@@ -6047,6 +6047,7 @@ dependencies = [
  "env_logger",
  "libloading",
  "log",
+ "png",
  "sha2",
  "zeff-emu-common",
  "zeff-gb-core",

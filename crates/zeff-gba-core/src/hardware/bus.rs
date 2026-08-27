@@ -633,6 +633,22 @@ impl Bus {
         cycles
     }
 
+    pub(crate) fn irq_delay_state(&self) -> Option<u32> {
+        self.irq_delay_cycles
+    }
+
+    pub(crate) fn set_irq_delay_state(&mut self, delay: Option<u32>) -> bool {
+        if delay.is_some_and(|delay| delay > IRQ_DELAY_CYCLES) {
+            return false;
+        }
+        self.irq_delay_cycles = delay;
+        true
+    }
+
+    pub(crate) fn migrate_legacy_irq_delay(&mut self) {
+        self.irq_delay_cycles = self.irq_line_asserted().then_some(IRQ_DELAY_CYCLES);
+    }
+
     pub(crate) fn test_irq_signal(&mut self, cycles_late: u32) {
         self.test_irq_signal_with_extra_delay(cycles_late, 0);
     }

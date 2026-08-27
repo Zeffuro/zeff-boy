@@ -15,6 +15,8 @@ mod arm;
 mod fetch_memory;
 #[path = "tests/irq.rs"]
 mod irq;
+#[path = "tests/phases.rs"]
+mod phases;
 #[path = "tests/swi.rs"]
 mod swi;
 #[path = "tests/thumb.rs"]

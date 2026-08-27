@@ -217,6 +217,9 @@ impl Bus {
 mod tests {
     use super::Bus;
     use crate::hardware::cartridge::Cartridge;
+    use crate::hardware::constants::{
+        CTRL_NMI_ENABLE, PPU_REG_MASK, PPU_REG_STATUS, STATUS_VBLANK,
+    };
     use crate::hardware::timing::NesTiming;
 
     fn test_bus(timing: NesTiming) -> Bus {
@@ -244,5 +247,56 @@ mod tests {
         assert_eq!(ntsc.ppu.pre_render_scanline(), 261);
         assert_eq!(pal.ppu.pre_render_scanline(), 311);
         assert_eq!(dendy.ppu.pre_render_scanline(), 311);
+    }
+
+    #[test]
+    fn regional_ppumask_writes_follow_the_cpu_ppu_phase_contract() {
+        for (timing, access_dots, cycle_end_dots) in [
+            (NesTiming::Pal, [2, 5, 8, 11, 15], [3, 6, 9, 12, 16]),
+            (NesTiming::Dendy, [2, 5, 8, 11, 14], [3, 6, 9, 12, 15]),
+        ] {
+            let mut bus = test_bus(timing);
+
+            for (index, (&access_dot, &cycle_end_dot)) in
+                access_dots.iter().zip(&cycle_end_dots).enumerate()
+            {
+                let was_enabled = bus.ppu.rendering_enabled();
+                bus.begin_timed_cpu_cycle();
+                assert_eq!(bus.ppu_cycles, access_dot, "{timing:?}");
+
+                bus.ppu_write_register(PPU_REG_MASK, if was_enabled { 0 } else { 0x18 });
+                assert_eq!(bus.ppu.rendering_enabled(), was_enabled, "{timing:?}");
+
+                bus.finish_timed_cpu_cycle(false);
+                assert_eq!(bus.ppu_cycles, cycle_end_dot, "{timing:?}");
+                assert_ne!(bus.ppu.rendering_enabled(), was_enabled, "{timing:?}");
+                let expected_phase = if timing == NesTiming::Pal {
+                    (index as u8 + 1) % 5
+                } else {
+                    0
+                };
+                assert_eq!(bus.ppu_clock.master_phase(), expected_phase);
+            }
+        }
+    }
+
+    #[test]
+    fn dendy_status_read_observes_and_cancels_the_vblank_edge_at_its_cpu_access_dot() {
+        let mut bus = test_bus(NesTiming::Dendy);
+        bus.ppu.regs.ctrl = CTRL_NMI_ENABLE;
+        bus.ppu.scanline = bus.ppu.vblank_start_scanline();
+        bus.ppu.dot = 0;
+
+        bus.begin_timed_cpu_cycle();
+
+        assert_eq!(bus.ppu.dot, 2);
+        assert_ne!(bus.ppu.regs.status & STATUS_VBLANK, 0);
+        assert_ne!(bus.ppu_read_register(PPU_REG_STATUS) & STATUS_VBLANK, 0);
+        assert!(!bus.ppu.nmi_output);
+
+        bus.finish_timed_cpu_cycle(false);
+
+        assert_eq!(bus.ppu.dot, 3);
+        assert!(!bus.cpu_step_events.nmi_raised);
     }
 }

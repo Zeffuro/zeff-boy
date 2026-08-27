@@ -5,14 +5,80 @@ use super::{
 };
 
 impl PPU {
+    pub(in crate::hardware) fn write_lcdc_bg_enable_with_video(
+        &mut self,
+        value: u8,
+        vram: &[u8],
+        oam: &[u8],
+    ) -> u8 {
+        let next_lcdc = Lcdc::from_bits_truncate(value);
+        let retained_pixels = self.dmg_lcdc_bg_enable_retained_pixels();
+        let rendered_line = (!self.sgb_enabled && self.lcdc ^ next_lcdc == Lcdc::BG_ENABLE)
+            .then(|| self.begin_dmg_mid_scanline_register_change(retained_pixels, vram, oam))
+            .flatten();
+        let interrupts = self.write_lcdc(value);
+        self.finish_dmg_mid_scanline_register_change(rendered_line, vram, oam);
+        interrupts
+    }
+
+    pub(super) fn dmg_lcdc_bg_enable_retained_pixels(&self) -> u8 {
+        let Some(output_x) = self.mode3_obj_fetch_output_x_for_write() else {
+            return 1;
+        };
+        let selection_mask = 1 << self.mode3_obj_fetch_selection;
+        let fetch_active_or_complete = self.mode3_obj_fetch_phase != ObjFetchPhase::Idle
+            || self.mode3_obj_fetched_mask & selection_mask != 0;
+        let trigger_x = self.mode3_obj_fetch_x.saturating_sub(8);
+        u8::from(
+            !self.lcdc.contains(Lcdc::OBJ_ENABLE)
+                || !fetch_active_or_complete
+                || output_x != trigger_x,
+        )
+    }
+
+    pub(in crate::hardware) fn write_wx_with_video(&mut self, value: u8, vram: &[u8], oam: &[u8]) {
+        let rendered_line = (value != self.wx
+            && self.window_enable_condition()
+            && self.window_y_triggered
+            && (self.wx <= 166 || value <= 166))
+            .then(|| self.begin_dmg_mid_scanline_register_change(0, vram, oam))
+            .flatten();
+        self.write_wx(value);
+        self.finish_dmg_mid_scanline_register_change(rendered_line, vram, oam);
+    }
+
+    pub(in crate::hardware) fn cpu_lcdc_write_needs_early_obj_cancel(&self, value: u8) -> bool {
+        let next_lcdc = Lcdc::from_bits_truncate(value);
+        self.mode3_obj_fetch_timing_active()
+            && self.lcdc.contains(Lcdc::OBJ_ENABLE)
+            && !next_lcdc.contains(Lcdc::OBJ_ENABLE)
+            && self.mode3_obj_fetch_x >= 8
+    }
+
+    pub(in crate::hardware) fn prepare_cpu_lcdc_write(&mut self, value: u8) {
+        if self.cpu_lcdc_write_needs_early_obj_cancel(value) {
+            self.cancel_active_obj_fetch();
+        }
+    }
+
     pub(in crate::hardware) fn write_lcdc(&mut self, value: u8) -> u8 {
         let was_enabled = self.lcdc.contains(Lcdc::LCD_ENABLE);
         let next_lcdc = Lcdc::from_bits_truncate(value);
-        if self.mode3_obj_fetch_timing_active()
-            && (self.lcdc ^ next_lcdc)
-                .intersects(Lcdc::OBJ_ENABLE | Lcdc::OBJ_SIZE | Lcdc::WINDOW_ENABLE)
-        {
-            self.legacy_obj_fetch_for_line = true;
+        if self.mode3_obj_fetch_timing_active() {
+            let changed = self.lcdc ^ next_lcdc;
+            if changed.contains(Lcdc::WINDOW_ENABLE)
+                || (changed.contains(Lcdc::OBJ_SIZE) && !self.mode3_obj_fetch_pipeline_enabled())
+            {
+                self.legacy_obj_fetch_for_line = true;
+            } else if changed.contains(Lcdc::OBJ_ENABLE) {
+                if next_lcdc.contains(Lcdc::OBJ_ENABLE) {
+                    if self.mode3_obj_fetch_dot == 0 {
+                        self.legacy_obj_fetch_for_line = true;
+                    }
+                } else {
+                    self.cancel_active_obj_fetch();
+                }
+            }
         }
         self.lcdc = next_lcdc;
         let enabled = self.lcdc.contains(Lcdc::LCD_ENABLE);
@@ -49,6 +115,52 @@ impl PPU {
             && self.lcd_was_enabled
             && self.ly < SCREEN_H as u8
             && self.cycles >= u64::from(self.mode3_obj_fetch_start_dot())
+    }
+
+    fn begin_dmg_mid_scanline_register_change(
+        &mut self,
+        retained_pixels: u8,
+        vram: &[u8],
+        oam: &[u8],
+    ) -> Option<bool> {
+        let write_dot = self.cycles.saturating_sub(3);
+        if self.cgb_mode
+            || self.ly >= SCREEN_H as u8
+            || self.blank_first_frame_after_lcd_on
+            || write_dot < OAM_DOTS
+            || write_dot >= OAM_DOTS + self.draw_dots_for_line
+        {
+            return None;
+        }
+
+        let startup_dots = DRAW_DOTS_BASE - SCREEN_W as u64;
+        let output_dot = write_dot + u64::from(self.ly == 0) * 4;
+        let x = self
+            .mode3_obj_fetch_output_x_for_write()
+            .unwrap_or_else(|| {
+                output_dot
+                    .saturating_sub(OAM_DOTS + startup_dots)
+                    .min(SCREEN_W as u64) as u8
+            })
+            .saturating_add(retained_pixels)
+            .min(SCREEN_W as u8);
+        let line_was_rendered = self.rendered_current_line;
+        if line_was_rendered {
+            self.dmg_rendered_x = self.dmg_rendered_x.min(x);
+        }
+        self.render_dmg_until(x, vram, oam);
+        Some(line_was_rendered)
+    }
+
+    fn finish_dmg_mid_scanline_register_change(
+        &mut self,
+        rendered_line: Option<bool>,
+        vram: &[u8],
+        oam: &[u8],
+    ) {
+        if rendered_line == Some(true) {
+            self.render_dmg_until(SCREEN_W as u8, vram, oam);
+        }
     }
 
     fn enable_lcd_after_lcdc_write(&mut self) -> u8 {
@@ -127,6 +239,9 @@ impl PPU {
         self.mode3_obj_fetch_x = 0;
         self.mode3_obj_fetch_phase = ObjFetchPhase::Idle;
         self.mode3_obj_fetch_phase_dot = 0;
+        self.mode3_obj_tile_row_latched_mask = 0;
+        self.mode3_obj_tile_rows = [0; 10];
+        self.mode3_obj_completed_mask = 0;
         self.legacy_obj_fetch_for_line = false;
     }
 
@@ -179,10 +294,7 @@ impl PPU {
     }
 
     pub(super) fn mode3_obj_fetch_pipeline_enabled(&self) -> bool {
-        !self.cgb_mode
-            && self.lcdc.contains(Lcdc::OBJ_ENABLE)
-            && self.selected_obj_count != 0
-            && !self.window_visible_on_current_line()
+        !self.cgb_mode && self.selected_obj_count != 0 && !self.window_visible_on_current_line()
     }
 
     fn advance_mode3_obj_fetch(&mut self, target_dot: u64, oam: &[u8]) {
@@ -220,19 +332,44 @@ impl PPU {
         }
 
         if self.mode3_obj_fetch_phase != ObjFetchPhase::Idle {
-            self.advance_active_obj_fetch();
+            self.advance_active_obj_fetch(oam);
             return;
         }
 
-        if self.lcdc.contains(Lcdc::OBJ_ENABLE)
-            && let Some(selection) = self.next_obj_fetch_selection(oam)
-        {
+        if !self.lcdc.contains(Lcdc::OBJ_ENABLE) {
+            self.skip_disabled_objs(oam);
+        } else if let Some(selection) = self.next_obj_fetch_selection(oam) {
             self.begin_obj_fetch(selection, oam);
-            self.advance_active_obj_fetch();
+            self.advance_active_obj_fetch(oam);
             return;
         }
 
         self.mode3_output_x += 1;
+    }
+
+    fn cancel_active_obj_fetch(&mut self) {
+        if self.mode3_obj_fetch_phase == ObjFetchPhase::Idle {
+            return;
+        }
+
+        self.mode3_obj_fetched_mask |= 1 << self.mode3_obj_fetch_selection;
+        self.mode3_obj_fetch_phase = ObjFetchPhase::Idle;
+        self.mode3_obj_fetch_phase_dot = 0;
+    }
+
+    fn skip_disabled_objs(&mut self, oam: &[u8]) {
+        for selection in 0..self.selected_obj_count.min(10) {
+            let bit = 1 << selection;
+            if self.mode3_obj_fetched_mask & bit != 0 {
+                continue;
+            }
+
+            let index = self.selected_obj_indices[usize::from(selection)];
+            let x = oam.get(usize::from(index) * 4 + 1).copied().unwrap_or(0);
+            if x >= 168 || x.saturating_sub(8) <= self.mode3_output_x {
+                self.mode3_obj_fetched_mask |= bit;
+            }
+        }
     }
 
     fn next_obj_fetch_selection(&self, oam: &[u8]) -> Option<u8> {
@@ -271,7 +408,7 @@ impl PPU {
         self.mode3_obj_fetch_phase_dot = 0;
     }
 
-    fn advance_active_obj_fetch(&mut self) {
+    fn advance_active_obj_fetch(&mut self, oam: &[u8]) {
         self.mode3_obj_fetch_phase_dot += 1;
         let phase_dots = match self.mode3_obj_fetch_phase {
             ObjFetchPhase::Idle => return,
@@ -289,12 +426,33 @@ impl PPU {
             ObjFetchPhase::Idle => ObjFetchPhase::Idle,
             ObjFetchPhase::Align => ObjFetchPhase::Tile,
             ObjFetchPhase::Tile => ObjFetchPhase::DataLow,
-            ObjFetchPhase::DataLow => ObjFetchPhase::DataHigh,
+            ObjFetchPhase::DataLow => {
+                self.latch_active_obj_tile_row(oam);
+                ObjFetchPhase::DataHigh
+            }
             ObjFetchPhase::DataHigh => {
-                self.mode3_obj_fetched_mask |= 1 << self.mode3_obj_fetch_selection;
+                let bit = 1 << self.mode3_obj_fetch_selection;
+                self.mode3_obj_fetched_mask |= bit;
+                self.mode3_obj_completed_mask |= bit;
                 ObjFetchPhase::Idle
             }
         };
+    }
+
+    fn latch_active_obj_tile_row(&mut self, oam: &[u8]) {
+        let selection = usize::from(self.mode3_obj_fetch_selection);
+        let index = usize::from(self.selected_obj_indices[selection]);
+        let base = index * 4;
+        let sprite_y = oam.get(base).copied().unwrap_or(0);
+        let flip_y = oam.get(base + 3).copied().unwrap_or(0) & 0x40 != 0;
+        let tall = self.lcdc.contains(Lcdc::OBJ_SIZE);
+        let height = if tall { 16 } else { 8 };
+        let mut row = self.ly.wrapping_add(16).wrapping_sub(sprite_y) & (height - 1);
+        if flip_y {
+            row = height - 1 - row;
+        }
+        self.mode3_obj_tile_rows[selection] = row | (u8::from(tall) << 4);
+        self.mode3_obj_tile_row_latched_mask |= 1 << selection;
     }
 
     fn mode3_obj_fetch_output_x_for_write(&self) -> Option<u8> {
@@ -304,6 +462,26 @@ impl PPU {
             && !self.legacy_sprite_selection_for_line
             && !self.legacy_obj_fetch_for_line)
             .then_some(self.mode3_output_history[0])
+    }
+
+    pub(super) fn dmg_output_x_for_write_dot(&self, write_dot: u64) -> u8 {
+        if let Some(x) = self.mode3_obj_fetch_output_x_for_write() {
+            return x;
+        }
+
+        let startup_dots = DRAW_DOTS_BASE - SCREEN_W as u64;
+        let output_dot = write_dot + u64::from(self.ly == 0) * 4;
+        let mut x = output_dot
+            .saturating_sub(OAM_DOTS + startup_dots + u64::from(self.scx & 7))
+            .min(SCREEN_W as u64) as u8;
+        if self.window_visible_on_current_line() {
+            let window_x = self.wx.saturating_sub(7).min(SCREEN_W as u8);
+            if x > window_x {
+                let stall = 6 + u8::from(self.wx == 0 && self.scx & 7 != 0);
+                x = window_x.max(x.saturating_sub(stall));
+            }
+        }
+        x
     }
 
     fn compute_draw_dots_for_line(&self, oam: &[u8]) -> u64 {
@@ -445,22 +623,14 @@ impl PPU {
             return;
         }
 
-        let startup_dots = DRAW_DOTS_BASE - SCREEN_W as u64;
-        let output_dot = write_dot + u64::from(self.ly == 0) * 4;
-        let x = self
-            .mode3_obj_fetch_output_x_for_write()
-            .unwrap_or_else(|| {
-                output_dot
-                    .saturating_sub(OAM_DOTS + startup_dots)
-                    .min(SCREEN_W as u64) as u8
-            });
+        let x = self.dmg_output_x_for_write_dot(write_dot);
         let line_was_rendered = self.rendered_current_line;
         if line_was_rendered {
             self.dmg_rendered_x = self.dmg_rendered_x.min(x);
         }
         let previous = self.bgp;
         self.render_dmg_until(x, vram, oam);
-        if x < SCREEN_W as u8 && previous != value {
+        if x != 0 && x < SCREEN_W as u8 && previous != value {
             self.bgp = previous | value;
             self.render_dmg_until(x + 1, vram, oam);
         }

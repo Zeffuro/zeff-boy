@@ -63,15 +63,6 @@ impl Emulator {
             TimingMode::Pal => NesTiming::Pal,
             TimingMode::Dendy => NesTiming::Dendy,
         };
-        match timing {
-            NesTiming::Pal => anyhow::bail!(
-                "NES PAL timing is not supported yet; this core currently emulates NTSC timing only"
-            ),
-            NesTiming::Dendy => anyhow::bail!(
-                "NES Dendy timing is not supported yet; this core currently emulates NTSC timing only"
-            ),
-            NesTiming::Ntsc => {}
-        }
         let bus = Bus::new_with_timing(cartridge, sample_rate, timing);
 
         let mut emu = Self {

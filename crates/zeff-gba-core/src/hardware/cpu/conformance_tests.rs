@@ -88,7 +88,7 @@ impl GbaAdapter {
         self.cpu.break_after_next_stub = false;
         self.cpu.next_fetch_sequential = false;
         self.cpu.last_fetch = None;
-        self.cpu.prefetch_queue.clear();
+        self.cpu.pipeline.clear();
     }
 }
 
@@ -123,8 +123,8 @@ fn common_adapter_observes_ewram_store_order() {
         expected_memory: vec![MemoryBlock::new(0x0200_0010, 0x1234_5678_u32.to_le_bytes())],
         expected_step: StepObservation {
             kind: StepKind::Instruction,
-            cpu_cycles: 4,
-            master_ticks: MasterTicks::new(4),
+            cpu_cycles: 9,
+            master_ticks: MasterTicks::new(9),
             master_rate: ClockRate::from_hz(16_777_216),
             bus_events: vec![
                 BusAccessEvent::Read {

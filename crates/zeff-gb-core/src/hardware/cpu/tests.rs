@@ -30,6 +30,22 @@ fn master_ticks_follow_the_system_clock() {
 }
 
 #[test]
+fn lcdc_write_preserves_cgb_double_speed_master_ticks() {
+    let mut cpu = Cpu::new();
+    let mut bus = make_test_bus(HardwareMode::CGBDouble);
+    cpu.pc = 0xC000;
+    cpu.regs.a = 0;
+    bus.write_byte(0xC000, 0xEA);
+    bus.write_byte(0xC001, PPU_LCDC as u8);
+    bus.write_byte(0xC002, (PPU_LCDC >> 8) as u8);
+
+    cpu.step(&mut bus);
+
+    assert_eq!(cpu.last_step_cycles, 16);
+    assert_eq!(cpu.last_step_master_ticks, 8);
+}
+
+#[test]
 fn cpu_access_trace_preserves_bus_order_and_master_ticks() {
     let mut cpu = Cpu::new();
     let mut bus = make_test_bus(HardwareMode::DMG);

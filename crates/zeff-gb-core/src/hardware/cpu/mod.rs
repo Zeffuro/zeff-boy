@@ -78,7 +78,16 @@ impl GbCpuBus for Bus {
         let oam_accessible_at_access = (OAM_START..=OAM_END)
             .contains(&addr)
             .then(|| Bus::cpu_oam_write_accessible(self));
-        let access_master_ticks = Bus::advance_cpu_t_cycles(self, 4);
+        let access_master_ticks = if addr == PPU_LCDC
+            && !blocked_by_oam_dma
+            && Bus::cpu_lcdc_write_needs_early_obj_cancel(self, value)
+        {
+            let first_master_tick = Bus::advance_cpu_t_cycles(self, 1);
+            Bus::prepare_cpu_lcdc_write(self, value);
+            first_master_tick.wrapping_add(Bus::advance_cpu_t_cycles(self, 3))
+        } else {
+            Bus::advance_cpu_t_cycles(self, 4)
+        };
         let extra_t_cycles = Bus::cpu_write_byte_after_oam_dma_and_oam_access_check(
             self,
             addr,

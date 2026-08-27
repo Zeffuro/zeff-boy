@@ -241,7 +241,7 @@ impl Bus {
             return self.zapper_fallback_hit;
         };
 
-        if self.ppu.scanline >= VBLANK_START_SCANLINE || self.ppu.scanline < y {
+        if self.ppu.scanline >= self.ppu.vblank_start_scanline() || self.ppu.scanline < y {
             return false;
         }
         if self.ppu.scanline == y && self.ppu.dot <= x.saturating_add(1) {

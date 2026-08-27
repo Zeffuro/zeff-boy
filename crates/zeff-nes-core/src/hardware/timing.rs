@@ -125,6 +125,20 @@ impl NesTiming {
         self.scanlines_per_frame() - 1
     }
 
+    pub(crate) const fn vblank_start_scanline(self) -> u16 {
+        match self {
+            Self::Ntsc | Self::Pal => 241,
+            Self::Dendy => 291,
+        }
+    }
+
+    pub(crate) const fn forced_oam_refresh_start_scanline(self) -> Option<u16> {
+        match self {
+            Self::Pal => Some(self.vblank_start_scanline() + 24),
+            Self::Ntsc | Self::Dendy => None,
+        }
+    }
+
     pub(crate) const fn odd_frame_dot_skip(self) -> bool {
         matches!(self, Self::Ntsc)
     }
@@ -208,6 +222,8 @@ mod tests {
         assert_eq!(NesTiming::Ntsc.cpu_clock_hz_ratio(), (236_250_000, 132));
         assert_eq!(NesTiming::Ntsc.scanlines_per_frame(), 262);
         assert_eq!(NesTiming::Ntsc.pre_render_scanline(), 261);
+        assert_eq!(NesTiming::Ntsc.vblank_start_scanline(), 241);
+        assert_eq!(NesTiming::Ntsc.forced_oam_refresh_start_scanline(), None);
         assert!(NesTiming::Ntsc.odd_frame_dot_skip());
 
         assert_eq!(NesTiming::Pal.cpu_master_divisor(), 16);
@@ -216,6 +232,11 @@ mod tests {
         assert_eq!(NesTiming::Pal.cpu_clock_hz_ratio(), (53_203_425, 32));
         assert_eq!(NesTiming::Pal.scanlines_per_frame(), 312);
         assert_eq!(NesTiming::Pal.pre_render_scanline(), 311);
+        assert_eq!(NesTiming::Pal.vblank_start_scanline(), 241);
+        assert_eq!(
+            NesTiming::Pal.forced_oam_refresh_start_scanline(),
+            Some(265)
+        );
         assert!(!NesTiming::Pal.odd_frame_dot_skip());
 
         assert_eq!(NesTiming::Dendy.cpu_master_divisor(), 15);
@@ -224,6 +245,8 @@ mod tests {
         assert_eq!(NesTiming::Dendy.cpu_clock_hz_ratio(), (53_203_425, 30));
         assert_eq!(NesTiming::Dendy.scanlines_per_frame(), 312);
         assert_eq!(NesTiming::Dendy.pre_render_scanline(), 311);
+        assert_eq!(NesTiming::Dendy.vblank_start_scanline(), 291);
+        assert_eq!(NesTiming::Dendy.forced_oam_refresh_start_scanline(), None);
         assert!(!NesTiming::Dendy.odd_frame_dot_skip());
     }
 

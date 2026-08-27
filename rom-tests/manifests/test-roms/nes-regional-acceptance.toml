@@ -1,0 +1,185 @@
+manifest_version = 1
+
+[suite]
+id = "nes-regional-acceptance"
+name = "NES PAL and Dendy regional acceptance"
+core = "nes"
+upstream_url = "https://github.com/christopherpow/nes-test-roms/tree/95d8f621ae55cee0d09b91519a8989ae0e64753b"
+license = "mixed/unknown; see source repository"
+
+[[test_groups]]
+id_prefix = "nes/regional/pal-apu"
+cache_prefix = "rom-tests/cache/nes/regional-acceptance"
+core = "nes"
+tier = "local"
+max_frames = 600
+tags = ["nes", "pal", "apu", "timing", "source-backed", "local-only"]
+notes = "Hardware-verified PAL APU suite. The build script changes only the source ROM's iNES timing bit so the public header-selected PAL machine is exercised."
+
+[test_groups.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "scripts/build-nes-regional-acceptance-roms.ps1"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-regional-95d8f621"
+
+[test_groups.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "a5b01d3a6504c05684c5e5be4062b37db7ab004cc5c2ab649c743280a933338e"
+
+[[test_groups.roms]]
+id = "01-len-ctr"
+archive_path = "pal-01.len_ctr.nes"
+sha256 = "567cdc921e31cca681c75f1748d01359b4797a0df3382ae8a8c75978597829c0"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "a5b01d3a6504c05684c5e5be4062b37db7ab004cc5c2ab649c743280a933338e"
+
+[[test_groups.roms]]
+id = "02-len-table"
+archive_path = "pal-02.len_table.nes"
+sha256 = "432ceb520ab08e9a33017cda46ba960bd0eb1e582fc64c16ba7b10f54da903ff"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "b8f59246a235efccb6d7b5e748abffdb99f3badf4034be8e3a34c8c61934ef93"
+
+[[test_groups.roms]]
+id = "03-irq-flag"
+archive_path = "pal-03.irq_flag.nes"
+sha256 = "012dfcc6e562d58a2f775223646b07a9c7117b6e5ea90a4c4c261465987631bc"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "b11a291b03670d3c356d6fd3afd8a367bde6b8833206436779370697706ce31f"
+
+[[test_groups.roms]]
+id = "04-clock-jitter"
+archive_path = "pal-04.clock_jitter.nes"
+sha256 = "2f56c7fffe824f3dc75f6bbe766f4607838234df443efbebffaa50b3778f5a72"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "62197a2ec56b285be06705c9e112496844ceabf32ab6fb5b54592aba247e7157"
+
+[[test_groups.roms]]
+id = "05-len-timing-mode0"
+archive_path = "pal-05.len_timing_mode0.nes"
+sha256 = "c317ee702662e60e25fe44676dd0842f74d9ee01b94c6dab5b4a6816a5ece583"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "88a15df9e4853bf2855da739186a3c94603bd0ad59d906bd6c5398c2165ef09a"
+
+[[test_groups.roms]]
+id = "06-len-timing-mode1"
+archive_path = "pal-06.len_timing_mode1.nes"
+sha256 = "30ad8f77ba4654100348bfe607ca78492226b0e0577646e4fd8f723771f3490e"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "9c2adcd75f0abacbe26a59a2bd98810944321eb60ba84361e4adfc556da0010c"
+
+[[test_groups.roms]]
+id = "07-irq-flag-timing"
+archive_path = "pal-07.irq_flag_timing.nes"
+sha256 = "9f7fa42a25ce44e73f660f9dcdcacecada7a49b6bd40d47cdda45f9f2db703a5"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "7edd4968f7581d233f0032e2543507c5a21042fb00196061e5edb838b3efefaa"
+
+[[test_groups.roms]]
+id = "08-irq-timing"
+archive_path = "pal-08.irq_timing.nes"
+sha256 = "f555b7d3b7c45c6828f836c686e454703cf8218d6c339a7c7752da18531dcb00"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "fe4ca0e84cc72c90e70762f5b6f5fd3f839add7626694b4ac9781eb5c86cdf33"
+
+[[test_groups.roms]]
+id = "10-len-halt-timing"
+archive_path = "pal-10.len_halt_timing.nes"
+sha256 = "bcaeca140bf720b7b2a0a7e99f2eb925f2c1837f933fba5018d0b8180a662889"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "ab740af03ae3530134d5dd2f94bd0682add22fa4f97c6e29df1844aa4dfad759"
+
+[[test_groups.roms]]
+id = "11-len-reload-timing"
+archive_path = "pal-11.len_reload_timing.nes"
+sha256 = "334558ab8eea1231419b14aae74d23505a5d07b4ba787f54f83bc114a50b6043"
+
+[test_groups.roms.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "17ee38c70f2a9d423d9b6e9ac62e50f127e243d192a40075499b7bb964f945a9"
+
+[[tests]]
+id = "nes/regional/pal-nmi-sync/frame-600"
+core = "nes"
+tier = "local"
+max_frames = 600
+tags = ["nes", "pal", "ppu", "nmi", "timing", "source-backed", "local-only"]
+notes = "Hardware-tested PAL NMI-sync fixture through a header-selected PAL machine."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "scripts/build-nes-regional-acceptance-roms.ps1"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-regional-95d8f621"
+
+[tests.rom]
+path = "rom-tests/cache/nes/regional-acceptance/pal-demo_pal.nes"
+sha256 = "d5c9698c5687903fd8358718ffcb0101bf9024cdf296cf78eea7bb13d7aad98b"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 600
+screenshot_sha256 = "375e871ec759aa905334f36f6487200ba819e2c1b98eec50d26e99e70aa45add"
+
+[[tests]]
+id = "nes/regional/dendy-240pee/menu-frame-900"
+core = "nes"
+tier = "local"
+max_frames = 900
+input = ["b@60-61"]
+tags = ["nes", "dendy", "ppu", "apu", "timing", "source-backed", "local-only"]
+notes = "240pee boots through a NES 2.0 Dendy timing header, identifies the machine as Dendy, and reaches its test menu deterministically."
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "scripts/build-nes-regional-acceptance-roms.ps1"
+source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
+source_id = "christopherpow-nes-test-roms-regional-95d8f621"
+
+[tests.rom]
+path = "rom-tests/cache/nes/regional-acceptance/dendy-240pee.nes"
+sha256 = "cf76f0554497e130ac1ace629529a8e94bf7e686f8dde4255fbd0a334d494d68"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 900
+screenshot_sha256 = "6c4d89d3017e82865f9af99f82d08c0f3e5928a5676a354585cb85aa40d137cc"
+

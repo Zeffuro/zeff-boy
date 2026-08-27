@@ -1,21 +1,22 @@
 use super::Cpu;
 use crate::hardware::bus::Bus;
 
+const INTR_WAIT_RETURN_INSTRUCTION_CYCLES: [u8; 19] =
+    [3, 1, 2, 3, 1, 1, 2, 2, 3, 1, 4, 3, 4, 1, 1, 3, 1, 5, 3];
+const INTR_WAIT_FLAG_CLEAR_INSTRUCTION: usize = 6;
+
 impl Cpu {
     pub(super) fn execute_software_interrupt(&mut self, bus: &mut Bus, function: u32) {
-        #[cfg(test)]
         let standalone_timing = !self.data_access_timing_active;
-        #[cfg(test)]
         let timing_start_cycle = self.cycles;
-        #[cfg(test)]
         if standalone_timing {
             self.begin_data_access_timing(0);
         }
         if bus.has_external_bios() {
             self.enter_software_interrupt_exception();
-            #[cfg(test)]
             if standalone_timing {
                 self.finish_data_access_timing(
+                    bus,
                     self.cycles
                         .wrapping_sub(timing_start_cycle)
                         .min(u64::from(u32::MAX)) as u32,
@@ -23,10 +24,7 @@ impl Cpu {
             }
             return;
         }
-        #[cfg(test)]
-        {
-            self.hle_data_accesses = true;
-        }
+        self.hle_data_accesses = true;
 
         match function {
             0x00 => self.swi_soft_reset(bus),
@@ -57,9 +55,9 @@ impl Cpu {
         }
         self.bios_protected_read_latch = super::POST_SWI_BIOS_READ_LATCH;
         self.cycles = self.cycles.wrapping_add(4);
-        #[cfg(test)]
         if standalone_timing {
             self.finish_data_access_timing(
+                bus,
                 self.cycles
                     .wrapping_sub(timing_start_cycle)
                     .min(u64::from(u32::MAX)) as u32,
@@ -105,6 +103,7 @@ impl Cpu {
         };
         self.state = super::CpuState::Running;
         self.swi_wait_return_pc = None;
+        self.swi_wait_mask = 0;
         self.next_fetch_sequential = false;
         self.flush_prefetch_queue();
     }
@@ -122,12 +121,26 @@ impl Cpu {
         let ready = (bus.bios_irq_flags() | bus.enabled_interrupt_flags()) & mask;
         if ready != 0 {
             bus.clear_bios_irq_flags(ready);
+            self.swi_wait_mask = 0;
             return;
         }
 
         bus.enable_master_interrupts();
         self.swi_wait_return_pc = Some(self.pc());
+        self.swi_wait_mask = mask;
         self.state = super::CpuState::Halted;
+    }
+
+    pub(super) fn complete_swi_wait(&mut self, bus: &mut Bus) {
+        for (instruction, cycles) in INTR_WAIT_RETURN_INSTRUCTION_CYCLES.into_iter().enumerate() {
+            let cycles = u32::from(cycles);
+            self.cycles = self.cycles.wrapping_add(u64::from(cycles));
+            bus.step_cycles(cycles);
+            if instruction == INTR_WAIT_FLAG_CLEAR_INSTRUCTION {
+                bus.clear_bios_irq_flags(self.swi_wait_mask);
+                self.swi_wait_mask = 0;
+            }
+        }
     }
 
     fn swi_div(&mut self) {
@@ -631,9 +644,8 @@ fn cpu_set_zero_read_addr(addr: u32) -> bool {
 }
 
 impl Cpu {
-    fn cpu_set_read32(&mut self, bus: &Bus, addr: u32) -> u32 {
+    fn cpu_set_read32(&mut self, bus: &mut Bus, addr: u32) -> u32 {
         if cpu_set_zero_read_addr(addr) {
-            #[cfg(test)]
             self.record_data_access_only(bus, addr, 4);
             0
         } else {
@@ -641,9 +653,8 @@ impl Cpu {
         }
     }
 
-    fn cpu_set_read16(&mut self, bus: &Bus, addr: u32) -> u16 {
+    fn cpu_set_read16(&mut self, bus: &mut Bus, addr: u32) -> u16 {
         if cpu_set_zero_read_addr(addr) {
-            #[cfg(test)]
             self.record_data_access_only(bus, addr, 2);
             0
         } else if addr & 1 == 0 {

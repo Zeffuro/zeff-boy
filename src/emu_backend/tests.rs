@@ -155,6 +155,28 @@ fn shared_backend_loader_covers_every_supported_core() {
     }
 }
 
+#[test]
+fn nes_backend_pacing_follows_header_declared_pal_and_dendy_timing() {
+    for (header_byte_7, header_byte_9, header_byte_12, expected_rate) in [
+        (0x00, 0x01, 0x00, (53_203_425, 32)),
+        (0x08, 0x00, 0x03, (53_203_425, 30)),
+    ] {
+        let mut rom = build_nes_test_rom();
+        rom[7] = header_byte_7;
+        rom[9] = header_byte_9;
+        rom[12] = header_byte_12;
+        let nes = zeff_nes_core::emulator::Emulator::new(&rom, 44_100.0)
+            .expect("regional NES emulator should initialize");
+        let backend = EmuBackend::from_nes(nes, PathBuf::from("regional.nes"));
+
+        assert_eq!(backend.nominal_frame_duration_ns(), 19_997_209);
+        assert_eq!(
+            backend.timing_snapshot().rate(),
+            zeff_emu_common::time::ClockRate::from_ratio(expected_rate.0, expected_rate.1)
+        );
+    }
+}
+
 fn assert_frame_lifecycle_roundtrip(mut backend: EmuBackend) {
     let before_frame = FrameLifecycle::frame_count(&backend);
     let before_timing = backend.timing_snapshot();

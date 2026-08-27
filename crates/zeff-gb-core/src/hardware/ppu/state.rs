@@ -71,6 +71,9 @@ impl PPU {
         writer.write_u8(self.mode3_obj_fetch_phase.tag());
         writer.write_u8(self.mode3_obj_fetch_phase_dot);
         writer.write_bool(self.legacy_obj_fetch_for_line);
+        writer.write_u16(self.mode3_obj_tile_row_latched_mask);
+        writer.write_bytes(&self.mode3_obj_tile_rows);
+        writer.write_u16(self.mode3_obj_completed_mask);
     }
 
     pub fn read_state(reader: &mut StateReader<'_>, format_version: u32) -> Result<Self> {
@@ -177,6 +180,13 @@ impl PPU {
                 .ok_or_else(|| anyhow::anyhow!("invalid PPU Mode 3 OBJ fetch phase"))?;
             ppu.mode3_obj_fetch_phase_dot = reader.read_u8()?;
             ppu.legacy_obj_fetch_for_line = reader.read_bool()?;
+            if format_version >= 12 {
+                ppu.mode3_obj_tile_row_latched_mask = reader.read_u16()?;
+                reader.read_exact(&mut ppu.mode3_obj_tile_rows)?;
+                ppu.mode3_obj_completed_mask = reader.read_u16()?;
+            } else if ppu.mode3_obj_fetch_dot != 0 {
+                ppu.legacy_obj_fetch_for_line = true;
+            }
             ppu.validate_mode3_obj_fetch_state()?;
         } else {
             let mode3_start = OAM_DOTS - u64::from(ppu.ly == 0) * 4;
@@ -197,6 +207,26 @@ impl PPU {
                 .windows(2)
                 .all(|pair| pair[0] <= pair[1] && pair[1] - pair[0] <= 1);
         let active_phase = self.mode3_obj_fetch_phase != ObjFetchPhase::Idle;
+        let active_latched_mask = if self.mode3_obj_fetch_phase == ObjFetchPhase::DataHigh {
+            1 << self.mode3_obj_fetch_selection
+        } else {
+            0
+        };
+        let allowed_latched_mask = self.mode3_obj_fetched_mask | active_latched_mask;
+        let tile_rows_valid = self.mode3_obj_tile_row_latched_mask & !allowed_latched_mask == 0
+            && self.mode3_obj_completed_mask & !self.mode3_obj_fetched_mask == 0
+            && self.mode3_obj_completed_mask & !self.mode3_obj_tile_row_latched_mask == 0
+            && self
+                .mode3_obj_tile_rows
+                .iter()
+                .enumerate()
+                .all(|(selection, &row)| {
+                    if self.mode3_obj_tile_row_latched_mask & (1 << selection) != 0 {
+                        row & !0x1F == 0 && (row & 0x10 != 0 || row & 0x08 == 0)
+                    } else {
+                        row == 0
+                    }
+                });
         let phase_limit = match self.mode3_obj_fetch_phase {
             ObjFetchPhase::Idle => 1,
             ObjFetchPhase::Align => 5u8.saturating_sub(
@@ -221,6 +251,9 @@ impl PPU {
             && self.mode3_obj_fetch_x == 0
             && self.mode3_obj_fetch_phase == ObjFetchPhase::Idle
             && self.mode3_obj_fetch_phase_dot == 0
+            && self.mode3_obj_tile_row_latched_mask == 0
+            && self.mode3_obj_tile_rows == [0; 10]
+            && self.mode3_obj_completed_mask == 0
             && pipeline_not_required;
         let fetch_identity_valid = if self.mode3_obj_fetched_mask == 0 && !active_phase {
             self.mode3_obj_fetch_selection == 0 && self.mode3_obj_fetch_x == 0
@@ -229,10 +262,15 @@ impl PPU {
         };
         let started = self.mode3_obj_fetch_dot >= start_dot
             && u64::from(self.mode3_obj_fetch_dot) <= self.cycles
-            && (fallback_line || u64::from(self.mode3_obj_fetch_dot) == self.cycles)
+            && (fallback_line
+                || self.mode3_output_x == SCREEN_W as u8
+                || u64::from(self.mode3_obj_fetch_dot) == self.cycles)
             && self.mode3_output_x <= SCREEN_W as u8
             && self.mode3_scx_low <= 7
             && self.mode3_obj_fetched_mask & !valid_mask == 0
+            && self.mode3_obj_tile_row_latched_mask & !valid_mask == 0
+            && self.mode3_obj_completed_mask & !valid_mask == 0
+            && tile_rows_valid
             && history_valid
             && fetch_identity_valid
             && (!active_phase

@@ -53,27 +53,34 @@ fn build_timing_exercise_rom() -> Vec<u8> {
 }
 
 #[test]
-fn rejects_header_declared_pal_timing_until_the_full_machine_model_exists() {
+fn header_declared_pal_timing_selects_the_pal_machine() {
     let mut rom = build_test_rom();
     rom[9] = 0x01;
 
-    let err = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap_err();
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("PAL ROM should load");
 
-    assert!(err.to_string().contains("PAL timing is not supported yet"));
+    assert_eq!(
+        emu.timing_snapshot().rate(),
+        ClockRate::from_ratio(53_203_425, 32)
+    );
+    assert_eq!(emu.nominal_frame_duration_ns(), 19_997_209);
+    assert_eq!(emu.step_instruction(), (0x8000, 0xEA, 2));
 }
 
 #[test]
-fn rejects_header_declared_dendy_timing_until_the_full_machine_model_exists() {
+fn header_declared_dendy_timing_selects_the_dendy_machine() {
     let mut rom = build_test_rom();
     rom[7] = 0x08;
     rom[12] = 0x03;
 
-    let err = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).unwrap_err();
+    let mut emu = Emulator::new(&rom, DEFAULT_SAMPLE_RATE).expect("Dendy ROM should load");
 
-    assert!(
-        err.to_string()
-            .contains("Dendy timing is not supported yet")
+    assert_eq!(
+        emu.timing_snapshot().rate(),
+        ClockRate::from_ratio(53_203_425, 30)
     );
+    assert_eq!(emu.nominal_frame_duration_ns(), 19_997_209);
+    assert_eq!(emu.step_instruction(), (0x8000, 0xEA, 2));
 }
 
 #[test]

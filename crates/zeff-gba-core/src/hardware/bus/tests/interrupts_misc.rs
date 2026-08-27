@@ -153,7 +153,7 @@ fn enabled_timer_irq_reports_pending_interrupt() {
     bus.write16(0x0400_0100, 0xFFFF);
     bus.write16(0x0400_0102, 0x00C0);
 
-    bus.step_cycles(1);
+    bus.step_cycles(2);
 
     assert_ne!(bus.read16(0x0400_0202) & (1 << 3), 0);
     assert!(bus.interrupt_pending());

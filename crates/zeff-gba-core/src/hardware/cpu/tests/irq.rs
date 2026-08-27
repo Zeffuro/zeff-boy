@@ -12,6 +12,43 @@ fn reset_enters_post_bios_system_mode_with_interrupts_enabled() {
 }
 
 #[test]
+fn irq_entry_owns_nonsequential_and_sequential_refill_phases() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.reset();
+    cpu.cpsr &= !CPSR_IRQ_DISABLE;
+
+    assert!(cpu.try_service_irq(&mut bus, true));
+
+    assert_eq!(
+        cpu.execution_state().phase,
+        CpuExecutionPhase::RefillNonSequential
+    );
+    assert_eq!(cpu.cycles, 0);
+    assert_eq!(cpu.pipeline_state().len, 0);
+
+    assert_eq!(cpu.step_cpu_phase_for_test(&mut bus), None);
+    let pipeline = cpu.pipeline_state();
+    assert_eq!(
+        cpu.execution_state().phase,
+        CpuExecutionPhase::RefillSequential
+    );
+    assert_eq!(cpu.cycles, 1);
+    assert_eq!(pipeline.len, 1);
+    assert_eq!(pipeline.entries[0].pc, 0x0000_0018);
+
+    assert_eq!(cpu.step_cpu_phase_for_test(&mut bus), None);
+    let pipeline = cpu.pipeline_state();
+    assert_eq!(cpu.execution_state(), CpuExecutionState::default());
+    assert_eq!(cpu.cycles, 2);
+    assert_eq!(pipeline.len, 2);
+    assert_eq!(pipeline.entries[0].pc, 0x0000_0018);
+    assert_eq!(pipeline.entries[1].pc, 0x0000_001C);
+    assert!(!pipeline.entries[0].thumb);
+    assert!(!pipeline.entries[1].thumb);
+}
+
+#[test]
 fn irq_exception_enters_bios_stub_and_restores_user_sp_lr() {
     let mut rom = vec![0; 0x104];
     rom[0x100..0x104].copy_from_slice(&0xE12F_FF1E_u32.to_le_bytes()); // bx lr
@@ -23,7 +60,7 @@ fn irq_exception_enters_bios_stub_and_restores_user_sp_lr() {
     cpu.regs[13] = 0x0300_7000;
     cpu.regs[14] = 0x0800_2222;
 
-    assert!(cpu.try_service_irq(true));
+    assert!(cpu.try_service_irq(&mut bus, true));
     for _ in 0..8 {
         cpu.step(&mut bus);
     }
@@ -44,12 +81,12 @@ fn irq_return_sets_protected_bios_latch_for_following_game_reads() {
     cpu.reset();
     cpu.cpsr &= !CPSR_IRQ_DISABLE;
 
-    assert!(cpu.try_service_irq(true));
+    assert!(cpu.try_service_irq(&mut bus, true));
     for _ in 0..8 {
         cpu.step(&mut bus);
     }
     cpu.fetch_decode_stub(&bus);
 
-    assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), 0xE55E_C002);
-    assert_eq!(cpu.cpu_read16(&bus, 0x0000_0000), 0xC002);
+    assert_eq!(cpu.cpu_read32(&mut bus, 0x0000_0000), 0xE55E_C002);
+    assert_eq!(cpu.cpu_read16(&mut bus, 0x0000_0000), 0xC002);
 }

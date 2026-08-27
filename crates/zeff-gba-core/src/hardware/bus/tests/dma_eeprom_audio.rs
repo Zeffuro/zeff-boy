@@ -222,7 +222,7 @@ fn dma3_serial_eeprom_reports_busy_after_write_until_programming_finishes() {
     assert_eq!(bus.read16(0x0D00_0000) & 1, 0);
     bus.step_cycles(EEPROM_WRITE_BUSY_CYCLES - 1);
     assert_eq!(bus.read16(0x0D00_0000) & 1, 0);
-    bus.step_cycles(1);
+    bus.step_cycles(2);
     assert_eq!(bus.read16(0x0D00_0000) & 1, 1);
 }
 
@@ -328,7 +328,7 @@ fn sound_fifo_dma_refills_on_selected_timer_overflow() {
     bus.write16(0x0400_0100, 0xFFFF);
     bus.write16(0x0400_0102, 0x0080);
 
-    bus.step_cycles(1);
+    bus.step_cycles(2);
 
     assert_eq!(bus.apu.fifo_len(0), 16);
     assert_eq!(bus.dma.channel(1).source, 0x0200_0000);
@@ -356,7 +356,7 @@ fn sound_fifo_dma_services_multiple_timer_overflows_in_one_step() {
     bus.write16(0x0400_0100, 0xFFFF);
     bus.write16(0x0400_0102, 0x0080);
 
-    bus.step_cycles(5);
+    bus.step_cycles(6);
 
     assert_eq!(bus.apu.fifo_len(0), 31);
     assert_eq!(bus.dma.channel(1).source, 0x0200_0000);
@@ -378,7 +378,7 @@ fn sound_fifo_dma_reenable_reloads_active_source_from_initial_register() {
     bus.write16(0x0400_0100, 0xFFFF);
     bus.write16(0x0400_0102, 0x0080);
 
-    bus.step_cycles(1);
+    bus.step_cycles(2);
     assert_eq!(bus.dma.channel(1).source, 0x0200_0000);
     assert_eq!(bus.dma.channel(1).active_source, 0x0200_0010);
 

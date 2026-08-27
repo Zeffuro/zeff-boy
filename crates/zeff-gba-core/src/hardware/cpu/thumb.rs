@@ -208,7 +208,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_thumb_pc_relative_load(&mut self, bus: &Bus, pc: u32, raw: u16) {
+    pub(super) fn execute_thumb_pc_relative_load(&mut self, bus: &mut Bus, pc: u32, raw: u16) {
         let rd = ((raw >> 8) & 0x7) as usize;
         let addr = (pc.wrapping_add(4) & !3).wrapping_add(u32::from(raw & 0xFF) << 2);
         self.regs[rd] = self.cpu_read32(bus, addr);

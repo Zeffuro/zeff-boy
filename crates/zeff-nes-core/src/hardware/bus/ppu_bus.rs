@@ -1,8 +1,6 @@
 use super::Bus;
 use crate::hardware::cartridge::{ChrFetchKind, Mirroring};
-use crate::hardware::constants::{
-    CTRL_NMI_ENABLE, SCREEN_HEIGHT, STATUS_VBLANK, VBLANK_START_SCANLINE,
-};
+use crate::hardware::constants::{CTRL_NMI_ENABLE, SCREEN_HEIGHT, STATUS_VBLANK};
 
 impl Bus {
     pub(super) fn ppu_read_register(&mut self, addr: u16) -> u8 {
@@ -11,7 +9,7 @@ impl Bus {
         let (result, refresh_mask) = match addr {
             0x2002 => {
                 let status = (self.ppu.regs.status & 0xE0) | (latch & 0x1F);
-                if self.ppu.scanline == VBLANK_START_SCANLINE && self.ppu.dot == 1 {
+                if self.ppu.scanline == self.ppu.vblank_start_scanline() && self.ppu.dot == 1 {
                     self.ppu.suppress_vblank_edge = true;
                 }
                 self.ppu.regs.clear_vblank();
@@ -115,15 +113,28 @@ impl Bus {
     }
 
     #[inline]
-    fn rendering_active_scanline(&self) -> bool {
-        self.ppu.rendering_enabled()
-            && (self.ppu.scanline < SCREEN_HEIGHT as u16
-                || self.ppu.scanline == self.ppu.pre_render_scanline())
+    fn oam_write_blocked(&self) -> bool {
+        let forced_oam_refresh =
+            self.timing
+                .forced_oam_refresh_start_scanline()
+                .is_some_and(|start| {
+                    self.ppu.scanline >= start && self.ppu.scanline < self.ppu.pre_render_scanline()
+                });
+        forced_oam_refresh
+            || (self.ppu.rendering_enabled()
+                && (self.ppu.scanline < SCREEN_HEIGHT as u16
+                    || self.ppu.scanline == self.ppu.pre_render_scanline()))
     }
 
     #[inline]
     pub(super) fn write_oam_data(&mut self, val: u8) {
-        if self.rendering_active_scanline() {
+        if self.oam_write_blocked() {
+            if self.ppu.rendering_enabled()
+                && (self.ppu.scanline < SCREEN_HEIGHT as u16
+                    || self.ppu.scanline == self.ppu.pre_render_scanline())
+            {
+                self.ppu.oam_addr = self.ppu.oam_addr.wrapping_add(4);
+            }
             return;
         }
 
@@ -133,7 +144,10 @@ impl Bus {
 
     #[inline]
     fn increment_v_after_ppudata_access(&mut self) {
-        if self.rendering_active_scanline() {
+        if self.ppu.rendering_enabled()
+            && (self.ppu.scanline < SCREEN_HEIGHT as u16
+                || self.ppu.scanline == self.ppu.pre_render_scanline())
+        {
             self.ppu.increment_scroll_x();
             self.ppu.increment_scroll_y();
         } else {
@@ -237,18 +251,24 @@ impl Bus {
 mod tests {
     use super::*;
     use crate::hardware::cartridge::Cartridge;
-    use crate::hardware::constants::{CTRL_NMI_ENABLE, OAM_DMA, STATUS_VBLANK};
+    use crate::hardware::constants::{
+        CTRL_NMI_ENABLE, OAM_DMA, STATUS_VBLANK, VBLANK_START_SCANLINE,
+    };
     use crate::hardware::ppu::PPU_IO_LATCH_DECAY_PPU_CYCLES;
     use crate::hardware::timing::NesTiming;
 
-    fn test_bus() -> Bus {
+    fn test_bus_with_timing(timing: NesTiming) -> Bus {
         let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
         rom[0..4].copy_from_slice(b"NES\x1A");
         rom[4] = 1;
         rom[5] = 1;
 
         let cart = Cartridge::load(&rom).expect("test ROM should load");
-        Bus::new(cart, 44_100.0)
+        Bus::new_with_timing(cart, 44_100.0, timing)
+    }
+
+    fn test_bus() -> Bus {
+        test_bus_with_timing(NesTiming::Ntsc)
     }
 
     #[test]
@@ -483,17 +503,17 @@ mod tests {
     }
 
     #[test]
-    fn oamdata_write_during_rendering_is_ignored() {
+    fn oamdata_write_during_rendering_preserves_oam_and_advances_evaluator_address() {
         let mut bus = test_bus();
         bus.ppu.regs.mask = 0x18;
         bus.ppu.scanline = 20;
         bus.ppu.dot = 100;
-        bus.ppu.oam_addr = 0x02;
-        bus.ppu.oam[0x02] = 0x11;
+        bus.ppu.oam_addr = 0xFE;
+        bus.ppu.oam[0xFE] = 0x11;
 
         bus.ppu_write_register(0x2004, 0xFF);
 
-        assert_eq!(bus.ppu.oam[0x02], 0x11);
+        assert_eq!(bus.ppu.oam[0xFE], 0x11);
         assert_eq!(bus.ppu.oam_addr, 0x02);
     }
 
@@ -509,6 +529,67 @@ mod tests {
 
         assert_eq!(bus.ppu.oam[0x02], 0x77);
         assert_eq!(bus.ppu.oam_addr, 0x03);
+    }
+
+    #[test]
+    fn pal_forced_oam_refresh_blocks_writes_even_while_rendering_is_disabled() {
+        let mut pal = test_bus_with_timing(NesTiming::Pal);
+        pal.ppu.regs.mask = 0x18;
+        pal.ppu.scanline = 310;
+        pal.ppu.dot = 10;
+        pal.ppu.oam_addr = 0xFF;
+        pal.ppu.oam[0xFF] = 0x11;
+
+        pal.ppu_write_register(0x2004, 0x77);
+
+        assert_eq!(pal.ppu.oam[0xFF], 0x11);
+        assert_eq!(pal.ppu.oam_addr, 0xFF);
+
+        pal.ppu.regs.mask = 0;
+        pal.ppu_write_register(0x2004, 0x77);
+
+        assert_eq!(pal.ppu.oam[0xFF], 0x11);
+        assert_eq!(pal.ppu.oam_addr, 0xFF);
+
+        pal.ppu.scanline = 264;
+        pal.ppu_write_register(0x2004, 0x77);
+
+        assert_eq!(pal.ppu.oam[0xFF], 0x77);
+        assert_eq!(pal.ppu.oam_addr, 0x00);
+
+        pal.ppu.oam[0xFF] = 0x11;
+        pal.ppu.oam_addr = 0xFF;
+        pal.ppu.scanline = 311;
+        pal.ppu_write_register(0x2004, 0x88);
+
+        assert_eq!(pal.ppu.oam[0xFF], 0x88);
+        assert_eq!(pal.ppu.oam_addr, 0x00);
+
+        let mut dendy = test_bus_with_timing(NesTiming::Dendy);
+        dendy.ppu.regs.mask = 0x18;
+        dendy.ppu.scanline = 265;
+        dendy.ppu.dot = 10;
+        dendy.ppu.oam_addr = 0x02;
+
+        dendy.ppu_write_register(0x2004, 0x55);
+
+        assert_eq!(dendy.ppu.oam[0x02], 0x55);
+        assert_eq!(dendy.ppu.oam_addr, 0x03);
+    }
+
+    #[test]
+    fn pal_forced_oam_refresh_does_not_change_ppudata_incrementing() {
+        let mut pal = test_bus_with_timing(NesTiming::Pal);
+        pal.ppu.regs.mask = 0;
+        pal.ppu.regs.ctrl = 0;
+        pal.ppu.scanline = 265;
+        pal.ppu.dot = 10;
+        pal.ppu.v = 0x0010;
+
+        pal.ppu_write_register(0x2007, 0x77);
+
+        assert_eq!(pal.ppu.v, 0x0011);
+        assert_eq!(pal.ppu_bus_read(0x0010), 0x77);
     }
 
     #[test]

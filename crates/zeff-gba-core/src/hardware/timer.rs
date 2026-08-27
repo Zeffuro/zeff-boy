@@ -12,23 +12,19 @@ pub struct Timers {
     // mask avoids walking the four disabled timer registers at every instruction.
     clocked_timer_mask: u8,
     cycle_accum: [u32; 4],
-    enable_delay_pending: [bool; 4],
-    enable_delay_cycles: [u32; 4],
-    // Runtime-only scheduler phase for the first overflow after enabling a timer.
-    //
-    // GBATEK documents TMCNT_L as a reload register: writes affect the next
-    // start/overflow, not the already-running counter. mGBA models this with
-    // scheduled timer events plus a delayed IRQ event. This interpreter still
-    // applies IO writes at instruction boundaries, so this keeps first-overflow
-    // IRQ phasing close until timer IO becomes fully cycle-addressed.
-    first_overflow_irq_extra_delay: [u32; 4],
+    start_delay_cycles: [u8; 4],
+    clock_phase: u16,
 }
 
 pub type TimerOverflowCounts = [u32; 4];
 pub type TimerIrqExtraDelays = [u32; 4];
 
-const FIRST_OVERFLOW_IRQ_EXTRA_DELAY: u32 = 3;
-const ACTIVE_RELOAD_WRITE_FIRST_OVERFLOW_IRQ_EXTRA_DELAY: u32 = 1;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TimerTimingState {
+    pub cycle_accum: [u32; 4],
+    pub start_delay_cycles: [u8; 4],
+    pub clock_phase: u16,
+}
 
 impl Timers {
     pub fn read16(&self, index: usize, control: bool) -> u16 {
@@ -48,40 +44,16 @@ impl Timers {
                 if old_control & 0x0080 == 0 && timer.control & 0x0080 != 0 {
                     timer.counter = timer.reload;
                     if let Some(accum) = self.cycle_accum.get_mut(index) {
-                        *accum = 0;
+                        let period = timer_period(timer.control);
+                        *accum = u32::from(self.clock_phase.wrapping_add(1)) & (period - 1);
                     }
-                    self.enable_delay_pending[index] = true;
-                    self.enable_delay_cycles[index] = 0;
-                    self.first_overflow_irq_extra_delay[index] = if timer.reload == 0xFFFF {
-                        0
-                    } else {
-                        FIRST_OVERFLOW_IRQ_EXTRA_DELAY
-                    };
+                    self.start_delay_cycles[index] = 1;
                 } else if timer.control & 0x0080 == 0 {
-                    self.first_overflow_irq_extra_delay[index] = 0;
+                    self.start_delay_cycles[index] = 0;
                 }
                 self.refresh_clocked_timer_mask(index);
             } else {
                 timer.reload = value;
-                if timer.control & 0x0080 != 0 && self.first_overflow_irq_extra_delay[index] != 0 {
-                    self.first_overflow_irq_extra_delay[index] =
-                        ACTIVE_RELOAD_WRITE_FIRST_OVERFLOW_IRQ_EXTRA_DELAY;
-                }
-            }
-        }
-    }
-
-    pub fn begin_step_window(&mut self, cycles: u32) {
-        if self.clocked_timer_mask == 0 {
-            return;
-        }
-        for index in 0..self.timers.len() {
-            if self.enable_delay_pending[index] {
-                let immediate_overflow_delay = u32::from(self.timers[index].counter == 0xFFFF);
-                self.enable_delay_cycles[index] = self.enable_delay_cycles[index]
-                    .saturating_add(cycles)
-                    .saturating_add(immediate_overflow_delay);
-                self.enable_delay_pending[index] = false;
             }
         }
     }
@@ -94,6 +66,7 @@ impl Timers {
         &mut self,
         cycles: u32,
     ) -> (u16, TimerOverflowCounts, TimerIrqExtraDelays) {
+        self.clock_phase = self.clock_phase.wrapping_add(cycles as u16) & 0x03FF;
         if self.clocked_timer_mask == 0 {
             return (0, [0; 4], [0; 4]);
         }
@@ -106,11 +79,12 @@ impl Timers {
                 continue;
             }
 
-            let count_cycles = self.consume_enable_delay(index, cycles);
+            let delay = u32::from(self.start_delay_cycles[index]).min(cycles);
+            self.start_delay_cycles[index] -= delay as u8;
+            let count_cycles = cycles - delay;
             if count_cycles == 0 {
                 continue;
             }
-
             self.cycle_accum[index] = self.cycle_accum[index].saturating_add(count_cycles);
             let period = timer_period(timer.control);
             while self.cycle_accum[index] >= period {
@@ -137,6 +111,40 @@ impl Timers {
         self.timers
     }
 
+    pub(crate) fn timing_state(&self) -> TimerTimingState {
+        TimerTimingState {
+            cycle_accum: self.cycle_accum,
+            start_delay_cycles: self.start_delay_cycles,
+            clock_phase: self.clock_phase,
+        }
+    }
+
+    pub(crate) fn set_timing_state(&mut self, state: TimerTimingState) -> bool {
+        if state.clock_phase > 0x03FF
+            || state.cycle_accum.into_iter().any(|accum| accum > 0x03FF)
+            || state.start_delay_cycles.into_iter().any(|delay| delay > 1)
+        {
+            return false;
+        }
+        self.cycle_accum = state.cycle_accum;
+        self.start_delay_cycles = state.start_delay_cycles;
+        self.clock_phase = state.clock_phase;
+        true
+    }
+
+    pub(crate) fn migrate_legacy_timing(&mut self, cycles: u64) {
+        let phase = (cycles as u16) & 0x03FF;
+        self.clock_phase = phase;
+        self.start_delay_cycles = [0; 4];
+        for (index, timer) in self.timers.iter().enumerate() {
+            self.cycle_accum[index] = if timer.control & 0x0084 == 0x0080 {
+                u32::from(phase) & (timer_period(timer.control) - 1)
+            } else {
+                0
+            };
+        }
+    }
+
     pub fn cycles_until_overflow(&self, index: usize) -> Option<u32> {
         if index >= self.timers.len() {
             return None;
@@ -147,11 +155,11 @@ impl Timers {
         let timer = self.timers.get(index).copied()?;
         let period = timer_period(timer.control);
         let accum = self.cycle_accum.get(index).copied().unwrap_or(0);
-        let enable_delay = self.enable_delay_cycles.get(index).copied().unwrap_or(0);
+        let start_delay = u32::from(self.start_delay_cycles[index]);
         let cycles_until_increment = period.saturating_sub(accum).max(1);
         let increments_until_overflow = 0x1_0000 - u32::from(timer.counter);
         Some(
-            enable_delay
+            start_delay
                 .saturating_add(cycles_until_increment)
                 .saturating_add(
                     increments_until_overflow
@@ -171,9 +179,8 @@ impl Timers {
                 mask | (u8::from(timer.control & 0x0084 == 0x0080) << index)
             });
         self.cycle_accum = [0; 4];
-        self.enable_delay_pending = [false; 4];
-        self.enable_delay_cycles = [0; 4];
-        self.first_overflow_irq_extra_delay = [0; 4];
+        self.start_delay_cycles = [0; 4];
+        self.clock_phase = 0;
     }
 
     #[inline]
@@ -224,20 +231,13 @@ impl Timers {
             overflow_counts[index] = overflow_counts[index].saturating_add(1);
             if timer.control & 0x0040 != 0 {
                 *irq_flags |= 1 << (3 + index);
-                irq_extra_delays[index] = self.first_overflow_irq_extra_delay[index];
+                irq_extra_delays[index] = 0;
             }
-            self.first_overflow_irq_extra_delay[index] = 0;
             true
         } else {
             timer.counter = counter;
             false
         }
-    }
-
-    fn consume_enable_delay(&mut self, index: usize, cycles: u32) -> u32 {
-        let delay = self.enable_delay_cycles[index].min(cycles);
-        self.enable_delay_cycles[index] -= delay;
-        cycles - delay
     }
 }
 
@@ -291,14 +291,9 @@ mod tests {
         let mut timers = Timers::default();
         timers.write16(0, false, 0xFFFF);
         timers.write16(0, true, 0x00C0);
-        timers.begin_step_window(1);
 
         let flags = timers.step(1);
 
-        assert_eq!(flags, 0);
-        assert_eq!(timers.read16(0, false), 0xFFFF);
-
-        let flags = timers.step(1);
         assert_eq!(flags, 0);
         assert_eq!(timers.read16(0, false), 0xFFFF);
 
@@ -315,10 +310,6 @@ mod tests {
         timers.write16(1, false, 0xFFFE);
         timers.write16(0, true, 0x0080);
         timers.write16(1, true, 0x0084);
-        timers.begin_step_window(1);
-
-        timers.step(1);
-        assert_eq!(timers.read16(1, false), 0xFFFE);
 
         timers.step(1);
         assert_eq!(timers.read16(1, false), 0xFFFE);
@@ -336,19 +327,10 @@ mod tests {
         timers.write16(0, false, 0xFFFF);
         timers.write16(0, true, 0x0080);
 
-        timers.begin_step_window(1);
-        let (flags, overflows, _) = timers.step_with_overflows(1);
-        assert_eq!(flags, 0);
-        assert_eq!(overflows[0], 0);
-
-        let (flags, overflows, _) = timers.step_with_overflows(1);
-        assert_eq!(flags, 0);
-        assert_eq!(overflows[0], 0);
-
         let (flags, overflows, _) = timers.step_with_overflows(4);
 
         assert_eq!(flags, 0);
-        assert_eq!(overflows[0], 4);
+        assert_eq!(overflows[0], 3);
         assert_eq!(timers.read16(0, false), 0xFFFF);
     }
 
@@ -357,33 +339,14 @@ mod tests {
         let mut timers = Timers::default();
         timers.write16(0, false, 0xFFFE);
         timers.write16(0, true, 0x0081);
-        timers.begin_step_window(1);
 
-        assert_eq!(timers.cycles_until_overflow(0), Some(129));
+        assert_eq!(timers.cycles_until_overflow(0), Some(128));
 
         timers.step(32);
-        assert_eq!(timers.cycles_until_overflow(0), Some(97));
+        assert_eq!(timers.cycles_until_overflow(0), Some(96));
 
-        timers.step(97);
+        timers.step(96);
         assert_eq!(timers.read16(0, false), 0xFFFE);
         assert_eq!(timers.cycles_until_overflow(0), Some(128));
-    }
-
-    #[test]
-    fn newly_enabled_timer_does_not_count_current_step_window() {
-        let mut timers = Timers::default();
-        timers.write16(0, false, 0xFFFF);
-        timers.write16(0, true, 0x0080);
-
-        timers.begin_step_window(3);
-        let (_, overflows, _) = timers.step_with_overflows(3);
-        assert_eq!(overflows[0], 0);
-        assert_eq!(timers.read16(0, false), 0xFFFF);
-
-        let (_, overflows, _) = timers.step_with_overflows(1);
-        assert_eq!(overflows[0], 0);
-
-        let (_, overflows, _) = timers.step_with_overflows(1);
-        assert_eq!(overflows[0], 1);
     }
 }

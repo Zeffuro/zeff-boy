@@ -17,7 +17,7 @@ use std::fmt;
 use crate::hardware::constants::{
     FRAMEBUFFER_LEN, MASK_SHOW_BG, MASK_SHOW_BG_LEFT8, MASK_SHOW_SPRITES, MASK_SHOW_SPRITES_LEFT8,
     PPU_DOTS_PER_SCANLINE, PPU_PALETTE_RAM_BYTES, PRIMARY_OAM_BYTES, SCREEN_WIDTH,
-    SECONDARY_OAM_BYTES, VBLANK_START_SCANLINE,
+    SECONDARY_OAM_BYTES,
 };
 use crate::hardware::timing::NesTiming;
 
@@ -80,6 +80,7 @@ pub struct Ppu {
     pub(crate) frame_ready: bool,
     pub(crate) frame_count: u64,
     pub(crate) odd_frame_dot_skip_enabled: bool,
+    vblank_start_scanline: u16,
     pre_render_scanline: u16,
 
     pub(crate) bg_shift_pattern_lo: u16,
@@ -145,6 +146,7 @@ impl Ppu {
             frame_ready: false,
             frame_count: 0,
             odd_frame_dot_skip_enabled: timing.odd_frame_dot_skip(),
+            vblank_start_scanline: timing.vblank_start_scanline(),
             pre_render_scanline: timing.pre_render_scanline(),
             bg_shift_pattern_lo: 0,
             bg_shift_pattern_hi: 0,
@@ -237,6 +239,10 @@ impl Ppu {
         self.pre_render_scanline
     }
 
+    pub(crate) const fn vblank_start_scanline(&self) -> u16 {
+        self.vblank_start_scanline
+    }
+
     #[inline]
     pub(crate) fn io_latch_value_at(&self, ppu_cycles: u64) -> u8 {
         let mut value = self.io_latch;
@@ -295,7 +301,7 @@ impl Ppu {
     pub fn tick(&mut self) -> bool {
         let mut raise_nmi = false;
 
-        if self.scanline == VBLANK_START_SCANLINE && self.dot == 1 {
+        if self.scanline == self.vblank_start_scanline && self.dot == 1 {
             if self.suppress_vblank_edge {
                 self.suppress_vblank_edge = false;
                 self.in_vblank = false;
@@ -564,6 +570,7 @@ impl fmt::Debug for Ppu {
 #[cfg(test)]
 mod tests {
     use super::{LAST_DOT, ODD_FRAME_SKIP_DOT, Ppu};
+    use crate::hardware::constants::{CTRL_NMI_ENABLE, STATUS_VBLANK};
     use crate::hardware::timing::NesTiming;
 
     #[test]
@@ -616,6 +623,31 @@ mod tests {
             assert!(!ppu.odd_frame);
             assert_eq!(ppu.frame_count, 1);
         }
+    }
+
+    #[test]
+    fn regional_vblank_edges_follow_the_timing_profile() {
+        for timing in [NesTiming::Ntsc, NesTiming::Pal, NesTiming::Dendy] {
+            let mut ppu = Ppu::new_with_timing(timing);
+            ppu.regs.ctrl = CTRL_NMI_ENABLE;
+            ppu.scanline = timing.vblank_start_scanline();
+            ppu.dot = 1;
+
+            assert!(ppu.tick());
+            assert!(ppu.in_vblank);
+            assert_ne!(ppu.regs.status & STATUS_VBLANK, 0);
+            assert!(ppu.frame_ready);
+        }
+
+        let mut dendy = Ppu::new_with_timing(NesTiming::Dendy);
+        dendy.regs.ctrl = CTRL_NMI_ENABLE;
+        dendy.scanline = NesTiming::Pal.vblank_start_scanline();
+        dendy.dot = 1;
+
+        assert!(!dendy.tick());
+        assert!(!dendy.in_vblank);
+        assert_eq!(dendy.regs.status & STATUS_VBLANK, 0);
+        assert!(!dendy.frame_ready);
     }
 
     #[test]

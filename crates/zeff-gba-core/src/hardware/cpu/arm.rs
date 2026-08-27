@@ -135,12 +135,12 @@ impl Cpu {
         }
     }
 
-    fn return_from_exception(&mut self, pc: u32, thumb: bool) {
+    pub(super) fn return_from_exception(&mut self, pc: u32, thumb: bool) {
         self.set_cpsr(self.spsr);
         self.write_reg(15, pc, thumb || self.thumb_state());
     }
 
-    fn arm_register_operand(&self, raw: u32, pc: u32) -> (u32, bool) {
+    pub(super) fn arm_register_operand(&self, raw: u32, pc: u32) -> (u32, bool) {
         let rm = (raw & 0xF) as usize;
         let shift_type = (raw >> 5) & 0x3;
         let by_register = raw & (1 << 4) != 0;
@@ -351,12 +351,12 @@ impl Cpu {
         }
     }
 
-    pub(super) fn load_arm_unsigned_halfword(&mut self, bus: &Bus, addr: u32) -> u32 {
+    pub(super) fn load_arm_unsigned_halfword(&mut self, bus: &mut Bus, addr: u32) -> u32 {
         let value = u32::from(self.cpu_read16(bus, addr));
         rotate_right(value, (addr & 1) * 8)
     }
 
-    pub(super) fn load_arm_signed_halfword(&mut self, bus: &Bus, addr: u32) -> u32 {
+    pub(super) fn load_arm_signed_halfword(&mut self, bus: &mut Bus, addr: u32) -> u32 {
         if addr & 1 != 0 {
             sign_extend(u32::from(self.cpu_read8(bus, addr)), 8) as u32
         } else {
@@ -450,7 +450,7 @@ impl Cpu {
         }
     }
 
-    fn block_transfer_read_reg(&self, reg: usize, pc: u32, force_user: bool) -> u32 {
+    pub(super) fn block_transfer_read_reg(&self, reg: usize, pc: u32, force_user: bool) -> u32 {
         if force_user && bank_index(self.mode()) != BANK_USER_SYSTEM {
             match reg {
                 8..=12 if self.mode() == CpuMode::Fiq => {
@@ -465,7 +465,7 @@ impl Cpu {
         }
     }
 
-    fn block_transfer_write_reg(&mut self, reg: usize, value: u32, force_user: bool) {
+    pub(super) fn block_transfer_write_reg(&mut self, reg: usize, value: u32, force_user: bool) {
         if force_user && bank_index(self.mode()) != BANK_USER_SYSTEM {
             match reg {
                 8..=12 if self.mode() == CpuMode::Fiq => {

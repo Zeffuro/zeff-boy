@@ -8,7 +8,8 @@ mod libretro_harness;
 mod native {
 
     use super::libretro_harness::{
-        CoreOption, HarnessConfig, JoypadInput, PixelFormat, load_rom, run_repeated_fixed_frames,
+        CoreOption, FrameCaptureRequest, HarnessConfig, JoypadInput, PixelFormat, load_rom,
+        run_repeated_fixed_frames,
     };
     use std::env;
     use std::error::Error;
@@ -35,6 +36,9 @@ mod native {
         let mut core_options = Vec::new();
         let mut system_directory = None;
         let mut save_directory = None;
+        let mut capture_frame = None;
+        let mut capture_png = None;
+        let mut audio_frame_csv = None;
         while let Some(option) = args.next() {
             match option.as_str() {
                 "--warmup" => warmup_frames = parse_usize(args.next(), "--warmup")?,
@@ -61,6 +65,19 @@ mod native {
                         args.next().ok_or("--save-dir requires a path")?,
                     ));
                 }
+                "--capture-frame" => {
+                    capture_frame = Some(parse_usize(args.next(), "--capture-frame")?);
+                }
+                "--capture-png" => {
+                    capture_png = Some(PathBuf::from(
+                        args.next().ok_or("--capture-png requires a path")?,
+                    ));
+                }
+                "--audio-frame-csv" => {
+                    audio_frame_csv = Some(PathBuf::from(
+                        args.next().ok_or("--audio-frame-csv requires a path")?,
+                    ));
+                }
                 "--help" | "-h" => {
                     println!("{}", usage());
                     return Ok(());
@@ -68,6 +85,11 @@ mod native {
                 _ => return Err(format!("unknown option '{option}'\n{}", usage()).into()),
             }
         }
+        let frame_capture = match (capture_frame, capture_png) {
+            (Some(frame), Some(path)) => Some(FrameCaptureRequest { frame, path }),
+            (None, None) => None,
+            _ => return Err("--capture-frame and --capture-png must be supplied together".into()),
+        };
         let content_path = PathBuf::from(content_path);
         let result = run_repeated_fixed_frames(
             &HarnessConfig {
@@ -81,12 +103,14 @@ mod native {
                 core_options,
                 system_directory,
                 save_directory,
+                frame_capture,
+                audio_frame_csv,
             },
             repeats,
         )?;
         let run = result.runs.last().expect("nonzero repeats has a result");
         println!(
-            "runs={} fps_p50={:.2} fps_p95={:.2} elapsed_ms_p50={:.3} elapsed_ms_p95={:.3} video_calls={} video_bytes={} video_pixel_format={} video_sha256={} audio_sample_calls={} audio_batch_calls={} audio_frames={} audio_bytes={} invalid_audio_buffer_len={} audio_sha256={} input_polls={} input_queries={} geometry={}x{} max={}x{} aspect={} last_video={}x{} pitch={} serialize_size={} serialize_sha256={} state_roundtrip={} undersized_serialize_rejected={} repeated_state_hashes_match={} repeated_video_hashes_match={} repeated_audio_hashes_match={} repeated_callback_counts_match={} unsupported_environment_commands={}",
+            "runs={} fps_p50={:.2} fps_p95={:.2} elapsed_ms_p50={:.3} elapsed_ms_p95={:.3} video_calls={} video_bytes={} visible_video_bytes={} video_pixel_format={} video_sha256={} audio_sample_calls={} audio_batch_calls={} audio_frames={} audio_bytes={} invalid_audio_buffer_len={} audio_sha256={} input_polls={} input_queries={} geometry={}x{} max={}x{} aspect={} advertised_fps={} advertised_sample_rate={} last_video={}x{} pitch={} serialize_size={} serialize_sha256={} state_roundtrip={} undersized_serialize_rejected={} repeated_state_hashes_match={} repeated_video_hashes_match={} repeated_audio_hashes_match={} repeated_callback_counts_match={} unsupported_environment_commands={}",
             result.runs.len(),
             result.fps_p50,
             result.fps_p95,
@@ -94,6 +118,7 @@ mod native {
             result.elapsed_ms_p95,
             run.callbacks.video_calls,
             run.callbacks.video_bytes,
+            run.callbacks.visible_video_bytes,
             run.video_pixel_format,
             hex(&run.video_hash),
             run.callbacks.audio_sample_calls,
@@ -109,6 +134,8 @@ mod native {
             run.geometry.max_width,
             run.geometry.max_height,
             run.geometry.aspect_ratio,
+            run.advertised_frames_per_second,
+            run.advertised_sample_rate,
             run.last_video.width,
             run.last_video.height,
             run.last_video.pitch,
@@ -181,7 +208,7 @@ mod native {
     }
 
     fn usage() -> &'static str {
-        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path]"
+        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path] [--capture-frame N --capture-png path] [--audio-frame-csv path]"
     }
 }
 

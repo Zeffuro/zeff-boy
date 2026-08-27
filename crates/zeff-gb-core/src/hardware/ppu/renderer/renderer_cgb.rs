@@ -146,6 +146,7 @@ pub fn render_scanline_cgb(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             dmg_palette_preset: ppu.dmg_palette_preset,
             selected_obj_indices: (!ppu.legacy_sprite_selection_for_line)
                 .then_some((ppu.selected_obj_indices, ppu.selected_obj_count)),
+            selected_obj_tile_rows: None,
         });
     }
 }

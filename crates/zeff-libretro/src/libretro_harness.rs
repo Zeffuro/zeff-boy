@@ -3,6 +3,8 @@
 use libloading::{Library, Symbol};
 use sha2::{Digest, Sha256};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::os::raw::c_uint;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -33,6 +35,8 @@ const RETRO_PIXEL_FORMAT_0RGB1555: c_uint = 0;
 const RETRO_PIXEL_FORMAT_XRGB8888: c_uint = 1;
 const RETRO_PIXEL_FORMAT_RGB565: c_uint = 2;
 const RETRO_NUM_CORE_OPTION_VALUES_MAX: usize = 128;
+const MAX_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_AUDIO_TELEMETRY_FRAMES: usize = 100_000;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -160,6 +164,14 @@ pub struct CoreOption {
 }
 
 #[derive(Clone, Debug)]
+pub struct FrameCaptureRequest {
+    /// Absolute libretro frame index, including warmup frames.
+    pub frame: usize,
+    /// Fresh PNG destination. Existing files are never replaced.
+    pub path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
 pub struct HarnessConfig {
     pub core_path: PathBuf,
     pub content_path: PathBuf,
@@ -171,12 +183,16 @@ pub struct HarnessConfig {
     pub core_options: Vec<CoreOption>,
     pub system_directory: Option<PathBuf>,
     pub save_directory: Option<PathBuf>,
+    pub frame_capture: Option<FrameCaptureRequest>,
+    /// Fresh CSV destination for generic per-emulated-frame audio telemetry.
+    pub audio_frame_csv: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CallbackCounts {
     pub video_calls: usize,
     pub video_bytes: usize,
+    pub visible_video_bytes: usize,
     pub audio_sample_calls: usize,
     pub audio_batch_calls: usize,
     pub audio_frames: usize,
@@ -203,6 +219,8 @@ pub struct HarnessResult {
     pub audio_hash: [u8; 32],
     pub unsupported_environment_commands: Vec<c_uint>,
     pub geometry: RetroGameGeometry,
+    pub advertised_frames_per_second: f64,
+    pub advertised_sample_rate: f64,
     pub last_video: VideoFrameInfo,
     pub serialize_size: usize,
     pub serialize_hash: [u8; 32],
@@ -228,6 +246,31 @@ struct CoreOptionValue {
     value: CString,
 }
 
+#[derive(Clone, Debug)]
+struct CapturedFrame {
+    width: u32,
+    height: u32,
+    rgb24: Vec<u8>,
+}
+
+#[derive(Clone, Default)]
+struct FrameAudioStats {
+    sample_calls: usize,
+    batch_calls: usize,
+    frames: usize,
+    bytes: usize,
+    hasher: Sha256,
+}
+
+struct FrameAudioReport {
+    frame: usize,
+    sample_calls: usize,
+    batch_calls: usize,
+    frames: usize,
+    bytes: usize,
+    hash: [u8; 32],
+}
+
 #[derive(Default)]
 struct CallbackState {
     requested_pixel_format: c_uint,
@@ -244,6 +287,11 @@ struct CallbackState {
     invalid_video_pitch: bool,
     invalid_video_buffer_len: bool,
     invalid_audio_buffer_len: bool,
+    capture_frame: Option<usize>,
+    captured_frame: Option<CapturedFrame>,
+    capture_error: Option<String>,
+    frame_audio: Option<Vec<FrameAudioStats>>,
+    invalid_audio_frame_index: bool,
     unsupported_environment_commands: Vec<c_uint>,
 }
 
@@ -459,6 +507,10 @@ unsafe extern "C" fn video_refresh(
             return;
         };
         let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), frame_bytes) };
+        state.counts.visible_video_bytes = state
+            .counts
+            .visible_video_bytes
+            .saturating_add(visible_row_bytes.saturating_mul(height as usize));
         state
             .video_hasher
             .update(state.active_pixel_format.to_le_bytes());
@@ -466,6 +518,12 @@ unsafe extern "C" fn video_refresh(
         state.video_hasher.update(height.to_le_bytes());
         for row in bytes.chunks_exact(pitch).take(height as usize) {
             state.video_hasher.update(&row[..visible_row_bytes]);
+        }
+        if state.capture_frame == Some(state.frame_index) {
+            match capture_rgb24(bytes, width, height, pitch, state.active_pixel_format) {
+                Ok(captured) => state.captured_frame = Some(captured),
+                Err(error) => state.capture_error = Some(error.to_string()),
+            }
         }
     }
 }
@@ -480,6 +538,10 @@ unsafe extern "C" fn audio_sample(left: i16, right: i16) {
     state.counts.audio_bytes += std::mem::size_of::<i16>() * 2;
     state.audio_hasher.update(left.to_le_bytes());
     state.audio_hasher.update(right.to_le_bytes());
+    record_frame_audio(state, 1, 0, 1, std::mem::size_of::<i16>() * 2, |hasher| {
+        hasher.update(left.to_le_bytes());
+        hasher.update(right.to_le_bytes());
+    });
 }
 
 unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
@@ -505,8 +567,123 @@ unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
         for sample in samples {
             state.audio_hasher.update(sample.to_le_bytes());
         }
+        record_frame_audio(
+            state,
+            0,
+            1,
+            frames,
+            frames.saturating_mul(std::mem::size_of::<i16>() * 2),
+            |hasher| {
+                for sample in samples {
+                    hasher.update(sample.to_le_bytes());
+                }
+            },
+        );
+    } else {
+        record_frame_audio(
+            state,
+            0,
+            1,
+            frames,
+            frames.saturating_mul(std::mem::size_of::<i16>() * 2),
+            |_| {},
+        );
     }
     frames
+}
+
+fn record_frame_audio(
+    state: &mut CallbackState,
+    sample_calls: usize,
+    batch_calls: usize,
+    frames: usize,
+    bytes: usize,
+    update: impl FnOnce(&mut Sha256),
+) {
+    let Some(frame_audio) = state.frame_audio.as_mut() else {
+        return;
+    };
+    let Some(frame) = frame_audio.get_mut(state.frame_index) else {
+        state.invalid_audio_frame_index = true;
+        return;
+    };
+    frame.sample_calls = frame.sample_calls.saturating_add(sample_calls);
+    frame.batch_calls = frame.batch_calls.saturating_add(batch_calls);
+    frame.frames = frame.frames.saturating_add(frames);
+    frame.bytes = frame.bytes.saturating_add(bytes);
+    update(&mut frame.hasher);
+}
+
+fn capture_rgb24(
+    bytes: &[u8],
+    width: c_uint,
+    height: c_uint,
+    pitch: usize,
+    pixel_format: c_uint,
+) -> anyhow::Result<CapturedFrame> {
+    let width = usize::try_from(width)?;
+    let height = usize::try_from(height)?;
+    let pixel_count = width
+        .checked_mul(height)
+        .ok_or_else(|| anyhow::anyhow!("captured frame dimensions overflow"))?;
+    let output_len = pixel_count
+        .checked_mul(3)
+        .filter(|length| *length <= MAX_CAPTURE_BYTES)
+        .ok_or_else(|| anyhow::anyhow!("captured RGB frame exceeds {MAX_CAPTURE_BYTES} bytes"))?;
+    let bytes_per_pixel = match pixel_format {
+        RETRO_PIXEL_FORMAT_XRGB8888 => 4,
+        RETRO_PIXEL_FORMAT_0RGB1555 | RETRO_PIXEL_FORMAT_RGB565 => 2,
+        _ => anyhow::bail!("cannot capture unsupported libretro pixel format {pixel_format}"),
+    };
+    let mut rgb24 = Vec::with_capacity(output_len);
+    for row in bytes.chunks_exact(pitch).take(height) {
+        for pixel in row.chunks_exact(bytes_per_pixel).take(width) {
+            match pixel_format {
+                RETRO_PIXEL_FORMAT_XRGB8888 => {
+                    let value = u32::from_ne_bytes(pixel.try_into().expect("four-byte pixel"));
+                    rgb24.extend_from_slice(&[
+                        ((value >> 16) as u8),
+                        ((value >> 8) as u8),
+                        value as u8,
+                    ]);
+                }
+                RETRO_PIXEL_FORMAT_0RGB1555 => {
+                    let value = u16::from_ne_bytes(pixel.try_into().expect("two-byte pixel"));
+                    rgb24.extend_from_slice(&[
+                        expand_5bit(((value >> 10) & 0x1F) as u8),
+                        expand_5bit(((value >> 5) & 0x1F) as u8),
+                        expand_5bit((value & 0x1F) as u8),
+                    ]);
+                }
+                RETRO_PIXEL_FORMAT_RGB565 => {
+                    let value = u16::from_ne_bytes(pixel.try_into().expect("two-byte pixel"));
+                    rgb24.extend_from_slice(&[
+                        expand_5bit(((value >> 11) & 0x1F) as u8),
+                        expand_6bit(((value >> 5) & 0x3F) as u8),
+                        expand_5bit((value & 0x1F) as u8),
+                    ]);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+    anyhow::ensure!(
+        rgb24.len() == output_len,
+        "captured frame had insufficient visible pixels"
+    );
+    Ok(CapturedFrame {
+        width: u32::try_from(width)?,
+        height: u32::try_from(height)?,
+        rgb24,
+    })
+}
+
+const fn expand_5bit(value: u8) -> u8 {
+    (value << 3) | (value >> 2)
+}
+
+const fn expand_6bit(value: u8) -> u8 {
+    (value << 2) | (value >> 4)
 }
 
 unsafe extern "C" fn input_poll() {
@@ -546,6 +723,24 @@ pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult>
         !config.rom_bytes.is_empty(),
         "the libretro harness requires nonempty content bytes"
     );
+    let telemetry_frame_count = config
+        .warmup_frames
+        .checked_add(config.measurement_frames)
+        .ok_or_else(|| anyhow::anyhow!("warmup and measurement frame counts overflow"))?;
+    if config.audio_frame_csv.is_some() {
+        anyhow::ensure!(
+            telemetry_frame_count <= MAX_AUDIO_TELEMETRY_FRAMES,
+            "per-frame audio telemetry is limited to {MAX_AUDIO_TELEMETRY_FRAMES} frames"
+        );
+    }
+    if let Some(capture) = &config.frame_capture {
+        anyhow::ensure!(
+            capture.frame < telemetry_frame_count,
+            "capture frame {} is outside the {} emulated frames",
+            capture.frame,
+            telemetry_frame_count
+        );
+    }
     let content_path = CString::new(config.content_path.to_string_lossy().as_bytes())
         .map_err(|_| anyhow::anyhow!("content path contains an interior NUL"))?;
     let library = unsafe { Library::new(&config.core_path) }.map_err(|error| {
@@ -586,6 +781,11 @@ pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult>
             .as_deref()
             .map(path_to_cstring)
             .transpose()?,
+        capture_frame: config.frame_capture.as_ref().map(|capture| capture.frame),
+        frame_audio: config
+            .audio_frame_csv
+            .as_ref()
+            .map(|_| vec![FrameAudioStats::default(); telemetry_frame_count]),
         ..CallbackState::default()
     });
 
@@ -601,6 +801,10 @@ pub fn run_repeated_fixed_frames(
     repeats: usize,
 ) -> anyhow::Result<RepeatedHarnessResult> {
     anyhow::ensure!(repeats > 0, "repeats must be nonzero");
+    anyhow::ensure!(
+        repeats == 1 || (config.frame_capture.is_none() && config.audio_frame_csv.is_none()),
+        "frame capture and per-frame audio telemetry require --repeat 1"
+    );
     let mut runs = Vec::with_capacity(repeats);
     for _ in 0..repeats {
         runs.push(run_fixed_frames(config)?);
@@ -744,7 +948,29 @@ unsafe fn run_loaded_core(
         .as_ref()
         .expect("libretro harness is not active");
     validate_callback_buffers(callback_state)?;
-    Ok(HarnessResult {
+    anyhow::ensure!(
+        !callback_state.invalid_audio_frame_index,
+        "libretro core emitted audio outside the requested telemetry frame range"
+    );
+    if let Some(error) = &callback_state.capture_error {
+        anyhow::bail!("failed to capture requested frame: {error}");
+    }
+    let captured_frame = callback_state.captured_frame.clone();
+    let frame_audio = callback_state.frame_audio.as_ref().map(|frames| {
+        frames
+            .iter()
+            .enumerate()
+            .map(|(frame, stats)| FrameAudioReport {
+                frame,
+                sample_calls: stats.sample_calls,
+                batch_calls: stats.batch_calls,
+                frames: stats.frames,
+                bytes: stats.bytes,
+                hash: stats.hasher.clone().finalize().into(),
+            })
+            .collect::<Vec<_>>()
+    });
+    let result = HarnessResult {
         elapsed,
         frames_per_second: config.measurement_frames as f64 / elapsed.as_secs_f64(),
         callbacks: callback_state.counts,
@@ -754,12 +980,75 @@ unsafe fn run_loaded_core(
         audio_hash: callback_state.audio_hasher.clone().finalize().into(),
         unsupported_environment_commands: callback_state.unsupported_environment_commands.clone(),
         geometry: av_info.geometry,
+        advertised_frames_per_second: av_info.timing.fps,
+        advertised_sample_rate: av_info.timing.sample_rate,
         last_video: callback_state.last_video,
         serialize_size: state_size,
         serialize_hash: state_hash,
         state_roundtrip,
         undersized_serialize_rejected,
+    };
+    drop(callback_guard);
+    if let Some(capture) = &config.frame_capture {
+        let frame = captured_frame.ok_or_else(|| {
+            anyhow::anyhow!(
+                "the core produced no visible frame for capture frame {}",
+                capture.frame
+            )
+        })?;
+        write_capture_png(&capture.path, &frame)?;
+    }
+    if let Some(path) = &config.audio_frame_csv {
+        write_audio_frame_csv(path, frame_audio.as_deref().expect("telemetry requested"))?;
+    }
+    Ok(result)
+}
+
+fn write_capture_png(path: &Path, frame: &CapturedFrame) -> anyhow::Result<()> {
+    let file = File::create_new(path).map_err(|error| {
+        anyhow::anyhow!("failed to create capture '{}': {error}", path.display())
+    })?;
+    let mut encoder = png::Encoder::new(BufWriter::new(file), frame.width, frame.height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|error| {
+        anyhow::anyhow!("failed to start PNG capture '{}': {error}", path.display())
+    })?;
+    writer.write_image_data(&frame.rgb24).map_err(|error| {
+        anyhow::anyhow!("failed to write PNG capture '{}': {error}", path.display())
     })
+}
+
+fn write_audio_frame_csv(path: &Path, frames: &[FrameAudioReport]) -> anyhow::Result<()> {
+    let file = File::create_new(path).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to create audio telemetry '{}': {error}",
+            path.display()
+        )
+    })?;
+    let mut writer = BufWriter::new(file);
+    writeln!(
+        writer,
+        "frame,audio_sample_calls,audio_batch_calls,audio_frames,audio_bytes,audio_sha256"
+    )?;
+    for frame in frames {
+        writeln!(
+            writer,
+            "{},{},{},{},{},{}",
+            frame.frame,
+            frame.sample_calls,
+            frame.batch_calls,
+            frame.frames,
+            frame.bytes,
+            sha256_hex(&frame.hash),
+        )?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn sha256_hex(hash: &[u8; 32]) -> String {
+    hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn validate_callback_buffers(callback_state: &CallbackState) -> anyhow::Result<()> {
@@ -829,7 +1118,7 @@ mod tests {
         RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
         RETRO_NUM_CORE_OPTION_VALUES_MAX, RETRO_PIXEL_FORMAT_RGB565, RetroCoreOptionV2Definition,
         RetroCoreOptionValue, RetroCoreOptionsV2, RetroCoreOptionsV2Intl, RetroLogCallback,
-        RetroVariable, audio_batch, environment, get_variable, percentile,
+        RetroVariable, audio_batch, capture_rgb24, environment, get_variable, percentile,
         serialize_rejects_undersized_buffer, validate_callback_buffers, video_refresh,
     };
     use sha2::Digest;
@@ -855,6 +1144,51 @@ mod tests {
             &mut CallbackState::default()
         ));
         assert!(variable.value.is_null());
+    }
+
+    #[test]
+    fn captured_rgb565_frame_converts_visible_pixels_without_pitch_padding() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0xF800_u16.to_ne_bytes());
+        bytes.extend_from_slice(&0x07E0_u16.to_ne_bytes());
+        bytes.extend_from_slice(&[0xAA, 0xBB]);
+
+        let frame = capture_rgb24(&bytes, 2, 1, 6, RETRO_PIXEL_FORMAT_RGB565).unwrap();
+
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 1);
+        assert_eq!(frame.rgb24, [0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00]);
+    }
+
+    #[test]
+    fn captured_frame_rejects_a_bounded_output_overflow_before_reading_pixels() {
+        let error = capture_rgb24(&[], 10_000, 10_000, 0, RETRO_PIXEL_FORMAT_RGB565).unwrap_err();
+
+        assert!(error.to_string().contains("captured RGB frame exceeds"));
+    }
+
+    #[test]
+    fn audio_batch_records_frame_local_telemetry() {
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+            frame_index: 1,
+            frame_audio: Some(vec![Default::default(), Default::default()]),
+            ..CallbackState::default()
+        });
+        let samples = [1_i16, -2, 3, -4];
+
+        assert_eq!(unsafe { audio_batch(samples.as_ptr(), 2) }, 2);
+
+        let state = CALLBACK_STATE.lock().unwrap().take().unwrap();
+        let frame = &state.frame_audio.unwrap()[1];
+        assert_eq!(frame.sample_calls, 0);
+        assert_eq!(frame.batch_calls, 1);
+        assert_eq!(frame.frames, 2);
+        assert_eq!(frame.bytes, 8);
+        let mut expected = sha2::Sha256::new();
+        for sample in samples {
+            expected.update(sample.to_le_bytes());
+        }
+        assert_eq!(frame.hasher.clone().finalize(), expected.finalize());
     }
 
     #[test]
@@ -907,26 +1241,36 @@ mod tests {
         let padded = [1_u8, 2, 3, 4, 90, 91, 5, 6, 7, 8, 92, 93];
         let changed_pixel = [1_u8, 2, 3, 9, 5, 6, 7, 8];
 
-        let hash = |bytes: &[u8], width, height, pitch| {
+        let sample = |bytes: &[u8], width, height, pitch| {
             *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
                 requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
                 active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
                 ..CallbackState::default()
             });
             unsafe { video_refresh(bytes.as_ptr().cast(), width, height, pitch) };
-            CALLBACK_STATE
-                .lock()
-                .unwrap()
-                .take()
-                .unwrap()
-                .video_hasher
-                .finalize()
+            CALLBACK_STATE.lock().unwrap().take().unwrap()
         };
 
-        let tight_hash = hash(&tight, 2, 2, 4);
-        assert_eq!(tight_hash, hash(&padded, 2, 2, 6));
-        assert_ne!(tight_hash, hash(&changed_pixel, 2, 2, 4));
-        assert_ne!(tight_hash, hash(&tight, 1, 4, 2));
+        let tight_sample = sample(&tight, 2, 2, 4);
+        let padded_sample = sample(&padded, 2, 2, 6);
+        let changed_pixel_sample = sample(&changed_pixel, 2, 2, 4);
+        let reshaped_sample = sample(&tight, 1, 4, 2);
+
+        assert_eq!(
+            tight_sample.video_hasher.clone().finalize(),
+            padded_sample.video_hasher.clone().finalize()
+        );
+        assert_ne!(
+            tight_sample.video_hasher.clone().finalize(),
+            changed_pixel_sample.video_hasher.clone().finalize()
+        );
+        assert_ne!(
+            tight_sample.video_hasher.clone().finalize(),
+            reshaped_sample.video_hasher.clone().finalize()
+        );
+        assert_eq!(tight_sample.counts.visible_video_bytes, 8);
+        assert_eq!(padded_sample.counts.visible_video_bytes, 8);
+        assert_eq!(padded_sample.counts.video_bytes, 12);
     }
 
     #[test]

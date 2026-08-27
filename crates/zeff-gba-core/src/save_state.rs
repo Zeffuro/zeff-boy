@@ -6,14 +6,21 @@ use crate::hardware::apu::ApuSaveState;
 use crate::hardware::constants::{
     EWRAM_SIZE, IO_SIZE, IWRAM_SIZE, OAM_SIZE, PALETTE_RAM_SIZE, VRAM_SIZE,
 };
-use crate::hardware::cpu::CpuState;
+use crate::hardware::cpu::{
+    CpuBusOperation, CpuExecutionPhase, CpuExecutionState, CpuPipelineEntryState, CpuPipelineState,
+    CpuState,
+};
 use crate::hardware::dma::{DmaChannel, DmaController};
-use crate::hardware::timer::{Timer, Timers};
+use crate::hardware::timer::{Timer, TimerTimingState, Timers};
 
 const MAGIC: &[u8; 8] = b"ZBGBAST\0";
-const VERSION: u32 = 6;
+const VERSION: u32 = 8;
 const MAX_BACKUP_SIZE: usize = 0x20_000;
 const MAX_FIFO_SIZE: usize = 32;
+#[cfg(test)]
+const VERSION_7_RUNTIME_STATE_SIZE: usize = 49;
+#[cfg(test)]
+const VERSION_8_EXECUTION_STATE_SIZE: usize = 71;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::with_capacity(0x80_000);
@@ -112,6 +119,57 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u64(0);
     emu.bus.cartridge.write_rtc_state(&mut w);
     w.write_bool(emu.bus.has_external_bios());
+    let timer_timing = emu.bus.timers.timing_state();
+    for accum in timer_timing.cycle_accum {
+        w.write_u32(accum);
+    }
+    for delay in timer_timing.start_delay_cycles {
+        w.write_u8(delay);
+    }
+    w.write_u16(timer_timing.clock_phase);
+    w.write_bool(emu.bus.irq_delay_state().is_some());
+    w.write_u32(emu.bus.irq_delay_state().unwrap_or_default());
+    w.write_u16(emu.cpu.swi_wait_mask);
+    let pipeline = cpu.pipeline_state();
+    w.write_u8(pipeline.len);
+    for entry in pipeline.entries {
+        w.write_u32(entry.pc);
+        w.write_u32(entry.raw);
+        w.write_bool(entry.thumb);
+    }
+    w.write_bool(pipeline.pending_load_internal_cycle);
+    let execution = cpu.execution_state();
+    w.write_u8(execution.phase.tag());
+    w.write_u8(execution.phase_cycles_remaining);
+    w.write_bool(execution.instruction_active);
+    w.write_u32(execution.active_pc);
+    w.write_u32(execution.active_raw);
+    w.write_bool(execution.active_thumb);
+    w.write_bool(execution.condition_passed);
+    w.write_u32(execution.active_fetch_cycles);
+    w.write_u8(execution.bus_operation.tag());
+    w.write_u32(execution.bus_address);
+    w.write_u8(execution.bus_width);
+    w.write_bool(execution.bus_sequential);
+    w.write_u32(execution.bus_value);
+    w.write_u32(execution.bus_read_latch);
+    w.write_u32(execution.transfer_original_base);
+    w.write_u32(execution.transfer_current_address);
+    w.write_u16(execution.transfer_register_mask);
+    w.write_u8(execution.transfer_next_register);
+    w.write_bool(execution.transfer_first_access);
+    w.write_bool(execution.transfer_force_user);
+    w.write_bool(execution.transfer_exception_return);
+    w.write_bool(execution.transfer_writeback);
+    w.write_bool(execution.writeback_present);
+    w.write_u8(execution.writeback_register);
+    w.write_u32(execution.writeback_value);
+    w.write_u32(execution.refill_target);
+    w.write_bool(execution.refill_thumb);
+    w.write_u8(execution.refill_index);
+    w.write_u32(execution.data_access_elapsed_cycles);
+    w.write_u32(execution.data_access_count);
+    w.write_u32(execution.data_bus_phase_cycles);
 
     Ok(w.into_bytes())
 }
@@ -254,6 +312,118 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
             "GBA save state firmware mode does not match the loaded emulator"
         );
     }
+    if version >= 7 {
+        let mut timer_timing = TimerTimingState::default();
+        for accum in &mut timer_timing.cycle_accum {
+            *accum = r.read_u32()?;
+        }
+        for delay in &mut timer_timing.start_delay_cycles {
+            *delay = r.read_u8()?;
+        }
+        timer_timing.clock_phase = r.read_u16()?;
+        ensure!(
+            emu.bus.timers.set_timing_state(timer_timing),
+            "invalid GBA timer timing state"
+        );
+        let irq_delay = if r.read_bool()? {
+            Some(r.read_u32()?)
+        } else {
+            let _unused = r.read_u32()?;
+            None
+        };
+        ensure!(
+            emu.bus.set_irq_delay_state(irq_delay),
+            "invalid GBA IRQ delay state"
+        );
+        emu.cpu.swi_wait_mask = r.read_u16()?;
+        ensure!(
+            emu.cpu.swi_wait_mask & !0x3FFF == 0
+                && (emu.cpu.swi_wait_return_pc.is_some() || emu.cpu.swi_wait_mask == 0),
+            "invalid GBA interrupt wait mask"
+        );
+        let mut pipeline = CpuPipelineState {
+            len: r.read_u8()?,
+            ..CpuPipelineState::default()
+        };
+        for entry in &mut pipeline.entries {
+            *entry = CpuPipelineEntryState {
+                pc: r.read_u32()?,
+                raw: r.read_u32()?,
+                thumb: r.read_bool()?,
+            };
+        }
+        pipeline.pending_load_internal_cycle = r.read_bool()?;
+        ensure!(
+            emu.cpu.set_pipeline_state(pipeline),
+            "invalid GBA CPU pipeline state"
+        );
+    } else {
+        emu.bus.timers.migrate_legacy_timing(emu.cpu.cycles);
+        emu.bus.migrate_legacy_irq_delay();
+        emu.cpu.migrate_legacy_pipeline();
+        emu.cpu.swi_wait_mask = if emu.cpu.swi_wait_return_pc.is_some() {
+            emu.cpu.regs[1] as u16 & 0x3FFF
+        } else {
+            0
+        };
+    }
+
+    if version >= 8 {
+        let phase_tag = r.read_u8()?;
+        let Some(phase) = CpuExecutionPhase::from_tag(phase_tag) else {
+            bail!("invalid GBA CPU execution phase {phase_tag}");
+        };
+        let phase_cycles_remaining = r.read_u8()?;
+        let instruction_active = r.read_bool()?;
+        let active_pc = r.read_u32()?;
+        let active_raw = r.read_u32()?;
+        let active_thumb = r.read_bool()?;
+        let condition_passed = r.read_bool()?;
+        let active_fetch_cycles = r.read_u32()?;
+        let bus_operation_tag = r.read_u8()?;
+        let Some(bus_operation) = CpuBusOperation::from_tag(bus_operation_tag) else {
+            bail!("invalid GBA CPU bus operation {bus_operation_tag}");
+        };
+        let execution = CpuExecutionState {
+            phase,
+            phase_cycles_remaining,
+            instruction_active,
+            active_pc,
+            active_raw,
+            active_thumb,
+            condition_passed,
+            active_fetch_cycles,
+            bus_operation,
+            bus_address: r.read_u32()?,
+            bus_width: r.read_u8()?,
+            bus_sequential: r.read_bool()?,
+            bus_value: r.read_u32()?,
+            bus_read_latch: r.read_u32()?,
+            transfer_original_base: r.read_u32()?,
+            transfer_current_address: r.read_u32()?,
+            transfer_register_mask: r.read_u16()?,
+            transfer_next_register: r.read_u8()?,
+            transfer_first_access: r.read_bool()?,
+            transfer_force_user: r.read_bool()?,
+            transfer_exception_return: r.read_bool()?,
+            transfer_writeback: r.read_bool()?,
+            writeback_present: r.read_bool()?,
+            writeback_register: r.read_u8()?,
+            writeback_value: r.read_u32()?,
+            refill_target: r.read_u32()?,
+            refill_thumb: r.read_bool()?,
+            refill_index: r.read_u8()?,
+            data_access_elapsed_cycles: r.read_u32()?,
+            data_access_count: r.read_u32()?,
+            data_bus_phase_cycles: r.read_u32()?,
+        };
+        ensure!(
+            emu.cpu.set_execution_state(execution),
+            "invalid GBA CPU execution state"
+        );
+    } else {
+        emu.cpu.migrate_legacy_execution_state();
+    }
 
     if !r.is_exhausted() {
         bail!("GBA save state has trailing bytes");
@@ -285,6 +455,7 @@ fn read_fixed_vec(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hardware::bus::DebugTraceEvent;
 
     fn minimal_rom() -> Vec<u8> {
         let mut rom = vec![0; 0xC0];
@@ -297,6 +468,14 @@ mod tests {
         let mut rom = minimal_rom();
         rom[0xAC..0xB0].copy_from_slice(b"BPEE");
         rom
+    }
+
+    fn assert_timers_eq(actual: &Timers, expected: &Timers) {
+        for (actual, expected) in actual.all().iter().zip(expected.all().iter()) {
+            assert_eq!(actual.reload, expected.reload);
+            assert_eq!(actual.counter, expected.counter);
+            assert_eq!(actual.control, expected.control);
+        }
     }
 
     #[test]
@@ -408,7 +587,9 @@ mod tests {
         assert_eq!(restored.bus.read16(0x0800_00C8), 1);
         assert_eq!(restored.bus.read16(0x0800_00C6), 7);
 
-        let mut v4 = state[..state.len() - 34].to_vec();
+        let mut v4 = state
+            [..state.len() - 34 - VERSION_7_RUNTIME_STATE_SIZE - VERSION_8_EXECUTION_STATE_SIZE]
+            .to_vec();
         v4[8..12].copy_from_slice(&4u32.to_le_bytes());
         let mut legacy = Emulator::new(&rom, 48_000).unwrap();
         legacy.set_rtc_date_time(
@@ -418,5 +599,556 @@ mod tests {
         decode_state(&mut legacy, &v4).unwrap();
         assert_eq!(legacy.bus.read16(0x0800_00C8), default_control);
         assert_eq!(legacy.rtc_date_time().unwrap().year(), 2000);
+    }
+
+    #[test]
+    fn roundtrips_timer_scheduler_phase_and_irq_timing() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        saved.bus.step_cycles(37);
+        saved.bus.write16(0x0400_0200, 1 << 3);
+        saved.bus.write16(0x0400_0208, 1);
+        saved.bus.write16(0x0400_0100, 0xFFFC);
+        saved.bus.write16(0x0400_0102, 0x00C1);
+        saved.bus.step_cycles(19);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+        assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+        assert_eq!(
+            restored.bus.timers.timing_state(),
+            saved.bus.timers.timing_state()
+        );
+        assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
+        for cycles in [1, 7, 63, 64, 211] {
+            saved.bus.step_cycles(cycles);
+            restored.bus.step_cycles(cycles);
+            assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+            assert_eq!(
+                restored.bus.timers.timing_state(),
+                saved.bus.timers.timing_state()
+            );
+            assert_eq!(
+                restored.bus.read16(0x0400_0202),
+                saved.bus.read16(0x0400_0202)
+            );
+            assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
+        }
+    }
+
+    #[test]
+    fn roundtrips_timer_global_divider_phase() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        saved.bus.step_cycles(37);
+        saved.bus.write16(0x0400_0100, 0xFFFF);
+        saved.bus.write16(0x0400_0102, 0x0081);
+        assert_eq!(saved.bus.timers.cycles_until_overflow(0), Some(27));
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+        assert_eq!(
+            restored.bus.timers.timing_state(),
+            saved.bus.timers.timing_state()
+        );
+
+        for cycles in [26, 1] {
+            saved.bus.step_cycles(cycles);
+            restored.bus.step_cycles(cycles);
+            assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+            assert_eq!(
+                restored.bus.timers.timing_state(),
+                saved.bus.timers.timing_state()
+            );
+        }
+    }
+
+    #[test]
+    fn roundtrips_pending_timer_start_delay() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        saved.bus.step_cycles(16);
+        saved.bus.write16(0x0400_0100, 0xFFFF);
+        saved.bus.write16(0x0400_0102, 0x0080);
+        assert_eq!(saved.bus.timers.timing_state().start_delay_cycles[0], 1);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+        assert_eq!(
+            restored.bus.timers.timing_state(),
+            saved.bus.timers.timing_state()
+        );
+
+        for cycles in [1, 1] {
+            saved.bus.step_cycles(cycles);
+            restored.bus.step_cycles(cycles);
+            assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+            assert_eq!(
+                restored.bus.timers.timing_state(),
+                saved.bus.timers.timing_state()
+            );
+        }
+    }
+
+    #[test]
+    fn roundtrips_interrupt_wait_mask() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        saved.cpu.swi_wait_return_pc = Some(0x0800_1234);
+        saved.cpu.swi_wait_mask = 1 << 3;
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        assert_eq!(restored.cpu.swi_wait_return_pc, Some(0x0800_1234));
+        assert_eq!(restored.cpu.swi_wait_mask, 1 << 3);
+    }
+
+    #[test]
+    fn roundtrips_prefetched_pipeline_contents() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        let code = 0x0300_0000;
+        saved.bus.write32(code, 0xE3A0_0001);
+        saved.bus.write32(code + 4, 0xE3A0_1002);
+        saved.bus.write32(code + 8, 0xE3A0_2003);
+        saved.cpu.set_pc(code);
+        let _ = saved.step_instruction();
+        saved.bus.write32(code + 4, 0xE3A0_1009);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+        assert_eq!(restored.cpu.execution_state(), CpuExecutionState::default());
+        let _ = saved.step_instruction();
+        let _ = restored.step_instruction();
+        assert_eq!(saved.cpu.regs, restored.cpu.regs);
+        assert_eq!(restored.cpu.regs[1], 2);
+        assert_eq!(saved.cpu.cycles, restored.cpu.cycles);
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+    }
+
+    #[test]
+    fn roundtrips_pending_load_internal_cycle() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        let code = 0x0300_0000;
+        saved.bus.write16(code, 0x880A);
+        saved.bus.write16(code + 2, 0x2307);
+        saved.bus.write16(0x0300_0100, 0xABCD);
+        saved.cpu.cpsr |= crate::hardware::cpu::CPSR_THUMB;
+        saved.cpu.set_pc(code);
+        saved.cpu.regs[1] = 0x0300_0100;
+        let _ = saved.step_instruction();
+        assert!(saved.cpu.pipeline_state().pending_load_internal_cycle);
+        let bytes = encode_state(&saved).unwrap();
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+        let _ = saved.step_instruction();
+        let _ = restored.step_instruction();
+        assert_eq!(restored.cpu.regs, saved.cpu.regs);
+        assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+    }
+
+    #[test]
+    fn migrates_version_7_at_an_instruction_boundary() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        let code = 0x0300_0000;
+        saved.bus.write32(code, 0xE3A0_0001);
+        saved.bus.write32(code + 4, 0xE280_1002);
+        saved.bus.write32(code + 8, 0xE281_2003);
+        saved.cpu.set_pc(code);
+        let _ = saved.step_instruction();
+        let state = encode_state(&saved).unwrap();
+        let mut v7 = state[..state.len() - VERSION_8_EXECUTION_STATE_SIZE].to_vec();
+        v7[8..12].copy_from_slice(&7u32.to_le_bytes());
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &v7).unwrap();
+
+        assert_eq!(restored.cpu.execution_state(), CpuExecutionState::default());
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+        let _ = saved.step_instruction();
+        let _ = restored.step_instruction();
+        assert_eq!(restored.cpu.regs, saved.cpu.regs);
+        assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+    }
+
+    fn branch_emulator_after_phase_steps(steps: usize) -> Emulator {
+        let rom = minimal_rom();
+        let mut emu = Emulator::new(&rom, 48_000).unwrap();
+        let code = 0x0300_0000;
+        emu.bus.write32(code, 0xEA00_0002);
+        emu.bus.write32(code + 4, 0xE1A0_0000);
+        emu.bus.write32(code + 8, 0xE1A0_0000);
+        emu.bus.write32(code + 0x10, 0xE3A0_0007);
+        emu.bus.write32(code + 0x14, 0xE1A0_0000);
+        emu.bus.write32(code + 0x18, 0xE1A0_0000);
+        emu.cpu.set_pc(code);
+        for _ in 0..steps {
+            let _ = emu.cpu.step_cpu_phase_for_test(&mut emu.bus);
+        }
+        emu
+    }
+
+    fn assert_midphase_continuation(steps: usize, expected_phase: CpuExecutionPhase) {
+        let rom = minimal_rom();
+        let mut saved = branch_emulator_after_phase_steps(steps);
+        assert_eq!(saved.cpu.execution_state().phase, expected_phase);
+        let state = encode_state(&saved).unwrap();
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &state).unwrap();
+
+        assert_eq!(restored.cpu.execution_state(), saved.cpu.execution_state());
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+        assert_eq!(restored.cpu.regs, saved.cpu.regs);
+        assert_eq!(restored.cpu.cpsr, saved.cpu.cpsr);
+        assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+        assert_eq!(
+            restored.bus.timers.timing_state(),
+            saved.bus.timers.timing_state()
+        );
+        assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
+
+        let saved_result = saved.step_instruction();
+        let restored_result = restored.step_instruction();
+        assert_eq!(restored_result, saved_result);
+        assert_eq!(restored.cpu.execution_state(), saved.cpu.execution_state());
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+        assert_eq!(restored.cpu.regs, saved.cpu.regs);
+        assert_eq!(restored.cpu.cpsr, saved.cpu.cpsr);
+        assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+        assert_eq!(
+            restored.bus.timers.timing_state(),
+            saved.bus.timers.timing_state()
+        );
+        assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
+    }
+
+    #[test]
+    fn roundtrips_sequential_fetch_and_both_refill_boundaries() {
+        assert_midphase_continuation(1, CpuExecutionPhase::SequentialFetch);
+        assert_midphase_continuation(2, CpuExecutionPhase::Execute);
+        assert_midphase_continuation(3, CpuExecutionPhase::RefillNonSequential);
+        assert_midphase_continuation(4, CpuExecutionPhase::RefillSequential);
+        assert_midphase_continuation(5, CpuExecutionPhase::Boundary);
+    }
+
+    #[test]
+    fn roundtrips_both_irq_refill_boundaries() {
+        let rom = minimal_rom();
+        for completed_phases in [0, 1] {
+            let mut saved = Emulator::new(&rom, 48_000).unwrap();
+            saved.cpu.cpsr &= !(1 << 7);
+            assert!(saved.cpu.try_service_irq(&mut saved.bus, true));
+            for _ in 0..completed_phases {
+                let _ = saved.cpu.step_cpu_phase_for_test(&mut saved.bus);
+            }
+            let expected_phase = if completed_phases == 0 {
+                CpuExecutionPhase::RefillNonSequential
+            } else {
+                CpuExecutionPhase::RefillSequential
+            };
+            assert_eq!(saved.cpu.execution_state().phase, expected_phase);
+            let state = encode_state(&saved).unwrap();
+            let mut restored = Emulator::new(&rom, 48_000).unwrap();
+            decode_state(&mut restored, &state).unwrap();
+
+            assert_eq!(restored.cpu.execution_state(), saved.cpu.execution_state());
+            assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+            assert_eq!(restored.cpu.regs, saved.cpu.regs);
+            assert_eq!(restored.cpu.cpsr, saved.cpu.cpsr);
+            assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+            let saved_result = saved.step_instruction();
+            let restored_result = restored.step_instruction();
+            assert_eq!(restored_result, saved_result);
+            assert_eq!(restored.cpu.execution_state(), saved.cpu.execution_state());
+            assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+            assert_eq!(restored.cpu.regs, saved.cpu.regs);
+            assert_eq!(restored.cpu.cpsr, saved.cpu.cpsr);
+            assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+        }
+    }
+
+    fn staged_transfer_emulator(instruction: u32, registers: &[(usize, u32)]) -> Emulator {
+        let rom = minimal_rom();
+        let mut emu = Emulator::new(&rom, 48_000).unwrap();
+        let code = 0x0300_0000;
+        emu.bus.write32(code, instruction);
+        emu.bus.write32(code + 4, 0xE1A0_0000);
+        emu.bus.write32(code + 8, 0xE1A0_0000);
+        emu.cpu.set_pc(code);
+        for &(register, value) in registers {
+            emu.cpu.regs[register] = value;
+        }
+        emu
+    }
+
+    fn assert_staged_transfer_continuation(
+        instruction: u32,
+        registers: &[(usize, u32)],
+        phase_steps: usize,
+        expected_phase: CpuExecutionPhase,
+    ) {
+        let rom = minimal_rom();
+        let mut saved = staged_transfer_emulator(instruction, registers);
+        saved.bus.write32(0x0200_0000, 0x1122_3344);
+        saved.bus.write32(0x0200_0004, 0x5566_7788);
+        for _ in 0..phase_steps {
+            let _ = saved.cpu.step_cpu_phase_for_test(&mut saved.bus);
+        }
+        assert_eq!(saved.cpu.execution_state().phase, expected_phase);
+        let state = encode_state(&saved).unwrap();
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &state).unwrap();
+
+        assert_eq!(restored.cpu.execution_state(), saved.cpu.execution_state());
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+        assert_eq!(restored.cpu.regs, saved.cpu.regs);
+        assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+        assert_eq!(restored.bus.ewram, saved.bus.ewram);
+        let saved_result = saved.step_instruction();
+        let restored_result = restored.step_instruction();
+        assert_eq!(restored_result, saved_result);
+        assert_eq!(restored.cpu.regs, saved.cpu.regs);
+        assert_eq!(restored.cpu.cpsr, saved.cpu.cpsr);
+        assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
+        assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
+        assert_eq!(restored.bus.ewram, saved.bus.ewram);
+        assert_eq!(
+            restored.bus.timers.timing_state(),
+            saved.bus.timers.timing_state()
+        );
+        assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
+    }
+
+    #[test]
+    fn roundtrips_every_single_transfer_phase() {
+        for (steps, phase) in [
+            (3, CpuExecutionPhase::DataBus),
+            (4, CpuExecutionPhase::LoadInternal),
+            (5, CpuExecutionPhase::Writeback),
+        ] {
+            assert_staged_transfer_continuation(0xE590_1000, &[(0, 0x0200_0000)], steps, phase);
+        }
+    }
+
+    #[test]
+    fn roundtrips_every_two_register_block_transfer_boundary() {
+        for (steps, phase) in [
+            (3, CpuExecutionPhase::DataBus),
+            (4, CpuExecutionPhase::LoadInternal),
+            (5, CpuExecutionPhase::DataBus),
+            (6, CpuExecutionPhase::LoadInternal),
+            (7, CpuExecutionPhase::Writeback),
+        ] {
+            assert_staged_transfer_continuation(0xE8B2_0005, &[(2, 0x0200_0000)], steps, phase);
+        }
+    }
+
+    #[test]
+    fn completed_block_store_is_not_replayed_after_restore() {
+        let rom = minimal_rom();
+        let mut saved =
+            staged_transfer_emulator(0xE8A2_0005, &[(0, 0x1111_2222), (2, 0x0200_0000)]);
+        for _ in 0..4 {
+            let _ = saved.cpu.step_cpu_phase_for_test(&mut saved.bus);
+        }
+        assert_eq!(
+            saved.cpu.execution_state().phase,
+            CpuExecutionPhase::DataBus
+        );
+        assert_eq!(saved.cpu.execution_state().bus_address, 0x0200_0004);
+        let bytes = encode_state(&saved).unwrap();
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &bytes).unwrap();
+
+        let (_, events) = restored.step_instruction_with_bus_trace(false, true);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DebugTraceEvent::Write {
+                addr: 0x0200_0004,
+                ..
+            }
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DebugTraceEvent::Write {
+                addr: 0x0200_0000,
+                ..
+            }
+        )));
+        assert_eq!(restored.bus.read32(0x0200_0000), 0x1111_2222);
+        assert_eq!(restored.bus.read32(0x0200_0004), 0x0200_0008);
+    }
+
+    #[test]
+    fn rejects_invalid_or_noncanonical_execution_state() {
+        let rom = minimal_rom();
+        let saved = Emulator::new(&rom, 48_000).unwrap();
+        let bytes = encode_state(&saved).unwrap();
+        let execution_offset = bytes.len() - VERSION_8_EXECUTION_STATE_SIZE;
+
+        let mut invalid_phase = bytes.clone();
+        invalid_phase[execution_offset] = 8;
+        assert!(decode_state(&mut Emulator::new(&rom, 48_000).unwrap(), &invalid_phase).is_err());
+
+        let mut active_phase = bytes.clone();
+        active_phase[execution_offset] = CpuExecutionPhase::Execute.tag();
+        assert!(decode_state(&mut Emulator::new(&rom, 48_000).unwrap(), &active_phase).is_err());
+
+        let mut orphaned_phase_cycle = bytes.clone();
+        orphaned_phase_cycle[execution_offset + 1] = 1;
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &orphaned_phase_cycle
+            )
+            .is_err()
+        );
+
+        let mut invalid_bus_operation = bytes.clone();
+        invalid_bus_operation[execution_offset + 17] = 3;
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &invalid_bus_operation
+            )
+            .is_err()
+        );
+
+        let mut orphaned_bus_width = bytes;
+        orphaned_bus_width[execution_offset + 22] = 4;
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &orphaned_bus_width
+            )
+            .is_err()
+        );
+
+        let mut invalid_cursor = encode_state(&saved).unwrap();
+        invalid_cursor[execution_offset + 59..execution_offset + 63]
+            .copy_from_slice(&1025u32.to_le_bytes());
+        assert!(decode_state(&mut Emulator::new(&rom, 48_000).unwrap(), &invalid_cursor).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_timer_and_irq_scheduler_state() {
+        let rom = minimal_rom();
+        let saved = Emulator::new(&rom, 48_000).unwrap();
+        let bytes = encode_state(&saved).unwrap();
+        let runtime_offset =
+            bytes.len() - VERSION_8_EXECUTION_STATE_SIZE - VERSION_7_RUNTIME_STATE_SIZE;
+
+        let mut invalid_accum = bytes.clone();
+        invalid_accum[runtime_offset..runtime_offset + 4].copy_from_slice(&0x400u32.to_le_bytes());
+        assert!(decode_state(&mut Emulator::new(&rom, 48_000).unwrap(), &invalid_accum).is_err());
+
+        let mut invalid_start_delay = bytes.clone();
+        invalid_start_delay[runtime_offset + 16] = 2;
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &invalid_start_delay
+            )
+            .is_err()
+        );
+
+        let mut invalid_phase = bytes.clone();
+        let phase_offset = runtime_offset + 20;
+        invalid_phase[phase_offset..phase_offset + 2].copy_from_slice(&0x400u16.to_le_bytes());
+        assert!(decode_state(&mut Emulator::new(&rom, 48_000).unwrap(), &invalid_phase).is_err());
+
+        let mut invalid_irq_delay = bytes.clone();
+        let irq_present_offset = runtime_offset + 22;
+        invalid_irq_delay[irq_present_offset] = 1;
+        let irq_delay_offset = runtime_offset + 23;
+        invalid_irq_delay[irq_delay_offset..irq_delay_offset + 4]
+            .copy_from_slice(&8u32.to_le_bytes());
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &invalid_irq_delay
+            )
+            .is_err()
+        );
+
+        let mut invalid_wait_mask = encode_state(&saved).unwrap();
+        let wait_mask_offset = runtime_offset + 27;
+        invalid_wait_mask[wait_mask_offset..wait_mask_offset + 2]
+            .copy_from_slice(&0x4000u16.to_le_bytes());
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &invalid_wait_mask
+            )
+            .is_err()
+        );
+
+        let mut orphaned_wait_mask = encode_state(&saved).unwrap();
+        orphaned_wait_mask[wait_mask_offset..wait_mask_offset + 2]
+            .copy_from_slice(&8u16.to_le_bytes());
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &orphaned_wait_mask
+            )
+            .is_err()
+        );
+
+        let mut invalid_pipeline = bytes.clone();
+        invalid_pipeline[runtime_offset + 29] = 1;
+        invalid_pipeline[runtime_offset + 30..runtime_offset + 34]
+            .copy_from_slice(&0x0800_0004u32.to_le_bytes());
+        assert!(
+            decode_state(&mut Emulator::new(&rom, 48_000).unwrap(), &invalid_pipeline).is_err()
+        );
+
+        let mut invalid_pending_load = bytes.clone();
+        invalid_pending_load[runtime_offset + 48] = 2;
+        assert!(
+            decode_state(
+                &mut Emulator::new(&rom, 48_000).unwrap(),
+                &invalid_pending_load
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn migrates_version_6_timer_and_irq_scheduler_state() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 48_000).unwrap();
+        saved.bus.write16(0x0400_0200, 1 << 3);
+        saved.bus.write16(0x0400_0208, 1);
+        saved.bus.write16(0x0400_0100, 0xFFFF);
+        saved.bus.write16(0x0400_0102, 0x00C1);
+        saved.bus.step_cycles(64);
+        saved.cpu.cycles = 321;
+        let state = encode_state(&saved).unwrap();
+        let mut v6 = state
+            [..state.len() - VERSION_8_EXECUTION_STATE_SIZE - VERSION_7_RUNTIME_STATE_SIZE]
+            .to_vec();
+        v6[8..12].copy_from_slice(&6u32.to_le_bytes());
+
+        let mut restored = Emulator::new(&rom, 48_000).unwrap();
+        decode_state(&mut restored, &v6).unwrap();
+
+        let timing = restored.bus.timers.timing_state();
+        assert_eq!(timing.clock_phase, 321);
+        assert_eq!(timing.cycle_accum[0], 1);
+        assert_eq!(timing.start_delay_cycles, [0; 4]);
+        assert_eq!(restored.bus.irq_delay_state(), Some(7));
     }
 }

@@ -55,6 +55,7 @@ pub(super) struct SpriteRenderContext<'a> {
     pub(super) cgb_bg_priority_flags: Option<&'a [bool; SCREEN_W]>,
     pub(super) dmg_palette_preset: DmgPalettePreset,
     pub(super) selected_obj_indices: Option<([u8; 10], u8)>,
+    pub(super) selected_obj_tile_rows: Option<([u8; 10], u16, u16)>,
 }
 
 pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
@@ -62,41 +63,54 @@ pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
         return;
     }
 
-    let tall_sprites = ctx.lcdc.contains(Lcdc::OBJ_SIZE);
-    let sprite_height: u8 = if tall_sprites { 16 } else { 8 };
+    let default_tall = ctx.lcdc.contains(Lcdc::OBJ_SIZE);
+    let default_height: u8 = if default_tall { 16 } else { 8 };
 
-    let mut sprites_on_line: ArrayVec<SpriteEntry, 10> = ArrayVec::new();
+    let mut sprites_on_line: ArrayVec<(SpriteEntry, Option<u8>), 10> = ArrayVec::new();
 
     if let Some((selected, count)) = ctx.selected_obj_indices {
         let selected = &selected[..usize::from(count.min(10))];
-        let cached_selection_is_valid = selected.iter().all(|&index| {
-            let base = usize::from(index) * 4;
-            index < 40
-                && ctx.oam.get(base).is_some_and(|&y| {
-                    let sy = i32::from(y) - 16;
-                    ctx.ly as i32 >= sy && (ctx.ly as i32) < sy + i32::from(sprite_height)
-                })
-        });
+        let cached_selection_is_valid = ctx.selected_obj_tile_rows.is_some()
+            || selected.iter().all(|&index| {
+                let base = usize::from(index) * 4;
+                index < 40
+                    && ctx.oam.get(base).is_some_and(|&y| {
+                        let sy = i32::from(y) - 16;
+                        ctx.ly as i32 >= sy && (ctx.ly as i32) < sy + i32::from(default_height)
+                    })
+            });
         if cached_selection_is_valid {
-            for &index in selected {
-                sprites_on_line.push(SpriteEntry::from_oam(ctx.oam, usize::from(index)));
+            for (selection, &index) in selected.iter().enumerate() {
+                let tile_row = if let Some((tile_rows, latched_mask, completed_mask)) =
+                    ctx.selected_obj_tile_rows
+                {
+                    let bit = 1 << selection;
+                    if completed_mask & bit == 0 || latched_mask & bit == 0 {
+                        continue;
+                    }
+                    Some(tile_rows[selection])
+                } else {
+                    None
+                };
+                sprites_on_line
+                    .push((SpriteEntry::from_oam(ctx.oam, usize::from(index)), tile_row));
             }
         } else {
-            collect_sprites_on_line(ctx.oam, ctx.ly, sprite_height, &mut sprites_on_line);
+            collect_sprites_on_line(ctx.oam, ctx.ly, default_height, &mut sprites_on_line);
         }
     } else {
-        collect_sprites_on_line(ctx.oam, ctx.ly, sprite_height, &mut sprites_on_line);
+        collect_sprites_on_line(ctx.oam, ctx.ly, default_height, &mut sprites_on_line);
     }
 
     sprites_on_line.sort_by(|a, b| {
         if ctx.cgb_mode {
-            a.oam_index.cmp(&b.oam_index)
+            a.0.oam_index.cmp(&b.0.oam_index)
         } else {
-            a.x.cmp(&b.x).then(a.oam_index.cmp(&b.oam_index))
+            a.0.x.cmp(&b.0.x).then(a.0.oam_index.cmp(&b.0.oam_index))
         }
     });
 
-    for sprite in sprites_on_line.iter().rev() {
+    for (sprite, latched_tile_row) in sprites_on_line.iter().rev() {
         let dmg_palette = if sprite.palette_number() == 1 {
             ctx.obp1
         } else {
@@ -107,25 +121,36 @@ pub(super) fn render_sprites(ctx: SpriteRenderContext<'_>) {
         let flip_y = sprite.flip_y();
         let bg_priority = sprite.bg_priority();
 
-        let mut line_in_sprite = (ctx.ly as i32 - sprite.y) as usize;
-        let tile_index = if tall_sprites {
-            let base_tile = sprite.tile & 0xFE;
-            if flip_y {
-                line_in_sprite = 15 - line_in_sprite;
-            }
-            if line_in_sprite >= 8 {
-                base_tile + 1
+        let (tile_index, tile_line) = if let Some(encoded_row) = latched_tile_row {
+            let tall = encoded_row & 0x10 != 0;
+            let line_in_sprite = usize::from(encoded_row & 0x0F);
+            let tile_index = if tall {
+                (sprite.tile & 0xFE) + u8::from(line_in_sprite >= 8)
             } else {
-                base_tile
-            }
+                sprite.tile
+            };
+            (tile_index, line_in_sprite % 8)
         } else {
-            if flip_y {
-                line_in_sprite = 7 - line_in_sprite;
-            }
-            sprite.tile
+            let sprite_height = if default_tall { 16 } else { 8 };
+            let mut line_in_sprite = ((ctx.ly as i32 - sprite.y) as usize) & (sprite_height - 1);
+            let tile_index = if default_tall {
+                let base_tile = sprite.tile & 0xFE;
+                if flip_y {
+                    line_in_sprite = 15 - line_in_sprite;
+                }
+                if line_in_sprite >= 8 {
+                    base_tile + 1
+                } else {
+                    base_tile
+                }
+            } else {
+                if flip_y {
+                    line_in_sprite = 7 - line_in_sprite;
+                }
+                sprite.tile
+            };
+            (tile_index, line_in_sprite % 8)
         };
-
-        let tile_line = line_in_sprite % 8;
         let tile_addr = (tile_index as usize) * 16 + tile_line * 2;
         let banked_tile_addr = if ctx.cgb_mode {
             sprite.cgb_vram_bank() * 0x2000 + tile_addr
@@ -186,14 +211,14 @@ fn collect_sprites_on_line(
     oam: &[u8],
     ly: usize,
     sprite_height: u8,
-    sprites: &mut ArrayVec<SpriteEntry, 10>,
+    sprites: &mut ArrayVec<(SpriteEntry, Option<u8>), 10>,
 ) {
     for i in 0..40 {
         let sprite = SpriteEntry::from_oam(oam, i);
         let sy = sprite.y;
 
         if ly as i32 >= sy && (ly as i32) < sy + i32::from(sprite_height) {
-            sprites.push(sprite);
+            sprites.push((sprite, None));
             if sprites.is_full() {
                 break;
             }

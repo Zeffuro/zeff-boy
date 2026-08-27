@@ -142,6 +142,13 @@ pub fn render_scanline_dmg(ppu: &mut PPU, vram: &[u8], oam: &[u8]) {
             dmg_palette_preset: ppu.dmg_palette_preset,
             selected_obj_indices: (!ppu.legacy_sprite_selection_for_line)
                 .then_some((ppu.selected_obj_indices, ppu.selected_obj_count)),
+            selected_obj_tile_rows: (!ppu.legacy_sprite_selection_for_line
+                && !ppu.legacy_obj_fetch_for_line)
+                .then_some((
+                    ppu.mode3_obj_tile_rows,
+                    ppu.mode3_obj_tile_row_latched_mask,
+                    ppu.mode3_obj_completed_mask,
+                )),
         });
     }
 

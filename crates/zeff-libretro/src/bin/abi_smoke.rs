@@ -108,6 +108,8 @@ mod native {
             core_options: Vec::new(),
             system_directory: None,
             save_directory: None,
+            frame_capture: None,
+            audio_frame_csv: None,
         })?;
         assert_eq!(
             (result.geometry.base_width, result.geometry.base_height),

@@ -134,6 +134,14 @@ impl Bus {
         system_t_cycles
     }
 
+    pub(in crate::hardware) fn prepare_cpu_lcdc_write(&mut self, value: u8) {
+        self.io.ppu.prepare_cpu_lcdc_write(value);
+    }
+
+    pub(in crate::hardware) fn cpu_lcdc_write_needs_early_obj_cancel(&self, value: u8) -> bool {
+        self.io.ppu.cpu_lcdc_write_needs_early_obj_cancel(value)
+    }
+
     pub(in crate::hardware) fn enter_stop_mode(&mut self) {
         if self.io.timer.reset_div() {
             self.if_reg |= 0x04;

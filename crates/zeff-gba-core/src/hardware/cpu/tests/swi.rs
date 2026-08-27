@@ -479,8 +479,11 @@ fn hle_swi_sets_protected_bios_latch_for_following_game_reads() {
 
     cpu.execute_software_interrupt(&mut bus, 0x06);
 
-    assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), POST_SWI_BIOS_READ_LATCH);
-    assert_eq!(cpu.cpu_read16(&bus, 0x0000_0002), 0xE3A0);
+    assert_eq!(
+        cpu.cpu_read32(&mut bus, 0x0000_0000),
+        POST_SWI_BIOS_READ_LATCH
+    );
+    assert_eq!(cpu.cpu_read16(&mut bus, 0x0000_0002), 0xE3A0);
 }
 
 #[test]
@@ -502,5 +505,24 @@ fn hle_swi_wait_restores_post_swi_latch_at_return_pc_after_irq_path() {
     cpu.resume();
     cpu.fetch_decode_stub(&bus);
 
-    assert_eq!(cpu.cpu_read32(&bus, 0x0000_0000), POST_SWI_BIOS_READ_LATCH);
+    assert_eq!(
+        cpu.cpu_read32(&mut bus, 0x0000_0000),
+        POST_SWI_BIOS_READ_LATCH
+    );
+}
+
+#[test]
+fn hle_swi_wait_charges_and_clears_the_bios_return_path() {
+    let mut bus = bus_with_rom(&[]);
+    let mut cpu = Cpu::new();
+    cpu.swi_wait_mask = 1 << 3;
+    bus.request_interrupt(1 << 3);
+    bus.write16(0x0400_0202, 1 << 3);
+    assert_eq!(bus.bios_irq_flags() & (1 << 3), 1 << 3);
+
+    cpu.complete_swi_wait(&mut bus);
+
+    assert_eq!(cpu.cycles, 44);
+    assert_eq!(cpu.swi_wait_mask, 0);
+    assert_eq!(bus.bios_irq_flags() & (1 << 3), 0);
 }

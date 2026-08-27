@@ -189,14 +189,19 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
             bus.clear_cpu_interrupt_pending_before_if(!value);
         }
 
-        PPU_LCDC => bus.if_reg |= bus.io.ppu.write_lcdc(value),
+        PPU_LCDC => {
+            bus.if_reg |= bus
+                .io
+                .ppu
+                .write_lcdc_bg_enable_with_video(value, &bus.vram, &bus.oam);
+        }
         PPU_STAT => bus.io.ppu.stat = (bus.io.ppu.stat & 0x07) | (value & 0xF8),
         PPU_SCY => bus.io.ppu.scy = value,
         PPU_SCX => bus.io.ppu.scx = value,
         PPU_LY => bus.io.ppu.ly = 0,
         PPU_LYC => bus.io.ppu.lyc = value,
         PPU_WY => bus.io.ppu.write_wy(value),
-        PPU_WX => bus.io.ppu.write_wx(value),
+        PPU_WX => bus.io.ppu.write_wx_with_video(value, &bus.vram, &bus.oam),
         PPU_BGP => bus.io.ppu.write_bgp(value, &bus.vram, &bus.oam),
         PPU_OBP0 => bus.io.ppu.obp0 = value,
         PPU_OBP1 => bus.io.ppu.obp1 = value,

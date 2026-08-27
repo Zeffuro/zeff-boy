@@ -104,7 +104,6 @@ impl TimerIoCompletionEvent {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DataAccessCursor {
     timeline_origin_cycle: u32,
@@ -153,15 +152,14 @@ impl CpuInstructionTimeline {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DataAccessCompletion {
+    pub transaction_start_cycle: u32,
     pub first_completion_cycle: u32,
     pub second_halfword_completion_cycle: Option<u32>,
     pub completion_cycle: u32,
 }
 
-#[cfg(test)]
 impl DataAccessCursor {
     pub(crate) fn reset(&mut self, timeline_origin_cycle: u32) {
         self.timeline_origin_cycle = timeline_origin_cycle;
@@ -169,13 +167,35 @@ impl DataAccessCursor {
         self.access_count = 0;
     }
 
-    #[cfg(test)]
     pub(crate) fn elapsed_cycles(self) -> u32 {
         self.elapsed_cycles
     }
 
     pub(crate) fn access_count(self) -> u32 {
         self.access_count
+    }
+
+    pub(crate) fn state(self) -> (u32, u32, u32) {
+        (
+            self.timeline_origin_cycle,
+            self.elapsed_cycles,
+            self.access_count,
+        )
+    }
+
+    pub(crate) fn set_state(
+        &mut self,
+        timeline_origin_cycle: u32,
+        elapsed_cycles: u32,
+        access_count: u32,
+    ) -> bool {
+        if elapsed_cycles > 1024 || access_count > 16 {
+            return false;
+        }
+        self.timeline_origin_cycle = timeline_origin_cycle;
+        self.elapsed_cycles = elapsed_cycles;
+        self.access_count = access_count;
+        true
     }
 
     pub(crate) fn advance(
@@ -191,6 +211,7 @@ impl DataAccessCursor {
             4 => addr & !3,
             _ => addr,
         };
+        let transaction_start_cycle = self.elapsed_cycles;
         if width_bytes == WORD_BYTES && word_access_uses_halfwords(aligned) {
             let first_cycles = access_cycles_with_waitcnt(aligned, 2, access, waitcnt);
             let first_completion_cycle = self
@@ -208,6 +229,7 @@ impl DataAccessCursor {
                 .saturating_add(first_cycles)
                 .saturating_add(second_cycles);
             DataAccessCompletion {
+                transaction_start_cycle,
                 first_completion_cycle,
                 second_halfword_completion_cycle: Some(
                     self.timeline_origin_cycle
@@ -227,6 +249,7 @@ impl DataAccessCursor {
                     waitcnt,
                 ));
             DataAccessCompletion {
+                transaction_start_cycle,
                 first_completion_cycle: self
                     .timeline_origin_cycle
                     .saturating_add(self.elapsed_cycles),
@@ -389,7 +412,6 @@ fn sram_access_cycles(waitcnt: u16) -> u32 {
     ACCESS_CYCLE_TABLE[((waitcnt >> WAITCNT_SRAM_SHIFT) & WAITCNT_MASK_2BIT) as usize]
 }
 
-#[cfg(test)]
 fn word_access_uses_halfwords(addr: u32) -> bool {
     matches!(
         region_for_addr(addr),
@@ -509,8 +531,10 @@ mod tests {
         let first = cursor.advance(0x0400_00FC, 4, AccessType::NonSequential, 0);
         let second = cursor.advance(0x0400_0100, 4, AccessType::Sequential, 0);
 
+        assert_eq!(first.transaction_start_cycle, 0);
         assert_eq!(first.first_completion_cycle, 9);
         assert_eq!(first.second_halfword_completion_cycle, None);
+        assert_eq!(second.transaction_start_cycle, 1);
         assert_eq!(second.first_completion_cycle, 10);
         assert_eq!(second.second_halfword_completion_cycle, None);
         assert_eq!(cursor.elapsed_cycles(), 2);
@@ -538,6 +562,7 @@ mod tests {
 
         let access = cursor.advance(0x0400_0100, 2, AccessType::NonSequential, 0);
 
+        assert_eq!(access.transaction_start_cycle, 0);
         assert_eq!(access.first_completion_cycle, 9);
         assert_eq!(access.completion_cycle, 9);
         assert_eq!(cursor.elapsed_cycles(), 1);

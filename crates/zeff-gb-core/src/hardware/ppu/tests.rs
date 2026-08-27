@@ -1,6 +1,151 @@
 use super::*;
 
 #[test]
+fn dmg_lcdc_bg_enable_write_preserves_output_prefix() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+    for row in 0..8 {
+        vram[row * 2] = 0xFF;
+    }
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::TILE_DATA | Lcdc::BG_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    ppu.bgp = 0xE4;
+    ppu.dmg_palette_preset = DmgPalettePreset::Gray;
+    ppu.step(
+        OAM_DOTS + DRAW_DOTS_BASE - SCREEN_W as u64 + 8 + 3,
+        &vram,
+        &oam,
+        false,
+    );
+
+    ppu.write_lcdc_bg_enable_with_video((ppu.lcdc - Lcdc::BG_ENABLE).bits(), &vram, &oam);
+    ppu.step(8, &vram, &oam, false);
+    ppu.write_lcdc_bg_enable_with_video((ppu.lcdc | Lcdc::BG_ENABLE).bits(), &vram, &oam);
+    ppu.step(DOTS_PER_LINE - 1 - ppu.cycles, &vram, &oam, false);
+
+    let line_start = SCREEN_W * 4;
+    let pixel = |x: usize| &ppu.framebuffer[line_start + x * 4..line_start + x * 4 + 4];
+    assert_eq!(
+        pixel(7),
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 1)
+    );
+    assert_eq!(
+        pixel(8),
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 1)
+    );
+    assert_eq!(
+        pixel(9),
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 0)
+    );
+    assert_eq!(
+        pixel(16),
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 0)
+    );
+    assert_eq!(
+        pixel(17),
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 1)
+    );
+}
+
+#[test]
+fn dmg_lcdc_bg_enable_obj_trigger_has_no_extra_pixel_delay() {
+    let mut ppu = PPU::new();
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::BG_ENABLE | Lcdc::OBJ_ENABLE;
+    ppu.selected_obj_count = 1;
+    ppu.selected_obj_indices[0] = 0;
+    ppu.cycles = 100;
+    ppu.mode3_obj_fetch_dot = 100;
+    ppu.mode3_output_x = 4;
+    ppu.mode3_output_history = [4; 4];
+    ppu.mode3_obj_fetch_x = 12;
+    ppu.mode3_obj_fetch_phase = ObjFetchPhase::DataHigh;
+
+    assert_eq!(ppu.dmg_lcdc_bg_enable_retained_pixels(), 0);
+
+    ppu.mode3_obj_fetch_phase = ObjFetchPhase::Idle;
+    ppu.mode3_obj_fetched_mask = 1;
+    assert_eq!(ppu.dmg_lcdc_bg_enable_retained_pixels(), 0);
+
+    ppu.mode3_output_history = [5; 4];
+    assert_eq!(ppu.dmg_lcdc_bg_enable_retained_pixels(), 1);
+}
+
+#[test]
+fn dmg_window_entry_stall_maps_write_dot_to_output() {
+    let mut ppu = PPU::new();
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::WINDOW_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.window_y_triggered = true;
+    ppu.ly = 1;
+    ppu.wx = 11;
+    let mode3_output_start = OAM_DOTS + DRAW_DOTS_BASE - SCREEN_W as u64;
+
+    assert_eq!(ppu.dmg_output_x_for_write_dot(mode3_output_start + 9), 4);
+
+    ppu.wx = 0;
+    ppu.scx = 1;
+    assert_eq!(ppu.dmg_output_x_for_write_dot(mode3_output_start + 17), 9);
+}
+
+#[test]
+fn dmg_wx_write_preserves_rendered_prefix_and_state_converges() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let oam = [0u8; 160];
+    vram[0x1800] = 0;
+    vram[0x1C00] = 1;
+    vram[2] = 0xFF;
+    vram[16] = 0;
+    vram[17] = 0xFF;
+    ppu.lcdc = Lcdc::LCD_ENABLE
+        | Lcdc::TILE_DATA
+        | Lcdc::BG_ENABLE
+        | Lcdc::WINDOW_ENABLE
+        | Lcdc::WINDOW_TILEMAP;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    ppu.window_y_triggered = true;
+    ppu.wx = 167;
+    ppu.bgp = 0xE4;
+    ppu.dmg_palette_preset = DmgPalettePreset::Gray;
+    ppu.step(
+        OAM_DOTS + (DRAW_DOTS_BASE - SCREEN_W as u64) + 5 + 3,
+        &vram,
+        &oam,
+        false,
+    );
+
+    ppu.write_wx_with_video(7, &vram, &oam);
+
+    let mut writer = crate::save_state::StateWriter::new();
+    ppu.write_state(&mut writer);
+    let bytes = writer.into_bytes();
+    let mut reader = crate::save_state::StateReader::new(&bytes);
+    let mut restored =
+        PPU::read_state(&mut reader, crate::save_state::SAVE_STATE_FORMAT_VERSION).unwrap();
+    let remaining = DOTS_PER_LINE - ppu.cycles;
+    ppu.step(remaining, &vram, &oam, false);
+    restored.step(remaining, &vram, &oam, false);
+
+    let line_start = SCREEN_W * 4;
+    assert_eq!(
+        &ppu.framebuffer[line_start + 16..line_start + 20],
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 1)
+    );
+    assert_eq!(
+        &ppu.framebuffer[line_start + 20..line_start + 24],
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 2)
+    );
+    let mut expected = crate::save_state::StateWriter::new();
+    ppu.write_state(&mut expected);
+    let mut actual = crate::save_state::StateWriter::new();
+    restored.write_state(&mut actual);
+    assert_eq!(actual.into_bytes(), expected.into_bytes());
+}
+
+#[test]
 fn dmg_bgp_write_during_mode3_keeps_prior_pixels_and_ors_transition_pixel() {
     let mut ppu = PPU::new();
     let mut vram = [0u8; 0x4000];
@@ -673,6 +818,87 @@ fn mode3_selected_obj_fetch_stalls_output_through_each_fetch_phase() {
 }
 
 #[test]
+fn mode3_obj_tile_row_samples_size_at_data_low_completion() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let mut oam = [0u8; 160];
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::OBJ_ENABLE | Lcdc::OBJ_SIZE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 9;
+    vram[0] = 0x11;
+    vram[1] = 0x22;
+    vram[16] = 0x33;
+    vram[17] = 0x44;
+    oam[0] = 17;
+    oam[1] = 1;
+
+    ppu.step(OAM_DOTS, &vram, &oam, false);
+    for _ in 0..64 {
+        if ppu.mode3_obj_fetch_phase == ObjFetchPhase::DataLow && ppu.mode3_obj_fetch_phase_dot == 1
+        {
+            break;
+        }
+        ppu.step(1, &vram, &oam, false);
+    }
+    assert_eq!(ppu.mode3_obj_fetch_phase, ObjFetchPhase::DataLow);
+    assert_eq!(ppu.mode3_obj_fetch_phase_dot, 1);
+    assert_eq!(ppu.mode3_obj_tile_row_latched_mask, 0);
+
+    ppu.write_lcdc((ppu.lcdc - Lcdc::OBJ_SIZE).bits());
+    assert!(!ppu.legacy_obj_fetch_for_line);
+    ppu.step(1, &vram, &oam, false);
+    assert_eq!(ppu.mode3_obj_fetch_phase, ObjFetchPhase::DataHigh);
+    assert_eq!(ppu.mode3_obj_tile_row_latched_mask, 1);
+    assert_eq!(ppu.mode3_obj_tile_rows[0], 0);
+
+    ppu.write_lcdc((ppu.lcdc | Lcdc::OBJ_SIZE).bits());
+    ppu.step(1, &vram, &oam, false);
+    ppu.step(1, &vram, &oam, false);
+    assert_eq!(ppu.mode3_obj_tile_rows[0], 0);
+    assert_eq!(ppu.mode3_obj_completed_mask, 1);
+}
+
+#[test]
+fn canceled_obj_fetch_does_not_render_latched_partial_data() {
+    let mut ppu = PPU::new();
+    let mut vram = [0u8; 0x4000];
+    let mut oam = [0u8; 160];
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::OBJ_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    ppu.bgp = 0xE4;
+    ppu.obp0 = 0xE4;
+    ppu.dmg_palette_preset = DmgPalettePreset::Gray;
+    vram[0] = 0xFF;
+    oam[0] = 17;
+    oam[1] = 1;
+
+    ppu.step(OAM_DOTS, &vram, &oam, false);
+    for _ in 0..64 {
+        if ppu.mode3_obj_fetch_phase == ObjFetchPhase::DataHigh {
+            break;
+        }
+        ppu.step(1, &vram, &oam, false);
+    }
+    assert_eq!(ppu.mode3_obj_fetch_phase, ObjFetchPhase::DataHigh);
+    assert_eq!(ppu.mode3_obj_tile_row_latched_mask, 1);
+    assert_eq!(ppu.mode3_obj_tile_rows[0], 0);
+    assert_eq!(ppu.mode3_obj_completed_mask, 0);
+
+    ppu.write_lcdc((ppu.lcdc - Lcdc::OBJ_ENABLE).bits());
+    ppu.write_lcdc((ppu.lcdc | Lcdc::OBJ_ENABLE).bits());
+    assert_eq!(ppu.mode3_obj_fetched_mask, 1);
+    assert_eq!(ppu.mode3_obj_completed_mask, 0);
+    ppu.step(DOTS_PER_LINE - ppu.cycles, &vram, &oam, false);
+
+    let line_start = SCREEN_W * 4;
+    assert_eq!(
+        &ppu.framebuffer[line_start..line_start + 4],
+        apply_dmg_palette(DmgPalettePreset::Gray, ppu.bgp, 0)
+    );
+}
+
+#[test]
 fn mode3_selected_obj_fetch_state_continues_exactly_after_restore() {
     let vram = [0u8; 0x4000];
     let mut oam = [0u8; 160];
@@ -756,10 +982,11 @@ fn mode3_window_position_writes_fallback_and_restore_exactly() {
 
         if write_window_position {
             ppu.write_wx(7);
+            assert!(ppu.legacy_obj_fetch_for_line);
         } else {
             ppu.write_lcdc((ppu.lcdc - Lcdc::OBJ_ENABLE).bits());
+            assert!(!ppu.legacy_obj_fetch_for_line);
         }
-        assert!(ppu.legacy_obj_fetch_for_line);
         let mut writer = crate::save_state::StateWriter::new();
         ppu.write_state(&mut writer);
         let bytes = writer.into_bytes();
@@ -774,6 +1001,72 @@ fn mode3_window_position_writes_fallback_and_restore_exactly() {
         restored.write_state(&mut actual);
         assert_eq!(actual.into_bytes(), expected.into_bytes());
     }
+}
+
+#[test]
+fn mode3_obj_disable_cancels_active_fetch_without_legacy_fallback() {
+    let mut ppu = PPU::new();
+    let vram = [0u8; 0x4000];
+    let mut oam = [0u8; 160];
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::OBJ_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    oam[0] = 17;
+    oam[1] = 8;
+
+    ppu.step(OAM_DOTS, &vram, &oam, false);
+    for _ in 0..64 {
+        if ppu.mode3_obj_fetch_phase == ObjFetchPhase::Tile {
+            break;
+        }
+        ppu.step(1, &vram, &oam, false);
+    }
+    assert_eq!(ppu.mode3_obj_fetch_phase, ObjFetchPhase::Tile);
+
+    ppu.write_lcdc((ppu.lcdc - Lcdc::OBJ_ENABLE).bits());
+
+    assert_eq!(ppu.mode3_obj_fetch_phase, ObjFetchPhase::Idle);
+    assert_eq!(ppu.mode3_obj_fetch_phase_dot, 0);
+    assert_eq!(ppu.mode3_obj_fetched_mask, 1);
+    assert!(!ppu.legacy_obj_fetch_for_line);
+}
+
+#[test]
+fn mode3_obj_enable_after_disabled_progress_fetches_only_future_objects() {
+    let mut ppu = PPU::new();
+    let vram = [0u8; 0x4000];
+    let mut oam = [0u8; 160];
+    ppu.lcdc = Lcdc::LCD_ENABLE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    oam[0] = 17;
+    oam[1] = 8;
+    oam[4] = 17;
+    oam[5] = 40;
+
+    ppu.step(OAM_DOTS, &vram, &oam, false);
+    for _ in 0..96 {
+        if ppu.mode3_output_x == 16 {
+            break;
+        }
+        ppu.step(1, &vram, &oam, false);
+    }
+    assert_eq!(ppu.mode3_obj_fetched_mask & 1, 1);
+    assert_eq!(ppu.mode3_output_x, 16);
+
+    ppu.write_lcdc((ppu.lcdc | Lcdc::OBJ_ENABLE).bits());
+    for _ in 0..32 {
+        if ppu.mode3_output_x == 32 {
+            break;
+        }
+        ppu.step(1, &vram, &oam, false);
+    }
+
+    assert_eq!(ppu.mode3_output_x, 32);
+    assert_eq!(ppu.mode3_obj_fetch_phase, ObjFetchPhase::Idle);
+    ppu.step(1, &vram, &oam, false);
+    assert_ne!(ppu.mode3_obj_fetch_phase, ObjFetchPhase::Idle);
+    assert_eq!(ppu.mode3_obj_fetch_selection, 1);
 }
 
 #[test]
@@ -826,7 +1119,7 @@ fn version_ten_mid_mode3_state_uses_legacy_obj_fetch_for_one_line() {
     let mut writer = crate::save_state::StateWriter::new();
     ppu.write_state(&mut writer);
     let mut bytes = writer.into_bytes();
-    bytes.truncate(bytes.len() - 15);
+    bytes.truncate(bytes.len() - 29);
     let mut reader = crate::save_state::StateReader::new(&bytes);
     let restored = PPU::read_state(&mut reader, 10).unwrap();
 
@@ -840,11 +1133,64 @@ fn version_eleven_ppu_state_rejects_invalid_obj_fetch_phase() {
     let mut writer = crate::save_state::StateWriter::new();
     ppu.write_state(&mut writer);
     let mut bytes = writer.into_bytes();
+    bytes.truncate(bytes.len() - 14);
     let phase_offset = bytes.len() - 3;
     bytes[phase_offset] = 0xFF;
     let mut reader = crate::save_state::StateReader::new(&bytes);
 
     assert!(PPU::read_state(&mut reader, 11).is_err());
+}
+
+#[test]
+fn version_eleven_mid_mode3_state_uses_legacy_obj_fetch_for_one_line() {
+    let mut ppu = PPU::new();
+    let vram = [0u8; 0x4000];
+    let mut oam = [0u8; 160];
+    ppu.lcdc = Lcdc::LCD_ENABLE | Lcdc::OBJ_ENABLE | Lcdc::OBJ_SIZE;
+    ppu.lcd_was_enabled = true;
+    ppu.ly = 1;
+    oam[0] = 17;
+    oam[1] = 1;
+    ppu.step(OAM_DOTS + 18, &vram, &oam, false);
+
+    let mut writer = crate::save_state::StateWriter::new();
+    ppu.write_state(&mut writer);
+    let mut bytes = writer.into_bytes();
+    bytes.truncate(bytes.len() - 14);
+    let mut reader = crate::save_state::StateReader::new(&bytes);
+    let restored = PPU::read_state(&mut reader, 11).unwrap();
+
+    assert!(reader.is_exhausted());
+    assert!(restored.legacy_obj_fetch_for_line);
+    assert_eq!(restored.mode3_obj_tile_row_latched_mask, 0);
+    assert_eq!(restored.mode3_obj_tile_rows, [0; 10]);
+    assert_eq!(restored.mode3_obj_completed_mask, 0);
+}
+
+#[test]
+fn version_twelve_ppu_state_rejects_invalid_obj_tile_row_latches() {
+    let ppu = PPU::new();
+    let mut writer = crate::save_state::StateWriter::new();
+    ppu.write_state(&mut writer);
+    let bytes = writer.into_bytes();
+    let mut invalid_mask = bytes.clone();
+    let mask_offset = invalid_mask.len() - 14;
+    invalid_mask[mask_offset] = 1;
+    let mut reader = crate::save_state::StateReader::new(&invalid_mask);
+    assert!(PPU::read_state(&mut reader, 12).is_err());
+
+    let mut invalid_row = bytes;
+    let row_offset = invalid_row.len() - 12;
+    invalid_row[row_offset] = 1;
+    let mut reader = crate::save_state::StateReader::new(&invalid_row);
+    assert!(PPU::read_state(&mut reader, 12).is_err());
+
+    let mut invalid_completed = invalid_row;
+    invalid_completed[row_offset] = 0;
+    let completed_offset = invalid_completed.len() - 2;
+    invalid_completed[completed_offset] = 1;
+    let mut reader = crate::save_state::StateReader::new(&invalid_completed);
+    assert!(PPU::read_state(&mut reader, 12).is_err());
 }
 
 #[test]
@@ -859,7 +1205,8 @@ fn version_eleven_ppu_state_rejects_unstarted_fetch_after_mode3_begins() {
         ppu.selected_obj_count = 1;
         let mut writer = crate::save_state::StateWriter::new();
         ppu.write_state(&mut writer);
-        let bytes = writer.into_bytes();
+        let mut bytes = writer.into_bytes();
+        bytes.truncate(bytes.len() - 14);
         let mut reader = crate::save_state::StateReader::new(&bytes);
 
         assert!(PPU::read_state(&mut reader, 11).is_err());
@@ -872,7 +1219,7 @@ fn version_nine_ppu_state_uses_legacy_selection_for_one_line() {
     let mut writer = crate::save_state::StateWriter::new();
     ppu.write_state(&mut writer);
     let mut bytes = writer.into_bytes();
-    bytes.truncate(bytes.len() - 28);
+    bytes.truncate(bytes.len() - 42);
     let mut reader = crate::save_state::StateReader::new(&bytes);
 
     let restored = PPU::read_state(&mut reader, 9).unwrap();
@@ -920,7 +1267,7 @@ fn version_ten_ppu_state_rejects_cursor_inconsistent_with_mode2_progress() {
     let mut writer = crate::save_state::StateWriter::new();
     ppu.write_state(&mut writer);
     let mut bytes = writer.into_bytes();
-    bytes.truncate(bytes.len() - 15);
+    bytes.truncate(bytes.len() - 29);
     let cursor_offset = bytes.len() - 13;
     bytes[cursor_offset] = 1;
     let mut reader = crate::save_state::StateReader::new(&bytes);
@@ -938,7 +1285,7 @@ fn version_ten_ppu_state_rejects_selected_indices_out_of_order() {
     let mut writer = crate::save_state::StateWriter::new();
     ppu.write_state(&mut writer);
     let mut bytes = writer.into_bytes();
-    bytes.truncate(bytes.len() - 15);
+    bytes.truncate(bytes.len() - 29);
     let selected_offset = bytes.len() - 12;
     bytes[selected_offset + 1] = 0;
     let mut reader = crate::save_state::StateReader::new(&bytes);
@@ -956,7 +1303,7 @@ fn version_ten_ppu_state_rejects_an_unscanned_selected_index() {
     let mut writer = crate::save_state::StateWriter::new();
     ppu.write_state(&mut writer);
     let mut bytes = writer.into_bytes();
-    bytes.truncate(bytes.len() - 15);
+    bytes.truncate(bytes.len() - 29);
     let selected_offset = bytes.len() - 12;
     bytes[selected_offset] = 4;
     let mut reader = crate::save_state::StateReader::new(&bytes);
@@ -982,7 +1329,7 @@ fn version_nine_selection_fallback_converges_after_the_current_line() {
     let mut writer = crate::save_state::StateWriter::new();
     ppu.write_state(&mut writer);
     let mut bytes = writer.into_bytes();
-    bytes.truncate(bytes.len() - 28);
+    bytes.truncate(bytes.len() - 42);
     let mut reader = crate::save_state::StateReader::new(&bytes);
     let mut restored = PPU::read_state(&mut reader, 9).unwrap();
 

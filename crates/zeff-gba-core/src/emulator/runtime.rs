@@ -54,7 +54,8 @@ impl Emulator {
         let interrupt_pc = self.cpu.pc();
         let interrupt_cycle = self.cpu.cycles;
         let mut interrupt_serviced = false;
-        if self.bus.interrupt_ready()
+        if self.cpu.at_instruction_boundary()
+            && self.bus.interrupt_ready()
             && (self.bus.has_external_bios() || self.bus.irq_handler_installed())
         {
             let irq_delay_cycles = self.bus.take_irq_sample_delay_cycles();
@@ -62,7 +63,7 @@ impl Emulator {
                 self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(irq_delay_cycles));
                 self.bus.step_cycles(irq_delay_cycles);
             }
-            interrupt_serviced = self.cpu.try_service_irq(true);
+            interrupt_serviced = self.cpu.try_service_irq(&mut self.bus, true);
         }
         if interrupt_serviced && trace_enabled {
             let mut record = InstructionTraceRecord::new(
@@ -93,7 +94,7 @@ impl Emulator {
             self.cpu.suspend();
             return (None, Vec::new());
         }
-        if self.debug.should_break(self.cpu.pc()) {
+        if self.cpu.at_instruction_boundary() && self.debug.should_break(self.cpu.pc()) {
             self.cpu.suspend();
             return (None, Vec::new());
         }
@@ -125,16 +126,9 @@ impl Emulator {
         if let Some(instruction) = fetched {
             self.opcode_log.push(instruction.into());
         }
-        let elapsed = self
-            .cpu
-            .cycles
-            .wrapping_sub(before_cycles)
-            .min(u64::from(u32::MAX));
         let dma_cycles = self.bus.take_pending_dma_cycles();
         self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(dma_cycles));
-        self.bus.timers.begin_step_window(elapsed as u32);
-        self.bus
-            .step_cycles((elapsed as u32).saturating_add(dma_cycles));
+        self.bus.step_cycles(dma_cycles);
         if dma_cycles != 0
             && self
                 .debug

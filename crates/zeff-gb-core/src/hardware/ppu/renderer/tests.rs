@@ -65,6 +65,7 @@ fn cached_selection_with_changed_y_falls_back_without_underflow() {
             cgb_bg_priority_flags: None,
             dmg_palette_preset: DmgPalettePreset::default(),
             selected_obj_indices,
+            selected_obj_tile_rows: None,
         });
     };
 
@@ -73,4 +74,34 @@ fn cached_selection_with_changed_y_falls_back_without_underflow() {
 
     assert_eq!(cached_framebuffer, legacy_framebuffer);
     assert_ne!(&cached_framebuffer[..4], &[0; 4]);
+}
+
+#[test]
+fn selected_obj_tile_row_latch_controls_size_interpretation() {
+    let mut vram = [0u8; 0x2000];
+    vram[16] = 0xFF;
+    let mut oam = [0u8; 160];
+    oam[0] = 16;
+    oam[1] = 8;
+    oam[2] = 1;
+    let mut framebuffer = vec![0; SCREEN_W * SCREEN_H * 4];
+
+    render_sprites(SpriteRenderContext {
+        cgb_mode: false,
+        lcdc: Lcdc::OBJ_ENABLE | Lcdc::OBJ_SIZE,
+        obp0: 0xE4,
+        obp1: 0xE4,
+        vram: &vram,
+        oam: &oam,
+        ly: 0,
+        framebuffer: &mut framebuffer,
+        cgb_obj_palette_ram: None,
+        bg_color_ids: None,
+        cgb_bg_priority_flags: None,
+        dmg_palette_preset: DmgPalettePreset::default(),
+        selected_obj_indices: Some(([0; 10], 1)),
+        selected_obj_tile_rows: Some(([0; 10], 1, 1)),
+    });
+
+    assert_ne!(&framebuffer[..4], &[0; 4]);
 }

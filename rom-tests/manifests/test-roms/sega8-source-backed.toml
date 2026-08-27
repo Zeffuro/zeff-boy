@@ -39,12 +39,12 @@ archive_path = "zexdoc.sms"
 sha256 = "684cab8d256d474fdd34fc21ef942c4767cb355cbc47588926cd49ef4375ef30"
 
 [[tests]]
-id = "sega8/smspower/sms-vdp-test-1.31/boot"
+id = "sega8/smspower/sms-vdp-test-1.31/frame-180"
 core = "sms"
 tier = "local"
 max_frames = 180
 tags = ["sega8", "sms", "source-backed", "local-only", "vdp"]
-notes = "SMS VDP Test 1.31 source/binary ZIP from SMS Power. Local-only because no clear top-level license was found in the archive."
+notes = "SMS VDP Test 1.31 source/binary ZIP from SMS Power. The deterministic frame-180 checkpoint covers the program's VDP setup and initial test menu; it is not a full upstream verdict. Local-only because no clear top-level license was found in the archive."
 
 [tests.artifact]
 kind = "test_rom"
@@ -61,15 +61,17 @@ archive_path = "VDPTEST.sms"
 sha256 = "2b64b55ded7406aecf60a85547639dd4a0ab9f9c212a04676b79e15e8711f3a0"
 
 [tests.pass]
-kind = "headless_exit"
+kind = "screenshot_exact"
+screenshot_frame = 180
+screenshot_sha256 = "580a4726fcf48773c4e4d737f59371d1427ec3903c9a2b020381f3720b6a4a2d"
 
 [[tests]]
-id = "sega8/smspower/sms-64-color-palette-test-1.00/boot"
+id = "sega8/smspower/sms-64-color-palette-test-1.00/frame-60"
 core = "sms"
 tier = "local"
 max_frames = 60
 tags = ["sega8", "sms", "source-backed", "local-only", "palette", "vdp"]
-notes = "64 Color Palette Test source/binary ZIP from SMS Power. Local-only because no clear top-level license was found in the archive."
+notes = "64 Color Palette Test source/binary ZIP from SMS Power. The deterministic frame-60 checkpoint covers the initial palette program; it is not a full upstream verdict. Local-only because no clear top-level license was found in the archive."
 
 [tests.artifact]
 kind = "test_rom"
@@ -86,7 +88,9 @@ archive_path = "TEST.SMS"
 sha256 = "7b9058becf83cb01a60f7fcdc57c89db1e8806d00af4ffcd35ba42e8498db79f"
 
 [tests.pass]
-kind = "headless_exit"
+kind = "screenshot_exact"
+screenshot_frame = 60
+screenshot_sha256 = "71def143a16cf7ea22d09111a4ba2ea6aab4eddc27c230eee5827aeab5d6a22f"
 
 [[test_groups]]
 id_prefix = "sega8/joppyfurr/sn76489-testrom-sms-1.00"
