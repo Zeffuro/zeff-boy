@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 const PCE_STATE_EXTENSION: &str = "pcestate";
+const COLECO_STATE_EXTENSION: &str = "colstate";
 const TEMP_FILE_ATTEMPTS: u32 = 64;
 
 pub(super) fn write_pce_state_artifact(
@@ -16,15 +17,42 @@ pub(super) fn write_pce_state_artifact(
     Ok(path)
 }
 
-fn resolve_pce_state_artifact_path(path: &Path) -> anyhow::Result<PathBuf> {
-    let current_dir = std::env::current_dir().context("failed to resolve current directory")?;
-    let repo_root = workspace_root_from(&current_dir)?;
-    resolve_pce_state_artifact_path_from_root(&repo_root, path)
+pub(super) fn write_coleco_state_artifact(
+    requested_path: &Path,
+    bytes: &[u8],
+) -> anyhow::Result<PathBuf> {
+    let path = resolve_state_artifact_path(requested_path, COLECO_STATE_EXTENSION, "ColecoVision")?;
+    write_new_state_file(&path, bytes)?;
+    Ok(path)
 }
 
+fn resolve_pce_state_artifact_path(path: &Path) -> anyhow::Result<PathBuf> {
+    resolve_state_artifact_path(path, PCE_STATE_EXTENSION, "PC Engine")
+}
+
+fn resolve_state_artifact_path(
+    path: &Path,
+    expected_extension: &str,
+    system: &str,
+) -> anyhow::Result<PathBuf> {
+    let current_dir = std::env::current_dir().context("failed to resolve current directory")?;
+    let repo_root = workspace_root_from(&current_dir)?;
+    resolve_state_artifact_path_from_root(&repo_root, path, expected_extension, system)
+}
+
+#[cfg(test)]
 fn resolve_pce_state_artifact_path_from_root(
     workspace_root: &Path,
     path: &Path,
+) -> anyhow::Result<PathBuf> {
+    resolve_state_artifact_path_from_root(workspace_root, path, PCE_STATE_EXTENSION, "PC Engine")
+}
+
+fn resolve_state_artifact_path_from_root(
+    workspace_root: &Path,
+    path: &Path,
+    expected_extension: &str,
+    system: &str,
 ) -> anyhow::Result<PathBuf> {
     let repo_root = fs::canonicalize(workspace_root).with_context(|| {
         format!(
@@ -34,7 +62,7 @@ fn resolve_pce_state_artifact_path_from_root(
     })?;
     anyhow::ensure!(
         is_workspace_root(&repo_root),
-        "PC Engine state artifacts require a Git workspace root with Cargo.toml"
+        "{system} state artifacts require a Git workspace root with Cargo.toml"
     );
     let lexical_absolute = lexical_normalize_path(if path.is_absolute() {
         path.to_path_buf()
@@ -52,7 +80,7 @@ fn resolve_pce_state_artifact_path_from_root(
         fs::canonicalize(parent)
             .with_context(|| {
                 format!(
-                    "PC Engine state artifact parent must already exist: {}",
+                    "{system} state artifact parent must already exist: {}",
                     parent.display()
                 )
             })?
@@ -67,26 +95,26 @@ fn resolve_pce_state_artifact_path_from_root(
     ];
     let Some(allowed_root) = allowed_roots.iter().find(|root| absolute.starts_with(root)) else {
         anyhow::bail!(
-            "PC Engine state artifacts must be under ignored target/, temp/, or rom-tests/results/"
+            "{system} state artifacts must be under ignored target/, temp/, or rom-tests/results/"
         );
     };
     if absolute
         .extension()
         .and_then(|extension| extension.to_str())
-        != Some(PCE_STATE_EXTENSION)
+        != Some(expected_extension)
     {
-        anyhow::bail!("PC Engine state artifacts must use the .{PCE_STATE_EXTENSION} extension");
+        anyhow::bail!("{system} state artifacts must use the .{expected_extension} extension");
     }
 
     let canonical_allowed_root = fs::canonicalize(allowed_root).with_context(|| {
         format!(
-            "PC Engine state artifact root must already exist: {}",
+            "{system} state artifact root must already exist: {}",
             allowed_root.display()
         )
     })?;
     anyhow::ensure!(
         canonical_allowed_root.starts_with(&repo_root),
-        "PC Engine state artifact root escapes the workspace: {}",
+        "{system} state artifact root escapes the workspace: {}",
         allowed_root.display()
     );
     let parent = absolute
@@ -95,13 +123,13 @@ fn resolve_pce_state_artifact_path_from_root(
         .context("state artifact path must have a parent directory")?;
     let canonical_parent = fs::canonicalize(parent).with_context(|| {
         format!(
-            "PC Engine state artifact parent must already exist: {}",
+            "{system} state artifact parent must already exist: {}",
             parent.display()
         )
     })?;
     anyhow::ensure!(
         canonical_parent.starts_with(&canonical_allowed_root),
-        "PC Engine state artifact parent escapes its allowed root: {}",
+        "{system} state artifact parent escapes its allowed root: {}",
         parent.display()
     );
 
@@ -119,7 +147,7 @@ fn workspace_root_from(start: &Path) -> anyhow::Result<PathBuf> {
         .ancestors()
         .find(|candidate| is_workspace_root(candidate))
         .map(Path::to_path_buf)
-        .context("PC Engine state artifacts require running from a Git workspace")
+        .context("state artifacts require running from a Git workspace")
 }
 
 fn is_workspace_root(path: &Path) -> bool {
@@ -343,6 +371,29 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn coleco_artifacts_keep_the_same_safe_path_policy_and_colstate_extension() {
+        let workspace = test_workspace("coleco-policy");
+        assert!(
+            resolve_state_artifact_path_from_root(
+                &workspace.path,
+                Path::new("target/checkpoint.colstate"),
+                COLECO_STATE_EXTENSION,
+                "ColecoVision",
+            )
+            .is_ok()
+        );
+        assert!(
+            resolve_state_artifact_path_from_root(
+                &workspace.path,
+                Path::new("target/checkpoint.pcestate"),
+                COLECO_STATE_EXTENSION,
+                "ColecoVision",
+            )
+            .is_err()
+        );
     }
 
     #[cfg(any(unix, windows))]

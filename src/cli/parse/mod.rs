@@ -105,6 +105,10 @@ pub(crate) fn parse_args_from(
                 headless.expect_sega8_audio = true;
                 i += 1;
             }
+            "--expect-coleco-audio" => {
+                headless.expect_coleco_audio = true;
+                i += 1;
+            }
             "--expect-test-pass" => {
                 headless.expect_test_pass = true;
                 i += 1;
@@ -412,6 +416,13 @@ pub(crate) fn parse_args_from(
                     anyhow::bail!("--pce-save-state-out requires a file path");
                 };
                 headless.pce_save_state_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--coleco-save-state-out" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--coleco-save-state-out requires a file path");
+                };
+                headless.coleco_save_state_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--replay" => {

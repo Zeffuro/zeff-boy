@@ -201,6 +201,20 @@ fn parse_cheat_for_system_sega8_raw() {
 }
 
 #[test]
+fn parse_cheat_for_system_coleco_raw() {
+    let result = parse_cheat_for_system("6000:42", ActiveSystem::Coleco);
+    let (patches, ty) = result.expect("ColecoVision raw RAM cheat should parse");
+    assert_eq!(ty, CheatType::Raw);
+    assert_eq!(
+        patches,
+        [CheatPatch::RamWrite {
+            address: 0x6000,
+            value: CheatValue::Constant(0x42),
+        }]
+    );
+}
+
+#[test]
 fn parse_cheat_for_system_pce_raw_multi_code() {
     let (patches, ty) = parse_cheat_for_system("$2000:42+0x2001=7F", ActiveSystem::Pce)
         .expect("PCE raw cheats should parse");

@@ -1,0 +1,35 @@
+manifest_version = 1
+
+[suite]
+id = "coleco-cvbasic-controller"
+name = "CVBasic ColecoVision controller diagnostic"
+core = "coleco"
+upstream_url = "https://github.com/nanochess/CVBasic"
+license = "BSD-2-Clause"
+
+[[tests]]
+id = "coleco/nanochess/cvbasic-controller-8e5a3a19/p1-combined-input"
+core = "coleco"
+tier = "accuracy"
+max_frames = 240
+input = ["up+left+a+b+5@180-240"]
+tags = ["coleco", "source-built", "controller", "keypad", "input", "tms9918"]
+notes = "Exact source-built controller-status screenshot with P1 up, left, both side buttons, and keypad 5 active. This is a deterministic input-path regression, not a hardware timing oracle. Requires a locally supplied recognized ColecoVision BIOS."
+
+[tests.artifact]
+kind = "test_rom"
+license = "BSD-2-Clause"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/nanochess/CVBasic"
+source_version = "CVBasic 8e5a3a1905362b90f99e7542d6e0e02cf6f7880f; Gasm80 3f736b0a9d20f4773e8acbbb6b83517a378d2443"
+source_id = "nanochess-cvbasic-controller-8e5a3a19"
+
+[tests.rom]
+path = "rom-tests/cache/coleco/nanochess/cvbasic-controller-8e5a3a19/controller.col"
+sha256 = "aad8e30e3f0ef8171090b6eb9a3c5114dc5987e1e739660ec452e51e648369f4"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 240
+screenshot_sha256 = "3972db811c330b15993b157c168a3d515e632318808f74c14c2284124198a811"

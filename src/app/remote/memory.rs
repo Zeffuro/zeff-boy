@@ -174,6 +174,18 @@ impl App {
                     "unsupported PC Engine memory space",
                 ),
             },
+            ConsoleGraphicsData::Coleco(coleco) => match space {
+                "vram" => slice_memory_json(space, start, length, &coleco.vram),
+                "oam" | "sat" | "spriteattribute" | "spriteattributetable" => {
+                    slice_memory_json(space, start, length, &coleco.oam)
+                }
+                _ => memory_not_ready_json(
+                    space,
+                    start as u32,
+                    length,
+                    "unsupported ColecoVision memory space",
+                ),
+            },
             ConsoleGraphicsData::Sega8(sega8) => match space {
                 "vram" => slice_memory_json(space, start, length, &sega8.vram),
                 "cram" | "palette" | "paletteram" => {

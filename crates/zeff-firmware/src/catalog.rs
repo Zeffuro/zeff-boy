@@ -368,6 +368,12 @@ pub fn firmware_plan_for_existing_core(system: ExistingCoreSystem) -> Vec<Firmwa
             },
             FirmwareDependency::BootOnly,
         )],
+        ExistingCoreSystem::ColecoVision => vec![FirmwareRequest::new(
+            "coleco.vision.bios",
+            RequirementLevel::Required,
+            FallbackKind::None,
+            FirmwareDependency::RuntimeMapped,
+        )],
         ExistingCoreSystem::Nes | ExistingCoreSystem::WonderSwan => Vec::new(),
     }
 }
@@ -426,6 +432,7 @@ pub enum ExistingCoreSystem {
     WonderSwan,
     MasterSystem,
     GameGear,
+    ColecoVision,
 }
 
 pub fn catalog_specs() -> &'static [FirmwareSpec] {
@@ -557,6 +564,30 @@ const CATALOG_SPECS: &[FirmwareSpec] = &[
             size: SizeRule::Exact(1024),
             hashes: KnownHashes {
                 md5: Some("672e104c3be3a238301aceffc3b23fd6"),
+                sha1: None,
+                sha256: None,
+            },
+        }],
+    },
+    FirmwareSpec {
+        id: "coleco.vision.bios",
+        display_name: "ColecoVision BIOS",
+        system: "ColecoVision",
+        purpose: "ColecoVision startup and system services",
+        variants: &[FirmwareVariantSpec {
+            id: "coleco.vision.bios.retail",
+            display_name: "ColecoVision retail BIOS",
+            region: "ntsc",
+            model: None,
+            filenames: &[
+                "coleco.rom",
+                "colecovision.rom",
+                "BIOS.col",
+                "313 10031-4005 73108a.u2",
+            ],
+            size: SizeRule::Exact(8192),
+            hashes: KnownHashes {
+                md5: Some("2c66f5911e5b42b8ebe113403548eee7"),
                 sha1: None,
                 sha256: None,
             },

@@ -106,6 +106,25 @@ fn extended_host_buttons_fill_the_high_input_bits() {
 }
 
 #[test]
+fn coleco_keypad_uses_the_unused_dpad_high_nibble_without_losing_directions() {
+    let mut state = HostInputState::new();
+    state.set_keyboard(HostButton::Up, true);
+    state.set_coleco_keyboard_keypad(1, 10, true);
+    assert_eq!(state.coleco_dpad_pressed(1), 0xB4);
+
+    state.set_coleco_keyboard_keypad(1, 10, false);
+    assert_eq!(state.coleco_dpad_pressed(1), 0x04);
+
+    state.set_keyboard_p2(HostButton::Right, true);
+    state.set_coleco_keyboard_keypad(2, 7, true);
+    assert_eq!(state.coleco_dpad_pressed(2), 0x81);
+
+    state.set_coleco_remote_keypad(1, 3, true);
+    assert_eq!(state.coleco_keypad_pressed(1), Some(3));
+    assert_eq!(state.coleco_dpad_pressed(1), 0x44);
+}
+
+#[test]
 fn p2_shoulders_use_same_button_bits_as_p1() {
     let mut state = HostInputState::new();
     state.set_keyboard_p2(HostButton::L, true);

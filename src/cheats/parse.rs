@@ -86,6 +86,7 @@ fn try_parse_single_for_system(
         ActiveSystem::Nes => zeff_gb_core::cheats::parse_cheat(input)
             .ok()
             .or_else(|| try_parse_nes_game_genie(input)),
+        ActiveSystem::Coleco => try_parse_raw16(input),
         ActiveSystem::Pce => try_parse_raw16(input).or_else(|| try_parse_pce_physical_ram(input)),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             zeff_sega8_core::cheats::parse_cheat(input).ok()
@@ -134,7 +135,7 @@ pub(crate) fn parse_cheat_for_system(
                 all_patches.extend(patches);
             } else {
                 return Err(
-                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For PCE: logical raw (AAAA:VV), physical RAM (1Fxxxx:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
+                    "Unrecognized format in multi-code. For GB: GameShark, Game Genie, raw. For NES: Game Genie (AAAAAA/AAAAAAAA), raw (AAAA:VV). For ColecoVision: raw RAM (AAAA:VV). For PCE: logical raw (AAAA:VV), physical RAM (1Fxxxx:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
                 );
             }
         }
@@ -147,7 +148,7 @@ pub(crate) fn parse_cheat_for_system(
     }
 
     Err(
-        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For PCE: logical raw (AAAA:VV), physical RAM (1Fxxxx:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
+        "Unrecognized format. For GB: GameShark (01VVAAAA), Game Genie (XXX-YYY), raw (AAAA:VV). For NES: Game Genie (AAAAAA or AAAAAAAA), raw (AAAA:VV). For ColecoVision: raw RAM (AAAA:VV). For PCE: logical raw (AAAA:VV), physical RAM (1Fxxxx:VV). For Sega 8-bit: raw (AAAA:VV), Action Replay (00AA-AAVV), Game Genie (XXX-XXX-XXX). For GBA: raw (AAAAAAAA:VV), CodeBreaker/XPloder RAM writes. For WS: raw (AAAAAAAA:VV)",
     )
 }
 

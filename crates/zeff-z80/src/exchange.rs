@@ -20,7 +20,7 @@ impl Cpu {
         std::mem::swap(&mut self.regs.e, &mut self.regs.l);
     }
 
-    pub(super) fn exchange_stack_with_hl<B: SegaCpuBus>(&mut self, bus: &mut B) {
+    pub(super) fn exchange_stack_with_hl<B: Z80Bus>(&mut self, bus: &mut B) {
         let stack_value = self.read_mem_u16(bus, self.regs.sp);
         self.write_mem_u16(bus, self.regs.sp, self.regs.hl());
         self.regs.set_hl(stack_value);

@@ -110,17 +110,3 @@ pub const MODE4_SPRITE_TABLE_MASK: u8 = 0x7E;
 pub const MODE4_SPRITE_TABLE_SHIFT: u8 = 7;
 pub const MODE4_SPRITE_X_TILE_TABLE_OFFSET: usize = 0x80;
 pub const MODE4_SPRITE_TERMINATOR_Y: u8 = 0xD0;
-
-pub const Z80_INTERRUPT_ACK_OPCODE: u8 = 0xFF;
-pub const Z80_INTERRUPT_VECTOR_IM1: u16 = 0x0038;
-pub const Z80_INTERRUPT_VECTOR_NMI: u16 = 0x0066;
-pub const Z80_RESET_PC: u16 = 0x0000;
-pub const Z80_RESET_SP: u16 = 0xDFF0;
-pub const Z80_FLAG_SIGN: u8 = 0x80;
-pub const Z80_FLAG_ZERO: u8 = 0x40;
-pub const Z80_FLAG_BIT_5: u8 = 0x20;
-pub const Z80_FLAG_HALF_CARRY: u8 = 0x10;
-pub const Z80_FLAG_BIT_3: u8 = 0x08;
-pub const Z80_FLAG_PARITY_OVERFLOW: u8 = 0x04;
-pub const Z80_FLAG_SUBTRACT: u8 = 0x02;
-pub const Z80_FLAG_CARRY: u8 = 0x01;

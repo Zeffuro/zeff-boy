@@ -5977,6 +5977,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "winit",
  "xdelta3",
+ "zeff-coleco-core",
  "zeff-emu-common",
  "zeff-firmware",
  "zeff-gb-core",
@@ -5985,7 +5986,19 @@ dependencies = [
  "zeff-pce-core",
  "zeff-sega8-core",
  "zeff-ws-core",
+ "zeff-z80",
  "zip",
+]
+
+[[package]]
+name = "zeff-coleco-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "sha2",
+ "zeff-emu-common",
+ "zeff-z80",
 ]
 
 [[package]]
@@ -6119,7 +6132,7 @@ dependencies = [
  "criterion",
  "sha2",
  "zeff-emu-common",
- "zeff-test-support",
+ "zeff-z80",
  "zip",
 ]
 
@@ -6138,6 +6151,15 @@ dependencies = [
  "crc32fast",
  "criterion",
  "sha2",
+ "zeff-emu-common",
+ "zeff-test-support",
+]
+
+[[package]]
+name = "zeff-z80"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "zeff-emu-common",
  "zeff-test-support",
 ]

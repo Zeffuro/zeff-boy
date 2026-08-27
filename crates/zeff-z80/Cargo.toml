@@ -1,0 +1,15 @@
+[package]
+name = "zeff-z80"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "Z80 CPU emulation library."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+anyhow = "1.0.104"
+zeff-emu-common = { path = "../zeff-emu-common" }
+
+[dev-dependencies]
+zeff-test-support = { path = "../zeff-test-support" }

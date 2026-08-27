@@ -19,6 +19,10 @@ pub(super) struct HostInputState {
     keyboard_p5_pressed: u16,
     gamepad_p5_pressed: u16,
     remote_p5_pressed: u16,
+    coleco_keyboard_keypad_pressed: u16,
+    coleco_keyboard_keypad_p2_pressed: u16,
+    coleco_remote_keypad_pressed: u16,
+    coleco_remote_keypad_p2_pressed: u16,
     gamepad_stick_dpad_pressed: u8,
     tilt_keyboard_pressed: u8,
     ws_keyboard_x_pressed: u8,
@@ -92,6 +96,33 @@ impl HostInputState {
 
     pub(super) fn set_remote_p5(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.remote_p5_pressed, key, pressed);
+    }
+
+    pub(super) fn set_coleco_keyboard_keypad(&mut self, player: u8, key: u8, pressed: bool) {
+        let mask = match player {
+            1 => &mut self.coleco_keyboard_keypad_pressed,
+            2 => &mut self.coleco_keyboard_keypad_p2_pressed,
+            _ => return,
+        };
+        set_coleco_keypad_bit(mask, key, pressed);
+    }
+
+    pub(super) fn set_coleco_remote_keypad(&mut self, player: u8, key: u8, pressed: bool) {
+        let mask = match player {
+            1 => &mut self.coleco_remote_keypad_pressed,
+            2 => &mut self.coleco_remote_keypad_p2_pressed,
+            _ => return,
+        };
+        set_coleco_keypad_bit(mask, key, pressed);
+    }
+
+    pub(super) fn coleco_keypad_pressed(&self, player: u8) -> Option<u8> {
+        let keypad_pressed = match player {
+            1 => self.coleco_keyboard_keypad_pressed | self.coleco_remote_keypad_pressed,
+            2 => self.coleco_keyboard_keypad_p2_pressed | self.coleco_remote_keypad_p2_pressed,
+            _ => return None,
+        };
+        (keypad_pressed != 0).then(|| keypad_pressed.trailing_zeros() as u8)
     }
 
     pub(super) fn set_tilt_keyboard(&mut self, key: TiltBindingAction, pressed: bool) {
@@ -235,6 +266,16 @@ impl HostInputState {
         ((self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) >> 4) as u8
     }
 
+    pub(super) fn coleco_dpad_pressed(&self, player: u8) -> u8 {
+        let dpad = match player {
+            1 => self.dpad_pressed(),
+            2 => self.dpad_p2_pressed(),
+            _ => return 0,
+        };
+        self.coleco_keypad_pressed(player)
+            .map_or(dpad, |key| dpad | ((key + 1) << 4))
+    }
+
     pub(super) fn dpad_p3_pressed(&self) -> u8 {
         ((self.keyboard_p3_pressed | self.gamepad_p3_pressed | self.remote_p3_pressed) & 0x0F) as u8
     }
@@ -286,6 +327,20 @@ impl HostInputState {
         } else {
             *mask &= !bit;
         }
+    }
+}
+
+fn set_coleco_keypad_bit(mask: &mut u16, key: u8, pressed: bool) {
+    if key >= 12 {
+        return;
+    }
+    let Some(bit) = 1u16.checked_shl(u32::from(key)) else {
+        return;
+    };
+    if pressed {
+        *mask |= bit;
+    } else {
+        *mask &= !bit;
     }
 }
 
@@ -354,6 +409,11 @@ impl super::App {
                 self.host_input.ws_buttons_pressed(self.ws_display_rotated),
                 self.host_input.ws_dpad_pressed(self.ws_display_rotated),
             )
+        } else if system == ActiveSystem::Coleco {
+            (
+                self.host_input.buttons_pressed(),
+                self.host_input.coleco_dpad_pressed(1),
+            )
         } else {
             (
                 self.host_input.buttons_pressed(),
@@ -365,6 +425,11 @@ impl super::App {
     pub(super) fn host_joypad_p2_input_for_system(&self, system: ActiveSystem) -> (u8, u8) {
         if system == ActiveSystem::WonderSwan {
             (0, 0)
+        } else if system == ActiveSystem::Coleco {
+            (
+                self.host_input.buttons_p2_pressed(),
+                self.host_input.coleco_dpad_pressed(2),
+            )
         } else {
             (
                 self.host_input.buttons_p2_pressed(),

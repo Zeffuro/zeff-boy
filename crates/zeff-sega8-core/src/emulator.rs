@@ -9,7 +9,7 @@ use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, RGBA_CHANNELS, SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ, SMS_SCREEN_H,
     SMS_SCREEN_W,
 };
-use crate::hardware::cpu::Cpu;
+use crate::hardware::cpu::{Cpu, SEGA8_RESET_STATE};
 use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 
@@ -253,7 +253,7 @@ impl Emulator {
         );
         bus.set_boot_rom(boot_rom.map(<[u8]>::to_vec));
         Ok(Self {
-            cpu: Cpu::new(),
+            cpu: Cpu::new_with_reset(SEGA8_RESET_STATE),
             bus,
             rom_hash,
             frame_count: 0,

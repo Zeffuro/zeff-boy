@@ -50,6 +50,15 @@ impl App {
             return;
         }
 
+        if !egui_has_kb_focus
+            && self.game_view_focused
+            && !self.modifiers.ctrl
+            && !self.modifiers.alt
+            && self.handle_coleco_keypad_key(key_event, key_code)
+        {
+            return;
+        }
+
         if self.handle_shortcut_key(key_event, key_code) {
             return;
         }
@@ -68,6 +77,26 @@ impl App {
 
         self.handle_joypad_key(key_event, key_code);
         self.handle_tilt_key(key_event, key_code);
+    }
+
+    fn handle_coleco_keypad_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
+        let Some(key) = self.coleco_keypad_key(key_code) else {
+            return false;
+        };
+        match key_event.state {
+            ElementState::Pressed if !key_event.repeat => {
+                let player = if self.modifiers.shift { 2 } else { 1 };
+                self.host_input
+                    .set_coleco_keyboard_keypad(player, key, true);
+                true
+            }
+            ElementState::Released => {
+                self.host_input.set_coleco_keyboard_keypad(1, key, false);
+                self.host_input.set_coleco_keyboard_keypad(2, key, false);
+                true
+            }
+            ElementState::Pressed => true,
+        }
     }
 
     fn handle_consumed_keyboard_release(&mut self, key_event: &KeyEvent, key_code: KeyCode) {
@@ -95,6 +124,11 @@ impl App {
             self.host_input.set_keyboard_p2(gb_key, false);
         }
         self.set_pce_multitap_keyboard_key(key_code, false);
+
+        if let Some(key) = self.coleco_keypad_key(key_code) {
+            self.host_input.set_coleco_keyboard_keypad(1, key, false);
+            self.host_input.set_coleco_keyboard_keypad(2, key, false);
+        }
 
         if let Some(ws_key) = self.map_ws_key(key_code) {
             self.host_input.set_ws_keyboard(ws_key, false);

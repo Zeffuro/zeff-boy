@@ -77,6 +77,18 @@ pub(super) fn build_sms_test_rom() -> Vec<u8> {
     vec![0x76]
 }
 
+pub(super) fn build_coleco_backend() -> EmuBackend {
+    let mut rom = vec![0; 8 * 1024];
+    rom[..2].copy_from_slice(&[0xAA, 0x55]);
+    let emu = zeff_coleco_core::Emulator::new(&rom, &[0; 8 * 1024], 44_100)
+        .expect("Coleco emulator should initialize");
+    EmuBackend::from_coleco(
+        emu,
+        PathBuf::from("test.col"),
+        crate::emu_backend::ColecoBackend::rom_hash_for_bytes(&rom),
+    )
+}
+
 pub(super) fn build_gb_backend() -> EmuBackend {
     let rom = build_gb_test_rom();
     let gb = zeff_gb_core::emulator::Emulator::from_rom_data(
@@ -264,8 +276,10 @@ pub(super) fn assert_backend_feature_contract(
             .expect("backend should encode save-state")
             .is_empty()
     );
-    backend.debug_suspend();
-    assert!(backend.is_suspended());
+    if backend.supports_execution_controls() {
+        backend.debug_suspend();
+        assert!(backend.is_suspended());
+    }
 }
 
 pub(super) fn assert_app_snapshot_core_features(
@@ -307,12 +321,11 @@ pub(super) fn assert_app_snapshot_core_features(
     assert!(features.supports_rewind);
     assert!(features.supports_replay);
     assert!(features.supports_audio);
-    assert!(features.supports_cheats);
     assert_eq!(
         features.supports_cheats,
         features.cheat_features.supports_user_cheats
     );
-    assert!(features.supports_guest_calls);
+    assert_eq!(features.supports_guest_calls, features.supports_debugger);
     assert!(features.supports_debugger);
     assert_eq!(
         features.supports_opcode_history,
@@ -332,6 +345,7 @@ fn expected_opcode_history_support(system: ActiveSystem) -> bool {
             | ActiveSystem::Nes
             | ActiveSystem::Pce
             | ActiveSystem::Ws
+            | ActiveSystem::Coleco
             | ActiveSystem::Sms
             | ActiveSystem::Gg
             | ActiveSystem::Sg

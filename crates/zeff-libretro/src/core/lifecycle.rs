@@ -16,6 +16,7 @@ impl CoreState {
         let sample_rate = LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ;
 
         let core = match ext.as_str() {
+            "col" => anyhow::bail!("ColecoVision is not available in zeff-libretro"),
             "pce" => {
                 let host = zeff_pce_core::hardware::PceHuCardHost::new(data.to_vec(), sample_rate)?;
                 ActiveCore::Pce(Box::new(host))

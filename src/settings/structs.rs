@@ -386,6 +386,7 @@ impl VideoSettings {
             }
             Some(
                 crate::emu_backend::ActiveSystem::Nes
+                | crate::emu_backend::ActiveSystem::Coleco
                 | crate::emu_backend::ActiveSystem::Pce
                 | crate::emu_backend::ActiveSystem::MasterSystem
                 | crate::emu_backend::ActiveSystem::GameGear

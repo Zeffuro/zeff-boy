@@ -1,9 +1,10 @@
 use super::super::types::{HeadlessInputEvent, HeadlessZapperEvent};
 use super::numbers::{parse_frame_range_arg, parse_u64_arg};
 
-fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, bool)> {
+fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, Option<u8>, bool)> {
     let mut buttons = 0u8;
     let mut dpad = 0u8;
+    let mut coleco_keypad = None;
     let mut reset = false;
     let mut parsed_any = false;
 
@@ -22,13 +23,25 @@ fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, bool)> {
             "r" | "rightshoulder" | "shoulderr" | "iv" => buttons |= 0x20,
             "x" | "v" => buttons |= 0x40,
             "y" | "vi" => buttons |= 0x80,
+            "0" | "keypad0" | "kp0" => coleco_keypad = Some(0),
+            "1" | "keypad1" | "kp1" => coleco_keypad = Some(1),
+            "2" | "keypad2" | "kp2" => coleco_keypad = Some(2),
+            "3" | "keypad3" | "kp3" => coleco_keypad = Some(3),
+            "4" | "keypad4" | "kp4" => coleco_keypad = Some(4),
+            "5" | "keypad5" | "kp5" => coleco_keypad = Some(5),
+            "6" | "keypad6" | "kp6" => coleco_keypad = Some(6),
+            "7" | "keypad7" | "kp7" => coleco_keypad = Some(7),
+            "8" | "keypad8" | "kp8" => coleco_keypad = Some(8),
+            "9" | "keypad9" | "kp9" => coleco_keypad = Some(9),
+            "star" | "asterisk" | "keypadstar" | "kpstar" => coleco_keypad = Some(10),
+            "pound" | "hash" | "keypadpound" | "kppound" => coleco_keypad = Some(11),
             "right" => dpad |= 0x01,
             "left" => dpad |= 0x02,
             "up" => dpad |= 0x04,
             "down" => dpad |= 0x08,
             "reset" | "softreset" | "softresetbutton" => reset = true,
             _ => anyhow::bail!(
-                "{flag} has unknown key {:?}; expected a/i,b/ii,select,start/run,l/iii,r/iv,x/v,y/vi,up,down,left,right,reset",
+                "{flag} has unknown key {:?}; expected a/i,b/ii,select,start/run,l/iii,r/iv,x/v,y/vi,0-9,star,pound,up,down,left,right,reset",
                 raw_key
             ),
         }
@@ -38,7 +51,7 @@ fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, bool)> {
         anyhow::bail!("{flag} requires at least one key");
     }
 
-    Ok((buttons, dpad, reset))
+    Ok((buttons, dpad, coleco_keypad, reset))
 }
 
 pub(super) fn parse_input_event_arg(
@@ -69,13 +82,14 @@ pub(super) fn parse_input_event_arg(
             anyhow::bail!("{flag} event must be key@start-end, key:start-end, or start-end:key");
         };
 
-        let (buttons, dpad, reset) = parse_input_keys(keys_raw, flag)?;
+        let (buttons, dpad, coleco_keypad, reset) = parse_input_keys(keys_raw, flag)?;
         let (start_frame, end_frame) = parse_frame_range_arg(range_raw, flag)?;
         events.push(HeadlessInputEvent {
             start_frame,
             end_frame,
             buttons,
             dpad,
+            coleco_keypad,
             reset,
         });
     }

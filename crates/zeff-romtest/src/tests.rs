@@ -353,6 +353,44 @@ kind = "sega8_audio_nonzero"
 }
 
 #[test]
+fn parses_coleco_audio_nonzero_pass_kind() {
+    let manifest: Manifest = toml::from_str(
+        r#"
+manifest_version = 1
+
+[suite]
+id = "coleco-audio"
+name = "ColecoVision Audio"
+core = "coleco"
+
+[[tests]]
+id = "coleco/sample/audio"
+core = "coleco"
+tier = "local"
+max_frames = 60
+
+[tests.artifact]
+kind = "test_rom"
+license = "unknown"
+license_confidence = "unknown"
+redistributable = false
+source_url = "https://example.invalid"
+source_version = "test"
+
+[tests.rom]
+path = "rom-tests/cache/coleco/sample.col"
+
+[tests.pass]
+kind = "coleco_audio_nonzero"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.tests[0].core, Core::Coleco);
+    assert_eq!(manifest.tests[0].pass.kind, PassKind::ColecoAudioNonzero);
+}
+
+#[test]
 fn expands_grouped_manifest_entries() {
     let manifest: Manifest = toml::from_str(
         r#"

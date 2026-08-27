@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 
 use super::*;
-use crate::hardware::cartridge::{Cartridge, SystemHint};
-use zeff_emu_common::debug::{BusAccessEvent, TraceWriteKind, TraceWriteWidth};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum FlatAccess {
@@ -42,7 +40,7 @@ impl FlatBus {
     }
 }
 
-impl SegaCpuBus for FlatBus {
+impl Z80Bus for FlatBus {
     fn cpu_read(&self, addr: u16) -> u8 {
         let value = self.ram[usize::from(addr)];
         self.accesses
@@ -127,67 +125,28 @@ fn flat_bus_executes_store_at_an_arbitrary_address() {
 }
 
 #[test]
-fn flat_bus_matches_production_bus_for_safe_ram_store() {
+fn step_and_step_with_bus_match_for_safe_ram_store() {
     let mut flat_cpu = Cpu::new();
     flat_cpu.regs.pc = 0xC000;
     flat_cpu.regs.a = 0x5A;
     let mut flat_bus = FlatBus::new();
     flat_bus.load(0xC000, &[0x32, 0x00, 0xC1]);
 
-    let mut production_cpu = Cpu::new();
-    production_cpu.regs = flat_cpu.regs;
-    let cartridge = Cartridge::load_with_hint(&[0; 0x4000], SystemHint::MasterSystem)
-        .expect("test cartridge should load");
-    let mut production_bus = Bus::new(cartridge);
-    production_bus.cpu_write(0xC000, 0x32);
-    production_bus.cpu_write(0xC001, 0x00);
-    production_bus.cpu_write(0xC002, 0xC1);
-    production_bus.begin_cpu_access_trace();
+    let mut step_cpu = flat_cpu.clone();
+    let mut step_bus = FlatBus::new();
+    step_bus.load(0xC000, &[0x32, 0x00, 0xC1]);
 
     let flat_fetched = flat_cpu
         .step_with_bus(&mut flat_bus)
         .expect("flat store should execute");
-    let production_fetched = production_cpu
-        .step(&mut production_bus)
-        .expect("production store should execute");
-    let production_accesses = production_bus
-        .drain_cpu_access_trace()
-        .into_iter()
-        .map(flatten_production_access)
-        .collect::<Vec<_>>();
+    let step_fetched = step_cpu.step(&mut step_bus).expect("store should execute");
 
-    assert_eq!(flat_fetched, production_fetched);
-    assert_eq!(flat_cpu.regs, production_cpu.regs);
-    assert_eq!(flat_cpu.state, production_cpu.state);
-    assert_eq!(flat_cpu.cycles, production_cpu.cycles);
-    assert_eq!(flat_bus.ram[0xC100], production_bus.cpu_peek(0xC100));
-    assert_eq!(flat_bus.take_accesses(), production_accesses);
-}
-
-fn flatten_production_access(event: BusAccessEvent) -> FlatAccess {
-    match event {
-        BusAccessEvent::Read {
-            space: TraceWriteKind::Memory,
-            addr,
-            value,
-            width: TraceWriteWidth::Byte,
-            ..
-        } => FlatAccess::MemoryRead {
-            addr: u16::try_from(addr).expect("Sega CPU address"),
-            value: u8::try_from(value).expect("Sega byte read"),
-        },
-        BusAccessEvent::Write {
-            space: TraceWriteKind::Memory,
-            addr,
-            written_value,
-            width: TraceWriteWidth::Byte,
-            ..
-        } => FlatAccess::MemoryWrite {
-            addr: u16::try_from(addr).expect("Sega CPU address"),
-            value: u8::try_from(written_value).expect("Sega byte write"),
-        },
-        other => panic!("unexpected safe-RAM access: {other:?}"),
-    }
+    assert_eq!(flat_fetched, step_fetched);
+    assert_eq!(flat_cpu.regs, step_cpu.regs);
+    assert_eq!(flat_cpu.state, step_cpu.state);
+    assert_eq!(flat_cpu.cycles, step_cpu.cycles);
+    assert_eq!(flat_bus.ram[0xC100], step_bus.ram[0xC100]);
+    assert_eq!(flat_bus.take_accesses(), step_bus.take_accesses());
 }
 
 #[test]

@@ -8,6 +8,7 @@ use zeff_emu_common::system::CoreFamily;
 use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
 
 pub(crate) use self::capabilities::{CheatCapabilities, CoreCapabilities, InputCapabilities};
+pub(crate) use self::coleco::ColecoBackend;
 pub(crate) use self::gb::GbBackend;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
@@ -29,6 +30,7 @@ const WONDER_SWAN_REMOTE_LINK_POLL_INTERVAL_CYCLES: u64 = 800;
 
 pub(crate) mod capabilities;
 pub(crate) mod cheats;
+pub(crate) mod coleco;
 pub(crate) mod firmware;
 pub(crate) mod gb;
 pub(crate) mod gba;
@@ -58,6 +60,7 @@ pub(crate) enum EmuBackend {
     Gb(Box<GbBackend>),
     Gba(Box<GbaBackend>),
     Nes(Box<NesBackend>),
+    Coleco(Box<ColecoBackend>),
     Pce(Box<PceBackend>),
     Sega8(Box<Sega8Backend>),
     Ws(Box<WsBackend>),
@@ -69,6 +72,7 @@ macro_rules! dispatch {
             EmuBackend::Gb(b) => b.$method($($arg),*),
             EmuBackend::Gba(b) => b.$method($($arg),*),
             EmuBackend::Nes(b) => b.$method($($arg),*),
+            EmuBackend::Coleco(b) => b.$method($($arg),*),
             EmuBackend::Pce(b) => b.$method($($arg),*),
             EmuBackend::Sega8(b) => b.$method($($arg),*),
             EmuBackend::Ws(b) => b.$method($($arg),*),
@@ -111,6 +115,28 @@ impl EmuBackend {
 
     pub(crate) fn from_nes(emu: zeff_nes_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Nes(Box::new(NesBackend::new(emu, rom_path)))
+    }
+
+    pub(crate) fn from_coleco(
+        emu: zeff_coleco_core::Emulator,
+        rom_path: PathBuf,
+        rom_hash: [u8; 32],
+    ) -> Self {
+        Self::Coleco(Box::new(ColecoBackend::new(emu, rom_path, rom_hash)))
+    }
+
+    pub(crate) fn from_coleco_with_source(
+        emu: zeff_coleco_core::Emulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+        rom_hash: [u8; 32],
+    ) -> Self {
+        Self::Coleco(Box::new(ColecoBackend::with_source_path(
+            emu,
+            rom_path,
+            source_path,
+            rom_hash,
+        )))
     }
 
     pub(crate) fn from_pce(backend: PceBackend) -> Self {
@@ -166,6 +192,7 @@ impl EmuBackend {
             Self::Gb(..) => ActiveSystem::GameBoy,
             Self::Gba(..) => ActiveSystem::GameBoyAdvance,
             Self::Nes(..) => ActiveSystem::Nes,
+            Self::Coleco(..) => ActiveSystem::Coleco,
             Self::Pce(..) => ActiveSystem::Pce,
             Self::Sega8(b) => b.system(),
             Self::Ws(..) => ActiveSystem::WonderSwan,
@@ -205,6 +232,14 @@ impl EmuBackend {
     pub(crate) fn nes(&self) -> Option<&NesBackend> {
         match self {
             Self::Nes(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn coleco(&self) -> Option<&ColecoBackend> {
+        match self {
+            Self::Coleco(b) => Some(b),
             _ => None,
         }
     }

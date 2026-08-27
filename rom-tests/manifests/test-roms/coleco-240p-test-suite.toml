@@ -1,0 +1,118 @@
+manifest_version = 1
+
+[suite]
+id = "coleco-240p-test-suite"
+name = "ColecoVision 240p Test Suite"
+core = "coleco"
+upstream_url = "https://github.com/nanochess/240pTestSuite_colecovision"
+license = "GPL-2.0-or-later"
+
+[[tests]]
+id = "coleco/nanochess/240p-test-suite-d5c16c94/title-boot"
+core = "coleco"
+tier = "accuracy"
+max_frames = 120
+tags = ["coleco", "source-backed", "240p", "tms9918", "vdp"]
+notes = "Exact Zeff screenshot anchor. The indexed 256x192 geometry matches version-pinned Gearcoleco output; RGB palette values remain an explicitly separate analog-conversion choice. Requires a locally supplied recognized ColecoVision BIOS."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0-or-later"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/nanochess/240pTestSuite_colecovision"
+source_version = "d5c16c94d1dfc7145351a2d1ef5d31c5acb7019a"
+source_id = "nanochess-240p-test-suite-colecovision-d5c16c94"
+
+[tests.rom]
+path = "rom-tests/cache/coleco/nanochess/240p-test-suite-d5c16c94/suitecv.col"
+archive_path = "suitecv.rom"
+sha256 = "7108eb36c6365ca8d46019f6008a47d4c99768351c89463a7ed837ec23b20a2d"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 120
+screenshot_sha256 = "c95f17f0e859f3fbe06cce757b421852803eaaddcf92ced42b8a9ab75e60fee8"
+
+[[tests]]
+id = "coleco/nanochess/240p-test-suite-d5c16c94/main-menu"
+core = "coleco"
+tier = "accuracy"
+max_frames = 300
+tags = ["coleco", "source-backed", "240p", "tms9918", "vdp"]
+notes = "Exact main-menu screenshot anchor. Version-pinned Gearcoleco produces identical indexed geometry; RGB palette conversion is separate. Requires a locally supplied recognized ColecoVision BIOS."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0-or-later"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/nanochess/240pTestSuite_colecovision"
+source_version = "d5c16c94d1dfc7145351a2d1ef5d31c5acb7019a"
+source_id = "nanochess-240p-test-suite-colecovision-d5c16c94"
+
+[tests.rom]
+path = "rom-tests/cache/coleco/nanochess/240p-test-suite-d5c16c94/suitecv.col"
+archive_path = "suitecv.rom"
+sha256 = "7108eb36c6365ca8d46019f6008a47d4c99768351c89463a7ed837ec23b20a2d"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 300
+screenshot_sha256 = "13af1701310bc0636133e85dec0d7d368046fcefdbd7040894ec2508c6f8a308"
+
+[[tests]]
+id = "coleco/nanochess/240p-test-suite-d5c16c94/color-bleed"
+core = "coleco"
+tier = "accuracy"
+max_frames = 620
+input = ["b@320-321", "b@420-421"]
+tags = ["coleco", "source-backed", "240p", "tms9918", "vdp", "input"]
+notes = "Exact programmed route to the suite's color-bleed pattern. Version-pinned Gearcoleco produces identical indexed geometry; RGB palette conversion is separate. Requires a locally supplied recognized ColecoVision BIOS."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0-or-later"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/nanochess/240pTestSuite_colecovision"
+source_version = "d5c16c94d1dfc7145351a2d1ef5d31c5acb7019a"
+source_id = "nanochess-240p-test-suite-colecovision-d5c16c94"
+
+[tests.rom]
+path = "rom-tests/cache/coleco/nanochess/240p-test-suite-d5c16c94/suitecv.col"
+archive_path = "suitecv.rom"
+sha256 = "7108eb36c6365ca8d46019f6008a47d4c99768351c89463a7ed837ec23b20a2d"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 620
+screenshot_sha256 = "96d3484b7b4e5575dd05b5d562722a0ebd1af36015dec0db6ee2280674562d24"
+
+[[tests]]
+id = "coleco/nanochess/240p-test-suite-d5c16c94/sound-test"
+core = "coleco"
+tier = "accuracy"
+max_frames = 620
+input = ["down@320-321", "down@340-341", "b@360-361", "b@420-421"]
+tags = ["coleco", "source-backed", "240p", "sn76489", "audio", "input"]
+notes = "Exact programmed route to the suite's sound-test screen. The screenshot pins navigation and status only; it is not an audio-waveform oracle. Version-pinned Gearcoleco produces identical indexed geometry. Requires a locally supplied recognized ColecoVision BIOS."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0-or-later"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://github.com/nanochess/240pTestSuite_colecovision"
+source_version = "d5c16c94d1dfc7145351a2d1ef5d31c5acb7019a"
+source_id = "nanochess-240p-test-suite-colecovision-d5c16c94"
+
+[tests.rom]
+path = "rom-tests/cache/coleco/nanochess/240p-test-suite-d5c16c94/suitecv.col"
+archive_path = "suitecv.rom"
+sha256 = "7108eb36c6365ca8d46019f6008a47d4c99768351c89463a7ed837ec23b20a2d"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 620
+screenshot_sha256 = "c3f52d01fbfcaddf1869ec5efc0c0a7d08967456d62b841333f7b9ecd891f89c"

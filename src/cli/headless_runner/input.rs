@@ -6,6 +6,7 @@ use super::HeadlessOptions;
 pub(super) struct InputMasks {
     pub(super) buttons: u8,
     pub(super) dpad: u8,
+    pub(super) coleco_keypad: Option<u8>,
     pub(super) reset: bool,
     pub(super) zapper_enabled: bool,
     pub(super) zapper_trigger: bool,
@@ -58,6 +59,9 @@ fn apply_input_events(input: &mut InputMasks, events: &[HeadlessInputEvent], fra
         if (event.start_frame..=event.end_frame).contains(&frame) {
             input.buttons |= event.buttons;
             input.dpad |= event.dpad;
+            if event.coleco_keypad.is_some() {
+                input.coleco_keypad = event.coleco_keypad;
+            }
         }
         if event.reset && frame == event.start_frame {
             input.reset = true;

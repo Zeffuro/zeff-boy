@@ -41,6 +41,9 @@ pub(super) fn ensure_system_headless_options(
     if opts.expect_sega8_audio && !matches!(system, "sms" | "gg" | "sg") {
         anyhow::bail!("--expect-sega8-audio is only supported for Sega 8-bit headless runs");
     }
+    if opts.expect_coleco_audio && system != "coleco" {
+        anyhow::bail!("--expect-coleco-audio is only supported for ColecoVision headless runs");
+    }
     if opts.sega8_video_standard.is_some() && !matches!(system, "sms" | "gg" | "sg") {
         anyhow::bail!(
             "--sega8-video-standard/--sega8-region is only supported for Sega 8-bit headless runs"
@@ -61,12 +64,18 @@ pub(super) fn ensure_system_headless_options(
     if opts.pce_save_state_path.is_some() && system != "pce" {
         anyhow::bail!("--pce-save-state-out is only supported for PC Engine headless runs");
     }
+    if opts.coleco_save_state_path.is_some() && system != "coleco" {
+        anyhow::bail!("--coleco-save-state-out is only supported for ColecoVision headless runs");
+    }
+    if has_coleco_keypad_input(opts) && system != "coleco" {
+        anyhow::bail!("Coleco keypad input is only supported for ColecoVision headless runs");
+    }
     if !opts.input_events_p2.is_empty()
-        && !(matches!(system, "nes" | "pce" | "sms" | "gg" | "sg")
+        && !(matches!(system, "nes" | "coleco" | "pce" | "sms" | "gg" | "sg")
             || (system == "ws" && opts.ws_link_peer_path.is_some()))
     {
         anyhow::bail!(
-            "--press-p2/--input-p2 is only supported for NES, PC Engine, Sega 8-bit, and WonderSwan --ws-link-peer headless runs"
+            "--press-p2/--input-p2 is only supported for NES, ColecoVision, PC Engine, Sega 8-bit, and WonderSwan --ws-link-peer headless runs"
         );
     }
     if (!opts.input_events_p3.is_empty()
@@ -115,11 +124,13 @@ pub(super) fn ensure_system_headless_options(
     if system != "gba" && opts.gba_audio_mutes.iter().any(|&muted| muted) {
         anyhow::bail!("--gba-mute-audio is only supported for GBA headless runs");
     }
-    if !matches!(system, "gba" | "pce" | "ws" | "sms" | "gg" | "sg")
-        && opts.audio_dump_path.is_some()
+    if !matches!(
+        system,
+        "gba" | "coleco" | "pce" | "ws" | "sms" | "gg" | "sg"
+    ) && opts.audio_dump_path.is_some()
     {
         anyhow::bail!(
-            "--audio-dump is currently only supported for GBA, PC Engine, WonderSwan, and Sega 8-bit headless runs"
+            "--audio-dump is currently only supported for GBA, ColecoVision, PC Engine, WonderSwan, and Sega 8-bit headless runs"
         );
     }
     if opts.gb_dmg_palette_preset.is_some() {
@@ -128,6 +139,19 @@ pub(super) fn ensure_system_headless_options(
 
     log::info!("Running {system} headless smoke test");
     Ok(())
+}
+
+fn has_coleco_keypad_input(opts: &HeadlessOptions) -> bool {
+    [
+        &opts.input_events,
+        &opts.input_events_p2,
+        &opts.input_events_p3,
+        &opts.input_events_p4,
+        &opts.input_events_p5,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|event| event.coleco_keypad.is_some())
 }
 
 pub(super) fn read_headless_state_if_requested(
@@ -264,5 +288,17 @@ mod tests {
         ensure_system_headless_options("pce", &opts).unwrap();
         let error = ensure_system_headless_options("gba", &opts).unwrap_err();
         assert!(error.to_string().contains("--pce-save-state-out"));
+    }
+
+    #[test]
+    fn coleco_state_output_is_rejected_until_the_coleco_headless_route_wires_it() {
+        let opts = HeadlessOptions {
+            coleco_save_state_path: Some(std::path::PathBuf::from("target/endpoint.colstate")),
+            ..HeadlessOptions::default()
+        };
+
+        ensure_system_headless_options("coleco", &opts).unwrap();
+        let error = ensure_system_headless_options("gba", &opts).unwrap_err();
+        assert!(error.to_string().contains("--coleco-save-state-out"));
     }
 }

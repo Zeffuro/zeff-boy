@@ -3,13 +3,15 @@ use super::flags::szp_flags;
 use super::*;
 
 impl Cpu {
-    pub(super) fn execute_index<B: SegaCpuBus>(&mut self, bus: &mut B, pc: u16, prefix: u8) -> u32 {
+    pub(super) fn execute_index<B: Z80Bus>(&mut self, bus: &mut B, pc: u16, prefix: u8) -> u32 {
         let opcode = self.fetch_u8(bus);
         self.increment_refresh_register();
         let use_iy = prefix == Z80_PREFIX_FD;
 
         match opcode {
-            Z80_PREFIX_DD | Z80_PREFIX_FD => self.execute_index(bus, pc, opcode),
+            Z80_PREFIX_DD | Z80_PREFIX_FD => {
+                self.execute_index(bus, pc, opcode) + Z80_PREFIX_OVERHEAD
+            }
             0x09 | 0x19 | 0x29 | 0x39 => {
                 let pair = (opcode >> 4) & 0x03;
                 let value = if pair == 2 {
@@ -209,7 +211,7 @@ impl Cpu {
         }
     }
 
-    fn read_indexed_reg8<B: SegaCpuBus>(&self, bus: &B, use_iy: bool, register: u8) -> u8 {
+    fn read_indexed_reg8<B: Z80Bus>(&self, bus: &B, use_iy: bool, register: u8) -> u8 {
         match register {
             4 => (self.read_index(use_iy) >> 8) as u8,
             5 => self.read_index(use_iy) as u8,
@@ -218,7 +220,7 @@ impl Cpu {
         }
     }
 
-    fn write_indexed_reg8<B: SegaCpuBus>(
+    fn write_indexed_reg8<B: Z80Bus>(
         &mut self,
         bus: &mut B,
         use_iy: bool,
@@ -239,7 +241,7 @@ impl Cpu {
         }
     }
 
-    fn fetch_indexed_addr<B: SegaCpuBus>(&mut self, bus: &B, use_iy: bool) -> u16 {
+    fn fetch_indexed_addr<B: Z80Bus>(&mut self, bus: &B, use_iy: bool) -> u16 {
         let displacement = self.fetch_u8(bus) as i8;
         self.read_index(use_iy)
             .wrapping_add_signed(i16::from(displacement))
@@ -260,7 +262,7 @@ impl Cpu {
             | if carry { Z80_FLAG_CARRY } else { 0 };
     }
 
-    fn execute_index_cb<B: SegaCpuBus>(
+    fn execute_index_cb<B: Z80Bus>(
         &mut self,
         bus: &mut B,
         use_iy: bool,

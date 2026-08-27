@@ -1,5 +1,6 @@
+use std::cell::RefCell;
+
 use super::*;
-use crate::hardware::cartridge::{Cartridge, SystemHint};
 use zeff_emu_common::debug::{BusAccessEvent, TraceWriteKind, TraceWriteWidth};
 use zeff_emu_common::time::{ClockRate, MasterTicks};
 use zeff_test_support::cpu::{
@@ -8,7 +9,7 @@ use zeff_test_support::cpu::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Sega8State {
+struct Z80State {
     registers: Registers,
     shadow_registers: [u8; 8],
     state: CpuState,
@@ -18,27 +19,101 @@ struct Sega8State {
     enable_interrupts_delay: u8,
 }
 
-struct Sega8Adapter {
-    cpu: Cpu,
-    bus: Bus,
+struct TraceBus {
+    memory: Box<[u8]>,
+    events: RefCell<Vec<BusAccessEvent>>,
 }
 
-impl CpuConformanceAdapter for Sega8Adapter {
-    type State = Sega8State;
+impl TraceBus {
+    fn new() -> Self {
+        Self {
+            memory: vec![0; 0x1_0000].into_boxed_slice(),
+            events: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn begin_cpu_access_trace(&self) {
+        self.events.borrow_mut().clear();
+    }
+
+    fn drain_cpu_access_trace(&self) -> Vec<BusAccessEvent> {
+        std::mem::take(&mut *self.events.borrow_mut())
+    }
+
+    fn cpu_peek(&self, addr: u16) -> u8 {
+        self.memory[usize::from(addr)]
+    }
+}
+
+impl Z80Bus for TraceBus {
+    fn cpu_read(&self, addr: u16) -> u8 {
+        let value = self.memory[usize::from(addr)];
+        self.events.borrow_mut().push(BusAccessEvent::Read {
+            at: None,
+            space: TraceWriteKind::Memory,
+            addr: u32::from(addr),
+            value: u32::from(value),
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        });
+        value
+    }
+
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        let old_value = self.memory[usize::from(addr)];
+        self.memory[usize::from(addr)] = value;
+        self.events.get_mut().push(BusAccessEvent::Write {
+            at: None,
+            space: TraceWriteKind::Memory,
+            addr: u32::from(addr),
+            old_value: u32::from(old_value),
+            written_value: u32::from(value),
+            new_value: u32::from(value),
+            width: TraceWriteWidth::Byte,
+            mapped_addr: None,
+        });
+    }
+
+    fn io_read(&mut self, _port: u8) -> u8 {
+        0xFF
+    }
+
+    fn io_write(&mut self, _port: u8, _value: u8) {}
+
+    fn maskable_interrupt_pending(&self) -> bool {
+        false
+    }
+
+    fn non_maskable_interrupt_pending(&self) -> bool {
+        false
+    }
+
+    fn acknowledge_non_maskable_interrupt(&mut self) -> bool {
+        false
+    }
+}
+
+struct Z80Adapter {
+    cpu: Cpu,
+    bus: TraceBus,
+}
+
+impl CpuConformanceAdapter for Z80Adapter {
+    type State = Z80State;
 
     const TRACE_TIMING: TraceTiming = TraceTiming::OrderOnly;
 
     fn from_case(case: &CpuCase<Self::State>) -> Self {
         let mut adapter = Self {
             cpu: Cpu::new(),
-            bus: test_bus(),
+            bus: TraceBus::new(),
         };
         adapter.apply_state(&case.initial_state);
         for block in &case.initial_memory {
             for (offset, &value) in block.bytes.iter().enumerate() {
                 let offset = u32::try_from(offset).expect("test memory block offset");
                 let address = u16::try_from(block.start.wrapping_add(offset))
-                    .expect("Sega 8-bit test address must fit in 16 bits");
+                    .expect("Z80 test address must fit in 16 bits");
                 adapter.bus.cpu_write(address, value);
             }
         }
@@ -46,7 +121,7 @@ impl CpuConformanceAdapter for Sega8Adapter {
     }
 
     fn snapshot(&self) -> Self::State {
-        Sega8State {
+        Z80State {
             registers: self.cpu.regs,
             shadow_registers: [
                 self.cpu.shadow.a,
@@ -68,7 +143,7 @@ impl CpuConformanceAdapter for Sega8Adapter {
 
     fn peek8(&self, address: u32) -> u8 {
         self.bus
-            .cpu_peek(u16::try_from(address).expect("Sega 8-bit test address must fit in 16 bits"))
+            .cpu_peek(u16::try_from(address).expect("Z80 test address must fit in 16 bits"))
     }
 
     fn step(&mut self) -> StepObservation {
@@ -91,14 +166,14 @@ impl CpuConformanceAdapter for Sega8Adapter {
             },
             cpu_cycles,
             master_ticks: MasterTicks::new(cpu_cycles),
-            master_rate: ClockRate::from_hz(u64::from(self.bus.video_standard().clock_hz_approx())),
+            master_rate: ClockRate::from_hz(3_584_160),
             bus_events,
         }
     }
 }
 
-impl Sega8Adapter {
-    fn apply_state(&mut self, state: &Sega8State) {
+impl Z80Adapter {
+    fn apply_state(&mut self, state: &Z80State) {
         self.cpu.regs = state.registers;
         let [a, f, b, c, d, e, h, l] = state.shadow_registers;
         self.cpu.shadow = ShadowRegisters {
@@ -126,15 +201,9 @@ impl Sega8Adapter {
     }
 }
 
-fn test_bus() -> Bus {
-    let cartridge = Cartridge::load_with_hint(&[0; 0x4000], SystemHint::MasterSystem)
-        .expect("test cartridge should load");
-    Bus::new(cartridge)
-}
-
 #[test]
 fn common_adapter_observes_load_store_bus_order() {
-    let initial_state = Sega8State {
+    let initial_state = Z80State {
         registers: Registers {
             a: 0x5A,
             sp: 0xD000,
@@ -148,7 +217,7 @@ fn common_adapter_observes_load_store_bus_order() {
         saved_interrupts_enabled: false,
         enable_interrupts_delay: 0,
     };
-    let expected_state = Sega8State {
+    let expected_state = Z80State {
         registers: Registers {
             pc: 0xC003,
             r: 1,
@@ -205,5 +274,5 @@ fn common_adapter_observes_load_store_bus_order() {
         },
     };
 
-    assert_case::<Sega8Adapter>(&case);
+    assert_case::<Z80Adapter>(&case);
 }

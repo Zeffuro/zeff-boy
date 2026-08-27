@@ -5,6 +5,7 @@ use super::{
     ActiveSystem, BackendLoadConfig, BackendRuntimeConfig, EmuBackend, ROM_EXTENSIONS,
     load_backend_from_rom_source, system_specs,
 };
+use crate::cheats::{CheatPatch, CheatValue};
 use crate::debug::DebugUiActions;
 use crate::emu_core_trait::DebuggableEmulator;
 use crate::emu_thread::GuestCallRequest;
@@ -20,6 +21,8 @@ use zeff_gb_core::hardware::types::constants::{INTERRUPT_IF, SERIAL_SB, SERIAL_S
 mod fixtures;
 
 use fixtures::*;
+
+static TEST_COLECO_BIOS: [u8; 8 * 1024] = [0; 8 * 1024];
 
 #[test]
 fn active_system_detects_supported_rom_extensions() {
@@ -46,6 +49,10 @@ fn active_system_detects_supported_rom_extensions() {
     assert_eq!(
         ActiveSystem::from_path(&PathBuf::from("game.fds")),
         Some(ActiveSystem::Nes)
+    );
+    assert_eq!(
+        ActiveSystem::from_path(&PathBuf::from("game.col")),
+        Some(ActiveSystem::Coleco)
     );
     assert_eq!(
         ActiveSystem::from_path(&PathBuf::from("game.pce")),
@@ -93,10 +100,9 @@ fn system_specs_cover_supported_rom_extensions() {
 
     assert_eq!(from_specs, from_constant);
     for spec in system_specs() {
-        assert_eq!(
-            ActiveSystem::from_extension(spec.short_code),
-            Some(spec.system)
-        );
+        for extension in spec.rom_extensions {
+            assert_eq!(ActiveSystem::from_extension(extension), Some(spec.system));
+        }
         assert!(!spec.storage_subdir.is_empty());
         assert!(!spec.state_extension.is_empty());
         assert!(!spec.file_dialog_filter_name.is_empty());
@@ -282,6 +288,41 @@ fn pce_guest_call_returns_to_suspended_context_and_produces_undo_state() {
 }
 
 #[test]
+fn coleco_guest_call_returns_to_suspended_context_and_produces_undo_state() {
+    let mut rom = vec![0; 8 * 1024];
+    rom[..2].copy_from_slice(&[0xAA, 0x55]);
+    let mut bios = vec![0; zeff_coleco_core::constants::BIOS_SIZE];
+    bios[..4].copy_from_slice(&[0x31, 0x00, 0x70, 0x00]);
+    bios[0x100..0x103].copy_from_slice(&[0x3E, 0x42, 0xC9]);
+    let mut emu = zeff_coleco_core::Emulator::new(&rom, &bios, 44_100).unwrap();
+    emu.step_instruction();
+    let mut backend = EmuBackend::from_coleco(
+        emu,
+        PathBuf::from("call.col"),
+        crate::emu_backend::ColecoBackend::rom_hash_for_bytes(&rom),
+    );
+    backend.debug_suspend();
+
+    let (instructions, undo_state) = backend
+        .execute_guest_call(&GuestCallRequest {
+            name: "GuestRoutine".to_owned(),
+            target: 0x0100,
+            storage_offset: None,
+            explicit_overlay: false,
+            exec_mode: ExecMode::Z80,
+            instruction_budget: 10,
+        })
+        .unwrap();
+
+    assert_eq!(instructions, 2);
+    assert!(!undo_state.is_empty());
+    assert!(backend.is_suspended());
+    let coleco = backend.coleco().unwrap();
+    assert_eq!(coleco.emu.cpu().regs().pc, 3);
+    assert_eq!(coleco.emu.cpu().regs().a, 0x42);
+}
+
+#[test]
 fn failed_pce_guest_call_restores_the_full_state() {
     let mut backend = build_pce_backend();
     backend.debug_suspend();
@@ -456,6 +497,8 @@ fn system_specs_map_to_shared_backend_loader() {
                 Some(rom),
                 BackendLoadConfig {
                     sample_rate: Some(44_100),
+                    coleco_bios_override: (spec.system == ActiveSystem::Coleco)
+                        .then_some(&TEST_COLECO_BIOS),
                     ..BackendLoadConfig::default()
                 },
             );
@@ -527,6 +570,7 @@ fn shared_backend_loader_records_default_firmware_manifests() {
             ActiveSystem::GameBoy => "firmware.gb",
             ActiveSystem::GameBoyAdvance => "firmware.gba",
             ActiveSystem::Nes => "firmware.nes",
+            ActiveSystem::Coleco => "firmware.col",
             ActiveSystem::Pce => "firmware.pce",
             ActiveSystem::WonderSwan => "firmware.ws",
             ActiveSystem::MasterSystem => "firmware.sms",
@@ -583,6 +627,34 @@ fn shared_gba_loader_uses_selected_external_bios() {
             firmware_id,
             ..
         }] if firmware_id == "nintendo.gba.bios"
+    ));
+}
+
+#[test]
+#[ignore = "requires ZEFF_FIRMWARE_TEST_DIR with a recognized ColecoVision BIOS"]
+fn shared_coleco_loader_uses_recognized_external_bios() {
+    let root = PathBuf::from(std::env::var("ZEFF_FIRMWARE_TEST_DIR").unwrap());
+    let path = PathBuf::from("firmware-test.col");
+    let loaded = load_backend_from_rom_source(
+        ActiveSystem::Coleco,
+        &path,
+        &path,
+        Some(test_rom_for_system(ActiveSystem::Coleco)),
+        BackendLoadConfig {
+            firmware_search_dirs: vec![root],
+            ..BackendLoadConfig::default()
+        },
+    )
+    .unwrap();
+
+    let EmuBackend::Coleco(backend) = &loaded.backend else {
+        panic!("expected ColecoVision backend");
+    };
+    assert_eq!(backend.emu.cpu().regs().pc, 0);
+    assert!(matches!(
+        loaded.backend.replay_metadata().firmware.as_slice(),
+        [zeff_emu_common::replay::ReplayFirmwareManifest::External { firmware_id, .. }]
+            if firmware_id == "coleco.vision.bios"
     ));
 }
 
@@ -793,6 +865,11 @@ fn test_rom_for_system(system: ActiveSystem) -> Vec<u8> {
         ActiveSystem::GameBoy => build_gb_test_rom(),
         ActiveSystem::GameBoyAdvance => build_gba_test_rom(),
         ActiveSystem::Nes => build_nes_test_rom(),
+        ActiveSystem::Coleco => {
+            let mut rom = vec![0; 8 * 1024];
+            rom[..2].copy_from_slice(&[0xAA, 0x55]);
+            rom
+        }
         ActiveSystem::Pce => build_pce_test_rom(),
         ActiveSystem::WonderSwan => build_ws_test_rom(),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
@@ -824,6 +901,13 @@ fn backend_feature_contract_covers_every_supported_core() {
         SaveRamKind::none(),
         0x800,
         0x2000,
+    );
+    assert_backend_feature_contract(
+        build_coleco_backend(),
+        ActiveSystem::Coleco,
+        SaveRamKind::none(),
+        zeff_coleco_core::constants::WORK_RAM_SIZE,
+        zeff_coleco_core::constants::VRAM_SIZE,
     );
     assert_backend_feature_contract(
         build_ws_backend(),
@@ -1157,6 +1241,12 @@ fn app_ui_snapshot_reports_core_features_for_every_supported_core() {
     );
     assert_app_snapshot_core_features(build_nes_backend(), SaveRamKind::none(), 0x800, 0x2000);
     assert_app_snapshot_core_features(
+        build_coleco_backend(),
+        SaveRamKind::none(),
+        zeff_coleco_core::constants::WORK_RAM_SIZE,
+        zeff_coleco_core::constants::VRAM_SIZE,
+    );
+    assert_app_snapshot_core_features(
         build_ws_backend(),
         SaveRamKind::none(),
         zeff_ws_core::hardware::constants::WS_INTERNAL_RAM_SIZE,
@@ -1203,6 +1293,7 @@ fn backend_state_decode_smoke_covers_every_supported_core() {
     assert_backend_state_decode_smoke(build_gb_backend());
     assert_backend_state_decode_smoke(build_gba_backend());
     assert_backend_state_decode_smoke(build_nes_backend());
+    assert_backend_state_decode_smoke(build_coleco_backend());
     assert_backend_state_decode_smoke(build_pce_backend());
     assert_backend_state_decode_smoke(build_ws_backend());
     assert_backend_state_decode_smoke(build_sms_backend());
@@ -1289,6 +1380,7 @@ fn every_audio_backend_exposes_a_stable_topology_contract() {
     assert_audio_topology_contract(build_gb_backend(), 4);
     assert_audio_topology_contract(build_gba_backend(), 6);
     assert_audio_topology_contract(build_nes_backend(), 5);
+    assert_audio_topology_contract(build_coleco_backend(), 4);
     assert_audio_topology_contract(build_pce_backend(), 6);
     assert_audio_topology_contract(build_sms_backend(), 4);
     assert_audio_topology_contract(build_ws_backend(), 5);
@@ -1391,6 +1483,23 @@ fn sega8_backend_exposes_semantic_audio_frame_for_recording() {
 }
 
 #[test]
+fn coleco_backend_exposes_semantic_audio_frame_for_recording() {
+    let mut backend = build_coleco_backend();
+    backend.step_frame();
+
+    let frame = backend
+        .audio_semantic_frame()
+        .expect("ColecoVision should expose PSG semantic audio data for recording");
+    assert_eq!(frame.voices.len(), 4);
+    assert_eq!(frame.voices[0].name, "Coleco PSG Tone 0");
+    assert_eq!(
+        frame.voices[3].class,
+        crate::audio_tooling::AudioVoiceClass::Noise
+    );
+    assert_eq!(frame.voices[3].pitch_hz, None);
+}
+
+#[test]
 fn gba_backend_exposes_semantic_audio_frame_for_recording() {
     let mut backend = build_gba_backend();
     backend.step_frame();
@@ -1467,6 +1576,71 @@ fn debuggable_adapter_exposes_uniform_cpu_peek_write() {
     )
     .expect("Sega 8-bit emulator should initialize");
     assert_debuggable_cpu_byte_access(&mut sega8, 0xC123, 0x9A);
+
+    let mut coleco_rom = [0; 8 * 1024];
+    coleco_rom[..2].copy_from_slice(&[0xAA, 0x55]);
+    let mut coleco = zeff_coleco_core::Emulator::new(
+        &coleco_rom,
+        &[0; zeff_coleco_core::constants::BIOS_SIZE],
+        44_100,
+    )
+    .expect("ColecoVision emulator should initialize");
+    assert_debuggable_cpu_byte_access(&mut coleco, 0x6123, 0xBC);
+}
+
+#[test]
+fn coleco_execution_controls_and_trace_route_through_backend_runtime() {
+    let mut backend = build_coleco_backend();
+    assert!(backend.coleco().is_some());
+    assert!(backend.supports_debugger());
+    assert!(backend.supports_execution_controls());
+    assert!(backend.supports_opcode_history());
+    assert!(backend.supports_guest_calls());
+
+    let mut actions = DebugUiActions::none();
+    actions.add_breakpoint = Some(0);
+    actions.trace_enabled = Some(true);
+    let mut config = BackendRuntimeConfig::new(&actions);
+    config.opcode_log_enabled = true;
+    backend.apply_runtime_config(config);
+    backend.step_frame();
+    assert!(backend.is_suspended());
+
+    let actions = DebugUiActions::none();
+    let mut config = BackendRuntimeConfig::new(&actions);
+    config.opcode_log_enabled = true;
+    config.debug_step = true;
+    backend.apply_runtime_config(config);
+
+    let EmuBackend::Coleco(coleco) = &backend else {
+        panic!("ColecoVision backend changed systems");
+    };
+    assert_eq!(coleco.emu.cpu().regs().pc, 1);
+    assert_eq!(coleco.emu.recent_opcodes(1), vec![(0, 0, 4)]);
+    assert_eq!(coleco.emu.instruction_trace().iter().count(), 1);
+    assert!(coleco.emu.is_suspended());
+
+    let mut config = BackendRuntimeConfig::new(&actions);
+    config.debug_continue = true;
+    backend.apply_runtime_config(config);
+    assert!(!backend.is_suspended());
+}
+
+#[test]
+fn coleco_backend_applies_bounded_raw_ram_cheats() {
+    let mut backend = build_coleco_backend();
+    let capabilities = backend.capabilities();
+    assert!(capabilities.supports_cheats);
+    assert!(capabilities.cheat_features.supports_ram_writes);
+    assert!(!capabilities.cheat_features.supports_rom_patches);
+    assert_eq!(capabilities.cheat_features.formats, ["Raw"]);
+
+    backend.apply_ram_cheats(&[CheatPatch::RamWrite {
+        address: 0x6123,
+        value: CheatValue::Constant(0xA5),
+    }]);
+
+    assert_eq!(backend.coleco().unwrap().emu.cpu_peek8(0x6123), 0xA5);
 }
 
 #[test]
@@ -1819,6 +1993,11 @@ fn sega8_backend_replays_save_state_deterministically() {
 }
 
 #[test]
+fn coleco_backend_replays_save_state_deterministically() {
+    assert_save_state_replay_is_deterministic(build_coleco_backend(), 1, 2);
+}
+
+#[test]
 fn gb_runtime_audio_output_settings_do_not_affect_encoded_state() {
     assert_runtime_audio_output_settings_do_not_affect_encoded_state(
         build_gb_backend(),
@@ -1855,6 +2034,14 @@ fn sega8_runtime_audio_output_settings_do_not_affect_encoded_state() {
     assert_runtime_audio_output_settings_do_not_affect_encoded_state(
         build_sms_backend(),
         build_sms_backend(),
+    );
+}
+
+#[test]
+fn coleco_runtime_audio_output_settings_do_not_affect_encoded_state() {
+    assert_runtime_audio_output_settings_do_not_affect_encoded_state(
+        build_coleco_backend(),
+        build_coleco_backend(),
     );
 }
 

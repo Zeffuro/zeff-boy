@@ -1,7 +1,7 @@
 use super::*;
 
 impl Cpu {
-    pub(super) fn execute_unprefixed<B: SegaCpuBus>(
+    pub(super) fn execute_unprefixed<B: Z80Bus>(
         &mut self,
         bus: &mut B,
         pc: u16,
@@ -267,7 +267,8 @@ impl Cpu {
             }
             0xD3 => {
                 let port = self.fetch_u8(bus);
-                bus.io_write(port, self.regs.a);
+                let t_states_before = self.immediate_io_t_states_before();
+                self.write_io(bus, port, self.regs.a, t_states_before);
                 CYCLES_OUT_N_A
             }
             0xD9 => {

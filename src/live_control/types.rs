@@ -25,6 +25,16 @@ pub(crate) enum LiveCommand {
         key: HostButton,
         frames: usize,
     },
+    ColecoKeypad {
+        player: u8,
+        key: u8,
+        pressed: bool,
+    },
+    TapColecoKeypad {
+        player: u8,
+        key: u8,
+        frames: usize,
+    },
     Zapper {
         enabled: bool,
         trigger: bool,
@@ -110,10 +120,16 @@ pub(crate) struct LiveRequest {
     pub(super) response_tx: Sender<LiveReply>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LiveInput {
+    Button(HostButton),
+    ColecoKeypad(u8),
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct PendingButtonRelease {
     pub(crate) player: u8,
-    pub(crate) key: HostButton,
+    pub(crate) input: LiveInput,
     pub(crate) frames_remaining: usize,
 }
 

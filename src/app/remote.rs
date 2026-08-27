@@ -3,8 +3,9 @@ use serde_json::{Value, json};
 use super::App;
 use crate::emu_backend::CoreCapabilities;
 use crate::emu_thread::EmuCommand;
+#[cfg(test)]
 use crate::input::HostButton;
-use crate::live_control::{LiveCommand, LiveReply, PendingButtonRelease};
+use crate::live_control::{LiveCommand, LiveInput, LiveReply, PendingButtonRelease};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, MemoryRegionView};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::system::CoreFamily;
@@ -28,9 +29,10 @@ impl App {
     }
 
     pub(super) fn advance_live_button_releases(&mut self, frames: usize) {
-        for (player, key) in advance_pending_button_releases(&mut self.live_button_releases, frames)
+        for (player, input) in
+            advance_pending_button_releases(&mut self.live_button_releases, frames)
         {
-            set_remote_player(&mut self.host_input, player, key, false);
+            set_remote_input(&mut self.host_input, player, input, false);
         }
     }
 
@@ -95,10 +97,11 @@ impl App {
                         "players 3 through 5 are only available for PC Engine",
                     );
                 }
-                set_remote_player(&mut self.host_input, player, key, pressed);
+                let input = LiveInput::Button(key);
+                set_remote_input(&mut self.host_input, player, input, pressed);
                 if !pressed {
                     self.live_button_releases
-                        .retain(|release| !same_pending_button(release, player, key));
+                        .retain(|release| !same_pending_input(release, player, input));
                 }
                 LiveReply::ok(self.live_input_json())
             }
@@ -112,12 +115,58 @@ impl App {
                         "players 3 through 5 are only available for PC Engine",
                     );
                 }
-                set_remote_player(&mut self.host_input, player, key, true);
+                let input = LiveInput::Button(key);
+                set_remote_input(&mut self.host_input, player, input, true);
                 self.live_button_releases
-                    .retain(|release| !same_pending_button(release, player, key));
+                    .retain(|release| !same_pending_input(release, player, input));
                 self.live_button_releases.push(PendingButtonRelease {
                     player,
-                    key,
+                    input,
+                    frames_remaining: frames,
+                });
+                LiveReply::ok(self.live_input_json())
+            }
+            LiveCommand::ColecoKeypad {
+                player,
+                key,
+                pressed,
+            } => {
+                if self.active_system != crate::emu_backend::ActiveSystem::Coleco {
+                    return LiveReply::error(
+                        "ColecoVision keypad input is only available for ColecoVision",
+                    );
+                }
+                if player > 2 {
+                    return LiveReply::error("ColecoVision supports players 1 and 2 only");
+                }
+                let input = LiveInput::ColecoKeypad(key);
+                set_remote_input(&mut self.host_input, player, input, pressed);
+                if !pressed {
+                    self.live_button_releases
+                        .retain(|release| !same_pending_input(release, player, input));
+                }
+                LiveReply::ok(self.live_input_json())
+            }
+            LiveCommand::TapColecoKeypad {
+                player,
+                key,
+                frames,
+            } => {
+                if self.active_system != crate::emu_backend::ActiveSystem::Coleco {
+                    return LiveReply::error(
+                        "ColecoVision keypad input is only available for ColecoVision",
+                    );
+                }
+                if player > 2 {
+                    return LiveReply::error("ColecoVision supports players 1 and 2 only");
+                }
+                let input = LiveInput::ColecoKeypad(key);
+                set_remote_input(&mut self.host_input, player, input, true);
+                self.live_button_releases
+                    .retain(|release| !same_pending_input(release, player, input));
+                self.live_button_releases.push(PendingButtonRelease {
+                    player,
+                    input,
                     frames_remaining: frames,
                 });
                 LiveReply::ok(self.live_input_json())
@@ -350,6 +399,10 @@ impl App {
             "buttons_p2": buttons_p2,
             "dpad_p2": dpad_p2,
             "players": players,
+            "coleco_keypad": (self.active_system == crate::emu_backend::ActiveSystem::Coleco).then(|| json!({
+                "player1": self.host_input.coleco_keypad_pressed(1),
+                "player2": self.host_input.coleco_keypad_pressed(2),
+            })),
             "zapper": self.remote_zapper.map(|zapper| json!({
                 "enabled": zapper.enabled,
                 "trigger": zapper.trigger,
@@ -408,6 +461,7 @@ fn core_family_label(family: CoreFamily) -> &'static str {
         CoreFamily::GameBoy => "game_boy",
         CoreFamily::GameBoyAdvance => "game_boy_advance",
         CoreFamily::Nes => "nes",
+        CoreFamily::ColecoVision => "coleco_vision",
         CoreFamily::PcEngine => "pc_engine",
         CoreFamily::WonderSwan => "wonder_swan",
         CoreFamily::Sega8 => "sega8",
@@ -471,27 +525,26 @@ fn save_ram_kind_json(kind: SaveRamKind) -> Value {
     }
 }
 
-fn set_remote_player(
+fn set_remote_input(
     host_input: &mut crate::app::input::HostInputState,
     player: u8,
-    key: HostButton,
+    input: LiveInput,
     pressed: bool,
 ) {
-    match player {
-        2 => host_input.set_remote_p2(key, pressed),
-        3 => host_input.set_remote_p3(key, pressed),
-        4 => host_input.set_remote_p4(key, pressed),
-        5 => host_input.set_remote_p5(key, pressed),
-        _ => host_input.set_remote(key, pressed),
+    match input {
+        LiveInput::Button(key) => match player {
+            2 => host_input.set_remote_p2(key, pressed),
+            3 => host_input.set_remote_p3(key, pressed),
+            4 => host_input.set_remote_p4(key, pressed),
+            5 => host_input.set_remote_p5(key, pressed),
+            _ => host_input.set_remote(key, pressed),
+        },
+        LiveInput::ColecoKeypad(key) => host_input.set_coleco_remote_keypad(player, key, pressed),
     }
 }
 
-fn same_pending_button(release: &PendingButtonRelease, player: u8, key: HostButton) -> bool {
-    release.player == player && same_joypad_key(release.key, key)
-}
-
-fn same_joypad_key(a: HostButton, b: HostButton) -> bool {
-    a == b
+fn same_pending_input(release: &PendingButtonRelease, player: u8, input: LiveInput) -> bool {
+    release.player == player && release.input == input
 }
 
 fn pending_release_frame_limit(releases: &[PendingButtonRelease], frames: usize) -> usize {
@@ -505,12 +558,12 @@ fn pending_release_frame_limit(releases: &[PendingButtonRelease], frames: usize)
 fn advance_pending_button_releases(
     releases: &mut Vec<PendingButtonRelease>,
     frames: usize,
-) -> Vec<(u8, HostButton)> {
+) -> Vec<(u8, LiveInput)> {
     let mut expired = Vec::new();
     for release in releases.iter_mut() {
         release.frames_remaining = release.frames_remaining.saturating_sub(frames);
         if release.frames_remaining == 0 {
-            expired.push((release.player, release.key));
+            expired.push((release.player, release.input));
         }
     }
     releases.retain(|release| release.frames_remaining > 0);
@@ -526,12 +579,12 @@ mod tests {
         let mut releases = vec![
             PendingButtonRelease {
                 player: 1,
-                key: HostButton::A,
+                input: LiveInput::Button(HostButton::A),
                 frames_remaining: 3,
             },
             PendingButtonRelease {
                 player: 2,
-                key: HostButton::B,
+                input: LiveInput::ColecoKeypad(11),
                 frames_remaining: 1,
             },
         ];
@@ -540,12 +593,12 @@ mod tests {
         assert_eq!(pending_release_frame_limit(&[], 4), 4);
         assert_eq!(
             advance_pending_button_releases(&mut releases, 1),
-            vec![(2, HostButton::B)]
+            vec![(2, LiveInput::ColecoKeypad(11))]
         );
         assert_eq!(releases[0].frames_remaining, 2);
         assert_eq!(
             advance_pending_button_releases(&mut releases, 2),
-            vec![(1, HostButton::A)]
+            vec![(1, LiveInput::Button(HostButton::A))]
         );
         assert!(releases.is_empty());
     }

@@ -51,6 +51,12 @@ impl InputCapabilities {
                 supports_lightgun: true,
                 supports_wonderswan_direct_buttons: false,
             },
+            ActiveSystem::Coleco => Self {
+                buttons: HostButton::STANDARD,
+                max_players: 2,
+                supports_lightgun: false,
+                supports_wonderswan_direct_buttons: false,
+            },
             ActiveSystem::MasterSystem | ActiveSystem::Sg1000 => Self {
                 buttons: HostButton::STANDARD,
                 max_players: 2,
@@ -104,6 +110,13 @@ impl CheatCapabilities {
                 supports_ram_writes: true,
                 supports_rom_patches: true,
                 formats: &["Game Genie", "GameShark", "Raw"],
+            },
+            ActiveSystem::Coleco => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: false,
+                supports_ram_writes: true,
+                supports_rom_patches: false,
+                formats: &["Raw"],
             },
             ActiveSystem::MasterSystem | ActiveSystem::GameGear => Self {
                 supports_user_cheats: true,

@@ -247,6 +247,7 @@ pub(crate) enum ConsoleGraphicsData {
     Gba(GbaGraphicsData),
     Nes(Box<NesGraphicsData>),
     Pce(Box<PceGraphicsData>),
+    Coleco(Box<Sega8GraphicsData>),
     Sega8(Box<Sega8GraphicsData>),
 }
 

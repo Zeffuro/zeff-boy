@@ -16,12 +16,47 @@ pub(crate) fn firmware_plan_for_active_system(
         ActiveSystem::GameBoy => ExistingCoreSystem::GameBoy,
         ActiveSystem::GameBoyAdvance => ExistingCoreSystem::GameBoyAdvance,
         ActiveSystem::Nes => ExistingCoreSystem::Nes,
+        ActiveSystem::Coleco => ExistingCoreSystem::ColecoVision,
         ActiveSystem::Pce => return Vec::new(),
         ActiveSystem::WonderSwan => ExistingCoreSystem::WonderSwan,
         ActiveSystem::MasterSystem => ExistingCoreSystem::MasterSystem,
         ActiveSystem::GameGear => ExistingCoreSystem::GameGear,
         ActiveSystem::Sg1000 => return Vec::new(),
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn resolve_coleco_bios_with_manifest(
+    inventory: Option<&zeff_firmware::FirmwareInventory>,
+    firmware_roots: &[std::path::PathBuf],
+    content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    const COLECO_BIOS_ID: &str = "coleco.vision.bios";
+
+    let plan = firmware_plan_for_active_system(ActiveSystem::Coleco);
+    if let Some(resolved) = resolve_from_inventory(COLECO_BIOS_ID, &plan, inventory) {
+        return Ok(resolved);
+    }
+    let (resolved, search_dirs, candidate_summaries) =
+        find_external_firmware(COLECO_BIOS_ID, &plan, firmware_roots, content_path)?;
+    if let Some(resolved) = resolved {
+        return Ok(resolved);
+    }
+
+    anyhow::bail!(
+        "ColecoVision requires the recognized 8192-byte retail BIOS ({COLECO_BIOS_ID}). Searched: {}. Expected coleco.rom or colecovision.rom with MD5 2c66f5911e5b42b8ebe113403548eee7. {}",
+        searched_firmware_dirs(&search_dirs),
+        candidate_summaries.join(" ")
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn resolve_coleco_bios_with_manifest(
+    _inventory: Option<&zeff_firmware::FirmwareInventory>,
+    _firmware_roots: &[std::path::PathBuf],
+    _content_path: Option<&std::path::Path>,
+) -> anyhow::Result<ResolvedFirmwareBytes> {
+    anyhow::bail!("ColecoVision is currently available only in native builds")
 }
 
 pub(crate) fn default_firmware_manifests_for_active_system(

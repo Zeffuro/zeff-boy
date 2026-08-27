@@ -18,6 +18,7 @@ use super::output::{
 use super::trace_filters::{ime_short, mode_short, should_trace_op};
 use super::types::{HeadlessBusTraceAccess, HeadlessOptions};
 use audio::AudioStats;
+use coleco::run_coleco_headless;
 use debug_state::*;
 use gb::run_gb_headless;
 use gba::run_gba_headless;
@@ -43,6 +44,7 @@ use trace::*;
 use ws::run_ws_headless;
 
 mod audio;
+mod coleco;
 mod debug_state;
 mod gb;
 mod gba;
@@ -107,6 +109,9 @@ pub(crate) fn run_headless(
         ActiveSystem::GameBoy => run_gb_headless(&rom_path, &rom_data, mode_preference, opts),
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
         ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts),
+        ActiveSystem::Coleco => {
+            run_coleco_headless(&rom_path, &rom_data, &firmware_search_dirs, opts)
+        }
         ActiveSystem::Pce => unreachable!("PC Engine runs dispatch before raw ROM loading"),
         ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {

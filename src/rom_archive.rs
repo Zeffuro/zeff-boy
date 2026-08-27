@@ -54,6 +54,7 @@ fn system_label(system: ActiveSystem) -> &'static str {
         ActiveSystem::GameBoy => "Game Boy",
         ActiveSystem::GameBoyAdvance => "Game Boy Advance",
         ActiveSystem::Nes => "NES",
+        ActiveSystem::Coleco => "ColecoVision",
         ActiveSystem::Pce => "PC Engine",
         ActiveSystem::WonderSwan => "WonderSwan",
         ActiveSystem::MasterSystem => "Master System",

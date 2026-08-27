@@ -29,6 +29,7 @@ fn synthetic_workloads_stay_allocation_free() {
         "GB synthetic",
         "GBA synthetic",
         "NES synthetic",
+        "ColecoVision synthetic",
         "Sega 8-bit synthetic",
         "WonderSwan synthetic",
     ] {

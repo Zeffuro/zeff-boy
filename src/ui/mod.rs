@@ -1,4 +1,5 @@
 mod backend_snapshot;
+mod coleco_snapshot;
 mod debug_actions;
 mod frame_data;
 mod gb_snapshot;
@@ -11,6 +12,7 @@ mod snapshot_common;
 mod ws_snapshot;
 
 pub(crate) use backend_snapshot::collect_backend_snapshot;
+pub(crate) use coleco_snapshot::collect_coleco_snapshot;
 pub(crate) use debug_actions::apply_debug_actions;
 pub(crate) use frame_data::{InstructionTraceBatch, UiFrameData};
 pub(crate) use gb_snapshot::collect_emu_snapshot;

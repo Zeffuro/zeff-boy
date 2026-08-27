@@ -1,9 +1,10 @@
 use super::{on_off, sega8_system_label};
 use crate::debug::{CpuDebugSnapshot, DebugSection};
 use zeff_sega8_core::emulator::Emulator;
-use zeff_sega8_core::hardware::constants::{
-    SMS_VISIBLE_SCANLINES, Z80_FLAG_BIT_3, Z80_FLAG_BIT_5, Z80_FLAG_CARRY, Z80_FLAG_HALF_CARRY,
-    Z80_FLAG_PARITY_OVERFLOW, Z80_FLAG_SIGN, Z80_FLAG_SUBTRACT, Z80_FLAG_ZERO,
+use zeff_sega8_core::hardware::constants::SMS_VISIBLE_SCANLINES;
+use zeff_sega8_core::hardware::cpu::{
+    Z80_FLAG_BIT_3, Z80_FLAG_BIT_5, Z80_FLAG_CARRY, Z80_FLAG_HALF_CARRY, Z80_FLAG_PARITY_OVERFLOW,
+    Z80_FLAG_SIGN, Z80_FLAG_SUBTRACT, Z80_FLAG_ZERO,
 };
 
 pub(super) fn sega8_cpu_snapshot(emu: &Emulator) -> CpuDebugSnapshot {

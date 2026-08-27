@@ -12,10 +12,10 @@ anyhow = "1.0.104"
 crc32fast = "1.5.0"
 sha2 = "0.11.0"
 zeff-emu-common = { path = "../zeff-emu-common" }
+zeff-z80 = { path = "../zeff-z80" }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
-zeff-test-support = { path = "../zeff-test-support" }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [[bench]]

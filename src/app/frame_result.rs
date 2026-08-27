@@ -271,6 +271,14 @@ impl App {
                             self.recycled.nes_nametable = Some(nes.nametable_data);
                         }
                     }
+                    Some(ConsoleGraphicsData::Coleco(coleco)) => {
+                        if !coleco.vram.is_empty() {
+                            self.recycled.vram = Some(coleco.vram);
+                        }
+                        if !coleco.oam.is_empty() {
+                            self.recycled.oam = Some(coleco.oam);
+                        }
+                    }
                     Some(ConsoleGraphicsData::Sega8(sega8)) => {
                         if !sega8.vram.is_empty() {
                             self.recycled.vram = Some(sega8.vram);
@@ -366,6 +374,7 @@ impl App {
             Some(ConsoleGraphicsData::Gba(_))
             | Some(ConsoleGraphicsData::Nes(_))
             | Some(ConsoleGraphicsData::Pce(_))
+            | Some(ConsoleGraphicsData::Coleco(_))
             | Some(ConsoleGraphicsData::Sega8(_)) => {
                 if is_tab_open(&self.debug_dock, DebugTab::TileViewer) {
                     self.debug_windows.tiles.invalidate_cache();

@@ -201,6 +201,8 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_nes_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 } else if let Some(ConsoleGraphicsData::Pce(data)) = self.data.graphics_data {
                     draw_pce_tile_viewer_content(ui, data, &mut self.window_state.tiles);
+                } else if let Some(ConsoleGraphicsData::Coleco(data)) = self.data.graphics_data {
+                    draw_sega8_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 } else if let Some(ConsoleGraphicsData::Sega8(data)) = self.data.graphics_data {
                     draw_sega8_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 }
@@ -220,6 +222,14 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_nes_tilemap_viewer_content(ui, data, &mut self.window_state.tilemap);
                 } else if let Some(ConsoleGraphicsData::Pce(data)) = self.data.graphics_data {
                     draw_pce_tilemap_viewer_content(
+                        ui,
+                        data,
+                        &mut self.window_state.tilemap,
+                        &mut self.window_state.tiles,
+                        &mut self.actions,
+                    );
+                } else if let Some(ConsoleGraphicsData::Coleco(data)) = self.data.graphics_data {
+                    draw_tms9918_tilemap_viewer_content(
                         ui,
                         data,
                         &mut self.window_state.tilemap,

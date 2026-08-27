@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 
 use zeff_emu_common::cpu::{CpuCore, CpuStep};
-use zeff_sega8_core::hardware::cpu::{Cpu, FetchedInstruction, SegaCpuBus};
+use zeff_sega8_core::hardware::cpu::{Cpu, FetchedInstruction, SEGA8_RESET_STATE, Z80Bus};
 
 struct CpuBusHarness<C, B> {
     cpu: C,
@@ -42,7 +42,7 @@ impl FlatRam {
     }
 }
 
-impl SegaCpuBus for FlatRam {
+impl Z80Bus for FlatRam {
     fn cpu_read(&self, addr: u16) -> u8 {
         self.bytes[usize::from(addr)]
     }
@@ -72,7 +72,8 @@ impl SegaCpuBus for FlatRam {
 
 #[test]
 fn cpu_core_runs_with_flat_ram() {
-    let mut machine = CpuBusHarness::new(Cpu::new(), FlatRam::new());
+    let mut machine = CpuBusHarness::new(Cpu::new_with_reset(SEGA8_RESET_STATE), FlatRam::new());
+    assert_eq!(machine.cpu.regs().sp, 0xDFF0);
     machine.bus.bytes[..5].copy_from_slice(&[0x3E, 0x42, 0x32, 0x00, 0x80]);
 
     let first: Option<FetchedInstruction> = machine.step();

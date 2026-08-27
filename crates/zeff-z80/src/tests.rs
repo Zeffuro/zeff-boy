@@ -1,45 +1,144 @@
 use super::flags::szp_flags;
 use super::*;
-use crate::hardware::cartridge::{Cartridge, SystemHint};
-use crate::hardware::constants::{
-    IO_PORT_CONTROLLER_1, IO_PORT_GG_SERIAL_CONTROL, IO_PORT_GG_SERIAL_RX, IO_PORT_PSG,
-    IO_PORT_VDP_CONTROL, VDP_CONTROL_REGISTER_WRITE_VALUE, VDP_REG1_FRAME_IRQ_ENABLE,
-    VDP_REGISTER_MODE_CONTROL_2, VDP_STATUS_VBLANK, Z80_INTERRUPT_VECTOR_NMI,
-};
-use crate::hardware::input::ControllerPort;
-use crate::hardware::serial::GameGearSerial;
+
+const TEST_STATUS_PORT: u8 = 0x05;
+const TEST_DATA_PORT: u8 = 0x04;
+const TEST_OUTPUT_PORT: u8 = 0x7F;
+const TEST_STREAM_DATA_PORT: u8 = 0xBE;
+const TEST_STREAM_CONTROL_PORT: u8 = 0xBF;
+const TEST_INPUT_PORT: u8 = 0xDC;
+
+struct Bus {
+    memory: Box<[u8]>,
+    ports: [u8; 0x100],
+    irq_pending: bool,
+    nmi_pending: bool,
+    input_value: u8,
+    serial_control: u8,
+    serial_rx: u8,
+    last_port_write: Option<u8>,
+    last_io_write_cycle: Option<IoWriteCycle>,
+    stream: [u8; 0x4000],
+    stream_control_latch: Option<u8>,
+    stream_address: u16,
+}
+
+impl Bus {
+    fn new(program: &[u8]) -> Self {
+        let mut memory = vec![0; 0x1_0000].into_boxed_slice();
+        memory[..program.len()].copy_from_slice(program);
+        Self {
+            memory,
+            ports: [0xFF; 0x100],
+            irq_pending: false,
+            nmi_pending: false,
+            input_value: 0xFF,
+            serial_control: 0,
+            serial_rx: 0,
+            last_port_write: None,
+            last_io_write_cycle: None,
+            stream: [0; 0x4000],
+            stream_control_latch: None,
+            stream_address: 0,
+        }
+    }
+
+    fn set_input_value(&mut self, value: u8) {
+        self.input_value = value;
+    }
+
+    fn last_port_write(&self) -> Option<u8> {
+        self.last_port_write
+    }
+
+    fn stream_bytes(&self) -> &[u8; 0x4000] {
+        &self.stream
+    }
+}
+
+impl Z80Bus for Bus {
+    fn cpu_read(&self, addr: u16) -> u8 {
+        self.memory[usize::from(addr)]
+    }
+
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        self.memory[usize::from(addr)] = value;
+    }
+
+    fn io_read(&mut self, port: u8) -> u8 {
+        match port {
+            TEST_STATUS_PORT => self.serial_control,
+            TEST_DATA_PORT => self.serial_rx,
+            TEST_INPUT_PORT => self.input_value,
+            _ => self.ports[usize::from(port)],
+        }
+    }
+
+    fn io_write(&mut self, port: u8, value: u8) {
+        match port {
+            TEST_OUTPUT_PORT => self.last_port_write = Some(value),
+            TEST_STREAM_DATA_PORT => {
+                self.stream[usize::from(self.stream_address & 0x3FFF)] = value;
+                self.stream_address = self.stream_address.wrapping_add(1) & 0x3FFF;
+            }
+            TEST_STREAM_CONTROL_PORT => {
+                if let Some(low) = self.stream_control_latch.take() {
+                    self.stream_address = u16::from_le_bytes([low, value]) & 0x3FFF;
+                } else {
+                    self.stream_control_latch = Some(value);
+                }
+            }
+            _ => self.ports[usize::from(port)] = value,
+        }
+    }
+
+    fn io_write_cycle(&mut self, cycle: IoWriteCycle) {
+        self.last_io_write_cycle = Some(cycle);
+        self.io_write(cycle.port, cycle.value);
+    }
+
+    fn maskable_interrupt_pending(&self) -> bool {
+        self.irq_pending
+    }
+
+    fn non_maskable_interrupt_pending(&self) -> bool {
+        self.nmi_pending
+    }
+
+    fn acknowledge_non_maskable_interrupt(&mut self) -> bool {
+        std::mem::take(&mut self.nmi_pending)
+    }
+}
 
 fn cpu_and_bus(program: &[u8]) -> (Cpu, Bus) {
-    let cart = Cartridge::load_with_hint(program, SystemHint::MasterSystem)
-        .expect("test cartridge should load");
-    (Cpu::new(), Bus::new(cart))
+    (Cpu::new(), Bus::new(program))
 }
 
-fn game_gear_cpu_and_bus(program: &[u8]) -> (Cpu, Bus) {
-    let cart = Cartridge::load_with_hint(program, SystemHint::GameGear)
-        .expect("test cartridge should load");
-    (Cpu::new(), Bus::new(cart))
+#[test]
+fn reset_uses_the_configured_host_state() {
+    let reset_state = ResetState::new(0x1234, 0xABCD);
+    let mut cpu = Cpu::new_with_reset(reset_state);
+    cpu.regs.pc = 0;
+    cpu.regs.sp = 0;
+
+    cpu.reset();
+
+    assert_eq!(cpu.regs().pc, reset_state.pc);
+    assert_eq!(cpu.regs().sp, reset_state.sp);
 }
 
-fn enable_vdp_frame_interrupt(bus: &mut Bus) {
-    bus.io_write(IO_PORT_VDP_CONTROL, VDP_REG1_FRAME_IRQ_ENABLE);
-    bus.io_write(
-        IO_PORT_VDP_CONTROL,
-        VDP_CONTROL_REGISTER_WRITE_VALUE | VDP_REGISTER_MODE_CONTROL_2 as u8,
-    );
-    bus.vdp_mut().set_status_bits(VDP_STATUS_VBLANK);
+fn nmi_cpu_and_bus(program: &[u8]) -> (Cpu, Bus) {
+    cpu_and_bus(program)
 }
 
-fn deliver_game_gear_serial_byte(bus: &mut Bus, value: u8, nmi_enabled: bool) {
-    let clock_hz = bus.video_standard().clock_hz_approx();
-    let local_control = if nmi_enabled { 0x38 } else { 0x30 };
-    let mut peer = GameGearSerial::new();
-    peer.write_control(0x30);
-    peer.write_tx_data(value);
-    peer.step_cycles(20_000, clock_hz);
-    bus.game_gear_serial_mut().write_control(local_control);
-    bus.game_gear_serial_mut()
-        .exchange_with_peer(&mut peer, clock_hz);
+fn enable_maskable_interrupt(bus: &mut Bus) {
+    bus.irq_pending = true;
+}
+
+fn signal_nmi_with_data(bus: &mut Bus, value: u8, nmi_enabled: bool) {
+    bus.serial_control = 0x02;
+    bus.serial_rx = value;
+    bus.nmi_pending = nmi_enabled;
 }
 
 #[test]
@@ -148,7 +247,7 @@ fn enabled_vblank_interrupt_pushes_pc_and_vectors_to_0038() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     cpu.step(&mut bus);
-    enable_vdp_frame_interrupt(&mut bus);
+    enable_maskable_interrupt(&mut bus);
 
     let interrupt = cpu.step(&mut bus).expect("interrupt should be serviced");
 
@@ -163,8 +262,8 @@ fn enabled_vblank_interrupt_pushes_pc_and_vectors_to_0038() {
 }
 
 #[test]
-fn game_gear_serial_rx_nmi_pushes_pc_and_vectors_to_0066() {
-    let (mut cpu, mut bus) = game_gear_cpu_and_bus(&[
+fn bus_nmi_pushes_pc_and_vectors_to_0066() {
+    let (mut cpu, mut bus) = nmi_cpu_and_bus(&[
         0x31, 0x00, 0xD0, // LD SP,$D000
         0xF3, // DI
         0x00, // should be interrupted before executing
@@ -173,7 +272,7 @@ fn game_gear_serial_rx_nmi_pushes_pc_and_vectors_to_0066() {
     cpu.step(&mut bus);
     cpu.step(&mut bus);
     assert!(!cpu.interrupts_enabled());
-    deliver_game_gear_serial_byte(&mut bus, 0x5A, true);
+    signal_nmi_with_data(&mut bus, 0x5A, true);
     assert!(bus.non_maskable_interrupt_pending());
 
     let interrupt = cpu.step(&mut bus).expect("NMI should be serviced");
@@ -186,23 +285,23 @@ fn game_gear_serial_rx_nmi_pushes_pc_and_vectors_to_0066() {
     assert_eq!(bus.cpu_read(0xCFFE), 0x04);
     assert_eq!(bus.cpu_read(0xCFFF), 0x00);
     assert!(!bus.non_maskable_interrupt_pending());
-    assert_ne!(bus.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
-    assert_eq!(bus.io_read(IO_PORT_GG_SERIAL_RX), 0x5A);
+    assert_ne!(bus.io_read(TEST_STATUS_PORT) & 0x02, 0);
+    assert_eq!(bus.io_read(TEST_DATA_PORT), 0x5A);
 }
 
 #[test]
-fn game_gear_serial_rx_does_not_nmi_when_control_bit_is_clear() {
-    let (mut cpu, mut bus) = game_gear_cpu_and_bus(&[0x00]);
+fn bus_nmi_source_stays_inactive_when_disabled() {
+    let (mut cpu, mut bus) = nmi_cpu_and_bus(&[0x00]);
 
-    deliver_game_gear_serial_byte(&mut bus, 0x5A, false);
+    signal_nmi_with_data(&mut bus, 0x5A, false);
     assert!(!bus.non_maskable_interrupt_pending());
 
     let fetched = cpu.step(&mut bus).expect("NOP should execute");
 
     assert_eq!(fetched.opcode, 0x00);
     assert_eq!(cpu.regs().pc, 0x0001);
-    assert_ne!(bus.io_read(IO_PORT_GG_SERIAL_CONTROL) & 0x02, 0);
-    assert_eq!(bus.io_read(IO_PORT_GG_SERIAL_RX), 0x5A);
+    assert_ne!(bus.io_read(TEST_STATUS_PORT) & 0x02, 0);
+    assert_eq!(bus.io_read(TEST_DATA_PORT), 0x5A);
 }
 
 #[test]
@@ -224,7 +323,7 @@ fn halted_cpu_idles_until_vblank_interrupt_wakes_it() {
     assert_eq!(idle.opcode, 0x76);
     assert_eq!(cpu.state(), CpuState::Halted);
 
-    enable_vdp_frame_interrupt(&mut bus);
+    enable_maskable_interrupt(&mut bus);
     let interrupt = cpu.step(&mut bus).expect("interrupt should wake HALT");
 
     assert_eq!(interrupt.opcode, Z80_INTERRUPT_ACK_OPCODE);
@@ -532,12 +631,12 @@ fn ldir_copies_rom_bytes_to_ram_until_bc_zero() {
 }
 
 #[test]
-fn otir_writes_hl_bytes_to_vdp_data_port() {
+fn otir_writes_hl_bytes_to_a_stream_port() {
     let (mut cpu, mut bus) = cpu_and_bus(&[
         0x3E, 0x00, // LD A,$00
         0xD3, 0xBF, // OUT ($BF),A
         0x3E, 0x40, // LD A,$40
-        0xD3, 0xBF, // OUT ($BF),A, VDP write address $0000
+        0xD3, 0xBF, // OUT ($BF),A, stream write address $0000
         0x21, 0x12, 0x00, // LD HL,$0012
         0x06, 0x03, // LD B,$03
         0x0E, 0xBE, // LD C,$BE
@@ -550,7 +649,7 @@ fn otir_writes_hl_bytes_to_vdp_data_port() {
         cpu.step(&mut bus);
     }
 
-    assert_eq!(&bus.vdp().vram()[0..3], &[0x11, 0x22, 0x33]);
+    assert_eq!(&bus.stream_bytes()[0..3], &[0x11, 0x22, 0x33]);
     assert_eq!(cpu.regs().b, 0);
     assert_eq!(cpu.regs().hl(), 0x0015);
 }
@@ -564,13 +663,12 @@ fn inir_reads_port_bytes_into_hl_memory() {
         0x06,
         0x02, // LD B,$02
         0x0E,
-        IO_PORT_CONTROLLER_1, // LD C,$DC
+        TEST_INPUT_PORT, // LD C,$DC
         0xED,
         0xB2, // INIR
         0x76, // HALT
     ]);
-    bus.input_mut()
-        .set_controller_raw(ControllerPort::One, 0xF0);
+    bus.set_input_value(0xF0);
 
     while !cpu.is_halted() {
         cpu.step(&mut bus);
@@ -622,18 +720,26 @@ fn immediate_io_reads_and_writes_bus_ports() {
         0x3E,
         0x9F, // LD A,$9F
         0xD3,
-        IO_PORT_PSG, // OUT ($7F),A
+        TEST_OUTPUT_PORT, // OUT ($7F),A
         0xDB,
-        IO_PORT_CONTROLLER_1, // IN A,($DC)
+        TEST_INPUT_PORT, // IN A,($DC)
     ]);
-    bus.input_mut()
-        .set_controller_raw(ControllerPort::One, 0xF7);
+    bus.set_input_value(0xF7);
 
     cpu.step(&mut bus);
     cpu.step(&mut bus);
+    assert_eq!(
+        bus.last_io_write_cycle,
+        Some(IoWriteCycle {
+            port: TEST_OUTPUT_PORT,
+            value: 0x9F,
+            t_states_before: 7,
+            t_states: 4,
+        })
+    );
     cpu.step(&mut bus);
 
-    assert_eq!(bus.apu().last_write(), Some(0x9F));
+    assert_eq!(bus.last_port_write(), Some(0x9F));
     assert_eq!(cpu.regs().a, 0xF7);
 }
 
@@ -641,26 +747,101 @@ fn immediate_io_reads_and_writes_bus_ports() {
 fn ed_io_uses_c_register_port() {
     let (mut cpu, mut bus) = cpu_and_bus(&[
         0x0E,
-        IO_PORT_PSG, // LD C,$7F
+        TEST_OUTPUT_PORT, // LD C,$7F
         0x06,
         0x9F, // LD B,$9F
         0xED,
         0x41, // OUT (C),B
         0x0E,
-        IO_PORT_CONTROLLER_1, // LD C,$DC
+        TEST_INPUT_PORT, // LD C,$DC
         0xED,
         0x48, // IN C,(C)
     ]);
-    bus.input_mut()
-        .set_controller_raw(ControllerPort::One, 0xFE);
+    bus.set_input_value(0xFE);
 
-    for _ in 0..5 {
-        cpu.step(&mut bus);
-    }
+    cpu.step(&mut bus);
+    cpu.step(&mut bus);
+    cpu.step(&mut bus);
+    assert_eq!(
+        bus.last_io_write_cycle,
+        Some(IoWriteCycle {
+            port: TEST_OUTPUT_PORT,
+            value: 0x9F,
+            t_states_before: 8,
+            t_states: 4,
+        })
+    );
+    cpu.step(&mut bus);
+    cpu.step(&mut bus);
 
-    assert_eq!(bus.apu().last_write(), Some(0x9F));
+    assert_eq!(bus.last_port_write(), Some(0x9F));
     assert_eq!(cpu.regs().c, 0xFE);
     assert_eq!(cpu.regs().f, szp_flags(0xFE));
+}
+
+#[test]
+fn block_outputs_report_their_io_machine_cycle() {
+    let (mut outi_cpu, mut outi_bus) = cpu_and_bus(&[0xED, 0xA3, 0x76, 0x9F]);
+    outi_cpu.regs.set_hl(3);
+    outi_cpu.regs.b = 1;
+    outi_cpu.regs.c = TEST_OUTPUT_PORT;
+
+    let outi = outi_cpu.step(&mut outi_bus).unwrap();
+    assert_eq!(outi.cycles, 16);
+    assert_eq!(
+        outi_bus.last_io_write_cycle,
+        Some(IoWriteCycle {
+            port: TEST_OUTPUT_PORT,
+            value: 0x9F,
+            t_states_before: 12,
+            t_states: 4,
+        })
+    );
+
+    let (mut otir_cpu, mut otir_bus) = cpu_and_bus(&[0xED, 0xB3, 0x76, 0x9F, 0x8F]);
+    otir_cpu.regs.set_hl(3);
+    otir_cpu.regs.b = 2;
+    otir_cpu.regs.c = TEST_OUTPUT_PORT;
+
+    assert_eq!(otir_cpu.step(&mut otir_bus).unwrap().cycles, 21);
+    assert_eq!(
+        otir_bus.last_io_write_cycle,
+        Some(IoWriteCycle {
+            port: TEST_OUTPUT_PORT,
+            value: 0x9F,
+            t_states_before: 12,
+            t_states: 4,
+        })
+    );
+    assert_eq!(otir_cpu.step(&mut otir_bus).unwrap().cycles, 16);
+    assert_eq!(
+        otir_bus.last_io_write_cycle,
+        Some(IoWriteCycle {
+            port: TEST_OUTPUT_PORT,
+            value: 0x8F,
+            t_states_before: 12,
+            t_states: 4,
+        })
+    );
+}
+
+#[test]
+fn repeated_index_prefixes_remain_before_the_io_machine_cycle() {
+    let (mut cpu, mut bus) = cpu_and_bus(&[0xDD, 0xFD, 0xD3, TEST_OUTPUT_PORT]);
+    cpu.regs.a = 0x9F;
+
+    let instruction = cpu.step(&mut bus).unwrap();
+
+    assert_eq!(instruction.cycles, 19);
+    assert_eq!(
+        bus.last_io_write_cycle,
+        Some(IoWriteCycle {
+            port: TEST_OUTPUT_PORT,
+            value: 0x9F,
+            t_states_before: 15,
+            t_states: 4,
+        })
+    );
 }
 
 #[test]
@@ -1036,7 +1217,7 @@ fn ignored_and_repeated_index_prefixes_execute_next_supported_opcode() {
     let (mut cpu, mut bus) = cpu_and_bus(&[
         0xFD,
         0xDB,
-        IO_PORT_CONTROLLER_1, // IN A,($DC)
+        TEST_INPUT_PORT, // IN A,($DC)
         0xFD,
         0xDD,
         0x21,
@@ -1045,8 +1226,7 @@ fn ignored_and_repeated_index_prefixes_execute_next_supported_opcode() {
         0xDD,
         0xDF, // RST $18
     ]);
-    bus.input_mut()
-        .set_controller_raw(ControllerPort::One, 0xA5);
+    bus.set_input_value(0xA5);
 
     cpu.step(&mut bus);
     assert_eq!(cpu.regs().a, 0xA5);
@@ -1102,10 +1282,10 @@ fn refresh_register_counts_opcode_fetches_not_operands() {
 #[test]
 fn prefixed_opcode_fetch_also_increments_refresh_register() {
     let (mut cpu, mut bus) = cpu_and_bus(&[0xED, 0x71]);
-    cpu.regs.c = IO_PORT_PSG;
+    cpu.regs.c = TEST_OUTPUT_PORT;
 
     cpu.step(&mut bus);
 
     assert_eq!(cpu.regs().r, 2);
-    assert_eq!(bus.apu().last_write(), Some(0));
+    assert_eq!(bus.last_port_write(), Some(0));
 }

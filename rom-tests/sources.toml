@@ -1,6 +1,30 @@
 catalog_version = 1
 
 [[sources]]
+id = "nanochess-240p-test-suite-colecovision-d5c16c94"
+kind = "zip"
+url = "https://github.com/nanochess/240pTestSuite_colecovision/archive/d5c16c94d1dfc7145351a2d1ef5d31c5acb7019a.zip"
+sha256 = "d02ee9ff2bdbe236737476b147667ff2e4b1852aefcc5c40ada32357154658dc"
+archive_prefix = "240pTestSuite_colecovision-d5c16c94d1dfc7145351a2d1ef5d31c5acb7019a"
+contains_built_roms = true
+license = "GPL-2.0-or-later"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned nanochess 240p Test Suite source archive. It includes the GPL-2.0-or-later ColecoVision suitecv.rom diagnostic ROM; the ColecoVision BIOS remains user-supplied firmware."
+
+[[sources]]
+id = "nanochess-cvbasic-controller-8e5a3a19"
+kind = "zip"
+url = "https://github.com/nanochess/CVBasic/archive/8e5a3a1905362b90f99e7542d6e0e02cf6f7880f.zip"
+sha256 = "2a4fc56b4e0bb3c3be0aa593ffd5ec22a6c1a2392396600ebaf17f2a7472cedf"
+archive_prefix = "CVBasic-8e5a3a1905362b90f99e7542d6e0e02cf6f7880f"
+contains_built_roms = false
+license = "BSD-2-Clause"
+license_confidence = "verified"
+redistributable = false
+notes = "Pinned CVBasic source archive. Build the controller diagnostic with scripts/build-coleco-cvbasic-controller.ps1, which also pins Gasm80 3f736b0a9d20f4773e8acbbb6b83517a378d2443."
+
+[[sources]]
 id = "c-sp-game-boy-test-roms-v7.0"
 kind = "zip"
 url = "https://github.com/c-sp/game-boy-test-roms/releases/download/v7.0/game-boy-test-roms-v7.0.zip"

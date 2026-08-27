@@ -191,6 +191,40 @@ fn parses_pce_save_state_out_headless_option() {
 }
 
 #[test]
+fn parses_coleco_state_and_full_keypad_headless_options() {
+    let args = parse_args_from([
+        "--headless",
+        "--coleco-save-state-out",
+        "target/checkpoint.colstate",
+        "--press",
+        "star@10,pound@11,0@12,9@13",
+        "game.col",
+    ])
+    .unwrap();
+    let headless = args.headless.unwrap();
+
+    assert_eq!(
+        headless.coleco_save_state_path,
+        Some(std::path::PathBuf::from("target/checkpoint.colstate"))
+    );
+    assert_eq!(
+        headless
+            .input_events
+            .iter()
+            .map(|event| event.coleco_keypad)
+            .collect::<Vec<_>>(),
+        [Some(10), Some(11), Some(0), Some(9)]
+    );
+}
+
+#[test]
+fn parses_coleco_audio_assertion() {
+    let args = parse_args_from(["--headless", "--expect-coleco-audio", "game.col"]).unwrap();
+
+    assert!(args.headless.unwrap().expect_coleco_audio);
+}
+
+#[test]
 fn parses_pce_multitap_headless_inputs() {
     let args = parse_args_from([
         "--headless",

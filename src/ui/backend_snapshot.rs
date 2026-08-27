@@ -2,8 +2,8 @@ use crate::emu_backend::EmuBackend;
 use crate::emu_thread::{ReusableBuffers, SnapshotRequest};
 
 use super::{
-    UiFrameData, collect_emu_snapshot, collect_gba_snapshot, collect_nes_snapshot,
-    collect_pce_snapshot, collect_sega8_snapshot, collect_ws_snapshot,
+    UiFrameData, collect_coleco_snapshot, collect_emu_snapshot, collect_gba_snapshot,
+    collect_nes_snapshot, collect_pce_snapshot, collect_sega8_snapshot, collect_ws_snapshot,
 };
 
 pub(crate) fn collect_backend_snapshot(
@@ -26,6 +26,7 @@ pub(crate) fn collect_backend_snapshot(
             buffers.nes_nametable,
             buffers.memory_page,
         ),
+        EmuBackend::Coleco(coleco) => collect_coleco_snapshot(&coleco.emu, snapshot, buffers),
         EmuBackend::Pce(pce) => collect_pce_snapshot(pce, snapshot, buffers.memory_page),
         EmuBackend::Gba(gba) => collect_gba_snapshot(&gba.emu, snapshot, buffers),
         EmuBackend::Ws(ws) => collect_ws_snapshot(&ws.emu, snapshot, buffers),
@@ -35,6 +36,7 @@ pub(crate) fn collect_backend_snapshot(
         let store = match backend {
             EmuBackend::Gb(gb) => Some(gb.emu.instruction_trace()),
             EmuBackend::Nes(nes) => Some(nes.emu.instruction_trace()),
+            EmuBackend::Coleco(coleco) => Some(coleco.emu.instruction_trace()),
             EmuBackend::Pce(pce) => Some(pce.instruction_trace()),
             EmuBackend::Gba(gba) => Some(gba.emu.instruction_trace()),
             EmuBackend::Ws(ws) => Some(ws.emu.instruction_trace()),

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod coleco;
 mod gb;
 mod identity;
 pub(crate) mod import;

@@ -47,6 +47,30 @@ impl App {
             .copied()
             .find(|&action| kb.get(action) == key)
     }
+
+    pub(super) fn coleco_keypad_key(&self, key: KeyCode) -> Option<u8> {
+        (self.active_system == crate::emu_backend::ActiveSystem::Coleco)
+            .then(|| coleco_keypad_key(key))
+            .flatten()
+    }
+}
+
+fn coleco_keypad_key(key: KeyCode) -> Option<u8> {
+    Some(match key {
+        KeyCode::Digit0 => 0,
+        KeyCode::Digit1 => 1,
+        KeyCode::Digit2 => 2,
+        KeyCode::Digit3 => 3,
+        KeyCode::Digit4 => 4,
+        KeyCode::Digit5 => 5,
+        KeyCode::Digit6 => 6,
+        KeyCode::Digit7 => 7,
+        KeyCode::Digit8 => 8,
+        KeyCode::Digit9 => 9,
+        KeyCode::Minus => 10,
+        KeyCode::Equal => 11,
+        _ => return None,
+    })
 }
 
 fn map_key_bindings(kb: &crate::settings::KeyBindings, key: KeyCode) -> Option<HostButton> {
@@ -82,5 +106,19 @@ const fn host_button_for_action(action: crate::settings::BindingAction) -> HostB
         BindingAction::R => HostButton::R,
         BindingAction::Start => HostButton::Start,
         BindingAction::Select => HostButton::Select,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coleco_keypad_reserves_only_the_number_row() {
+        assert_eq!(coleco_keypad_key(KeyCode::Digit0), Some(0));
+        assert_eq!(coleco_keypad_key(KeyCode::Minus), Some(10));
+        assert_eq!(coleco_keypad_key(KeyCode::Equal), Some(11));
+        assert_eq!(coleco_keypad_key(KeyCode::Numpad8), None);
+        assert_eq!(coleco_keypad_key(KeyCode::NumpadAdd), None);
     }
 }

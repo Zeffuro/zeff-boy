@@ -11,7 +11,7 @@ mod wire;
 mod tests;
 
 pub(crate) use types::{
-    LiveCommand, LiveMemorySpace, LiveReply, LiveRequest, PendingButtonRelease,
+    LiveCommand, LiveInput, LiveMemorySpace, LiveReply, LiveRequest, PendingButtonRelease,
 };
 
 const ENV_VAR: &str = "ZEFF_REMOTE_CONTROL";

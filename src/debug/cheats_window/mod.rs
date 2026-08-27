@@ -12,6 +12,7 @@ pub(crate) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
         crate::emu_backend::ActiveSystem::Nes => {
             "NES Game Genie (AAAAAA or AAAAAAAA), GameShark (01VVAAAA), or raw (AAAA:VV)"
         }
+        crate::emu_backend::ActiveSystem::Coleco => "ColecoVision raw RAM cheats (AAAA:VV)",
         crate::emu_backend::ActiveSystem::Pce => {
             "PC Engine logical RAM (AAAA:VV) or physical work RAM (1Fxxxx:VV)"
         }

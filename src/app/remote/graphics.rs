@@ -84,6 +84,31 @@ impl App {
                 "vdc2": pce.vdc2.as_ref().map(pce_vdc_json),
                 "palette_colors": pce.palette.len(),
             }),
+            ConsoleGraphicsData::Coleco(coleco) => json!({
+                "ready": true,
+                "system": "coleco",
+                "vdp": {
+                    "status": coleco.status,
+                    "status_hex": format!("{:02X}", coleco.status),
+                    "status_flags": {
+                        "vblank": coleco.status & 0x80 != 0,
+                        "sprite_overflow": coleco.status & 0x40 != 0,
+                        "sprite_collision": coleco.status & 0x20 != 0,
+                    },
+                    "address": coleco.address,
+                    "address_hex": format!("{:04X}", coleco.address),
+                    "scanline": coleco.scanline,
+                    "scanline_cycle": coleco.scanline_cycle,
+                    "display_enabled": coleco.display_enabled,
+                    "tms9918_mode": coleco.tms9918_mode,
+                    "sprite_table_base": coleco.sprite_table_base,
+                    "registers": coleco.registers,
+                },
+                "buffers": {
+                    "vram": buffer_summary_json(&coleco.vram),
+                    "oam": buffer_summary_json(&coleco.oam),
+                },
+            }),
             ConsoleGraphicsData::Sega8(sega8) => json!({
                 "ready": true,
                 "system": match sega8.system {

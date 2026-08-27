@@ -2,7 +2,7 @@ use super::flags::{sz53_flags, szp_flags};
 use super::*;
 
 impl Cpu {
-    pub(super) fn execute_ed<B: SegaCpuBus>(&mut self, bus: &mut B, pc: u16) -> u32 {
+    pub(super) fn execute_ed<B: Z80Bus>(&mut self, bus: &mut B, pc: u16) -> u32 {
         let opcode = self.fetch_u8(bus);
         self.increment_refresh_register();
         match opcode {
@@ -81,11 +81,13 @@ impl Cpu {
             0x41 | 0x49 | 0x51 | 0x59 | 0x61 | 0x69 | 0x79 => {
                 let register = (opcode >> 3) & 0x07;
                 let value = self.read_reg8(bus, register);
-                bus.io_write(self.regs.c, value);
+                let t_states_before = self.ed_io_t_states_before();
+                self.write_io(bus, self.regs.c, value, t_states_before);
                 CYCLES_ED_IO
             }
             0x71 => {
-                bus.io_write(self.regs.c, 0);
+                let t_states_before = self.ed_io_t_states_before();
+                self.write_io(bus, self.regs.c, 0, t_states_before);
                 CYCLES_ED_IO
             }
             0x56 | 0x76 => {
@@ -204,7 +206,7 @@ impl Cpu {
         }
     }
 
-    fn block_copy<B: SegaCpuBus>(&mut self, bus: &mut B, delta: i16) {
+    fn block_copy<B: Z80Bus>(&mut self, bus: &mut B, delta: i16) {
         let value = bus.cpu_read(self.regs.hl());
         bus.cpu_write(self.regs.de(), value);
         self.regs.set_hl(self.regs.hl().wrapping_add_signed(delta));
@@ -222,7 +224,7 @@ impl Cpu {
             };
     }
 
-    fn block_compare<B: SegaCpuBus>(&mut self, bus: &B, delta: i16) -> bool {
+    fn block_compare<B: Z80Bus>(&mut self, bus: &B, delta: i16) -> bool {
         let value = bus.cpu_read(self.regs.hl());
         let result = self.regs.a.wrapping_sub(value);
         let half_borrow = (self.regs.a & 0x0F) < (value & 0x0F);
@@ -243,7 +245,7 @@ impl Cpu {
         result == 0
     }
 
-    fn block_input<B: SegaCpuBus>(&mut self, bus: &mut B, delta: i16) {
+    fn block_input<B: Z80Bus>(&mut self, bus: &mut B, delta: i16) {
         let value = bus.io_read(self.regs.c);
         bus.cpu_write(self.regs.hl(), value);
         self.regs.set_hl(self.regs.hl().wrapping_add_signed(delta));
@@ -251,9 +253,10 @@ impl Cpu {
         self.set_block_io_flags(value);
     }
 
-    fn block_output<B: SegaCpuBus>(&mut self, bus: &mut B, delta: i16) {
+    fn block_output<B: Z80Bus>(&mut self, bus: &mut B, delta: i16) {
         let value = bus.cpu_read(self.regs.hl());
-        bus.io_write(self.regs.c, value);
+        let t_states_before = self.ed_block_output_t_states_before();
+        self.write_io(bus, self.regs.c, value, t_states_before);
         self.regs.set_hl(self.regs.hl().wrapping_add_signed(delta));
         self.regs.b = self.regs.b.wrapping_sub(1);
         self.set_block_io_flags(value);
@@ -339,7 +342,7 @@ impl Cpu {
             };
     }
 
-    fn rotate_decimal_right<B: SegaCpuBus>(&mut self, bus: &mut B) {
+    fn rotate_decimal_right<B: Z80Bus>(&mut self, bus: &mut B) {
         let value = bus.cpu_read(self.regs.hl());
         let a = self.regs.a;
         bus.cpu_write(self.regs.hl(), ((a & 0x0F) << 4) | (value >> 4));
@@ -347,7 +350,7 @@ impl Cpu {
         self.regs.f = (self.regs.f & Z80_FLAG_CARRY) | szp_flags(self.regs.a);
     }
 
-    fn rotate_decimal_left<B: SegaCpuBus>(&mut self, bus: &mut B) {
+    fn rotate_decimal_left<B: Z80Bus>(&mut self, bus: &mut B) {
         let value = bus.cpu_read(self.regs.hl());
         let a = self.regs.a;
         bus.cpu_write(self.regs.hl(), (value << 4) | (a & 0x0F));

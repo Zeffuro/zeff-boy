@@ -1,0 +1,21 @@
+[package]
+name = "zeff-coleco-core"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "ColecoVision emulation core library."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+anyhow = "1.0.104"
+sha2 = "0.11.0"
+zeff-emu-common = { path = "../zeff-emu-common" }
+zeff-z80 = { path = "../zeff-z80" }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "coleco_benchmarks"
+harness = false

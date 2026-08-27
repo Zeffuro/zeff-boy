@@ -64,6 +64,7 @@ impl MemoryAddressSpace {
         match system {
             ActiveSystem::GameBoy
             | ActiveSystem::Nes
+            | ActiveSystem::Coleco
             | ActiveSystem::Pce
             | ActiveSystem::MasterSystem
             | ActiveSystem::GameGear

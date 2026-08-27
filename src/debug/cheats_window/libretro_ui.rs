@@ -192,6 +192,9 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
             ActiveSystem::Nes => {
                 ui.label("NES");
             }
+            ActiveSystem::Coleco => {
+                ui.label("ColecoVision (cheats unavailable)");
+            }
             ActiveSystem::Pce => {
                 ui.label(state.libretro_platform.label());
             }

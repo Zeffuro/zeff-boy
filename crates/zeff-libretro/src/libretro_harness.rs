@@ -37,6 +37,7 @@ const RETRO_PIXEL_FORMAT_RGB565: c_uint = 2;
 const RETRO_NUM_CORE_OPTION_VALUES_MAX: usize = 128;
 const MAX_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_AUDIO_TELEMETRY_FRAMES: usize = 100_000;
+const MAX_RAW_AUDIO_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -186,6 +187,7 @@ pub struct HarnessConfig {
     pub frame_capture: Option<FrameCaptureRequest>,
     /// Fresh CSV destination for generic per-emulated-frame audio telemetry.
     pub audio_frame_csv: Option<PathBuf>,
+    pub audio_s16le: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -291,6 +293,10 @@ struct CallbackState {
     captured_frame: Option<CapturedFrame>,
     capture_error: Option<String>,
     frame_audio: Option<Vec<FrameAudioStats>>,
+    audio_s16le: Option<BufWriter<File>>,
+    audio_s16le_bytes: usize,
+    audio_s16le_error: Option<String>,
+    capture_audio_s16le: bool,
     invalid_audio_frame_index: bool,
     unsupported_environment_commands: Vec<c_uint>,
 }
@@ -538,6 +544,9 @@ unsafe extern "C" fn audio_sample(left: i16, right: i16) {
     state.counts.audio_bytes += std::mem::size_of::<i16>() * 2;
     state.audio_hasher.update(left.to_le_bytes());
     state.audio_hasher.update(right.to_le_bytes());
+    let [left_low, left_high] = left.to_le_bytes();
+    let [right_low, right_high] = right.to_le_bytes();
+    write_audio_s16le(state, &[left_low, left_high, right_low, right_high]);
     record_frame_audio(state, 1, 0, 1, std::mem::size_of::<i16>() * 2, |hasher| {
         hasher.update(left.to_le_bytes());
         hasher.update(right.to_le_bytes());
@@ -567,6 +576,9 @@ unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
         for sample in samples {
             state.audio_hasher.update(sample.to_le_bytes());
         }
+        for sample in samples {
+            write_audio_s16le(state, &sample.to_le_bytes());
+        }
         record_frame_audio(
             state,
             0,
@@ -590,6 +602,30 @@ unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
         );
     }
     frames
+}
+
+fn write_audio_s16le(state: &mut CallbackState, bytes: &[u8]) {
+    if !state.capture_audio_s16le || state.audio_s16le_error.is_some() {
+        return;
+    }
+    let Some(total) = state.audio_s16le_bytes.checked_add(bytes.len()) else {
+        state.audio_s16le_error = Some("raw audio capture length overflowed".into());
+        return;
+    };
+    if total > MAX_RAW_AUDIO_CAPTURE_BYTES {
+        state.audio_s16le_error = Some(format!(
+            "raw audio capture exceeds {MAX_RAW_AUDIO_CAPTURE_BYTES}-byte limit"
+        ));
+        return;
+    }
+    let Some(writer) = state.audio_s16le.as_mut() else {
+        return;
+    };
+    if let Err(error) = writer.write_all(bytes) {
+        state.audio_s16le_error = Some(format!("failed to write raw audio capture: {error}"));
+        return;
+    }
+    state.audio_s16le_bytes = total;
 }
 
 fn record_frame_audio(
@@ -765,6 +801,18 @@ pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult>
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let audio_s16le = config
+        .audio_s16le
+        .as_ref()
+        .map(|path| {
+            File::create_new(path).map(BufWriter::new).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to create raw audio capture '{}': {error}",
+                    path.display()
+                )
+            })
+        })
+        .transpose()?;
     *CALLBACK_STATE
         .lock()
         .expect("libretro callback mutex poisoned") = Some(CallbackState {
@@ -786,6 +834,7 @@ pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult>
             .audio_frame_csv
             .as_ref()
             .map(|_| vec![FrameAudioStats::default(); telemetry_frame_count]),
+        audio_s16le,
         ..CallbackState::default()
     });
 
@@ -802,8 +851,11 @@ pub fn run_repeated_fixed_frames(
 ) -> anyhow::Result<RepeatedHarnessResult> {
     anyhow::ensure!(repeats > 0, "repeats must be nonzero");
     anyhow::ensure!(
-        repeats == 1 || (config.frame_capture.is_none() && config.audio_frame_csv.is_none()),
-        "frame capture and per-frame audio telemetry require --repeat 1"
+        repeats == 1
+            || (config.frame_capture.is_none()
+                && config.audio_frame_csv.is_none()
+                && config.audio_s16le.is_none()),
+        "frame capture and audio capture require --repeat 1"
     );
     let mut runs = Vec::with_capacity(repeats);
     for _ in 0..repeats {
@@ -941,11 +993,11 @@ unsafe fn run_loaded_core(
         unload_game();
         deinit();
     }
-    let callback_guard = CALLBACK_STATE
+    let mut callback_guard = CALLBACK_STATE
         .lock()
         .expect("libretro callback mutex poisoned");
     let callback_state = callback_guard
-        .as_ref()
+        .as_mut()
         .expect("libretro harness is not active");
     validate_callback_buffers(callback_state)?;
     anyhow::ensure!(
@@ -954,6 +1006,14 @@ unsafe fn run_loaded_core(
     );
     if let Some(error) = &callback_state.capture_error {
         anyhow::bail!("failed to capture requested frame: {error}");
+    }
+    if let Some(error) = &callback_state.audio_s16le_error {
+        anyhow::bail!("{error}");
+    }
+    if let Some(writer) = callback_state.audio_s16le.as_mut() {
+        writer
+            .flush()
+            .map_err(|error| anyhow::anyhow!("failed to flush raw audio capture: {error}"))?;
     }
     let captured_frame = callback_state.captured_frame.clone();
     let frame_audio = callback_state.frame_audio.as_ref().map(|frames| {
@@ -1103,6 +1163,8 @@ fn reset_measurement_callbacks() {
     state.last_video = VideoFrameInfo::default();
     state.video_hasher = Sha256::default();
     state.audio_hasher = Sha256::default();
+    state.audio_s16le_bytes = 0;
+    state.capture_audio_s16le = true;
 }
 
 pub fn load_rom(path: &Path) -> anyhow::Result<Vec<u8>> {

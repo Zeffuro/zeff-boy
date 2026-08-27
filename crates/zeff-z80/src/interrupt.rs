@@ -1,7 +1,7 @@
 use super::*;
 
 impl Cpu {
-    pub(super) fn try_service_non_maskable_interrupt<B: SegaCpuBus>(
+    pub(super) fn try_service_non_maskable_interrupt<B: Z80Bus>(
         &mut self,
         bus: &mut B,
     ) -> Option<FetchedInstruction> {
@@ -10,6 +10,7 @@ impl Cpu {
         }
 
         let pc = self.regs.pc;
+        self.last_m1_fetch_count = 1;
         bus.acknowledge_non_maskable_interrupt();
         self.state = CpuState::Running;
         self.interrupt_flip_flop_1 = false;
@@ -28,7 +29,7 @@ impl Cpu {
         })
     }
 
-    pub(super) fn try_service_maskable_interrupt<B: SegaCpuBus>(
+    pub(super) fn try_service_maskable_interrupt<B: Z80Bus>(
         &mut self,
         bus: &mut B,
     ) -> Option<FetchedInstruction> {
@@ -40,6 +41,7 @@ impl Cpu {
         }
 
         let pc = self.regs.pc;
+        self.last_m1_fetch_count = 1;
         self.state = CpuState::Running;
         self.interrupt_flip_flop_1 = false;
         self.interrupt_flip_flop_2 = false;

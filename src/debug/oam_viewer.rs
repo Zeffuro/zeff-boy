@@ -34,6 +34,7 @@ pub(super) fn draw_oam_viewer_content(
         Some(ConsoleGraphicsData::Gb(gfx)) => gb::draw(ui, info, gfx, state, tiles, actions),
         Some(ConsoleGraphicsData::Gba(gfx)) => gba::draw(ui, info, gfx, state, tiles, actions),
         Some(ConsoleGraphicsData::Nes(gfx)) => nes::draw(ui, info, gfx, state, tiles, actions),
+        Some(ConsoleGraphicsData::Coleco(gfx)) => sega8::draw(ui, info, gfx, state, tiles, actions),
         Some(ConsoleGraphicsData::Sega8(gfx)) => sega8::draw(ui, info, gfx, state, tiles, actions),
         _ => draw_oam_table(ui, info),
     }

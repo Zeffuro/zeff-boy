@@ -18,6 +18,7 @@ struct WireRequest {
     #[serde(alias = "method")]
     command: String,
     button: Option<String>,
+    keypad: Option<String>,
     #[serde(alias = "controller", alias = "port")]
     player: Option<u8>,
     pressed: Option<bool>,
@@ -76,6 +77,30 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
         "tap" => LiveCommand::Tap {
             player: optional_player(&request)?,
             key: required_button(&request)?,
+            frames: request.frames.unwrap_or(4).clamp(1, 60),
+        },
+        "keypad_press" | "keypadpress" | "press_keypad" | "presskeypad" => {
+            LiveCommand::ColecoKeypad {
+                player: optional_player(&request)?,
+                key: required_coleco_keypad(&request)?,
+                pressed: true,
+            }
+        }
+        "keypad_release" | "keypadrelease" | "release_keypad" | "releasekeypad" => {
+            LiveCommand::ColecoKeypad {
+                player: optional_player(&request)?,
+                key: required_coleco_keypad(&request)?,
+                pressed: false,
+            }
+        }
+        "keypad" | "set_keypad" | "setkeypad" => LiveCommand::ColecoKeypad {
+            player: optional_player(&request)?,
+            key: required_coleco_keypad(&request)?,
+            pressed: request.pressed.unwrap_or(true),
+        },
+        "tap_keypad" | "tapkeypad" => LiveCommand::TapColecoKeypad {
+            player: optional_player(&request)?,
+            key: required_coleco_keypad(&request)?,
             frames: request.frames.unwrap_or(4).clamp(1, 60),
         },
         "zapper" | "set_zapper" | "setzapper" | "lightgun" | "set_lightgun" | "setlightgun" => {
@@ -214,6 +239,28 @@ fn required_button(request: &WireRequest) -> Result<HostButton, String> {
         .as_deref()
         .ok_or_else(|| "missing required field: button".to_string())?;
     HostButton::from_name(button).ok_or_else(|| format!("unknown button: {button}"))
+}
+
+fn required_coleco_keypad(request: &WireRequest) -> Result<u8, String> {
+    let key = request
+        .keypad
+        .as_deref()
+        .ok_or_else(|| "missing required field: keypad".to_string())?;
+    match normalized_name(key).as_str() {
+        "0" | "keypad0" | "kp0" => Ok(0),
+        "1" | "keypad1" | "kp1" => Ok(1),
+        "2" | "keypad2" | "kp2" => Ok(2),
+        "3" | "keypad3" | "kp3" => Ok(3),
+        "4" | "keypad4" | "kp4" => Ok(4),
+        "5" | "keypad5" | "kp5" => Ok(5),
+        "6" | "keypad6" | "kp6" => Ok(6),
+        "7" | "keypad7" | "kp7" => Ok(7),
+        "8" | "keypad8" | "kp8" => Ok(8),
+        "9" | "keypad9" | "kp9" => Ok(9),
+        "*" | "star" | "asterisk" | "keypadstar" | "kpstar" => Ok(10),
+        "#" | "pound" | "hash" | "keypadpound" | "kppound" => Ok(11),
+        _ => Err(format!("unknown ColecoVision keypad key: {key}")),
+    }
 }
 
 fn normalized_name(s: &str) -> String {

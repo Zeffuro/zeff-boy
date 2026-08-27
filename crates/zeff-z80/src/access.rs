@@ -1,11 +1,35 @@
 use super::*;
 
 impl Cpu {
-    pub(super) fn conditional_relative_jump<B: SegaCpuBus>(
+    pub(super) fn write_io<B: Z80Bus>(
         &mut self,
-        bus: &B,
-        condition: u8,
-    ) -> u32 {
+        bus: &mut B,
+        port: u8,
+        value: u8,
+        t_states_before: u32,
+    ) {
+        let cycle = IoWriteCycle {
+            port,
+            value,
+            t_states_before,
+            t_states: CYCLES_IO_MACHINE,
+        };
+        bus.io_write_cycle(cycle);
+    }
+
+    pub(super) fn immediate_io_t_states_before(&self) -> u32 {
+        u32::from(self.last_m1_fetch_count) * CYCLES_M1 + CYCLES_IMMEDIATE_IO_OPERAND
+    }
+
+    pub(super) fn ed_io_t_states_before(&self) -> u32 {
+        u32::from(self.last_m1_fetch_count) * CYCLES_M1
+    }
+
+    pub(super) fn ed_block_output_t_states_before(&self) -> u32 {
+        self.ed_io_t_states_before() + CYCLES_ED_BLOCK_OUTPUT_LEAD
+    }
+
+    pub(super) fn conditional_relative_jump<B: Z80Bus>(&mut self, bus: &B, condition: u8) -> u32 {
         let displacement = self.fetch_u8(bus) as i8;
         if self.condition_is_true(condition) {
             self.regs.pc = self.regs.pc.wrapping_add_signed(i16::from(displacement));
@@ -69,7 +93,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn read_reg8<B: SegaCpuBus>(&self, bus: &B, register: u8) -> u8 {
+    pub(super) fn read_reg8<B: Z80Bus>(&self, bus: &B, register: u8) -> u8 {
         match register {
             0 => self.regs.b,
             1 => self.regs.c,
@@ -83,7 +107,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn write_reg8<B: SegaCpuBus>(&mut self, bus: &mut B, register: u8, value: u8) {
+    pub(super) fn write_reg8<B: Z80Bus>(&mut self, bus: &mut B, register: u8, value: u8) {
         match register {
             0 => self.regs.b = value,
             1 => self.regs.c = value,
@@ -97,7 +121,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn push_u16<B: SegaCpuBus>(&mut self, bus: &mut B, value: u16) {
+    pub(super) fn push_u16<B: Z80Bus>(&mut self, bus: &mut B, value: u16) {
         let [lo, hi] = value.to_le_bytes();
         self.regs.sp = self.regs.sp.wrapping_sub(1);
         bus.cpu_write(self.regs.sp, hi);
@@ -105,7 +129,7 @@ impl Cpu {
         bus.cpu_write(self.regs.sp, lo);
     }
 
-    pub(super) fn pop_u16<B: SegaCpuBus>(&mut self, bus: &B) -> u16 {
+    pub(super) fn pop_u16<B: Z80Bus>(&mut self, bus: &B) -> u16 {
         let lo = bus.cpu_read(self.regs.sp);
         self.regs.sp = self.regs.sp.wrapping_add(1);
         let hi = bus.cpu_read(self.regs.sp);
@@ -113,19 +137,19 @@ impl Cpu {
         u16::from_le_bytes([lo, hi])
     }
 
-    pub(super) fn read_mem_u16<B: SegaCpuBus>(&self, bus: &B, addr: u16) -> u16 {
+    pub(super) fn read_mem_u16<B: Z80Bus>(&self, bus: &B, addr: u16) -> u16 {
         let lo = bus.cpu_read(addr);
         let hi = bus.cpu_read(addr.wrapping_add(1));
         u16::from_le_bytes([lo, hi])
     }
 
-    pub(super) fn write_mem_u16<B: SegaCpuBus>(&self, bus: &mut B, addr: u16, value: u16) {
+    pub(super) fn write_mem_u16<B: Z80Bus>(&self, bus: &mut B, addr: u16, value: u16) {
         let [lo, hi] = value.to_le_bytes();
         bus.cpu_write(addr, lo);
         bus.cpu_write(addr.wrapping_add(1), hi);
     }
 
-    pub(super) fn fetch_u8<B: SegaCpuBus>(&mut self, bus: &B) -> u8 {
+    pub(super) fn fetch_u8<B: Z80Bus>(&mut self, bus: &B) -> u8 {
         let value = bus.cpu_read(self.regs.pc);
         self.regs.pc = self.regs.pc.wrapping_add(1);
         if usize::from(self.instruction_byte_count) < self.instruction_bytes.len() {
@@ -135,13 +159,14 @@ impl Cpu {
         value
     }
 
-    pub(super) fn fetch_u16<B: SegaCpuBus>(&mut self, bus: &B) -> u16 {
+    pub(super) fn fetch_u16<B: Z80Bus>(&mut self, bus: &B) -> u16 {
         let lo = self.fetch_u8(bus);
         let hi = self.fetch_u8(bus);
         u16::from_le_bytes([lo, hi])
     }
 
     pub(super) fn increment_refresh_register(&mut self) {
+        self.last_m1_fetch_count = self.last_m1_fetch_count.saturating_add(1);
         let bit7 = self.regs.r & REFRESH_COUNTER_BIT_7_MASK;
         let low = self.regs.r.wrapping_add(1) & REFRESH_COUNTER_MASK;
         self.regs.r = bit7 | low;

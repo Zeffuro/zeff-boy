@@ -4,6 +4,7 @@ use std::path::Path;
 const GB_ROM_EXTENSIONS: [&str; 3] = ["gb", "gbc", "sgb"];
 const GBA_ROM_EXTENSIONS: [&str; 1] = ["gba"];
 const NES_ROM_EXTENSIONS: [&str; 2] = ["nes", "fds"];
+const COLECO_ROM_EXTENSIONS: [&str; 1] = ["col"];
 #[cfg(not(target_arch = "wasm32"))]
 const PCE_ROM_EXTENSIONS: &[&str] = &["pce", "cue", "chd", "iso"];
 #[cfg(target_arch = "wasm32")]
@@ -17,17 +18,18 @@ const ARCHIVE_EXTENSION_LIST: [&str; 3] = ["zip", "7z", "rar"];
 #[cfg(target_arch = "wasm32")]
 const ARCHIVE_EXTENSION_LIST: [&str; 1] = ["zip"];
 #[cfg(not(target_arch = "wasm32"))]
-const SUPPORTED_EXTENSIONS_LABEL: &str = ".gb, .gbc, .sgb, .gba, .nes, .fds, .pce, .cue, .chd, .iso, .ws, .wsc, .sms, .gg, .sg, .sc, .zip, .7z, .rar";
+const SUPPORTED_EXTENSIONS_LABEL: &str = ".gb, .gbc, .sgb, .gba, .nes, .fds, .col, .pce, .cue, .chd, .iso, .ws, .wsc, .sms, .gg, .sg, .sc, .zip, .7z, .rar";
 #[cfg(target_arch = "wasm32")]
 const SUPPORTED_EXTENSIONS_LABEL: &str =
-    ".gb, .gbc, .sgb, .gba, .nes, .fds, .pce, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
-const SUPPORTED_SYSTEM_VALUES: &str = "gb|gba|nes|pce|ws|sms|gg|sg";
+    ".gb, .gbc, .sgb, .gba, .nes, .fds, .col, .pce, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
+const SUPPORTED_SYSTEM_VALUES: &str = "gb|gba|nes|coleco|pce|ws|sms|gg|sg";
 
 pub const RGBA_BYTES_PER_PIXEL: usize = 4;
 pub const GAME_BOY_SCREEN_SIZE: (u32, u32) = (160, 144);
 pub const SUPER_GAME_BOY_SCREEN_SIZE: (u32, u32) = (256, 224);
 pub const GBA_SCREEN_SIZE: (u32, u32) = (240, 160);
 pub const NES_SCREEN_SIZE: (u32, u32) = (256, 240);
+pub const COLECO_SCREEN_SIZE: (u32, u32) = (256, 192);
 pub const PCE_SCREEN_SIZE: (u32, u32) = (640, 480);
 pub const WS_SCREEN_SIZE: (u32, u32) = (224, 144);
 pub const SMS_SCREEN_SIZE: (u32, u32) = (256, 192);
@@ -38,6 +40,11 @@ pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 pub const GAME_BOY_FRAME_DURATION_NS: u64 = 16_742_706;
 pub const GBA_FRAME_DURATION_NS: u64 = GAME_BOY_FRAME_DURATION_NS;
 pub const NES_FRAME_DURATION_NS: u64 = 16_639_267;
+pub const COLECO_NTSC_Z80_CLOCK_HZ: u64 = 3_579_545;
+pub const COLECO_NTSC_Z80_CYCLES_PER_FRAME: u64 = 59_736;
+pub const COLECO_NTSC_FRAME_DURATION_NS: u64 = (COLECO_NTSC_Z80_CYCLES_PER_FRAME * 1_000_000_000
+    + COLECO_NTSC_Z80_CLOCK_HZ / 2)
+    / COLECO_NTSC_Z80_CLOCK_HZ;
 pub const PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS: u64 = 16_715_111;
 pub const WS_FRAME_DURATION_NS: u64 = 13_250_298;
 pub const SMS_FRAME_DURATION_NS: u64 = 16_666_667;
@@ -55,6 +62,7 @@ pub const ROM_EXTENSIONS: &[&str] = &[
     GBA_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[1],
+    COLECO_ROM_EXTENSIONS[0],
     PCE_ROM_EXTENSIONS[0],
     #[cfg(not(target_arch = "wasm32"))]
     PCE_ROM_EXTENSIONS[1],
@@ -76,6 +84,7 @@ pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     GBA_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[0],
     NES_ROM_EXTENSIONS[1],
+    COLECO_ROM_EXTENSIONS[0],
     PCE_ROM_EXTENSIONS[0],
     #[cfg(not(target_arch = "wasm32"))]
     PCE_ROM_EXTENSIONS[1],
@@ -106,6 +115,7 @@ pub enum System {
     Gb,
     Gba,
     Nes,
+    Coleco,
     Pce,
     Ws,
     Sms,
@@ -123,6 +133,7 @@ pub enum CoreFamily {
     GameBoy,
     GameBoyAdvance,
     Nes,
+    ColecoVision,
     PcEngine,
     WonderSwan,
     Sega8,
@@ -189,6 +200,18 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
         screen_size: NES_SCREEN_SIZE,
         frame_duration_ns: NES_FRAME_DURATION_NS,
         rom_extensions: &NES_ROM_EXTENSIONS,
+    },
+    SystemSpec {
+        system: System::Coleco,
+        core_family: CoreFamily::ColecoVision,
+        file_dialog_filter_name: "ColecoVision ROMs",
+        code: "coleco",
+        short_code: "coleco",
+        storage_subdir: "coleco",
+        state_extension: "colstate",
+        screen_size: COLECO_SCREEN_SIZE,
+        frame_duration_ns: COLECO_NTSC_FRAME_DURATION_NS,
+        rom_extensions: &COLECO_ROM_EXTENSIONS,
     },
     SystemSpec {
         system: System::Pce,
@@ -400,6 +423,10 @@ mod tests {
             Some(System::Nes)
         );
         assert_eq!(
+            System::from_path(&PathBuf::from("game.col")),
+            Some(System::Coleco)
+        );
+        assert_eq!(
             System::from_path(&PathBuf::from("game.pce")),
             Some(System::Pce)
         );
@@ -471,7 +498,9 @@ mod tests {
 
         assert_eq!(from_specs, from_constant);
         for spec in system_specs() {
-            assert_eq!(System::from_extension(spec.short_code), Some(spec.system));
+            for extension in spec.rom_extensions {
+                assert_eq!(System::from_extension(extension), Some(spec.system));
+            }
             assert_eq!(System::from_code(spec.code), Some(spec.system));
             assert!(!spec.storage_subdir.is_empty());
             assert!(!spec.state_extension.is_empty());
@@ -501,6 +530,7 @@ mod tests {
         assert_eq!(System::Gb.core_family(), CoreFamily::GameBoy);
         assert_eq!(System::Gba.core_family(), CoreFamily::GameBoyAdvance);
         assert_eq!(System::Nes.core_family(), CoreFamily::Nes);
+        assert_eq!(System::Coleco.core_family(), CoreFamily::ColecoVision);
         assert_eq!(System::Pce.core_family(), CoreFamily::PcEngine);
         assert_eq!(System::Ws.core_family(), CoreFamily::WonderSwan);
         assert_eq!(System::Sms.core_family(), CoreFamily::Sega8);
@@ -515,5 +545,21 @@ mod tests {
             PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS
         );
         assert_eq!(PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS, 16_715_111);
+    }
+
+    #[test]
+    fn coleco_uses_the_ntsc_z80_cycle_derived_nominal_frame_duration() {
+        assert_eq!(COLECO_NTSC_Z80_CLOCK_HZ, 3_579_545);
+        assert_eq!(COLECO_NTSC_Z80_CYCLES_PER_FRAME, 59_736);
+        assert_eq!(
+            COLECO_NTSC_FRAME_DURATION_NS,
+            (COLECO_NTSC_Z80_CYCLES_PER_FRAME * 1_000_000_000 + COLECO_NTSC_Z80_CLOCK_HZ / 2)
+                / COLECO_NTSC_Z80_CLOCK_HZ
+        );
+        assert_eq!(COLECO_NTSC_FRAME_DURATION_NS, 16_688_155);
+        assert_eq!(
+            System::Coleco.frame_duration_ns(),
+            COLECO_NTSC_FRAME_DURATION_NS
+        );
     }
 }

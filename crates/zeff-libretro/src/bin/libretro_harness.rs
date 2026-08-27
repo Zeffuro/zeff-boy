@@ -39,6 +39,7 @@ mod native {
         let mut capture_frame = None;
         let mut capture_png = None;
         let mut audio_frame_csv = None;
+        let mut audio_s16le = None;
         while let Some(option) = args.next() {
             match option.as_str() {
                 "--warmup" => warmup_frames = parse_usize(args.next(), "--warmup")?,
@@ -78,6 +79,11 @@ mod native {
                         args.next().ok_or("--audio-frame-csv requires a path")?,
                     ));
                 }
+                "--audio-s16le" => {
+                    audio_s16le = Some(PathBuf::from(
+                        args.next().ok_or("--audio-s16le requires a path")?,
+                    ));
+                }
                 "--help" | "-h" => {
                     println!("{}", usage());
                     return Ok(());
@@ -105,6 +111,7 @@ mod native {
                 save_directory,
                 frame_capture,
                 audio_frame_csv,
+                audio_s16le,
             },
             repeats,
         )?;
@@ -208,7 +215,7 @@ mod native {
     }
 
     fn usage() -> &'static str {
-        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path] [--capture-frame N --capture-png path] [--audio-frame-csv path]"
+        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path] [--capture-frame N --capture-png path] [--audio-frame-csv path] [--audio-s16le path]"
     }
 }
 

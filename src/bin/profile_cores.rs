@@ -192,6 +192,38 @@ fn profile_gba_synthetic(
     }
 }
 
+fn profile_coleco_synthetic(
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    suffix: &str,
+) {
+    let mut bios = vec![0; zeff_coleco_core::constants::BIOS_SIZE];
+    bios[..31].copy_from_slice(&[
+        0x3E, 0x80, 0xD3, 0xE0, 0x3E, 0x04, 0xD3, 0xE0, 0x3E, 0x90, 0xD3, 0xE0, 0x3E, 0xBF, 0xD3,
+        0xE0, 0x3E, 0xDF, 0xD3, 0xE0, 0x3E, 0xFF, 0xD3, 0xE0, 0x21, 0x00, 0x60, 0x34, 0xC3, 0x1B,
+        0x00,
+    ]);
+    let mut cartridge = vec![0; 8 * 1024];
+    cartridge[..2].copy_from_slice(&[0xAA, 0x55]);
+    let mut coleco = zeff_coleco_core::Emulator::new(&cartridge, &bios, 48_000)
+        .expect("synthetic ColecoVision machine");
+    coleco.set_audio_generation_enabled(sample_generation_enabled);
+    coleco.set_instruction_trace_enabled(instruction_trace_enabled);
+    profile_frames(
+        &format!("ColecoVision synthetic{suffix}"),
+        frames,
+        &mut coleco,
+    );
+
+    let state = coleco
+        .save_state()
+        .expect("encode synthetic ColecoVision state");
+    let mut audio = Vec::new();
+    coleco.drain_audio_samples_into(&mut audio);
+    print_accuracy_hashes(coleco.framebuffer(), &state, &audio);
+}
+
 fn profile_gba_active_video(frames: u32, sample_generation_enabled: bool) {
     let mut gba =
         zeff_gba_core::emulator::Emulator::from_rom_data(&gba_rom()).expect("synthetic GBA ROM");
@@ -680,6 +712,13 @@ fn profile_synthetic(
         suffix,
     );
 
+    profile_coleco_synthetic(
+        frames,
+        sample_generation_enabled,
+        instruction_trace_enabled,
+        suffix,
+    );
+
     profile_pce_synthetic(
         frames,
         sample_generation_enabled,
@@ -1070,6 +1109,12 @@ fn main() {
                 instruction_trace_enabled,
                 suffix,
             ),
+            "coleco" => profile_coleco_synthetic(
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                suffix,
+            ),
             "pce" => profile_pce_synthetic(
                 frames,
                 sample_generation_enabled,
@@ -1088,7 +1133,9 @@ fn main() {
                 instruction_trace_enabled,
                 suffix,
             ),
-            _ => panic!("unknown core {core:?}; expected all, gb, gba, nes, pce, sega8, or ws"),
+            _ => panic!(
+                "unknown core {core:?}; expected all, gb, gba, nes, coleco, pce, sega8, or ws"
+            ),
         }
         return;
     }

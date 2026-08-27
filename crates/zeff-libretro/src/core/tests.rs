@@ -576,6 +576,22 @@ fn libretro_valid_extensions_include_registered_systems() {
 }
 
 #[test]
+fn libretro_rejects_deferred_coleco_roms() {
+    let extensions = crate::callbacks::VALID_EXTENSIONS
+        .to_str()
+        .expect("valid extensions should be UTF-8");
+    assert!(!extensions.split('|').any(|entry| entry == "col"));
+
+    let error = CoreState::from_rom(&[0xAA, 0x55], "test.col")
+        .err()
+        .expect("ColecoVision should have an explicit libretro error");
+    assert_eq!(
+        error.to_string(),
+        "ColecoVision is not available in zeff-libretro"
+    );
+}
+
+#[test]
 fn libretro_registers_pce_hucards_with_fixed_host_geometry() {
     let extensions = crate::callbacks::VALID_EXTENSIONS
         .to_str()
@@ -788,6 +804,13 @@ fn system_specs_map_to_libretro_core_state() {
 
     for spec in System::specs() {
         for extension in spec.rom_extensions {
+            if spec.system == System::Coleco {
+                assert!(
+                    !valid_extensions.split('|').any(|entry| entry == *extension),
+                    "deferred ColecoVision extension {extension} must not be registered"
+                );
+                continue;
+            }
             if spec.system == System::Pce && *extension != "pce" {
                 continue;
             }
@@ -827,7 +850,10 @@ fn system_specs_map_to_libretro_core_state() {
 fn video_geometry_matches_registered_system_matrix() {
     for spec in System::specs() {
         for extension in spec.rom_extensions {
-            if *extension == "fds" || spec.system == System::Pce && *extension != "pce" {
+            if *extension == "fds"
+                || spec.system == System::Coleco
+                || spec.system == System::Pce && *extension != "pce"
+            {
                 continue;
             }
 
@@ -918,6 +944,7 @@ fn rom_for_system(system: System) -> Vec<u8> {
         System::Gb => gb_rom(),
         System::Gba => gba_rom(),
         System::Nes => nes_rom(),
+        System::Coleco => vec![0xAA, 0x55],
         System::Pce => pce_rom(),
         System::Ws => ws_rom(),
         System::Sms | System::Gg | System::Sg => vec![0x76],
@@ -940,6 +967,7 @@ fn expected_system_label(system: System) -> &'static str {
         System::Gb => "GB/GBC",
         System::Gba => "GBA",
         System::Nes => "NES",
+        System::Coleco => "ColecoVision",
         System::Pce => "PC Engine",
         System::Ws => "WonderSwan",
         System::Sms => "SMS",
@@ -953,6 +981,7 @@ fn expected_system_ram_size(system: System) -> usize {
         System::Gb => zeff_gb_core::hardware::types::constants::WRAM_SIZE * 8,
         System::Gba => zeff_gba_core::hardware::constants::SYSTEM_RAM_SIZE,
         System::Nes => zeff_nes_core::hardware::constants::SYSTEM_RAM_SIZE,
+        System::Coleco => 1024,
         System::Pce => zeff_pce_core::hardware::WORK_RAM_LEN,
         System::Ws => zeff_ws_core::hardware::constants::WSC_INTERNAL_RAM_SIZE,
         System::Sms | System::Gg => zeff_sega8_core::hardware::constants::SMS_WORK_RAM_SIZE,

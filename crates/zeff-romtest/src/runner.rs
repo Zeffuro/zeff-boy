@@ -327,6 +327,9 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
         PassKind::Sega8AudioNonzero => {
             zeff_args.push("--expect-sega8-audio".to_string());
         }
+        PassKind::ColecoAudioNonzero => {
+            zeff_args.push("--expect-coleco-audio".to_string());
+        }
         PassKind::HeadlessExit => {}
         PassKind::ScreenshotPerceptual | PassKind::Manual => return Ok(None),
     }
@@ -604,6 +607,22 @@ mod tests {
             invocation
                 .display_args
                 .contains(&"--expect-sega8-audio".to_string())
+        );
+    }
+
+    #[test]
+    fn coleco_audio_invocations_forward_expected_flag() {
+        let mut test = test_case(ArtifactKind::TestRom);
+        test.core = Core::Coleco;
+        test.rom.path = PathBuf::from("rom-tests/cache/coleco/test.col");
+        test.pass.kind = PassKind::ColecoAudioNonzero;
+
+        let invocation = build_invocation(&test, &cli()).unwrap().unwrap();
+
+        assert!(
+            invocation
+                .display_args
+                .contains(&"--expect-coleco-audio".to_string())
         );
     }
 

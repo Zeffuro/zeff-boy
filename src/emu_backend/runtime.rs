@@ -102,6 +102,17 @@ impl EmuBackend {
                     apply_debug_controls(&mut nes.emu, &config);
                 }
             }
+            Self::Coleco(coleco) => {
+                if supports_debugger {
+                    apply_debug_actions_to(&mut coleco.emu, config.debug_actions);
+                }
+                if !config.uncapped_mode {
+                    coleco.emu.set_audio_generation_enabled(!config.skip_audio);
+                }
+                if supports_debugger {
+                    apply_debug_controls(&mut coleco.emu, &config);
+                }
+            }
             Self::Pce(pce) => {
                 pce.set_display_config(config.pce_overscan_mode, config.pce_palette_mode);
                 pce.set_apu_debug_capture_enabled(config.apu_capture_enabled);
@@ -190,6 +201,17 @@ impl EmuBackend {
                     .emu
                     .debug_execute_guest_call(target, request.instruction_budget)
             }
+            Self::Coleco(backend) => {
+                let target = u16::try_from(request.target)
+                    .map_err(|_| anyhow::anyhow!("target is out of range"))?;
+                anyhow::ensure!(
+                    request.exec_mode == crate::symbols::ExecMode::Z80,
+                    "expected Z80 code"
+                );
+                backend
+                    .emu
+                    .debug_execute_guest_call(target, request.instruction_budget)
+            }
             Self::Pce(backend) => {
                 let target = u16::try_from(request.target)
                     .map_err(|_| anyhow::anyhow!("target is out of range"))?;
@@ -255,6 +277,9 @@ impl EmuBackend {
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
             Self::Nes(backend) => u16::try_from(request.target)
+                .ok()
+                .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
+            Self::Coleco(backend) => u16::try_from(request.target)
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),
             Self::Pce(backend) => u16::try_from(request.target)

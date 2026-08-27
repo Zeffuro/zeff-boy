@@ -27,6 +27,31 @@ fn parses_tap_button_with_default_frames() {
 }
 
 #[test]
+fn parses_coleco_keypad_commands() {
+    let parsed =
+        parse_wire_request(r#"{"command":"keypad_press","keypad":"star","player":2}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::ColecoKeypad {
+            player: 2,
+            key: 10,
+            pressed: true,
+        }
+    ));
+
+    let parsed =
+        parse_wire_request(r##"{"command":"tap_keypad","keypad":"#","frames":2}"##).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TapColecoKeypad {
+            player: 1,
+            key: 11,
+            frames: 2,
+        }
+    ));
+}
+
+#[test]
 fn parses_player_two_button_command() {
     let parsed = parse_wire_request(r#"{"command":"press","button":"a","player":2}"#).unwrap();
     assert!(matches!(

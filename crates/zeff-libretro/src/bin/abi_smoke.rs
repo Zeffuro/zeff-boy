@@ -110,6 +110,7 @@ mod native {
             save_directory: None,
             frame_capture: None,
             audio_frame_csv: None,
+            audio_s16le: None,
         })?;
         assert_eq!(
             (result.geometry.base_width, result.geometry.base_height),
