@@ -5,7 +5,7 @@ pub(crate) mod state;
 use std::collections::VecDeque;
 
 use super::bus::OPEN_BUS_VALUE;
-use super::cd_media::{CD_USER_SECTOR_BYTES, CdDisc};
+use super::cd_media::{CD_RAW_SECTOR_BYTES, CD_USER_SECTOR_BYTES, CdDisc};
 use super::constants::{PCE_NTSC_MASTER_CLOCK_HZ_DENOMINATOR, PCE_NTSC_MASTER_CLOCK_HZ_NUMERATOR};
 use super::cpu::LineLevel;
 
@@ -281,8 +281,9 @@ pub struct CdRom2 {
     audio_end_lba: u32,
     audio_current_lba: u32,
     audio_current_sample: usize,
-    // Derived cache: never part of persistent emulation state.
     audio_track_index: Option<usize>,
+    audio_sector_lba: Option<u32>,
+    audio_sector: [u8; CD_RAW_SECTOR_BYTES],
     audio_end_behavior: CdAudioEndBehavior,
     audio_tick_accumulator: u64,
     audio_left_sample: i16,
@@ -364,6 +365,8 @@ impl CdRom2 {
             audio_current_lba: 0,
             audio_current_sample: 0,
             audio_track_index: None,
+            audio_sector_lba: None,
+            audio_sector: [0; CD_RAW_SECTOR_BYTES],
             audio_end_behavior: CdAudioEndBehavior::Stop,
             audio_tick_accumulator: 0,
             audio_left_sample: 0,

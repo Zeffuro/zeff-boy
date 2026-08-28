@@ -19,7 +19,10 @@ use sha2::{Digest, Sha256};
 use super::ActiveSystem;
 use super::pce_cd::{
     LoadedPceCd, PCE_CD_CUE_BYTES_LIMIT, PCE_CD_DATA_BYTES_LIMIT, PceCdLoadError,
-    build_disc_with_mods, normalize_portable_path, parse_cue_bytes,
+    build_disc_with_mods, normalize_portable_path, parse_cue_bytes, pce_cd_mod_config,
+};
+use super::pce_cd_file::{
+    CueFileSource, load_cached_cue_file_backed, try_load_cached_cue_ppf_overlay,
 };
 use crate::rom_archive::ArchiveRomEntry;
 
@@ -829,7 +832,48 @@ fn load_cached_disc(
     let base = cache.extracted_bytes.saturating_add(cue.size);
     progress.set_phase(PceCdPackageLoadPhase::ReadingData);
     progress.set_total_bytes(base.saturating_add(data_total));
-    let mut completed = base;
+    let mut sources = Vec::with_capacity(resolved.len());
+    for name in &resolved {
+        let member = cache
+            .manifest
+            .members
+            .iter()
+            .find(|member| member.name == name.as_str())
+            .ok_or(CachedDiscError::Corrupt)?;
+        sources.push(cached_file_source(cache, member)?);
+    }
+    let overlay_sources = sources.clone();
+    let mut verified = 0_u64;
+    let mut loaded = load_cached_cue_file_backed(&cue_bytes, &sheet, sources, |count| {
+        check_cancelled(cancel)?;
+        verified = verified.saturating_add(count);
+        progress.update_decode_progress(base.saturating_add(verified), cancel);
+        check_cancelled(cancel)
+    })
+    .map_err(file_backed_cache_error)?;
+    check_cancelled(cancel).map_err(CachedDiscError::Load)?;
+    if !apply_mods {
+        return Ok(loaded);
+    }
+    let (dir, mods, selected_crc32) = pce_cd_mod_config(
+        crc32fast::hash(&loaded.source_disc_sha256),
+        loaded.content_crc32,
+    );
+    if !mods.iter().any(|entry| entry.enabled) {
+        loaded.mod_crc32 = selected_crc32;
+        return Ok(loaded);
+    }
+    if let Some(disc) = try_load_cached_cue_ppf_overlay(&sheet, overlay_sources, &dir, &mods)
+        .map_err(file_backed_cache_error)?
+    {
+        loaded.disc = disc;
+        loaded.mod_crc32 = selected_crc32;
+        return Ok(loaded);
+    }
+    drop(loaded);
+
+    progress.set_total_bytes(base.saturating_add(data_total.saturating_mul(2)));
+    let mut completed = base.saturating_add(data_total);
     let mut files = Vec::with_capacity(resolved.len());
     for name in resolved {
         let member = cache
@@ -843,7 +887,36 @@ fn load_cached_disc(
         files.push(bytes);
     }
     check_cancelled(cancel).map_err(CachedDiscError::Load)?;
-    build_disc_with_mods(cue_bytes, &sheet, files, apply_mods).map_err(CachedDiscError::Load)
+    build_disc_with_mods(cue_bytes, &sheet, files, true).map_err(CachedDiscError::Load)
+}
+
+fn cached_file_source(
+    cache: &CacheEntry,
+    member: &CachedMember,
+) -> Result<CueFileSource, CachedDiscError> {
+    let path = cache_member_path(&cache.path.join(CACHE_FILES_DIR), &member.name);
+    let metadata = std::fs::symlink_metadata(&path).map_err(|_| CachedDiscError::Corrupt)?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata_is_reparse_point(&metadata)
+        || metadata.len() != member.size
+    {
+        return Err(CachedDiscError::Corrupt);
+    }
+    Ok(CueFileSource {
+        path,
+        bytes: member.size,
+        sha256: member.sha256,
+    })
+}
+
+fn file_backed_cache_error(error: PceCdLoadError) -> CachedDiscError {
+    match error {
+        PceCdLoadError::ArchiveChanged | PceCdLoadError::BinUnreadable(_) => {
+            CachedDiscError::Corrupt
+        }
+        error => CachedDiscError::Load(error),
+    }
 }
 
 fn read_cached_member(
@@ -1454,6 +1527,21 @@ mod tests {
         )
     }
 
+    fn load_with_cache_and_mods(
+        archive: &Path,
+        cache: &Path,
+        apply_mods: bool,
+    ) -> Result<(PathBuf, LoadedPceCd), PceCdLoadError> {
+        load_7z_cue_with_cache_root(
+            archive,
+            &AtomicBool::new(false),
+            &PceCdPackageProgress::default(),
+            DEFAULT_DECODER_MEMORY_LIMIT_MIB,
+            apply_mods,
+            cache,
+        )
+    }
+
     fn complete_cache_dirs(cache: &Path) -> Vec<PathBuf> {
         std::fs::read_dir(cache)
             .into_iter()
@@ -1544,6 +1632,36 @@ mod tests {
                 0x21
             );
         }
+    }
+
+    #[test]
+    fn shared_file_virtual_pregap_matches_direct_identity_and_audio() {
+        let cue = b"FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2352\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nPREGAP 00:00:01\nINDEX 01 00:00:02\n";
+        let mut bin = vec![0; 4 * 2_352];
+        bin[16] = 0x11;
+        bin[2_352 + 16] = 0x22;
+        bin[2 * 2_352..2 * 2_352 + 2].copy_from_slice(&0x3456_i16.to_le_bytes());
+        let direct_root = std::env::temp_dir().join(format!(
+            "zeff-pce-cd-pregap-equivalence-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&direct_root).unwrap();
+        std::fs::write(direct_root.join("disc.cue"), cue).unwrap();
+        std::fs::write(direct_root.join("disc.bin"), &bin).unwrap();
+        let direct = load_direct_cue(&direct_root.join("disc.cue")).unwrap();
+        let archive = temp_archive(
+            "shared-virtual-pregap",
+            &[("disc.cue", cue.to_vec()), ("disc.bin", bin)],
+            true,
+        );
+        let loaded = load_7z_cue(&archive).unwrap();
+
+        assert_eq!(loaded.content_sha256, direct.content_sha256);
+        assert_eq!(loaded.content_crc32, direct.content_crc32);
+        assert_eq!(loaded.source_disc_sha256, direct.source_disc_sha256);
+        assert_eq!(loaded.disc, direct.disc);
+        assert!(loaded.disc.read_audio_sample(2, 0).is_err());
+        assert_eq!(loaded.disc.read_audio_sample(3, 0).unwrap().0, 0x3456);
     }
 
     #[test]
@@ -1762,6 +1880,37 @@ mod tests {
     }
 
     #[test]
+    fn unmodified_cache_loads_keep_file_backed_mutation_guards() {
+        let mut bin = vec![0x5A; 4 * 2_048];
+        bin[..8].copy_from_slice(
+            &SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .to_le_bytes()[..8],
+        );
+        let archive = temp_archive(
+            "cache-file-backed",
+            &[("disc.bin", bin.clone()), ("disc.cue", cue())],
+            true,
+        );
+        let cache = temp_cache("file-backed");
+        let _ = std::fs::remove_dir_all(&cache);
+        let (_, loaded) = load_with_cache_and_mods(&archive, &cache, false).unwrap();
+        let entry = complete_cache_dirs(&cache).pop().unwrap();
+        let data_path = entry.join(CACHE_FILES_DIR).join("disc.bin");
+        let mut changed = std::fs::read(&data_path).unwrap();
+        changed.extend_from_slice(&[0; 2_048]);
+        std::fs::write(&data_path, changed).unwrap();
+
+        assert!(loaded.disc.read_user_sector(0).is_err());
+        drop(loaded);
+        let (_, recovered) = load_with_cache_and_mods(&archive, &cache, false).unwrap();
+        assert_eq!(recovered.disc.read_user_sector(0).unwrap()[0..8], bin[..8]);
+        let _ = std::fs::remove_dir_all(cache);
+    }
+
+    #[test]
     fn source_metadata_change_creates_a_new_cache_identity() {
         let archive = temp_archive(
             "cache-source-change",
@@ -1798,7 +1947,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_manifest_and_member_fall_back_to_clean_extraction() {
+    fn corrupt_manifest_falls_back_to_clean_extraction() {
         let archive = temp_archive(
             "cache-corruption",
             &[("disc.bin", vec![0x33; 2_048]), ("disc.cue", cue())],
@@ -1823,7 +1972,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(after_manifest.disc, expected.disc);
+        let _ = std::fs::remove_dir_all(cache);
+    }
 
+    #[test]
+    fn same_length_cached_data_tamper_reextracts() {
+        let archive = temp_archive(
+            "cache-data-tamper",
+            &[("disc.bin", vec![0x33; 2_048]), ("disc.cue", cue())],
+            true,
+        );
+        let cache = temp_cache("data-tamper");
+        let _ = std::fs::remove_dir_all(&cache);
+        let (_, expected) = load_with_cache(
+            &archive,
+            &cache,
+            &AtomicBool::new(false),
+            &PceCdPackageProgress::default(),
+        )
+        .unwrap();
         let entry = complete_cache_dirs(&cache).pop().unwrap();
         std::fs::write(
             entry.join(CACHE_FILES_DIR).join("disc.bin"),
@@ -1838,6 +2005,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(after_member.disc, expected.disc);
+        assert_eq!(after_member.content_sha256, expected.content_sha256);
+        assert_eq!(after_member.disc.read_user_sector(0).unwrap()[0], 0x33);
         let _ = std::fs::remove_dir_all(cache);
     }
 
@@ -1897,6 +2066,47 @@ mod tests {
             complete_cache_dirs(&cache).len(),
             CACHE_MAX_COMPLETE_ENTRIES
         );
+        let _ = std::fs::remove_dir_all(cache);
+    }
+
+    #[test]
+    fn live_file_source_survives_cache_pruning() {
+        let cache = temp_cache("prune-live");
+        let _ = std::fs::remove_dir_all(&cache);
+        let first_archive = temp_archive(
+            "cache-prune-live-first",
+            &[("disc.bin", vec![0xA1; 2 * 2_048]), ("disc.cue", cue())],
+            true,
+        );
+        let (_, first) = load_with_cache(
+            &first_archive,
+            &cache,
+            &AtomicBool::new(false),
+            &PceCdPackageProgress::default(),
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        for index in 0..2_u8 {
+            let archive = temp_archive(
+                &format!("cache-prune-live-{index}"),
+                &[
+                    ("disc.bin", vec![0xB0 + index; 2 * 2_048]),
+                    ("disc.cue", cue()),
+                ],
+                true,
+            );
+            load_with_cache(
+                &archive,
+                &cache,
+                &AtomicBool::new(false),
+                &PceCdPackageProgress::default(),
+            )
+            .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        assert_eq!(first.disc.read_user_sector(0).unwrap()[0], 0xA1);
+        drop(first);
         let _ = std::fs::remove_dir_all(cache);
     }
 

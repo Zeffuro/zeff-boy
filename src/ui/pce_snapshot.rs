@@ -279,6 +279,22 @@ fn pce_rom_info(backend: &PceBackend) -> RomDebugInfo {
             ],
         },
     ];
+    if let Some(title) = backend.canonical_title_metadata() {
+        sections.insert(
+            1,
+            RomInfoSection {
+                heading: "Canonical Title",
+                fields: vec![
+                    ("ID", title.id.to_owned()),
+                    ("Title", title.title.to_owned()),
+                    ("Region", title.region.to_owned()),
+                    ("Controller", format!("{:?}", title.controller_mode)),
+                    ("Memory Base 128", on_off(title.memory_base_128).to_owned()),
+                    ("Arcade Card", on_off(title.arcade_card).to_owned()),
+                ],
+            },
+        );
+    }
     if !firmware.is_empty() {
         sections.push(RomInfoSection {
             heading: "Firmware",
@@ -1100,6 +1116,7 @@ fn asserted(value: bool) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
+    use crate::emu_backend::pce_profiles::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256;
     use crate::emu_core_trait::DebuggableEmulator;
     use crate::emu_thread::{RenderSettings, ReusableBuffers};
     use crate::settings::{ColorCorrection, DmgPalettePreset, NesPaletteMode};
@@ -1211,7 +1228,7 @@ mod tests {
                 source_path: PathBuf::from("set.7z"),
                 content_hash: [0xAB; 32],
                 content_crc32: 0xAB,
-                source_disc_hash: [0xAB; 32],
+                source_disc_hash: LEMMINGS_JAPAN_CANONICAL_DISC_SHA256,
                 console_wiring: PceConsoleWiring::TurboGrafx16,
                 arcade_card_mode: zeff_pce_core::hardware::PceArcadeCardMode::Disabled,
             },
@@ -1224,6 +1241,8 @@ mod tests {
         assert!(field(&info, "Disc", "Layout").contains("02:Audio@1+1"));
         assert_eq!(field(&info, "Machine", "System Card"), "SystemCardV3");
         assert_eq!(field(&info, "Content", "Source Path"), "set.7z");
+        assert_eq!(field(&info, "Canonical Title", "ID"), "pce-cd:jp:lemmings");
+        assert_eq!(field(&info, "Canonical Title", "Title"), "Lemmings");
     }
 
     #[test]

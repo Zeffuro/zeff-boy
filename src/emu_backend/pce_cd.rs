@@ -2,7 +2,6 @@
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::io::{BufReader, Read};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -21,7 +20,7 @@ pub(crate) const PCE_CD_PATH_BYTES_LIMIT: usize = 1024;
 pub(crate) const PCE_CD_PATH_COMPONENT_BYTES_LIMIT: usize = 255;
 pub(crate) const PCE_CD_PATH_DEPTH_LIMIT: usize = 16;
 
-const CONTENT_ID_DOMAIN: &[u8] = b"zeff-boy:pce-cd-data:v2";
+pub(super) const CONTENT_ID_DOMAIN: &[u8] = b"zeff-boy:pce-cd-data:v2";
 pub(super) const ADPCM_FIXTURE_DISC_SHA256: [u8; 32] = [
     0xC8, 0xC7, 0x42, 0x6B, 0x3F, 0x91, 0xD7, 0xBF, 0xB5, 0xF5, 0x02, 0x9F, 0xFE, 0x18, 0xD8, 0xE2,
     0x60, 0x41, 0x95, 0xDA, 0xF8, 0xF5, 0x4C, 0x8B, 0x24, 0x94, 0xC2, 0x98, 0x1E, 0x8F, 0x68, 0xA2,
@@ -130,35 +129,35 @@ impl Error for PceCdLoadError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CueSheet {
     pub(super) files: Vec<CueFile>,
-    tracks: Vec<CueTrack>,
+    pub(super) tracks: Vec<CueTrack>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CueFile {
     pub(super) reference: String,
-    track_indices: Vec<usize>,
+    pub(super) track_indices: Vec<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CueTrack {
-    number: u8,
-    file_index: usize,
-    mode: CdTrackMode,
-    index0: Option<u32>,
-    index1: Option<u32>,
-    pregap: Option<u32>,
+pub(super) struct CueTrack {
+    pub(super) number: u8,
+    pub(super) file_index: usize,
+    pub(super) mode: CdTrackMode,
+    pub(super) index0: Option<u32>,
+    pub(super) index1: Option<u32>,
+    pub(super) pregap: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ChdTrack {
-    number: u8,
-    mode: CdTrackMode,
-    frames: u32,
-    pregap: u32,
+pub(super) struct ChdTrack {
+    pub(super) number: u8,
+    pub(super) mode: CdTrackMode,
+    pub(super) frames: u32,
+    pub(super) pregap: u32,
 }
 
 impl ChdTrack {
-    fn payload_bytes(&self) -> usize {
+    pub(super) fn payload_bytes(&self) -> usize {
         sector_bytes(self.mode)
     }
 }
@@ -180,6 +179,26 @@ pub(crate) fn load_direct_cue_with_mods(
     let cue_bytes = std::fs::read(cue_path)
         .map_err(|_| PceCdLoadError::CueUnreadable(cue_path.to_path_buf()))?;
     let sheet = parse_cue_bytes(&cue_bytes)?;
+    let mut file_backed =
+        super::pce_cd_file::load_direct_cue_file_backed(cue_path, &cue_bytes, &sheet)?;
+    if !apply_mods {
+        return Ok(file_backed);
+    }
+    let (dir, mods, selected_crc32) = pce_cd_mod_config(
+        crc32fast::hash(&file_backed.source_disc_sha256),
+        file_backed.content_crc32,
+    );
+    if !mods.iter().any(|entry| entry.enabled) {
+        file_backed.mod_crc32 = selected_crc32;
+        return Ok(file_backed);
+    }
+    if let Some(disc) =
+        super::pce_cd_file::try_load_direct_cue_ppf_overlay(cue_path, &sheet, &dir, &mods)?
+    {
+        file_backed.disc = disc;
+        file_backed.mod_crc32 = selected_crc32;
+        return Ok(file_backed);
+    }
     let parent = cue_path.parent().unwrap_or_else(|| Path::new(""));
     let mut data = Vec::with_capacity(sheet.files.len());
     let mut total = 0_u64;
@@ -195,7 +214,7 @@ pub(crate) fn load_direct_cue_with_mods(
         }
         data.push(std::fs::read(&path).map_err(|_| PceCdLoadError::BinUnreadable(path.clone()))?);
     }
-    build_disc_with_mods(cue_bytes, &sheet, data, apply_mods)
+    build_disc_with_mods(cue_bytes, &sheet, data, true)
 }
 
 pub(crate) fn cue_path_for_iso(iso_path: &Path) -> Result<PathBuf, PceCdLoadError> {
@@ -251,7 +270,7 @@ pub(crate) fn cue_path_for_iso(iso_path: &Path) -> Result<PathBuf, PceCdLoadErro
     }
 }
 
-fn resolve_direct_file_reference(
+pub(super) fn resolve_direct_file_reference(
     parent: &Path,
     reference: &str,
 ) -> Result<PathBuf, PceCdLoadError> {
@@ -294,91 +313,7 @@ pub(crate) fn load_direct_chd_with_mods(
     chd_path: &Path,
     apply_mods: bool,
 ) -> Result<LoadedPceCd, PceCdLoadError> {
-    let file = std::fs::File::open(chd_path)
-        .map_err(|_| PceCdLoadError::ChdUnreadable(chd_path.to_path_buf()))?;
-    let mut chd = chd::Chd::open(BufReader::new(file), None)
-        .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
-    if chd.header().unit_bytes() != 2_448 || !chd.header().hunk_size().is_multiple_of(2_448) {
-        return Err(PceCdLoadError::InvalidChdMetadata);
-    }
-    let metadata: Vec<chd::metadata::Metadata> = chd
-        .metadata_refs()
-        .try_into()
-        .map_err(|error: chd::Error| PceCdLoadError::Disc(error.to_string()))?;
-    let mut tracks = metadata
-        .iter()
-        .filter(|entry| entry.metatag == u32::from_be_bytes(*b"CHT2"))
-        .map(|entry| parse_chd_track_metadata(&entry.value))
-        .collect::<Result<Vec<_>, _>>()?;
-    if tracks.is_empty() || tracks.len() > 99 {
-        return Err(PceCdLoadError::InvalidChdMetadata);
-    }
-    tracks.sort_by_key(|track| track.number);
-    for (index, track) in tracks.iter().enumerate() {
-        if track.number != (index + 1) as u8 {
-            return Err(PceCdLoadError::InvalidTrackOrder);
-        }
-    }
-    let total_frames = tracks.iter().try_fold(0_u64, |total, track| {
-        total
-            .checked_add(u64::from(padded_chd_frames(track.frames)))
-            .ok_or(PceCdLoadError::DataTooLarge(u64::MAX))
-    })?;
-    if total_frames != chd.header().logical_bytes() / 2_448
-        || !chd.header().logical_bytes().is_multiple_of(2_448)
-    {
-        return Err(PceCdLoadError::InvalidChdMetadata);
-    }
-    let data_bytes = tracks.iter().try_fold(0_u64, |total, track| {
-        total
-            .checked_add(u64::from(track.frames) * track.payload_bytes() as u64)
-            .ok_or(PceCdLoadError::DataTooLarge(u64::MAX))
-    })?;
-    if data_bytes > PCE_CD_DATA_BYTES_LIMIT as u64 {
-        return Err(PceCdLoadError::DataTooLarge(data_bytes));
-    }
-    let mut payloads = tracks
-        .iter()
-        .map(|track| Vec::with_capacity(track.frames as usize * track.payload_bytes()))
-        .collect::<Vec<_>>();
-    let mut compressed = Vec::new();
-    let mut decoded = chd.get_hunksized_buffer();
-    let mut frame = 0_u64;
-    let mut track_index = 0_usize;
-    let mut track_end = u64::from(padded_chd_frames(tracks[track_index].frames));
-    'decode: for hunk_number in 0..chd.header().hunk_count() {
-        let mut hunk = chd
-            .hunk(hunk_number)
-            .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
-        hunk.read_hunk_in(&mut compressed, &mut decoded)
-            .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
-        let (sectors, remainder) = decoded.as_chunks::<2_448>();
-        debug_assert!(remainder.is_empty());
-        for sector in sectors {
-            if frame == total_frames {
-                break 'decode;
-            }
-            while frame == track_end && track_index + 1 < tracks.len() {
-                track_index += 1;
-                track_end += u64::from(padded_chd_frames(tracks[track_index].frames));
-            }
-            if frame
-                < track_end
-                    - u64::from(
-                        padded_chd_frames(tracks[track_index].frames) - tracks[track_index].frames,
-                    )
-            {
-                payloads[track_index]
-                    .extend_from_slice(&sector[..tracks[track_index].payload_bytes()]);
-            }
-            frame += 1;
-        }
-    }
-    if frame != total_frames {
-        return Err(PceCdLoadError::InvalidChdMetadata);
-    }
-    normalize_chd_audio_payloads(&tracks, &mut payloads);
-    build_chd_disc_with_mods(chd_path, tracks, payloads, apply_mods)
+    super::pce_cd_chd::load_direct_chd_with_mods(chd_path, apply_mods)
 }
 
 pub(super) fn parse_cue_bytes(cue_bytes: &[u8]) -> Result<CueSheet, PceCdLoadError> {
@@ -780,7 +715,7 @@ pub(super) fn build_disc_with_mods(
     })
 }
 
-fn pce_cd_mod_config(
+pub(super) fn pce_cd_mod_config(
     mod_crc32: u32,
     legacy_crc32: u32,
 ) -> (PathBuf, Vec<crate::mods::ModEntry>, u32) {
@@ -858,7 +793,7 @@ fn cue_patch_targets(
     Ok(targets)
 }
 
-fn parse_chd_track_metadata(value: &[u8]) -> Result<ChdTrack, PceCdLoadError> {
+pub(super) fn parse_chd_track_metadata(value: &[u8]) -> Result<ChdTrack, PceCdLoadError> {
     let value = std::str::from_utf8(value)
         .map_err(|_| PceCdLoadError::InvalidChdMetadata)?
         .trim_end_matches('\0');
@@ -883,7 +818,7 @@ fn parse_chd_track_metadata(value: &[u8]) -> Result<ChdTrack, PceCdLoadError> {
         .next()
         .and_then(|field| field.strip_prefix("FRAMES:"))
         .and_then(|frames| frames.parse::<u32>().ok())
-        .filter(|frames| *frames != 0)
+        .filter(|frames| *frames != 0 && *frames <= u32::MAX - 3)
         .ok_or(PceCdLoadError::InvalidChdMetadata)?;
     let pregap = fields
         .next()
@@ -927,21 +862,20 @@ fn valid_chd_pregap_type(mode: CdTrackMode) -> &'static str {
     }
 }
 
-fn padded_chd_frames(frames: u32) -> u32 {
+pub(super) fn padded_chd_frames(frames: u32) -> u32 {
     frames.next_multiple_of(4)
 }
 
-fn build_chd_disc_with_mods(
-    chd_path: &Path,
+pub(super) fn build_chd_disc_with_mods_and_identity(
     mut tracks: Vec<ChdTrack>,
     mut payloads: Vec<Vec<u8>>,
     apply_mods: bool,
+    (content_sha256, content_crc32): ([u8; 32], u32),
 ) -> Result<LoadedPceCd, PceCdLoadError> {
     let clean_disc = build_chd_disc(&tracks, &payloads)?;
     let source_disc_sha256 = clean_disc.content_hash();
     let canonical_mod_crc32 = crc32fast::hash(&source_disc_sha256);
     let mut mod_crc32 = canonical_mod_crc32;
-    let (content_sha256, content_crc32) = chd_content_identity(chd_path, &tracks)?;
     if apply_mods {
         let (dir, mods, selected_crc32) = pce_cd_mod_config(canonical_mod_crc32, content_crc32);
         mod_crc32 = selected_crc32;
@@ -1006,7 +940,10 @@ fn refresh_chd_track_lengths(
     Ok(())
 }
 
-fn build_chd_disc(tracks: &[ChdTrack], payloads: &[Vec<u8>]) -> Result<CdDisc, PceCdLoadError> {
+pub(super) fn build_chd_disc(
+    tracks: &[ChdTrack],
+    payloads: &[Vec<u8>],
+) -> Result<CdDisc, PceCdLoadError> {
     if tracks.len() != payloads.len() {
         return Err(PceCdLoadError::InvalidChdMetadata);
     }
@@ -1042,6 +979,7 @@ fn build_chd_disc(tracks: &[ChdTrack], payloads: &[Vec<u8>]) -> Result<CdDisc, P
     CdDisc::new(disc_tracks).map_err(|error| PceCdLoadError::Disc(error.to_string()))
 }
 
+#[cfg(test)]
 fn normalize_chd_audio_payloads(tracks: &[ChdTrack], payloads: &mut [Vec<u8>]) {
     for (track, payload) in tracks.iter().zip(payloads) {
         if track.mode == CdTrackMode::Audio {
@@ -1054,17 +992,10 @@ fn normalize_chd_audio_payloads(tracks: &[ChdTrack], payloads: &mut [Vec<u8>]) {
     }
 }
 
-fn chd_content_identity(
-    chd_path: &Path,
+pub(super) fn chd_content_identity_from_header(
+    header: &[u8; 124],
     tracks: &[ChdTrack],
 ) -> Result<([u8; 32], u32), PceCdLoadError> {
-    let file = std::fs::File::open(chd_path)
-        .map_err(|_| PceCdLoadError::ChdUnreadable(chd_path.to_path_buf()))?;
-    let mut reader = BufReader::new(file);
-    let mut header = [0_u8; 124];
-    reader
-        .read_exact(&mut header)
-        .map_err(|_| PceCdLoadError::ChdUnreadable(chd_path.to_path_buf()))?;
     let mut sha = Sha256::new();
     let mut crc = Crc32::new();
     update_identity(&mut sha, &mut crc, b"zeff-boy:pce-cd-chd:v1");

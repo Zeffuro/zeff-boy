@@ -6,7 +6,6 @@ use zeff_emu_common::cheats::{
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
-use super::constants::{PCE_PHYSICAL_WORK_RAM_END, PCE_PHYSICAL_WORK_RAM_START};
 use super::{
     ControllerPort, PCE_HOST_FRAME_RGBA_BYTES, POPULOUS_HUCARD_RAM_LEN, PadButtons,
     PceCartridgeDescriptor, PceFrameRun, PceHuCardBoard, PceMachine, PceMachineError,
@@ -191,7 +190,7 @@ impl PceHuCardHost {
 
 pub fn apply_pce_cheats(machine: &mut PceMachine, patches: &[CheatPatch]) {
     apply_ram_cheats_16(machine, patches);
-    let mut physical_ram = PcePhysicalWorkRam::new(machine.mapped_work_ram_mut());
+    let mut physical_ram = PcePhysicalRam { machine };
     apply_wide_ram_cheats(&mut physical_ram, patches);
 }
 
@@ -227,33 +226,17 @@ fn map_pad_buttons(buttons: u8, dpad: u8) -> PadButtons {
     mapped
 }
 
-struct PcePhysicalWorkRam<'a> {
-    bytes: &'a mut [u8],
+struct PcePhysicalRam<'a> {
+    machine: &'a mut PceMachine,
 }
 
-impl<'a> PcePhysicalWorkRam<'a> {
-    fn new(bytes: &'a mut [u8]) -> Self {
-        debug_assert!(bytes.len().is_power_of_two());
-        Self { bytes }
-    }
-
-    fn offset(&self, address: u32) -> Option<usize> {
-        if !(PCE_PHYSICAL_WORK_RAM_START..=PCE_PHYSICAL_WORK_RAM_END).contains(&address) {
-            return None;
-        }
-        Some((address as usize - PCE_PHYSICAL_WORK_RAM_START as usize) & (self.bytes.len() - 1))
-    }
-}
-
-impl CheatByteTarget<u32> for PcePhysicalWorkRam<'_> {
+impl CheatByteTarget<u32> for PcePhysicalRam<'_> {
     fn cheat_peek8(&self, address: u32) -> u8 {
-        self.offset(address).map_or(0, |offset| self.bytes[offset])
+        self.machine.cheat_peek_physical_ram(address).unwrap_or(0)
     }
 
     fn cheat_write8(&mut self, address: u32, value: u8) {
-        if let Some(offset) = self.offset(address) {
-            self.bytes[offset] = value;
-        }
+        self.machine.cheat_write_physical_ram(address, value);
     }
 }
 
@@ -322,5 +305,51 @@ mod tests {
 
         assert_eq!(host.machine().mapped_work_ram()[5], 0x42);
         assert_eq!(host.machine().mapped_work_ram()[0x345], 0x66);
+    }
+
+    #[test]
+    fn wide_physical_cheats_cover_system_card_and_cd_work_ram() {
+        use super::super::{
+            CDROM2_WORK_RAM_START, CdDisc, CdTrack, CdTrackMode, PceConsoleWiring,
+            SUPER_SYSTEM_CARD_RAM_START, SYSTEM_CARD_V1_V2_IMAGE_LEN,
+        };
+        use zeff_emu_common::cheats::CheatValue;
+
+        let track =
+            CdTrack::from_index1_data(1, 4, None, 0, CdTrackMode::Mode1_2048, vec![0; 2048])
+                .unwrap();
+        let disc = CdDisc::new(vec![track]).unwrap();
+        let mut machine = PceMachine::with_cdrom2_system_card_and_controller(
+            vec![0; SYSTEM_CARD_V1_V2_IMAGE_LEN],
+            PceHuCardBoard::SystemCardV3,
+            disc,
+            PceConsoleWiring::PcEngine,
+            ControllerPort::two_button(),
+        )
+        .unwrap();
+        let system_card_address = SUPER_SYSTEM_CARD_RAM_START + 0x1234;
+        let cd_address = CDROM2_WORK_RAM_START + 0x2345;
+
+        apply_pce_cheats(
+            &mut machine,
+            &[
+                CheatPatch::WideRamWrite {
+                    address: system_card_address,
+                    value: CheatValue::Constant(0x5A),
+                },
+                CheatPatch::WideRamWrite {
+                    address: cd_address,
+                    value: CheatValue::Constant(0x6B),
+                },
+                CheatPatch::WideRamWriteIfEquals {
+                    address: cd_address,
+                    value: CheatValue::Constant(0x7C),
+                    compare: CheatValue::Constant(0x6B),
+                },
+            ],
+        );
+
+        assert_eq!(machine.debug_peek_physical8(system_card_address), 0x5A);
+        assert_eq!(machine.debug_peek_physical8(cd_address), 0x7C);
     }
 }

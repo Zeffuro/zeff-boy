@@ -169,6 +169,9 @@ fn exact_lemmings_disc_automatically_selects_mouse_but_force_pad_wins() {
     let mut backend = backend_with_board(PceHuCardBoard::SystemCardV3, 0x40_000);
     backend.rom_hash = [0; 32];
     backend.source_disc_hash = Some(LEMMINGS_JAPAN_CANONICAL_DISC_SHA256);
+    let title = backend.canonical_title_metadata().unwrap();
+    assert_eq!(title.id, "pce-cd:jp:lemmings");
+    assert_eq!(title.title, "Lemmings");
 
     backend.set_pce_mouse_state(PceControllerMode::Automatic, 1, 2, 1);
     assert!(matches!(

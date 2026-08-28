@@ -137,6 +137,15 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
             "hucard_board": format!("{:?}", request.backend.hucard_board()),
             "controller_mode": format!("{:?}", request.backend.controller_mode()),
             "normalized_disc_sha256": request.backend.normalized_disc_hash().map(|hash| hash.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
+            "canonical_title": request.backend.canonical_title_metadata().map(|title| serde_json::json!({
+                "id": title.id,
+                "title": title.title,
+                "region": title.region,
+                "normalized_disc_sha256": title.normalized_disc_sha256.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+                "controller_mode": format!("{:?}", title.controller_mode),
+                "memory_base_128": title.memory_base_128,
+                "arcade_card": title.arcade_card,
+            })),
             "memory_base_128": {
                 "mode": format!("{:?}", request.backend.memory_base_mode()),
                 "connected": memory_base.connected,

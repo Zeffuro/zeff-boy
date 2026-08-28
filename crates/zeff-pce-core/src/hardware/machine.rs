@@ -1625,6 +1625,51 @@ impl PceMachine {
         self.bus.mapped_work_ram_mut()
     }
 
+    pub(crate) fn cheat_peek_physical_ram(&self, address: u32) -> Option<u8> {
+        match address {
+            super::constants::PCE_PHYSICAL_WORK_RAM_START
+                ..=super::constants::PCE_PHYSICAL_WORK_RAM_END => {
+                let offset = (address - super::constants::PCE_PHYSICAL_WORK_RAM_START) as usize
+                    & (self.bus.mapped_work_ram().len() - 1);
+                Some(self.bus.mapped_work_ram()[offset])
+            }
+            super::cartridge::SUPER_SYSTEM_CARD_RAM_START
+                ..=super::cartridge::SUPER_SYSTEM_CARD_RAM_END => self
+                .bus
+                .system_card_ram()
+                .map(|ram| ram[(address - super::cartridge::SUPER_SYSTEM_CARD_RAM_START) as usize]),
+            super::cdrom2::CDROM2_WORK_RAM_START..=super::cdrom2::CDROM2_WORK_RAM_END => self
+                .bus
+                .devices()
+                .cdrom2()
+                .and_then(|cdrom2| cdrom2.peek_physical(address)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn cheat_write_physical_ram(&mut self, address: u32, value: u8) {
+        match address {
+            super::constants::PCE_PHYSICAL_WORK_RAM_START
+                ..=super::constants::PCE_PHYSICAL_WORK_RAM_END => {
+                let offset = (address - super::constants::PCE_PHYSICAL_WORK_RAM_START) as usize
+                    & (self.bus.mapped_work_ram().len() - 1);
+                self.bus.mapped_work_ram_mut()[offset] = value;
+            }
+            super::cartridge::SUPER_SYSTEM_CARD_RAM_START
+                ..=super::cartridge::SUPER_SYSTEM_CARD_RAM_END => {
+                if let Some(ram) = self.bus.system_card_ram_mut() {
+                    ram[(address - super::cartridge::SUPER_SYSTEM_CARD_RAM_START) as usize] = value;
+                }
+            }
+            super::cdrom2::CDROM2_WORK_RAM_START..=super::cdrom2::CDROM2_WORK_RAM_END => {
+                if let Some(cdrom2) = self.bus.devices_mut().cdrom2_mut() {
+                    cdrom2.write_physical(address, value);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[inline]
     pub const fn hardware_topology(&self) -> PceHardwareTopology {
         self.bus.topology()

@@ -29,6 +29,9 @@ const STANDARD_HUCARD_512K_IMAGE_LEN: usize = 0x08_0000;
 const HUCARD_BANK_LEN: u32 = 0x2000;
 pub const POPULOUS_HUCARD_RAM_LEN: usize = 0x8000;
 pub const SUPER_SYSTEM_CARD_RAM_LEN: usize = 0x30_000;
+pub const SUPER_SYSTEM_CARD_RAM_START: u32 = 0x0D_0000;
+pub const SUPER_SYSTEM_CARD_RAM_END: u32 =
+    SUPER_SYSTEM_CARD_RAM_START + SUPER_SYSTEM_CARD_RAM_LEN as u32 - 1;
 pub const SYSTEM_CARD_V1_V2_IMAGE_LEN: usize = 0x40000;
 pub const SF2_CE_CANONICAL_SHA256: [u8; 32] = [
     0x6D, 0x65, 0x78, 0x74, 0x23, 0x84, 0xCF, 0x0B, 0x77, 0x14, 0x14, 0xDD, 0xF0, 0x16, 0xB7, 0xDC,
@@ -233,7 +236,9 @@ impl PceHuCard {
             }
             Self::SystemCardV3 { rom, ram } => match offset {
                 0..=0x07_FFFF => rom[offset as usize & (SYSTEM_CARD_V1_V2_IMAGE_LEN - 1)],
-                0x0D_0000..=0x0F_FFFF => ram[offset as usize - 0x0D_0000],
+                SUPER_SYSTEM_CARD_RAM_START..=SUPER_SYSTEM_CARD_RAM_END => {
+                    ram[offset as usize - SUPER_SYSTEM_CARD_RAM_START as usize]
+                }
                 _ => 0xFF,
             },
         }
@@ -247,8 +252,10 @@ impl PceHuCard {
             Self::Populous { ram, .. } if (0x08_0000..=0x08_7FFF).contains(&offset) => {
                 ram[offset as usize - 0x08_0000] = value;
             }
-            Self::SystemCardV3 { ram, .. } if (0x0D_0000..=0x0F_FFFF).contains(&offset) => {
-                ram[offset as usize - 0x0D_0000] = value;
+            Self::SystemCardV3 { ram, .. }
+                if (SUPER_SYSTEM_CARD_RAM_START..=SUPER_SYSTEM_CARD_RAM_END).contains(&offset) =>
+            {
+                ram[offset as usize - SUPER_SYSTEM_CARD_RAM_START as usize] = value;
             }
             _ => {}
         }
@@ -294,7 +301,13 @@ impl PceHuCard {
         Ok(())
     }
 
-    #[cfg(test)]
+    pub(crate) fn system_card_ram(&self) -> Option<&[u8; SUPER_SYSTEM_CARD_RAM_LEN]> {
+        match self {
+            Self::SystemCardV3 { ram, .. } => Some(ram),
+            _ => None,
+        }
+    }
+
     pub(crate) fn system_card_ram_mut(&mut self) -> Option<&mut [u8; SUPER_SYSTEM_CARD_RAM_LEN]> {
         match self {
             Self::SystemCardV3 { ram, .. } => Some(ram),

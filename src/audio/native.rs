@@ -432,20 +432,38 @@ impl AudioOutput {
         }
 
         let max_staged = self.sample_rate as usize * 2 * MAX_STAGED_AUDIO_MS / 1000;
-        let retain = samples
-            .len()
-            .min(max_staged.saturating_sub(self.staged_samples.len()));
-        if retain < samples.len() {
-            log::error!(
-                "audio staging exceeded {MAX_STAGED_AUDIO_MS} ms; dropping {} samples",
-                samples.len() - retain
+        let recovery = long_stall_recovery_range(
+            occupied.saturating_add(self.staged_samples.len()),
+            samples.len(),
+            max_staged,
+            max_queued,
+        );
+        let recovered_samples;
+        let samples = if let Some(range) = recovery {
+            let dropped = occupied
+                .saturating_add(self.staged_samples.len())
+                .saturating_add(samples.len())
+                .saturating_sub(range.len());
+            recovered_samples = samples[range].to_vec();
+            self.discard_queued_samples();
+            log::warn!(
+                "audio staging exceeded {MAX_STAGED_AUDIO_MS} ms; dropped {dropped} stale samples"
             );
-        }
-        if self.staged_samples.try_reserve(retain).is_err() {
-            log::error!("failed to reserve audio staging buffer; dropping {retain} samples");
+            &recovered_samples
+        } else {
+            samples
+        };
+        if samples.is_empty() {
             return;
         }
-        for (index, &sample) in samples[..retain].iter().enumerate() {
+        if self.staged_samples.try_reserve(samples.len()).is_err() {
+            log::error!(
+                "failed to reserve audio staging buffer; dropping {} samples",
+                samples.len()
+            );
+            return;
+        }
+        for (index, &sample) in samples.iter().enumerate() {
             let mut out = sample * gain;
             if config.low_pass_enabled {
                 out = self.low_pass_filter.apply_sample(out, index, alpha);
@@ -498,6 +516,20 @@ impl AudioOutput {
             None,
         )
     }
+}
+
+pub(super) fn long_stall_recovery_range(
+    pending_samples: usize,
+    incoming_samples: usize,
+    max_pending_samples: usize,
+    recent_samples: usize,
+) -> Option<std::ops::Range<usize>> {
+    if pending_samples.saturating_add(incoming_samples) <= max_pending_samples {
+        return None;
+    }
+    let end = incoming_samples & !1;
+    let retain = end.min(recent_samples & !1);
+    Some(end - retain..end)
 }
 
 #[derive(Clone, Copy)]

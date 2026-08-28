@@ -440,7 +440,12 @@ impl<D> BaseBus<D> {
         self.hucard.ram()
     }
 
-    #[cfg(test)]
+    pub(crate) fn system_card_ram(
+        &self,
+    ) -> Option<&[u8; super::cartridge::SUPER_SYSTEM_CARD_RAM_LEN]> {
+        self.hucard.system_card_ram()
+    }
+
     pub(crate) fn system_card_ram_mut(
         &mut self,
     ) -> Option<&mut [u8; super::cartridge::SUPER_SYSTEM_CARD_RAM_LEN]> {

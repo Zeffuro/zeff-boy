@@ -43,6 +43,12 @@ pub(crate) mod pce_cd;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod pce_cd_archive;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pce_cd_chd;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pce_cd_file;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pce_cd_overlay;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod pce_cd_rar;
 mod pce_display;
 pub(crate) mod pce_profiles;

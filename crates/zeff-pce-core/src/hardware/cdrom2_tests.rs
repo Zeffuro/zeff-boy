@@ -1,14 +1,60 @@
 use super::cpu::{InterruptSource, IrqPort, LineLevel, StatusFlags};
 use super::{
     BaseBus, CD_USER_SECTOR_BYTES, CDROM2_BRAM_START, CDROM2_REGISTER_START, CDROM2_WORK_RAM_END,
-    CDROM2_WORK_RAM_START, CdAudioEndMode, CdAudioStatus, CdDisc, CdRom2, CdScsiPhase, CdTrack,
-    CdTrackMode, ControllerPort, PROVISIONAL_CDROM2_AUTO_ACK_TICKS,
-    PROVISIONAL_CDROM2_NEXT_REQUEST_TICKS, PROVISIONAL_CDROM2_PHASE_TICKS,
-    PROVISIONAL_CDROM2_READ_STARTUP_SECTORS, PROVISIONAL_CDROM2_SELECTION_TICKS, PceConsoleWiring,
-    PceDevices, PceHuCardBoard, PceMachine, SUPER_SYSTEM_CARD_RAM_LEN, SYSTEM_CARD_V1_V2_IMAGE_LEN,
+    CDROM2_WORK_RAM_START, CdAudioEndMode, CdAudioStatus, CdDisc, CdRom2, CdScsiPhase,
+    CdSourceError, CdTrack, CdTrackMode, CdTrackSource, ControllerPort,
+    PROVISIONAL_CDROM2_AUTO_ACK_TICKS, PROVISIONAL_CDROM2_NEXT_REQUEST_TICKS,
+    PROVISIONAL_CDROM2_PHASE_TICKS, PROVISIONAL_CDROM2_READ_STARTUP_SECTORS,
+    PROVISIONAL_CDROM2_SELECTION_TICKS, PceConsoleWiring, PceDevices, PceHuCardBoard, PceMachine,
+    SUPER_SYSTEM_CARD_RAM_LEN, SYSTEM_CARD_V1_V2_IMAGE_LEN,
 };
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const READ_STARTUP_TICKS: u64 = 859_090;
+
+struct FailingCdSource {
+    data: Box<[u8]>,
+    payload_hash: [u8; 32],
+    fail_from: AtomicUsize,
+}
+
+impl FailingCdSource {
+    fn new(data: Vec<u8>) -> Self {
+        Self {
+            payload_hash: Sha256::digest(&data).into(),
+            data: data.into_boxed_slice(),
+            fail_from: AtomicUsize::new(usize::MAX),
+        }
+    }
+}
+
+impl CdTrackSource for FailingCdSource {
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    fn payload_hash(&self) -> [u8; 32] {
+        self.payload_hash
+    }
+
+    fn read_exact_at(&self, offset: usize, buffer: &mut [u8]) -> Result<(), CdSourceError> {
+        if offset >= self.fail_from.load(Ordering::Relaxed) {
+            return Err(CdSourceError::ReadFailed);
+        }
+        let end = offset
+            .checked_add(buffer.len())
+            .filter(|&end| end <= self.data.len())
+            .ok_or(CdSourceError::OutOfRange {
+                offset,
+                bytes: buffer.len(),
+                source_len: self.data.len(),
+            })?;
+        buffer.copy_from_slice(&self.data[offset..end]);
+        Ok(())
+    }
+}
 
 fn disc() -> CdDisc {
     let mut bytes = vec![0; CD_USER_SECTOR_BYTES * 2];
@@ -225,6 +271,34 @@ fn cdda_sample_latch_reads_little_endian_and_ignores_read_only_writes() {
 }
 
 #[test]
+fn cdda_source_failure_is_silent_while_transport_keeps_playing() {
+    let mut raw = vec![0; 2_352];
+    raw[..2].copy_from_slice(&0x1234_i16.to_le_bytes());
+    raw[2..4].copy_from_slice(&(-0x1235_i16).to_le_bytes());
+    let source = Arc::new(FailingCdSource::new(raw));
+    let disc = CdDisc::new(vec![
+        CdTrack::from_index1_source(1, 0, None, 0, CdTrackMode::Audio, source.clone()).unwrap(),
+    ])
+    .unwrap();
+    let mut cd = CdRom2::new(disc);
+    start_audio_track_one(&mut cd);
+    let before = cd.audio_transport_for_test();
+    source.fail_from.store(0, Ordering::Relaxed);
+
+    cd.advance_master_ticks(700);
+
+    let after = cd.audio_transport_for_test();
+    let snapshot = cd.debug_snapshot();
+    assert_eq!(cd.audio_status(), CdAudioStatus::Playing);
+    assert_eq!(after.2, before.2);
+    assert!(after.3 > before.3);
+    assert_eq!(
+        (snapshot.audio_left_sample, snapshot.audio_right_sample),
+        (0, 0)
+    );
+}
+
+#[test]
 fn machine_power_reset_clears_both_system_card_rams_and_preserves_locked_bram() {
     let mut machine = PceMachine::with_cdrom2_system_card_and_controller(
         system_card_rom(),
@@ -338,6 +412,38 @@ fn read6_data_port_auto_acknowledges_and_irq_tracks_live_enable() {
     assert_eq!(cd.read_physical(CDROM2_REGISTER_START + 8), Some(1));
     cd.write_physical(CDROM2_REGISTER_START + 2, 0);
     assert_eq!(cd.irq2_level(), LineLevel::High);
+}
+
+#[test]
+fn read6_source_failure_returns_check_condition_without_partial_data() {
+    let source = Arc::new(FailingCdSource::new(
+        (0..2 * CD_USER_SECTOR_BYTES)
+            .map(|index| index as u8)
+            .collect(),
+    ));
+    let disc = CdDisc::new(vec![
+        CdTrack::from_index1_source(1, 4, None, 0, CdTrackMode::Mode1_2048, source.clone())
+            .unwrap(),
+    ])
+    .unwrap();
+    source
+        .fail_from
+        .store(CD_USER_SECTOR_BYTES, Ordering::Relaxed);
+
+    let mut cd = CdRom2::new(disc);
+    select(&mut cd);
+    send_command(&mut cd, &[8, 0, 0, 0, 2, 0]);
+    cd.advance_master_ticks(PROVISIONAL_CDROM2_PHASE_TICKS);
+
+    let snapshot = cd.debug_snapshot();
+    assert_eq!(snapshot.phase, CdScsiPhase::Status);
+    assert_eq!(snapshot.response, [1]);
+    assert_eq!(snapshot.response_index, 0);
+    assert_eq!(snapshot.response_available, 1);
+    assert!(!snapshot.data_ready_condition);
+    finish_status(&mut cd, 1);
+    let sense = request_sense(&mut cd, 18);
+    assert_eq!((sense[2], sense[12]), (0x05, 0x21));
 }
 
 #[test]

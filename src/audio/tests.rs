@@ -95,6 +95,14 @@ fn staged_audio_preserves_order_when_a_catch_up_batch_exceeds_ring_space() {
     assert!(staged.is_empty());
 }
 
+#[test]
+fn long_stall_recovery_keeps_only_the_latest_complete_stereo_window() {
+    assert_eq!(long_stall_recovery_range(12, 8, 20, 8), None);
+    assert_eq!(long_stall_recovery_range(13, 8, 20, 8), Some(0..8));
+    assert_eq!(long_stall_recovery_range(0, 31, 20, 8), Some(22..30));
+    assert_eq!(long_stall_recovery_range(usize::MAX, 7, 20, 8), Some(0..6));
+}
+
 fn playback_state(preroll_samples: usize) -> (AudioPlaybackState, Arc<AtomicU64>) {
     let underruns = Arc::new(AtomicU64::new(0));
     (

@@ -419,6 +419,21 @@ mod tests {
         assert!(pacer.ready());
     }
 
+    #[test]
+    fn rewind_pacer_does_not_accumulate_work_during_a_host_stall() {
+        let mut pacer = RewindPacer::default();
+        pacer.schedule(10, 4);
+        pacer.elapse(Duration::from_secs(1));
+        assert!(pacer.ready());
+
+        pacer.schedule(10, 4);
+        assert!(!pacer.ready());
+        pacer.elapse(Duration::from_nanos(39));
+        assert!(!pacer.ready());
+        pacer.elapse(Duration::from_nanos(1));
+        assert!(pacer.ready());
+    }
+
     fn recording_state() -> RecordingState {
         RecordingState {
             audio_recorder: None,

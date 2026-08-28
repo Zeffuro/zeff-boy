@@ -37,7 +37,8 @@ use super::pce_profiles::{
     LEMMINGS_JAPAN_CANONICAL_DISC_SHA256, TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256,
 };
 use super::pce_profiles::{
-    automatic_arcade_card_enabled, automatic_controller_mode, automatic_memory_base_enabled,
+    PceCdTitleMetadata, automatic_arcade_card_enabled, automatic_controller_mode,
+    automatic_memory_base_enabled, canonical_title_metadata,
 };
 use crate::audio_tooling::{
     AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
@@ -523,6 +524,10 @@ impl PceBackend {
 
     pub(crate) const fn source_disc_hash(&self) -> Option<[u8; 32]> {
         self.source_disc_hash
+    }
+
+    pub(crate) fn canonical_title_metadata(&self) -> Option<&'static PceCdTitleMetadata> {
+        self.source_disc_hash.and_then(canonical_title_metadata)
     }
 
     pub(crate) fn cdrom2(&self) -> Option<&zeff_pce_core::hardware::CdRom2> {

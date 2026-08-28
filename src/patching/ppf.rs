@@ -3,10 +3,55 @@ use anyhow::{Context, ensure};
 const DESCRIPTION_END: usize = 56;
 const BLOCK_CHECK_LEN: usize = 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PpfPlanLimits {
+    max_patch_bytes: usize,
+    max_records: usize,
+    max_replacement_bytes: usize,
+}
+
+impl PpfPlanLimits {
+    pub(crate) const UNBOUNDED: Self = Self::new(usize::MAX, usize::MAX, usize::MAX);
+
+    pub(crate) const fn new(
+        max_patch_bytes: usize,
+        max_records: usize,
+        max_replacement_bytes: usize,
+    ) -> Self {
+        Self {
+            max_patch_bytes,
+            max_records,
+            max_replacement_bytes,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PpfPlanFallback {
+    PatchBytes { bytes: usize, limit: usize },
+    Records { records: usize, limit: usize },
+    ReplacementBytes { bytes: usize, limit: usize },
+}
+
 #[derive(Clone, Copy)]
-struct Record<'a> {
-    offset: u64,
-    bytes: &'a [u8],
+pub(crate) struct PpfWrite<'a> {
+    pub(crate) offset: u64,
+    pub(crate) bytes: &'a [u8],
+}
+
+pub(crate) struct PpfPatchPlan<'a> {
+    writes: Vec<PpfWrite<'a>>,
+}
+
+impl<'a> PpfPatchPlan<'a> {
+    pub(crate) fn writes(&self) -> &[PpfWrite<'a>] {
+        &self.writes
+    }
+}
+
+pub(crate) enum PpfPlanOutcome<'a> {
+    Planned(PpfPatchPlan<'a>),
+    Fallback(PpfPlanFallback),
 }
 
 pub(crate) fn apply_ppf_patch(target: &mut Vec<u8>, patch: &[u8]) -> anyhow::Result<()> {
@@ -29,19 +74,37 @@ pub(crate) fn apply_ppf_patch_segments(
         total.checked_add(target.len() as u64)
     });
     let total_len = total_len.context("PPF target is too large")?;
-    let records = parse_patch(patch, targets, total_len)?;
+    let outcome = plan_ppf_patch(
+        patch,
+        total_len,
+        PpfPlanLimits::UNBOUNDED,
+        &mut |offset, output| read_segments(targets, offset, output),
+    )?;
+    let plan = match outcome {
+        PpfPlanOutcome::Planned(plan) => plan,
+        PpfPlanOutcome::Fallback(reason) => {
+            anyhow::bail!("unbounded PPF planning unexpectedly fell back: {reason:?}")
+        }
+    };
 
-    for record in records {
+    for record in plan.writes() {
         write_segments(targets, record.offset, record.bytes);
     }
     Ok(())
 }
 
-fn parse_patch<'a>(
+pub(crate) fn plan_ppf_patch<'a>(
     patch: &'a [u8],
-    targets: &[Vec<u8>],
     target_len: u64,
-) -> anyhow::Result<Vec<Record<'a>>> {
+    limits: PpfPlanLimits,
+    read_source: &mut dyn FnMut(u64, &mut [u8]) -> anyhow::Result<()>,
+) -> anyhow::Result<PpfPlanOutcome<'a>> {
+    if patch.len() > limits.max_patch_bytes {
+        return Ok(PpfPlanOutcome::Fallback(PpfPlanFallback::PatchBytes {
+            bytes: patch.len(),
+            limit: limits.max_patch_bytes,
+        }));
+    }
     ensure!(patch.len() >= DESCRIPTION_END, "PPF header truncated");
     let (offset_bytes, mut cursor, record_end, undo) = match &patch[..5] {
         b"PPF10" => {
@@ -56,7 +119,7 @@ fn parse_patch<'a>(
                 expected_len == target_len,
                 "PPF2 target size mismatch: expected {expected_len}, got {target_len}"
             );
-            verify_block(targets, target_len, 0x9320, &patch[60..1084])?;
+            verify_block(target_len, 0x9320, &patch[60..1084], read_source)?;
             (4, 1084, record_end(patch, 4, 38)?, false)
         }
         b"PPF30" => {
@@ -71,7 +134,7 @@ fn parse_patch<'a>(
             ensure!(patch.len() >= header_len, "PPF3 header truncated");
             if has_block_check {
                 let offset = if patch[56] == 0 { 0x9320 } else { 0x80a0 };
-                verify_block(targets, target_len, offset, &patch[60..1084])?;
+                verify_block(target_len, offset, &patch[60..1084], read_source)?;
             }
             (8, header_len, record_end(patch, 2, 36)?, patch[58] != 0)
         }
@@ -80,6 +143,7 @@ fn parse_patch<'a>(
 
     ensure!(record_end >= cursor, "PPF record area is malformed");
     let mut records = Vec::new();
+    let mut replacement_bytes = 0_usize;
     while cursor < record_end {
         let header_end = cursor
             .checked_add(offset_bytes + 1)
@@ -106,14 +170,35 @@ fn parse_patch<'a>(
             target_end <= target_len,
             "PPF record ends outside target at {target_end:#x} (target length {target_len:#x})"
         );
-        records.push(Record {
+        let record_count = records
+            .len()
+            .checked_add(1)
+            .context("PPF record count overflow")?;
+        if record_count > limits.max_records {
+            return Ok(PpfPlanOutcome::Fallback(PpfPlanFallback::Records {
+                records: record_count,
+                limit: limits.max_records,
+            }));
+        }
+        replacement_bytes = replacement_bytes
+            .checked_add(len)
+            .context("PPF replacement length overflow")?;
+        if replacement_bytes > limits.max_replacement_bytes {
+            return Ok(PpfPlanOutcome::Fallback(
+                PpfPlanFallback::ReplacementBytes {
+                    bytes: replacement_bytes,
+                    limit: limits.max_replacement_bytes,
+                },
+            ));
+        }
+        records.push(PpfWrite {
             offset,
             bytes: &patch[data_start..data_end],
         });
         cursor = next;
     }
     ensure!(cursor == record_end, "PPF record area is malformed");
-    Ok(records)
+    Ok(PpfPlanOutcome::Planned(PpfPatchPlan { writes: records }))
 }
 
 fn record_end(patch: &[u8], length_bytes: usize, trailer_overhead: usize) -> anyhow::Result<usize> {
@@ -135,10 +220,10 @@ fn record_end(patch: &[u8], length_bytes: usize, trailer_overhead: usize) -> any
 }
 
 fn verify_block(
-    targets: &[Vec<u8>],
     target_len: u64,
     offset: u64,
     expected: &[u8],
+    read_source: &mut dyn FnMut(u64, &mut [u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     ensure!(
         expected.len() == BLOCK_CHECK_LEN,
@@ -148,28 +233,34 @@ fn verify_block(
         offset + BLOCK_CHECK_LEN as u64 <= target_len,
         "PPF target is too short for its block check"
     );
-    let actual = read_segments(targets, offset, BLOCK_CHECK_LEN);
+    let mut actual = [0; BLOCK_CHECK_LEN];
+    read_source(offset, &mut actual)?;
     ensure!(actual == expected, "PPF source block check failed");
     Ok(())
 }
 
-fn read_segments(targets: &[Vec<u8>], mut offset: u64, mut len: usize) -> Vec<u8> {
-    let mut output = Vec::with_capacity(len);
+fn read_segments(
+    targets: &[Vec<u8>],
+    mut offset: u64,
+    mut output: &mut [u8],
+) -> anyhow::Result<()> {
     for target in targets {
         if offset >= target.len() as u64 {
             offset -= target.len() as u64;
             continue;
         }
         let start = offset as usize;
-        let take = len.min(target.len() - start);
-        output.extend_from_slice(&target[start..start + take]);
-        len -= take;
+        let take = output.len().min(target.len() - start);
+        let (head, tail) = output.split_at_mut(take);
+        head.copy_from_slice(&target[start..start + take]);
+        output = tail;
         offset = 0;
-        if len == 0 {
+        if output.is_empty() {
             break;
         }
     }
-    output
+    ensure!(output.is_empty(), "PPF source read ends outside target");
+    Ok(())
 }
 
 fn write_segments(targets: &mut [Vec<u8>], mut offset: u64, mut bytes: &[u8]) {
@@ -258,5 +349,69 @@ mod tests {
         let original = target.clone();
         assert!(apply_ppf_patch(&mut target, &patch).is_err());
         assert_eq!(target, original);
+    }
+
+    #[test]
+    fn planner_returns_typed_fallbacks() {
+        let mut patch = b"PPF10\0".to_vec();
+        patch.resize(56, 0);
+        for offset in [0_u32, 4] {
+            patch.extend_from_slice(&offset.to_le_bytes());
+            patch.push(2);
+            patch.extend_from_slice(&[1, 2]);
+        }
+        let mut unread = |_: u64, _: &mut [u8]| -> anyhow::Result<()> {
+            panic!("PPF1 must not read the source")
+        };
+        let outcome = plan_ppf_patch(
+            &patch,
+            8,
+            PpfPlanLimits::new(patch.len() - 1, usize::MAX, usize::MAX),
+            &mut unread,
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            PpfPlanOutcome::Fallback(PpfPlanFallback::PatchBytes { .. })
+        ));
+
+        let outcome = plan_ppf_patch(
+            &patch,
+            8,
+            PpfPlanLimits::new(patch.len(), 1, usize::MAX),
+            &mut unread,
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            PpfPlanOutcome::Fallback(PpfPlanFallback::Records {
+                records: 2,
+                limit: 1
+            })
+        ));
+
+        let outcome = plan_ppf_patch(
+            &patch,
+            8,
+            PpfPlanLimits::new(patch.len(), usize::MAX, 3),
+            &mut unread,
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            PpfPlanOutcome::Fallback(PpfPlanFallback::ReplacementBytes { bytes: 4, limit: 3 })
+        ));
+
+        let outcome = plan_ppf_patch(
+            &patch,
+            8,
+            PpfPlanLimits::new(patch.len(), 2, 4),
+            &mut unread,
+        )
+        .unwrap();
+        let PpfPlanOutcome::Planned(plan) = outcome else {
+            panic!("exact limits must be accepted");
+        };
+        assert_eq!(plan.writes().len(), 2);
     }
 }

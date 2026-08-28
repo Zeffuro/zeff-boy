@@ -171,6 +171,34 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_recovers_all_frames_after_a_long_host_stall() {
+        let start = Instant::now();
+        let now = start + std::time::Duration::from_millis(100);
+        let mut last_frame_time = start;
+        let mut frames = 0;
+        let mut batches = 0;
+
+        loop {
+            let due = frames_due(
+                &mut last_frame_time,
+                now,
+                std::time::Duration::from_millis(1),
+                4,
+                false,
+            );
+            if due == 0 {
+                break;
+            }
+            frames += due;
+            batches += 1;
+        }
+
+        assert_eq!(frames, 100);
+        assert_eq!(batches, 25);
+        assert_eq!(last_frame_time, now);
+    }
+
+    #[test]
     fn speed_transitions_do_not_carry_fast_forward_debt_into_normal_mode() {
         let start = Instant::now();
         let entered_fast_forward = start + std::time::Duration::from_millis(100);

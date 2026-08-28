@@ -513,6 +513,7 @@ impl CdRom2 {
     pub(super) fn stop_audio(&mut self, status: CdAudioStatus) {
         self.audio_status = status;
         self.audio_track_index = None;
+        self.audio_sector_lba = None;
         self.audio_left_sample = 0;
         self.audio_right_sample = 0;
         self.audio_source_frames.clear();
@@ -522,22 +523,42 @@ impl CdRom2 {
     fn read_current_audio_sample(&mut self) -> (i16, i16) {
         let lba = self.audio_current_lba;
         let sample = self.audio_current_sample;
-        if let Some(track_index) = self.audio_track_index
-            && let Some(result) =
-                self.disc
-                    .read_audio_sample_from_track_index(track_index, lba, sample)
-        {
-            return result.unwrap_or((0, 0));
+        if sample >= 588 {
+            return (0, 0);
+        }
+        if self.audio_sector_lba != Some(lba) {
+            self.refresh_audio_sector(lba);
         }
 
-        self.audio_track_index = self.disc.stored_track_index_at_lba(lba);
-        self.audio_track_index
-            .and_then(|track_index| {
-                self.disc
-                    .read_audio_sample_from_track_index(track_index, lba, sample)
-            })
-            .and_then(Result::ok)
-            .unwrap_or((0, 0))
+        let offset = sample * 4;
+        let frame = &self.audio_sector[offset..offset + 4];
+        (
+            i16::from_le_bytes([frame[0], frame[1]]),
+            i16::from_le_bytes([frame[2], frame[3]]),
+        )
+    }
+
+    fn refresh_audio_sector(&mut self, lba: u32) {
+        let mut result = self.audio_track_index.and_then(|track_index| {
+            self.disc
+                .read_audio_sector_from_track_index(track_index, lba, &mut self.audio_sector)
+        });
+
+        if result.is_none() {
+            self.audio_track_index = self.disc.stored_track_index_at_lba(lba);
+            result = self.audio_track_index.and_then(|track_index| {
+                self.disc.read_audio_sector_from_track_index(
+                    track_index,
+                    lba,
+                    &mut self.audio_sector,
+                )
+            });
+        }
+
+        if !matches!(result, Some(Ok(()))) {
+            self.audio_sector.fill(0);
+        }
+        self.audio_sector_lba = Some(lba);
     }
 
     pub(super) fn service_adpcm_dma(&mut self) {
@@ -578,7 +599,57 @@ const fn adpcm_blip_buffer_samples(sample_rate: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::{CD_USER_SECTOR_BYTES, CdTrack, CdTrackMode};
+    use crate::hardware::{
+        CD_USER_SECTOR_BYTES, CdSourceError, CdTrack, CdTrackMode, CdTrackSource,
+    };
+    use sha2::{Digest, Sha256};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct CountingAudioSource {
+        data: Box<[u8]>,
+        payload_hash: [u8; 32],
+        reads: AtomicUsize,
+        fail: AtomicBool,
+    }
+
+    impl CountingAudioSource {
+        fn new(data: Vec<u8>) -> Self {
+            Self {
+                payload_hash: Sha256::digest(&data).into(),
+                data: data.into_boxed_slice(),
+                reads: AtomicUsize::new(0),
+                fail: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl CdTrackSource for CountingAudioSource {
+        fn len(&self) -> usize {
+            self.data.len()
+        }
+
+        fn payload_hash(&self) -> [u8; 32] {
+            self.payload_hash
+        }
+
+        fn read_exact_at(&self, offset: usize, buffer: &mut [u8]) -> Result<(), CdSourceError> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            if self.fail.load(Ordering::Relaxed) {
+                return Err(CdSourceError::ReadFailed);
+            }
+            let end = offset
+                .checked_add(buffer.len())
+                .filter(|&end| end <= self.data.len())
+                .ok_or(CdSourceError::OutOfRange {
+                    offset,
+                    bytes: buffer.len(),
+                    source_len: self.data.len(),
+                })?;
+            buffer.copy_from_slice(&self.data[offset..end]);
+            Ok(())
+        }
+    }
 
     fn cdrom() -> CdRom2 {
         let track = CdTrack::from_index1_data(
@@ -613,6 +684,21 @@ mod tests {
             CdTrack::from_index1_data(number, 0, None, lba, CdTrackMode::Audio, raw).unwrap()
         };
         CdRom2::new(CdDisc::new(vec![track(1, 0, 0x1111), track(2, 1, 0x2222)]).unwrap())
+    }
+
+    fn counting_audio_cdrom() -> (CdRom2, Arc<CountingAudioSource>) {
+        let mut raw = vec![0; 2 * CD_RAW_SECTOR_BYTES];
+        for (sample, frame) in raw.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let value = sample as i16;
+            frame[..2].copy_from_slice(&value.to_le_bytes());
+            frame[2..].copy_from_slice(&(-value).to_le_bytes());
+        }
+        let source = Arc::new(CountingAudioSource::new(raw));
+        let track =
+            CdTrack::from_index1_source(1, 0, None, 0, CdTrackMode::Audio, source.clone()).unwrap();
+        let cd = CdRom2::new(CdDisc::new(vec![track]).unwrap());
+        source.reads.store(0, Ordering::Relaxed);
+        (cd, source)
     }
 
     fn start(cd: &mut CdRom2, byte: u8, rate: u8) {
@@ -1141,6 +1227,42 @@ mod tests {
         cd.audio_track_index = Some(1);
         cd.reset();
         assert_eq!(cd.audio_track_index, None);
+    }
+
+    #[test]
+    fn cdda_sector_cache_reads_once_and_is_transient() {
+        let (mut cd, source) = counting_audio_cdrom();
+        let mut before = StateWriter::new();
+        cd.write_state(&mut before);
+
+        assert_eq!(cd.read_current_audio_sample(), (0, 0));
+        let mut after = StateWriter::new();
+        cd.write_state(&mut after);
+        assert_eq!(after.into_bytes(), before.into_bytes());
+
+        for sample in 1..588 {
+            cd.audio_current_sample = sample;
+            assert_eq!(cd.read_current_audio_sample().0, sample as i16);
+        }
+        assert_eq!(source.reads.load(Ordering::Relaxed), 1);
+
+        source.fail.store(true, Ordering::Relaxed);
+        cd.audio_current_lba = 1;
+        cd.audio_current_sample = 0;
+        assert_eq!(cd.read_current_audio_sample(), (0, 0));
+        cd.audio_current_sample = 1;
+        assert_eq!(cd.read_current_audio_sample(), (0, 0));
+        assert_eq!(source.reads.load(Ordering::Relaxed), 2);
+
+        let mut writer = StateWriter::new();
+        cd.write_state(&mut writer);
+        let state = writer.into_bytes();
+        cd.read_state(&mut StateReader::new(&state)).unwrap();
+        assert_eq!(cd.audio_sector_lba, None);
+
+        cd.audio_sector_lba = Some(1);
+        cd.stop_audio(CdAudioStatus::Stopped);
+        assert_eq!(cd.audio_sector_lba, None);
     }
 
     #[test]
