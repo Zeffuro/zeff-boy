@@ -231,7 +231,7 @@ fn copy_held_file_to_new_path(source_file: &File, target: &Path) -> std::io::Res
     let source_mode = source_file.metadata()?.permissions().mode() & 0o7777;
     let expected_len = source_file.metadata()?.len();
     let mut options = OpenOptions::new();
-    options.read(true).write(true).create_new(true).mode(0);
+    options.read(true).write(true).create_new(true).mode(0o000);
     let mut destination = options.open(target)?;
     let result = (|| -> std::io::Result<()> {
         let mut held_source = source_file.try_clone()?;
