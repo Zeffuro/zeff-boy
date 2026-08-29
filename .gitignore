@@ -1,5 +1,6 @@
 /target
 /.tmp/
+/local-artifacts/
 /tmp/pce-romset-smoke/
 /test-roms
 /temp

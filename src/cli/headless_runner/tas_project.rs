@@ -314,32 +314,13 @@ fn validate_nes_cartridge_project_scope(project: &TasProject, branch_id: &str) -
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use zeff_emu_common::replay::{ReplayPlayer, ReplayStartMetadata};
 
     use crate::tas_project::{TasBranch, TasControllerInput, TasInputFrame, TasInputSpan};
 
     use super::*;
-
-    struct TestDirectory(PathBuf);
-
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn test_directory() -> Result<TestDirectory> {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after Unix epoch")
-            .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("zeff_tas_cli_{}_{}", std::process::id(), suffix));
-        std::fs::create_dir(&path)?;
-        Ok(TestDirectory(path))
-    }
+    use crate::cli::headless_runner::test_support::test_directory;
 
     fn executable_nes_rom() -> Vec<u8> {
         let mut rom = vec![0; 16 + 0x4000 + 0x2000];
@@ -416,10 +397,10 @@ mod tests {
 
     #[test]
     fn native_cli_verifies_saves_then_exports_with_loader_owned_identity() -> Result<()> {
-        let directory = test_directory()?;
-        let rom_path = directory.0.join("game.nes");
-        let project_path = directory.0.join("movie.ztas");
-        let export_path = directory.0.join("movie.zrpl");
+        let directory = test_directory("tas-cli")?;
+        let rom_path = directory.path().join("game.nes");
+        let project_path = directory.path().join("movie.ztas");
+        let export_path = directory.path().join("movie.zrpl");
         let rom = executable_nes_rom();
         std::fs::write(&rom_path, &rom)?;
         project_for_rom(&rom_path, &rom, 301)?.save_atomic(&project_path)?;
@@ -460,9 +441,9 @@ mod tests {
 
     #[test]
     fn native_cli_rejects_media_change_without_mutating_project() -> Result<()> {
-        let directory = test_directory()?;
-        let rom_path = directory.0.join("game.nes");
-        let project_path = directory.0.join("movie.ztas");
+        let directory = test_directory("tas-cli-interrupted")?;
+        let rom_path = directory.path().join("game.nes");
+        let project_path = directory.path().join("movie.ztas");
         let rom = executable_nes_rom();
         std::fs::write(&rom_path, &rom)?;
         project_for_rom(&rom_path, &rom, 1)?.save_atomic(&project_path)?;
@@ -487,8 +468,8 @@ mod tests {
     #[test]
     fn native_cli_rejects_legacy_or_nonstandard_controller_start_state_transactionally()
     -> Result<()> {
-        let directory = test_directory()?;
-        let rom_path = directory.0.join("game.nes");
+        let directory = test_directory("tas-cli-profile")?;
+        let rom_path = directory.path().join("game.nes");
         let rom = executable_nes_rom();
         std::fs::write(&rom_path, &rom)?;
 
@@ -521,7 +502,7 @@ mod tests {
                 project.start_state = backend.encode_state_bytes().expect("state should encode");
             }
             project.identity.start_state_sha256 = TasDigest::from_bytes(&project.start_state);
-            let project_path = directory.0.join(format!("{name}.ztas"));
+            let project_path = directory.path().join(format!("{name}.ztas"));
             project.validate()?;
             project.save_atomic(&project_path)?;
             let before = std::fs::read(&project_path)?;
@@ -542,10 +523,10 @@ mod tests {
 
     #[test]
     fn native_cli_rejects_non_direct_media_without_mutating_project() -> Result<()> {
-        let directory = test_directory()?;
-        let rom_path = directory.0.join("game.nes");
-        let disguised_path = directory.0.join("game.fds");
-        let project_path = directory.0.join("movie.ztas");
+        let directory = test_directory("tas-cli-fds")?;
+        let rom_path = directory.path().join("game.nes");
+        let disguised_path = directory.path().join("game.fds");
+        let project_path = directory.path().join("movie.ztas");
         let rom = executable_nes_rom();
         std::fs::write(&rom_path, &rom)?;
         std::fs::write(&disguised_path, &rom)?;
@@ -567,8 +548,8 @@ mod tests {
 
     #[test]
     fn bounded_nes_media_reader_rejects_oversized_file() -> Result<()> {
-        let directory = test_directory()?;
-        let path = directory.0.join("oversized.nes");
+        let directory = test_directory("tas-cli-oversized")?;
+        let path = directory.path().join("oversized.nes");
         std::fs::File::create(&path)?.set_len(MAX_NES_CARTRIDGE_BYTES + 1)?;
         assert!(read_nes_cartridge_bounded(&path).is_err());
         Ok(())
@@ -576,9 +557,9 @@ mod tests {
 
     #[test]
     fn canonical_nes_tas_loader_ignores_battery_sidecar() -> Result<()> {
-        let directory = test_directory()?;
-        let isolated_path = directory.0.join("isolated.nes");
-        let baseline_path = directory.0.join("baseline.nes");
+        let directory = test_directory("tas-cli-isolated")?;
+        let isolated_path = directory.path().join("isolated.nes");
+        let baseline_path = directory.path().join("baseline.nes");
         let mut rom = executable_nes_rom();
         rom[6] = 0x02;
         rom[7] = 0x10;
@@ -623,8 +604,8 @@ mod tests {
 
     #[test]
     fn nes_cartridge_scope_rejects_every_unowned_timeline_domain() -> Result<()> {
-        let directory = test_directory()?;
-        let rom_path = directory.0.join("game.nes");
+        let directory = test_directory("tas-cli-failure")?;
+        let rom_path = directory.path().join("game.nes");
         let rom = executable_nes_rom();
         let base = project_for_rom(&rom_path, &rom, 1)?;
 
@@ -658,10 +639,10 @@ mod tests {
 
     #[test]
     fn export_failure_leaves_durable_verification() -> Result<()> {
-        let directory = test_directory()?;
-        let rom_path = directory.0.join("game.nes");
-        let project_path = directory.0.join("movie.ztas");
-        let export_path = directory.0.join("occupied.zrpl");
+        let directory = test_directory("tas-cli-occupied-export")?;
+        let rom_path = directory.path().join("game.nes");
+        let project_path = directory.path().join("movie.ztas");
+        let export_path = directory.path().join("occupied.zrpl");
         let rom = executable_nes_rom();
         std::fs::write(&rom_path, &rom)?;
         project_for_rom(&rom_path, &rom, 1)?.save_atomic(&project_path)?;

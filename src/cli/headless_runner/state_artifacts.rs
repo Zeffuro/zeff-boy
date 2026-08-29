@@ -264,52 +264,27 @@ pub(super) fn write_new_state_file(path: &Path, bytes: &[u8]) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
+    use crate::cli::headless_runner::test_support::{TestDirectory, test_directory};
 
-    struct TestTempDir {
-        path: PathBuf,
-    }
-
-    impl Drop for TestTempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-
-    fn test_temp_dir(label: &str) -> TestTempDir {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after Unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "zeff-boy-state-artifact-{label}-{}-{suffix}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).unwrap();
-        TestTempDir { path }
-    }
-
-    fn test_workspace(label: &str) -> TestTempDir {
-        let workspace = test_temp_dir(label);
-        fs::write(workspace.path.join("Cargo.toml"), "[workspace]\n").unwrap();
-        fs::create_dir(workspace.path.join(".git")).unwrap();
-        fs::create_dir(workspace.path.join("target")).unwrap();
-        fs::create_dir(workspace.path.join("temp")).unwrap();
-        fs::create_dir_all(workspace.path.join("rom-tests").join("results")).unwrap();
+    fn test_workspace(label: &str) -> TestDirectory {
+        let workspace = test_directory(label).unwrap();
+        fs::write(workspace.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::create_dir(workspace.path().join(".git")).unwrap();
+        fs::create_dir(workspace.path().join("target")).unwrap();
+        fs::create_dir(workspace.path().join("temp")).unwrap();
+        fs::create_dir_all(workspace.path().join("rom-tests").join("results")).unwrap();
         workspace
     }
 
     #[test]
     fn artifact_path_policy_anchors_subdirectories_to_workspace_root() {
         let workspace = test_workspace("workspace-root");
-        let subdirectory = workspace.path.join("src").join("cli");
+        let subdirectory = workspace.path().join("src").join("cli");
         fs::create_dir_all(&subdirectory).unwrap();
 
         let root = workspace_root_from(&subdirectory).unwrap();
-        assert_eq!(root, fs::canonicalize(&workspace.path).unwrap());
+        assert_eq!(root, fs::canonicalize(workspace.path()).unwrap());
         let resolved = resolve_pce_state_artifact_path_from_root(
             &root,
             Path::new("target/checkpoint.pcestate"),
@@ -320,27 +295,28 @@ mod tests {
 
     #[test]
     fn artifact_path_policy_rejects_non_workspace_current_directory() {
-        let outside = test_temp_dir("outside-workspace");
-        assert!(workspace_root_from(&outside.path).is_err());
+        let outside = test_directory("outside-workspace").unwrap();
+        assert!(workspace_root_from(outside.path()).is_err());
     }
 
     #[test]
     fn artifact_path_policy_normalizes_absolute_paths_before_workspace_check() {
         let workspace = test_workspace("absolute-path");
-        let inside = workspace.path.join("target").join("checkpoint.pcestate");
-        let resolved = resolve_pce_state_artifact_path_from_root(&workspace.path, &inside).unwrap();
+        let inside = workspace.path().join("target").join("checkpoint.pcestate");
+        let resolved =
+            resolve_pce_state_artifact_path_from_root(workspace.path(), &inside).unwrap();
         assert_eq!(
             resolved,
-            fs::canonicalize(workspace.path.join("target"))
+            fs::canonicalize(workspace.path().join("target"))
                 .unwrap()
                 .join("checkpoint.pcestate")
         );
 
-        let outside = test_temp_dir("absolute-outside");
+        let outside = test_directory("absolute-outside").unwrap();
         assert!(
             resolve_pce_state_artifact_path_from_root(
-                &workspace.path,
-                &outside.path.join("checkpoint.pcestate"),
+                workspace.path(),
+                &outside.path().join("checkpoint.pcestate"),
             )
             .is_err()
         );
@@ -355,7 +331,8 @@ mod tests {
             "rom-tests/results/checkpoint.pcestate",
         ] {
             assert!(
-                resolve_pce_state_artifact_path_from_root(&workspace.path, Path::new(path)).is_ok(),
+                resolve_pce_state_artifact_path_from_root(workspace.path(), Path::new(path))
+                    .is_ok(),
                 "{path}"
             );
         }
@@ -366,7 +343,7 @@ mod tests {
             "target/new-parent/checkpoint.pcestate",
         ] {
             assert!(
-                resolve_pce_state_artifact_path_from_root(&workspace.path, Path::new(path))
+                resolve_pce_state_artifact_path_from_root(workspace.path(), Path::new(path))
                     .is_err(),
                 "{path}"
             );
@@ -378,7 +355,7 @@ mod tests {
         let workspace = test_workspace("coleco-policy");
         assert!(
             resolve_state_artifact_path_from_root(
-                &workspace.path,
+                workspace.path(),
                 Path::new("target/checkpoint.colstate"),
                 COLECO_STATE_EXTENSION,
                 "ColecoVision",
@@ -387,7 +364,7 @@ mod tests {
         );
         assert!(
             resolve_state_artifact_path_from_root(
-                &workspace.path,
+                workspace.path(),
                 Path::new("target/checkpoint.pcestate"),
                 COLECO_STATE_EXTENSION,
                 "ColecoVision",
@@ -422,30 +399,30 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn artifact_path_policy_rejects_symlinked_allowed_roots_and_parents() {
-        let outside = test_temp_dir("symlink-outside");
+        let outside = test_directory("symlink-outside").unwrap();
 
         let root_link_workspace = test_workspace("symlink-root");
-        let root_link = root_link_workspace.path.join("target");
+        let root_link = root_link_workspace.path().join("target");
         fs::remove_dir(&root_link).unwrap();
-        if !create_directory_link_or_skip(&outside.path, &root_link) {
+        if !create_directory_link_or_skip(outside.path(), &root_link) {
             return;
         }
         assert!(
             resolve_pce_state_artifact_path_from_root(
-                &root_link_workspace.path,
+                root_link_workspace.path(),
                 Path::new("target/checkpoint.pcestate"),
             )
             .is_err()
         );
 
         let parent_link_workspace = test_workspace("symlink-parent");
-        let parent_link = parent_link_workspace.path.join("target").join("escape");
-        if !create_directory_link_or_skip(&outside.path, &parent_link) {
+        let parent_link = parent_link_workspace.path().join("target").join("escape");
+        if !create_directory_link_or_skip(outside.path(), &parent_link) {
             return;
         }
         assert!(
             resolve_pce_state_artifact_path_from_root(
-                &parent_link_workspace.path,
+                parent_link_workspace.path(),
                 Path::new("target/escape/checkpoint.pcestate"),
             )
             .is_err()
@@ -454,8 +431,8 @@ mod tests {
 
     #[test]
     fn write_new_state_file_roundtrips_bytes_and_preserves_existing_destination() {
-        let temp = test_temp_dir("write");
-        let path = temp.path.join("endpoint.pcestate");
+        let temp = test_directory("state-artifact-write").unwrap();
+        let path = temp.path().join("endpoint.pcestate");
         let bytes = [0x5A, 0x45, 0x46, 0x46];
         write_new_state_file(&path, &bytes).unwrap();
         assert_eq!(fs::read(&path).unwrap(), bytes);

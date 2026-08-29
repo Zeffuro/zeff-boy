@@ -537,34 +537,11 @@ fn print_pce_memory_dumps(backend: &PceBackend, opts: &HeadlessOptions) {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use crate::cli::headless_runner::test_support::test_directory;
 
     const RESET_PC: u16 = 0xE000;
-
-    struct TestTempDir {
-        path: PathBuf,
-    }
-
-    impl Drop for TestTempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
-    fn test_temp_dir(label: &str) -> TestTempDir {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after Unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "zeff-boy-pce-state-{label}-{}-{suffix}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&path).unwrap();
-        TestTempDir { path }
-    }
 
     fn pce_test_rom() -> Vec<u8> {
         let mut rom = vec![0xEA; 0x2000];
@@ -595,8 +572,8 @@ mod tests {
         source.step_frame();
         let state = source.encode_state_bytes()?;
 
-        let temp = test_temp_dir("roundtrip");
-        let state_path = temp.path.join("endpoint.pcestate");
+        let temp = test_directory("pce-state-roundtrip")?;
+        let state_path = temp.path().join("endpoint.pcestate");
         super::super::state_artifacts::write_new_state_file(&state_path, &state)?;
 
         let mut restored = PceBackend::new(rom, PathBuf::from("endpoint.pce"))?;

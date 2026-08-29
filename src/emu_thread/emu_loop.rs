@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver as StdReceiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
-use zeff_emu_common::time::Reset as _;
 
 use crate::cheats::CheatPatch;
 use crate::emu_backend::EmuBackend;
@@ -21,8 +20,7 @@ use super::recovery::{
 use super::speculation::{SpeculationBoundary, TerminalPersistenceReady};
 use super::{
     AudioRecordingCapture, DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
-    REWIND_CAPTURE_INTERVAL_FRAMES, ReplayStartState, SharedFramebuffer, TcpLinkMode,
-    WorkerRuntimeFault,
+    REWIND_CAPTURE_INTERVAL_FRAMES, SharedFramebuffer, TcpLinkMode, WorkerRuntimeFault,
 };
 
 const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -192,37 +190,31 @@ impl EmuLoop {
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
         self.speculation.invalidate();
+        let command = match (super::commands::CommonCommandContext {
+            backend: &mut self.backend,
+            shared_framebuffer: &self.shared_framebuffer,
+            uncapped_mode: &mut self.uncapped_mode,
+            rewind_buffer: &mut self.rewind_buffer,
+            last_cheats: &mut self.last_cheats,
+            audio_recording_capture: &mut self.audio_recording_capture,
+            pending_audio_discontinuities: &mut self.pending_audio_discontinuities,
+            runtime_fault: &mut self.runtime_fault,
+        })
+        .dispatch(command)
+        {
+            super::commands::CommonCommandDispatch::Handled(effects) => {
+                if effects.potentially_dirty {
+                    self.battery_flush.mark_potentially_dirty();
+                }
+                return effects
+                    .response
+                    .is_none_or(|response| self.send_resp(response));
+            }
+            super::commands::CommonCommandDispatch::PlatformSpecific(command) => command,
+        };
         match command {
-            EmuCommand::SetAudioRecordingCapture {
-                capture,
-                acknowledged,
-            } => {
-                if capture.semantic && !self.audio_recording_capture.semantic {
-                    self.pending_audio_discontinuities.clear();
-                }
-                self.audio_recording_capture = capture;
-                if let Some(acknowledged) = acknowledged {
-                    let _ = acknowledged.send(());
-                }
-            }
-
-            EmuCommand::SetUncapped(on) => {
-                self.uncapped_mode = on && self.runtime_fault.can_step();
-                self.backend
-                    .set_apu_sample_generation_enabled(!self.uncapped_mode);
-            }
-
             EmuCommand::SetUncappedBatchSize(frames) => {
                 self.uncapped_batch_size = frames.clamp(1, super::MAX_UNCAPPED_BATCH_SIZE);
-            }
-
-            EmuCommand::UpdateCheats(cheats) => {
-                if self.backend.supports_cheats() {
-                    self.last_cheats = cheats;
-                    self.backend.install_rom_patches(&self.last_cheats);
-                } else {
-                    self.last_cheats.clear();
-                }
             }
 
             EmuCommand::StartTcpLink(mode) => {
@@ -305,19 +297,17 @@ impl EmuLoop {
                     self.backend.framebuffer(),
                     detached_frame,
                 );
-                if debugger_mutation && self.runtime_fault.can_step() {
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation,
-                    );
-                }
                 let mut result = result;
-                if result.advanced_frames != 0 || debugger_mutation {
+                if super::commands::finalize_step_result(
+                    &mut result,
+                    debugger_mutation,
+                    self.audio_recording_capture,
+                    &mut self.pending_audio_discontinuities,
+                    &self.runtime_fault,
+                    &mut self.uncapped_mode,
+                ) {
                     self.battery_flush.mark_potentially_dirty();
                 }
-                if !self.runtime_fault.can_step() {
-                    self.uncapped_mode = false;
-                }
-                self.attach_audio_discontinuities(&mut result);
                 let preserve_delivery = EmuThread::frame_requires_preserved_delivery(
                     &result,
                     self.audio_recording_capture.active,
@@ -352,14 +342,12 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state(slot);
-                let state_loaded = result.is_ok();
                 let label = result.as_ref().ok().cloned().unwrap_or_default();
                 if !self.finalize_load_state(
                     result.map(|_| ()),
                     label,
                     buttons_pressed,
                     dpad_pressed,
-                    state_loaded,
                 ) {
                     return false;
                 }
@@ -383,194 +371,28 @@ impl EmuLoop {
             } => {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
-                let state_loaded = result.is_ok();
-                if !self.finalize_load_state(
-                    result,
-                    label,
-                    buttons_pressed,
-                    dpad_pressed,
-                    state_loaded,
-                ) {
-                    return false;
-                }
-            }
-
-            EmuCommand::SetSampleRate(rate) => {
-                self.backend.set_sample_rate(rate);
-            }
-
-            EmuCommand::ApplyMediaEvent(event) => {
-                let resp = match self.backend.apply_media_event(&event) {
-                    Ok(()) => match self.backend.media_slot_snapshot() {
-                        Some(snapshot) => EmuResponse::MediaEventApplied {
-                            event,
-                            snapshot,
-                            frame_count: self.backend.frame_count(),
-                        },
-                        None => EmuResponse::MediaEventFailed {
-                            event,
-                            error: "media slot disappeared after applying event".to_string(),
-                        },
-                    },
-                    Err(err) => EmuResponse::MediaEventFailed {
-                        event,
-                        error: err.to_string(),
-                    },
-                };
-                if matches!(&resp, EmuResponse::MediaEventApplied { .. }) {
-                    self.battery_flush.mark_potentially_dirty();
-                }
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::SetGameBoySerialDevice(device) => {
-                self.backend.set_game_boy_serial_device(device);
-            }
-
-            EmuCommand::QueueBardigunBarcodeScan(bytes) => {
-                let byte_count = bytes.len();
-                let response = match self.backend.queue_bardigun_barcode_scan(bytes) {
-                    Ok(()) => EmuResponse::BardigunBarcodeScanStarted(byte_count),
-                    Err(err) => EmuResponse::BardigunBarcodeScanFailed(err.to_string()),
-                };
-                if !self.send_resp(response) {
-                    return false;
-                }
-            }
-
-            EmuCommand::TriggerBarcodeBoyScan(digits) => {
-                let response = match self.backend.trigger_barcode_boy_scan(&digits) {
-                    Ok(()) => EmuResponse::BarcodeBoyScanStarted,
-                    Err(err) => EmuResponse::BarcodeBoyScanFailed(err.to_string()),
-                };
-                if !self.send_resp(response) {
-                    return false;
-                }
-            }
-
-            EmuCommand::RestoreGameBoyLinkState(state) => {
-                self.backend.restore_game_boy_link_replay_state(state);
-            }
-
-            EmuCommand::CaptureStateBytes => {
-                let resp = match EmuThread::encode_current_state(&self.backend) {
-                    Ok(bytes) => EmuResponse::StateCaptured(bytes),
-                    Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
-                };
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::ExecuteGuestCall(request) => {
-                let name = request.name.clone();
-                let resp = match self.backend.execute_guest_call(&request) {
-                    Ok((instructions, undo_state)) => EmuResponse::GuestCallCompleted {
-                        name,
-                        instructions,
-                        undo_state,
-                    },
-                    Err(error) => EmuResponse::GuestCallFailed {
-                        name,
-                        error: error.to_string(),
-                    },
-                };
-                super::types::publish_framebuffer(
-                    &self.shared_framebuffer,
-                    self.backend.framebuffer(),
-                );
-                if matches!(&resp, EmuResponse::GuestCallCompleted { .. }) {
-                    self.battery_flush.mark_potentially_dirty();
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation,
-                    );
-                }
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::UndoGuestCall(state) => {
-                let resp = if self.backend.supports_guest_calls() {
-                    match self.backend.load_state_from_bytes(state) {
-                        Ok(()) => EmuResponse::GuestCallUndone,
-                        Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
-                    }
-                } else {
-                    EmuResponse::GuestCallUndoFailed(
-                        "guest calls are not supported by this core".to_string(),
-                    )
-                };
-                super::types::publish_framebuffer(
-                    &self.shared_framebuffer,
-                    self.backend.framebuffer(),
-                );
-                if matches!(&resp, EmuResponse::GuestCallUndone) {
-                    self.battery_flush.mark_potentially_dirty();
-                    self.backend.discard_game_boy_printer_jobs();
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo,
-                    );
-                }
-                if !self.send_resp(resp) {
+                if !self.finalize_load_state(result, label, buttons_pressed, dpad_pressed) {
                     return false;
                 }
             }
 
             EmuCommand::CaptureReplayStart { capture_id } => {
-                let resp = if !self.backend.supports_replay() {
-                    EmuResponse::ReplayStartCaptureFailed {
-                        capture_id,
-                        error: "replay capture is not supported by this core".to_string(),
-                    }
-                } else if let Some(blocker) = self.replay_start_capture_blocker() {
-                    EmuResponse::ReplayStartCaptureFailed {
-                        capture_id,
-                        error: format!("replay start rejected: {blocker}"),
-                    }
+                let blocker = self
+                    .backend
+                    .supports_replay()
+                    .then(|| self.replay_start_capture_blocker())
+                    .flatten();
+                let metadata = if self.backend.supports_replay() && blocker.is_none() {
+                    Some(self.capture_replay_metadata())
                 } else {
-                    let metadata = self.capture_replay_metadata();
-                    match self.backend.encode_replay_start_state_bytes() {
-                        Ok(bytes) => EmuResponse::ReplayStartCaptured {
-                            capture_id,
-                            start: Box::new(ReplayStartState {
-                                state_bytes: bytes,
-                                frame_count: self.backend.frame_count(),
-                                game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
-                                wonder_swan_cpu_cycles: self.backend.wonder_swan_cpu_cycles(),
-                                metadata,
-                            }),
-                        },
-                        Err(err) => EmuResponse::ReplayStartCaptureFailed {
-                            capture_id,
-                            error: err.to_string(),
-                        },
-                    }
+                    None
                 };
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::CaptureReplayCheckpoint { frame } => {
-                let resp = if self.backend.supports_replay() {
-                    match EmuThread::encode_current_state(&self.backend) {
-                        Ok(state_bytes) => {
-                            EmuResponse::ReplayCheckpointCaptured { frame, state_bytes }
-                        }
-                        Err(err) => EmuResponse::ReplayCheckpointCaptureFailed {
-                            frame,
-                            error: err.to_string(),
-                        },
-                    }
-                } else {
-                    EmuResponse::ReplayCheckpointCaptureFailed {
-                        frame,
-                        error: "replay capture is not supported by this core".to_string(),
-                    }
-                };
+                let resp = super::commands::capture_replay_start_response(
+                    &self.backend,
+                    capture_id,
+                    blocker,
+                    || metadata.expect("supported, unblocked replay capture has metadata"),
+                );
                 if !self.send_resp(resp) {
                     return false;
                 }
@@ -743,7 +565,6 @@ impl EmuLoop {
                     "(replay)".to_string(),
                     buttons_pressed,
                     dpad_pressed,
-                    state_loaded,
                 ) {
                     return false;
                 }
@@ -757,41 +578,26 @@ impl EmuLoop {
                 return self.handle_recovery_inspection(resume, buttons_pressed, dpad_pressed);
             }
 
-            EmuCommand::Rewind(steps) => {
-                let resp = EmuThread::handle_rewind(
-                    &mut self.backend,
-                    &mut self.rewind_buffer,
-                    &self.shared_framebuffer,
-                    steps,
-                );
-                if matches!(&resp, EmuResponse::RewindOk { .. }) {
-                    self.battery_flush.mark_potentially_dirty();
-                    self.backend.discard_game_boy_printer_jobs();
-                    self.backend.install_rom_patches(&self.last_cheats);
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::Rewind,
-                    );
-                }
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::Reset => {
-                self.backend.reset();
-                self.battery_flush.mark_potentially_dirty();
-                self.backend.install_rom_patches(&self.last_cheats);
-                self.rewind_buffer.clear();
-                self.runtime_fault = WorkerRuntimeFault::default();
-                self.mark_audio_discontinuity(
-                    crate::audio_recorder::AudioTimelineDiscontinuity::Reset,
-                );
-            }
-
             EmuCommand::Shutdown => {
                 self.finish_shutdown();
                 return false;
             }
+
+            EmuCommand::SetAudioRecordingCapture { .. }
+            | EmuCommand::SetSampleRate(_)
+            | EmuCommand::SetUncapped(_)
+            | EmuCommand::ApplyMediaEvent(_)
+            | EmuCommand::CaptureStateBytes
+            | EmuCommand::ExecuteGuestCall(_)
+            | EmuCommand::UndoGuestCall(_)
+            | EmuCommand::CaptureReplayCheckpoint { .. }
+            | EmuCommand::SetGameBoySerialDevice(_)
+            | EmuCommand::QueueBardigunBarcodeScan(_)
+            | EmuCommand::TriggerBarcodeBoyScan(_)
+            | EmuCommand::RestoreGameBoyLinkState(_)
+            | EmuCommand::UpdateCheats(_)
+            | EmuCommand::Rewind(_)
+            | EmuCommand::Reset => unreachable!("shared command escaped common dispatch"),
         }
         true
     }
@@ -958,7 +764,6 @@ impl EmuLoop {
         label: String,
         buttons_pressed: u8,
         dpad_pressed: u8,
-        state_loaded: bool,
     ) -> bool {
         let resp = EmuThread::respond_load_state(
             &mut self.backend,
@@ -968,43 +773,30 @@ impl EmuLoop {
             dpad_pressed,
             &self.shared_framebuffer,
         );
-        if state_loaded {
+        let loaded = (super::commands::LoadFinalizationContext {
+            rewind_buffer: &mut self.rewind_buffer,
+            rewind_seconds: self.rewind_seconds,
+            backend: &mut self.backend,
+            cheats: &self.last_cheats,
+            audio_recording_capture: self.audio_recording_capture,
+            pending_audio_discontinuities: &mut self.pending_audio_discontinuities,
+        })
+        .finalize(&resp, |frame_duration_ns| {
+            self.frame_duration_ns
+                .store(frame_duration_ns, Ordering::Release);
+        });
+        if loaded {
             self.battery_flush.mark_potentially_dirty();
-            self.backend.discard_game_boy_printer_jobs();
-            self.reset_rewind_buffer();
-            self.backend.install_rom_patches(&self.last_cheats);
-            self.mark_audio_discontinuity(
-                crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad,
-            );
         }
         self.send_resp(resp)
     }
 
-    fn reset_rewind_buffer(&mut self) {
-        let frame_duration_ns = EmuThread::reset_rewind_for_loaded_state(
-            &mut self.rewind_buffer,
-            self.rewind_seconds,
-            &self.backend,
-        );
-        self.frame_duration_ns
-            .store(frame_duration_ns, Ordering::Release);
-    }
-
-    fn mark_audio_discontinuity(
-        &mut self,
-        reason: crate::audio_recorder::AudioTimelineDiscontinuity,
-    ) {
-        if self.audio_recording_capture.semantic {
-            self.pending_audio_discontinuities.push(reason);
-        }
-    }
-
+    #[cfg(test)]
     fn attach_audio_discontinuities(&mut self, result: &mut FrameResult) {
-        if !result.audio_semantic_frames.is_empty() {
-            result
-                .audio_timeline_discontinuities
-                .append(&mut self.pending_audio_discontinuities);
-        }
+        super::commands::attach_audio_discontinuities(
+            result,
+            &mut self.pending_audio_discontinuities,
+        );
     }
 
     fn handle_recovery_inspection(
@@ -1024,13 +816,11 @@ impl EmuLoop {
                 path,
             } if should_load_recovery(freshness, resume) => {
                 let result = self.backend.load_state_from_bytes(native_payload);
-                let loaded = result.is_ok();
                 self.finalize_load_state(
                     result,
                     path.display().to_string(),
                     buttons_pressed,
                     dpad_pressed,
-                    loaded,
                 )
             }
             RecoveryCandidate::Available { freshness, .. } => {

@@ -21,7 +21,7 @@ kind = "test_rom"
 license = "unknown"
 license_confidence = "unknown"
 redistributable = false
-source_url = "scripts/build-nes-regional-acceptance-roms.ps1"
+source_url = "crates/zeff-romtest/src/regional.rs"
 source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
 source_id = "christopherpow-nes-test-roms-regional-95d8f621"
 
@@ -143,7 +143,7 @@ kind = "test_rom"
 license = "unknown"
 license_confidence = "unknown"
 redistributable = false
-source_url = "scripts/build-nes-regional-acceptance-roms.ps1"
+source_url = "crates/zeff-romtest/src/regional.rs"
 source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
 source_id = "christopherpow-nes-test-roms-regional-95d8f621"
 
@@ -170,7 +170,7 @@ kind = "test_rom"
 license = "unknown"
 license_confidence = "unknown"
 redistributable = false
-source_url = "scripts/build-nes-regional-acceptance-roms.ps1"
+source_url = "crates/zeff-romtest/src/regional.rs"
 source_version = "95d8f621ae55cee0d09b91519a8989ae0e64753b"
 source_id = "christopherpow-nes-test-roms-regional-95d8f621"
 
@@ -182,4 +182,3 @@ sha256 = "cf76f0554497e130ac1ace629529a8e94bf7e686f8dde4255fbd0a334d494d68"
 kind = "screenshot_exact"
 screenshot_frame = 900
 screenshot_sha256 = "6c4d89d3017e82865f9af99f82d08c0f3e5928a5676a354585cb85aa40d137cc"
-

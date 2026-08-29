@@ -17,12 +17,12 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$sessionRoot = Join-Path $repoRoot "target\pgo\$stamp"
+$sessionRoot = Join-Path $repoRoot "local-artifacts\pgo\$stamp"
 $dataDir = Join-Path $sessionRoot 'data'
 $generateTarget = Join-Path $sessionRoot 'generate'
 $useTarget = Join-Path $sessionRoot 'use'
 $mergedProfile = Join-Path $dataDir 'merged.profdata'
-$outputDir = Join-Path $repoRoot 'target\pgo'
+$outputDir = Join-Path $repoRoot 'local-artifacts\pgo'
 $outputExe = Join-Path $outputDir 'zeff-boy.exe'
 
 function Invoke-Cargo {

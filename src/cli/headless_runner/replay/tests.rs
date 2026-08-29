@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::emu_backend::{
     ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
@@ -21,35 +20,10 @@ use super::endpoint::validate_game_boy_link_replay_result_for_test;
 use super::paired_live::ensure_replay_metadata_has_expected_gb_link_events;
 #[cfg(not(target_arch = "wasm32"))]
 use super::timeline::{PairedGameBoyReplayTimeline, paired_game_boy_replay_timeline};
+use crate::cli::headless_runner::test_support::test_directory;
 
 static TEST_FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =
     [0xFF; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE];
-
-struct TestTempDir {
-    path: PathBuf,
-}
-
-impl TestTempDir {
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TestTempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-fn test_temp_dir(prefix: &str) -> anyhow::Result<TestTempDir> {
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after Unix epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), suffix));
-    std::fs::create_dir(&path)?;
-    Ok(TestTempDir { path })
-}
 
 fn build_fds_test_image() -> Vec<u8> {
     let mut side_a = vec![0xA1; zeff_nes_core::hardware::cartridge::mappers::FDS_SIDE_SIZE];
@@ -181,7 +155,7 @@ fn replay_player_with_gb_events(
 
 #[test]
 fn paired_game_boy_replay_timeline_aligns_common_transfer_ids() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_pair_timeline")?;
+    let temp = test_directory("pair-timeline")?;
     let left = replay_player_with_gb_events(
         temp.path(),
         "left.zrpl",
@@ -236,7 +210,7 @@ fn paired_game_boy_replay_timeline_aligns_common_transfer_ids() -> anyhow::Resul
 
 #[test]
 fn paired_game_boy_replay_timeline_uses_recorded_link_state_frames() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_pair_timeline_link_state")?;
+    let temp = test_directory("pair-timeline-link-state")?;
     let state = ReplayGameBoyLinkState {
         peer_present: true,
         pending_master_byte: None,
@@ -296,7 +270,7 @@ fn paired_game_boy_replay_timeline_uses_recorded_link_state_frames() -> anyhow::
 
 #[test]
 fn paired_game_boy_replay_timeline_uses_recorded_link_state_ticks() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_pair_timeline_link_state_ticks")?;
+    let temp = test_directory("pair-timeline-link-state-ticks")?;
     let state = ReplayGameBoyLinkState {
         peer_present: true,
         pending_master_byte: None,
@@ -338,7 +312,7 @@ fn paired_game_boy_replay_timeline_uses_recorded_link_state_ticks() -> anyhow::R
 
 #[test]
 fn paired_game_boy_replay_timeline_defaults_without_common_transfer_ids() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_pair_timeline_no_common")?;
+    let temp = test_directory("pair-timeline-no-common")?;
     let left = replay_player_with_gb_events(
         temp.path(),
         "left.zrpl",
@@ -393,7 +367,7 @@ fn paired_game_boy_replay_timeline_defaults_without_common_transfer_ids() -> any
 
 #[test]
 fn paired_game_boy_replay_timeline_ignores_same_role_transfer_ids() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_pair_timeline_same_role")?;
+    let temp = test_directory("pair-timeline-same-role")?;
     let event = ReplayGameBoyLinkEvent::LocalMasterStart {
         transfer_id: 0x0100_0000_0000_0007,
         clock_period_t_cycles: 4096,
@@ -431,7 +405,7 @@ fn paired_game_boy_replay_timeline_ignores_same_role_transfer_ids() -> anyhow::R
 
 #[test]
 fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_headless_replay_route")?;
+    let temp = test_directory("headless-replay-route")?;
     let rom_path = temp.path().join("test.nes");
     let replay_path = temp.path().join("test.zrpl");
     let rom_data = build_nes_test_rom();
@@ -519,7 +493,7 @@ fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::
 
 #[test]
 fn loaded_replay_applies_wonder_swan_link_events() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_wonder_swan_link_replay")?;
+    let temp = test_directory("wonder-swan-link-replay")?;
     let replay_path = temp.path().join("link.zrpl");
     let mut expected_backend = wonder_swan_test_backend();
     let EmuBackend::Ws(ws) = &mut expected_backend else {
@@ -565,7 +539,7 @@ fn loaded_replay_applies_wonder_swan_link_events() -> anyhow::Result<()> {
 
 #[test]
 fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_camera_replay")?;
+    let temp = test_directory("camera-replay")?;
     let replay_path = temp.path().join("camera.zrpl");
     let rom_path = temp.path().join("camera.gb");
 
@@ -617,7 +591,7 @@ fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
 
 #[test]
 fn loaded_replay_restores_start_only_passive_game_boy_completion() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_gb_passive_start_replay")?;
+    let temp = test_directory("gb-passive-start-replay")?;
     let replay_path = temp.path().join("passive-start.zrpl");
     let rom_path = temp.path().join("plain.gb");
     let load_backend = || -> anyhow::Result<EmuBackend> {
@@ -677,7 +651,7 @@ fn loaded_replay_restores_start_only_passive_game_boy_completion() -> anyhow::Re
 
 #[test]
 fn loaded_replay_rejects_pocket_camera_input_for_non_camera_rom() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_camera_replay_reject")?;
+    let temp = test_directory("camera-replay-reject")?;
     let replay_path = temp.path().join("camera-on-nes.zrpl");
     let rom_path = temp.path().join("test.nes");
     let rom_data = build_nes_test_rom();
@@ -713,7 +687,7 @@ fn loaded_replay_rejects_pocket_camera_input_for_non_camera_rom() -> anyhow::Res
 
 #[test]
 fn loaded_replay_rejects_zapper_input_for_non_nes_rom() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_zapper_replay_reject")?;
+    let temp = test_directory("zapper-replay-reject")?;
     let replay_path = temp.path().join("zapper-on-gb.zrpl");
     let rom_path = temp.path().join("plain.gb");
     let rom_data = vec![0u8; 0x8000];
@@ -761,7 +735,7 @@ fn loaded_replay_rejects_zapper_input_for_non_nes_rom() -> anyhow::Result<()> {
 
 #[test]
 fn loaded_replay_rejects_mbc7_tilt_input_for_non_mbc7_rom() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_tilt_replay_reject")?;
+    let temp = test_directory("tilt-replay-reject")?;
     let replay_path = temp.path().join("tilt-on-plain-gb.zrpl");
     let rom_path = temp.path().join("plain.gb");
     let rom_data = vec![0u8; 0x8000];
@@ -804,7 +778,7 @@ fn loaded_replay_rejects_mbc7_tilt_input_for_non_mbc7_rom() -> anyhow::Result<()
 
 #[test]
 fn loaded_replay_rejects_embedded_final_state_hash_mismatch() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_replay_hash_mismatch")?;
+    let temp = test_directory("replay-hash-mismatch")?;
     let replay_path = temp.path().join("hash-mismatch.zrpl");
     let rom_path = temp.path().join("test.nes");
     let rom_data = build_nes_test_rom();
@@ -857,7 +831,7 @@ fn game_boy_link_replay_divergence_is_strict_unless_diagnostic_mode_is_explicit(
 
 #[test]
 fn loaded_replay_reports_checkpoint_divergence_frame() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_replay_checkpoint_mismatch")?;
+    let temp = test_directory("replay-checkpoint-mismatch")?;
     let replay_path = temp.path().join("checkpoint-mismatch.zrpl");
     let rom_path = temp.path().join("test.nes");
     let rom_data = build_nes_test_rom();
@@ -885,7 +859,7 @@ fn loaded_replay_reports_checkpoint_divergence_frame() -> anyhow::Result<()> {
 
 #[test]
 fn loaded_replay_validates_cursor_zero_checkpoint_before_execution() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_replay_checkpoint_zero")?;
+    let temp = test_directory("replay-checkpoint-zero")?;
     let replay_path = temp.path().join("checkpoint-zero.zrpl");
     let rom_path = temp.path().join("test.nes");
     let backend = load_nes_test_backend(&rom_path, build_nes_test_rom())?;
@@ -909,7 +883,7 @@ fn loaded_replay_validates_cursor_zero_checkpoint_before_execution() -> anyhow::
 
 #[test]
 fn loaded_replay_validates_matching_checkpoint() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_replay_checkpoint")?;
+    let temp = test_directory("replay-checkpoint")?;
     let replay_path = temp.path().join("checkpoint.zrpl");
     let rom_path = temp.path().join("test.nes");
     let rom_data = build_nes_test_rom();
@@ -938,7 +912,7 @@ fn loaded_replay_validates_matching_checkpoint() -> anyhow::Result<()> {
 
 #[test]
 fn loaded_replay_rejects_cheat_dependent_metadata() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_replay_cheat_metadata")?;
+    let temp = test_directory("replay-cheat-metadata")?;
     let replay_path = temp.path().join("cheats.zrpl");
     let rom_path = temp.path().join("test.nes");
     let rom_data = build_nes_test_rom();
@@ -964,7 +938,7 @@ fn loaded_replay_rejects_cheat_dependent_metadata() -> anyhow::Result<()> {
 
 #[test]
 fn loaded_replay_rejects_declared_core_family_mismatch() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_replay_core_family_mismatch")?;
+    let temp = test_directory("replay-core-family-mismatch")?;
     let replay_path = temp.path().join("wrong-core.zrpl");
     let rom_path = temp.path().join("test.nes");
     let backend = load_nes_test_backend(&rom_path, build_nes_test_rom())?;
@@ -986,7 +960,7 @@ fn loaded_replay_rejects_declared_core_family_mismatch() -> anyhow::Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn live_link_event_floor_rejects_incomplete_replay_metadata() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_replay_link_event_floor")?;
+    let temp = test_directory("replay-link-event-floor")?;
     let replay_path = temp.path().join("short-link.zrpl");
     let metadata = ReplayMetadata {
         events: vec![ReplayEvent::GameBoyLink {
@@ -1026,7 +1000,7 @@ fn live_link_event_floor_rejects_incomplete_replay_metadata() -> anyhow::Result<
 
 #[test]
 fn loaded_replay_applies_fds_side_events_before_matching_frame() -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_fds_replay_event")?;
+    let temp = test_directory("fds-replay-event")?;
     let replay_path = temp.path().join("side-change.zrpl");
     let rom_path = temp.path().join("test.fds");
 
@@ -1065,7 +1039,7 @@ fn loaded_replay_applies_fds_side_events_before_matching_frame() -> anyhow::Resu
 #[cfg(not(target_arch = "wasm32"))]
 fn verification_hashes_final_cursor_before_boundary_event_and_final_state_after_it()
 -> anyhow::Result<()> {
-    let temp = test_temp_dir("zeff_final_cursor_verification_order")?;
+    let temp = test_directory("final-cursor-verification-order")?;
     let replay_path = temp.path().join("final-side-change.zrpl");
     let rom_path = temp.path().join("test.fds");
 

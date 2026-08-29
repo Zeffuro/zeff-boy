@@ -338,20 +338,23 @@ impl EmuThread {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub(crate) fn finalize_load_state(
         resp: &EmuResponse,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
         rewind_seconds: usize,
-        frame_duration_ns: &mut u64,
         backend: &mut EmuBackend,
         cheats: &[crate::cheats::CheatPatch],
-    ) {
+        publish_frame_duration: impl FnOnce(u64),
+    ) -> bool {
         if matches!(resp, EmuResponse::LoadStateOk { .. }) {
             backend.discard_game_boy_printer_jobs();
-            *frame_duration_ns =
+            let frame_duration_ns =
                 Self::reset_rewind_for_loaded_state(rewind_buffer, rewind_seconds, backend);
+            publish_frame_duration(frame_duration_ns);
             backend.install_rom_patches(cheats);
+            true
+        } else {
+            false
         }
     }
 

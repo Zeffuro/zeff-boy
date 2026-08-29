@@ -30,6 +30,8 @@ pub(crate) struct Cli {
     pub(crate) compat_max_frames: u64,
     pub(crate) compat_limit: Option<usize>,
     pub(crate) compat_name_matches: Vec<String>,
+    pub(crate) fixture: Option<crate::fixtures::FixtureKind>,
+    pub(crate) fixture_out_dir: Option<PathBuf>,
 }
 
 impl Cli {
@@ -41,6 +43,9 @@ impl Cli {
             Some("check") => CommandKind::Check,
             Some("prepare") => CommandKind::Prepare,
             Some("fetch") => CommandKind::Fetch,
+            Some("build-fixture") => CommandKind::BuildFixture,
+            Some("build-nes-regional") => CommandKind::BuildNesRegional,
+            Some("audit-tooling") => CommandKind::AuditTooling,
             Some("run") => CommandKind::Run,
             Some("compare") => CommandKind::Compare,
             Some("generate-compat") => CommandKind::GenerateCompat,
@@ -69,6 +74,8 @@ impl Cli {
             compat_max_frames: 3600,
             compat_limit: None,
             compat_name_matches: Vec::new(),
+            fixture: None,
+            fixture_out_dir: None,
         };
 
         let rest: Vec<OsString> = args.collect();
@@ -157,6 +164,16 @@ impl Cli {
                     cli.compat_name_matches
                         .push(next_value(&rest, &mut i, "--name-match")?);
                 }
+                "--fixture" => {
+                    cli.fixture = Some(crate::fixtures::FixtureKind::parse(&next_value(
+                        &rest,
+                        &mut i,
+                        "--fixture",
+                    )?)?);
+                }
+                "--out-dir" => {
+                    cli.fixture_out_dir = Some(next_path(&rest, &mut i, "--out-dir")?);
+                }
                 "--help" | "-h" => {
                     cli.command = CommandKind::Help;
                     i += 1;
@@ -188,6 +205,9 @@ pub(crate) enum CommandKind {
     Check,
     Prepare,
     Fetch,
+    BuildFixture,
+    BuildNesRegional,
+    AuditTooling,
     Run,
     Compare,
     GenerateCompat,
@@ -214,6 +234,9 @@ Commands:
   check                Validate manifests and repository policy
   prepare              Populate rom-tests/cache from known local legacy paths
   fetch                Download pinned source archives and extract selected test ROMs
+  build-fixture        Build a platform-neutral generated ROM fixture
+  build-nes-regional   Derive pinned PAL and Dendy NES acceptance ROMs
+  audit-tooling        Enforce script ownership and fast/slow CI boundaries
   run                  Run selected tests through Zeff Boy headless CLI
   compare              Compare a run JSON report against a baseline JSON report
   generate-compat      Generate an ignored local game compatibility manifest
@@ -249,6 +272,8 @@ Options:
   --max-frames N       Max frames per generated compatibility entry (default: 3600)
   --limit N            Limit generated compatibility entries
   --name-match TEXT    Only include ROM filenames containing TEXT; may be repeated
+  --fixture NAME       Fixture for build-fixture: sega8|pce-cd-adpcm-irq|pce-vdc-fetch-contention
+  --out-dir PATH       Output directory for build-fixture
 "
     );
 }

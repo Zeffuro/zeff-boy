@@ -82,6 +82,11 @@ romtest-fetch:
 romtest-build-mgba-suite:
     powershell -ExecutionPolicy Bypass -File scripts/build-mgba-suite.ps1
 
+# Build the pinned CVBasic controller diagnostic into the ignored ROM cache.
+[windows]
+romtest-build-coleco-controller:
+    powershell -ExecutionPolicy Bypass -File scripts/build-coleco-cvbasic-controller.ps1
+
 # Build the asiekierka WonderSwan test suite into the ignored ROM cache.
 # Requires Docker Desktop, or pass -Builder local from a Wonderful Toolchain shell.
 [windows]
@@ -89,19 +94,20 @@ romtest-build-ws-suite:
     powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
 
 # Build tiny generated Sega 8-bit smoke ROMs into the ignored ROM cache.
-[windows]
 romtest-build-sega8-smoke:
-    powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
+    cargo run -p zeff-romtest -- build-fixture --fixture sega8 --out-dir rom-tests/cache/sega8/generated
 
 # Build the generated PC Engine CD READ6/ADPCM/R15/IRQ fixture into the ignored cache.
-[windows]
 romtest-build-pce-cd-fixture:
-    powershell -ExecutionPolicy Bypass -File scripts/build-pce-cd-adpcm-fixture.ps1
+    cargo run -p zeff-romtest -- build-fixture --fixture pce-cd-adpcm-irq --out-dir rom-tests/cache/pce/generated/cd-adpcm-irq
 
 # Build the generated PC Engine VDC fetch-contention diagnostic.
-[windows]
 romtest-build-pce-vdc-contention-fixture:
-    powershell -ExecutionPolicy Bypass -File scripts/build-pce-vdc-contention-fixture.ps1
+    cargo run -p zeff-romtest -- build-fixture --fixture pce-vdc-fetch-contention --out-dir rom-tests/cache/pce/generated/vdc-fetch-contention
+
+# Derive pinned PAL and Dendy NES acceptance ROMs into the ignored ROM cache.
+romtest-build-nes-regional:
+    cargo run -p zeff-romtest -- build-nes-regional --out-dir rom-tests/cache/nes/regional-acceptance
 
 # Validate the asiekierka WonderSwan test-suite build plan without downloading/building.
 [windows]
@@ -112,10 +118,12 @@ romtest-build-ws-suite-dry-run:
 [windows]
 romtest-build-local-suites:
     powershell -ExecutionPolicy Bypass -File scripts/build-mgba-suite.ps1
+    powershell -ExecutionPolicy Bypass -File scripts/build-coleco-cvbasic-controller.ps1
     powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
-    powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
-    powershell -ExecutionPolicy Bypass -File scripts/build-pce-cd-adpcm-fixture.ps1
-    powershell -ExecutionPolicy Bypass -File scripts/build-pce-vdc-contention-fixture.ps1
+    cargo run -p zeff-romtest -- build-fixture --fixture sega8 --out-dir rom-tests/cache/sega8/generated
+    cargo run -p zeff-romtest -- build-fixture --fixture pce-cd-adpcm-irq --out-dir rom-tests/cache/pce/generated/cd-adpcm-irq
+    cargo run -p zeff-romtest -- build-fixture --fixture pce-vdc-fetch-contention --out-dir rom-tests/cache/pce/generated/vdc-fetch-contention
+    cargo run -p zeff-romtest -- build-nes-regional --out-dir rom-tests/cache/nes/regional-acceptance
 
 # Download local-only test ROM sources and extract them into the ignored cache.
 # These may include unclear-license public test collections and stay out of default CI.
@@ -250,6 +258,10 @@ lint-wasm:
 # Run Clippy lints with all feature sets (matches CI)
 lint-all: lint lint-minimal lint-wasm
 
+# Enforce the approved PowerShell boundary and fast/slow CI split.
+tooling-audit:
+    cargo run -p zeff-romtest -- audit-tooling
+
 # CI follows the latest stable Rust release.
 sync-ci-toolchain:
     rustup update stable
@@ -274,7 +286,7 @@ lint-platform-leaks:
     $hits = Get-ChildItem -Path src -Recurse -Filter *.rs | Where-Object { $_.FullName -notmatch '\\(platform|input\\native|audio\\native|audio\\tests|camera|cli|mods\\native|libretro_common)' -and $_.Name -ne 'native.rs' } | Select-String -Pattern 'rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::' | Where-Object { $_.Line -notmatch '// platform-ok' }; if ($hits) { $hits; exit 1 } else { Write-Host 'No platform leaks found.' }
 
 # Run full CI pipeline locally (fmt + lint + platform check + test + deny)
-ci-local: sync-ci-toolchain ci-tools fmt-check lint-all lint-platform-leaks test-all deny
+ci-local: sync-ci-toolchain ci-tools fmt-check lint-all lint-platform-leaks tooling-audit test-all deny
 
 # Run WASM CI check locally (requires wasm32 target and Trunk)
 ci-local-wasm: sync-ci-toolchain lint-wasm check-wasm build-wasm-ghpages
@@ -287,7 +299,7 @@ fuzz-check:
 deny:
     cargo deny check
 
-# Concatenate all src/*.rs files to clipboard (cross-platform alternative to scripts/get-all-code.ps1)
+# Concatenate Rust source files to the clipboard.
 [unix]
 get-all-code:
     find src -name '*.rs' | sort | while read f; do echo "// ===== $f ====="; cat "$f"; done | xclip -selection clipboard || echo "(xclip not available — output printed to stdout)"
@@ -345,6 +357,21 @@ build-pgo frames="1200":
 pgo-corpus:
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-pgo.ps1 -ListGameplayCorpus
 
+# Compare DMG and CGB opcode traces for one Game Boy ROM.
+[windows]
+compare-interrupt-trace rom:
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/compare-interrupt-trace.ps1 -RomPath "{{rom}}"
+
+# Inventory Sega 8-bit ROM headers in a local corpus.
+[windows]
+scan-sega8-romset rom_root:
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/scan-sega8-romset.ps1 -RomRoot "{{rom_root}}"
+
+# Smoke a local PC Engine corpus through one isolated process per title.
+[windows]
+smoke-pce-romset rom_root:
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-pce-romset.ps1 -RomRoots "{{rom_root}}"
+
 # Run one core's Criterion suite: gb, gba, nes, pce, sega8, or ws
 bench core:
     cargo bench --bench "{{core}}_benchmarks" -p "zeff-{{core}}-core"
@@ -391,6 +418,11 @@ serve-wasm:
 # Serve WASM release build locally (reproduces GitHub Pages conditions)
 serve-wasm-release:
     trunk serve --release
+
+# Run one real Microsoft Edge WASM browser proof locally.
+[windows]
+test-wasm-browser filter="browser_indexeddb_transaction_matches_detached_control":
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-wasm-browser-speculation.ps1 -TestFilter "{{filter}}"
 
 # ──────────────────────────── Documentation ──────────────────────────
 
