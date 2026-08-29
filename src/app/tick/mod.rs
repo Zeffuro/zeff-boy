@@ -3,7 +3,9 @@ use super::{
     VIEWER_UPDATE_INTERVAL,
 };
 use crate::debug::{self, DebugTab, DebugUiActions, is_tab_open};
-use crate::emu_thread::{AudioConfig, AudioRecordingCapture, EmuCommand, FrameInput, JoypadInput};
+use crate::emu_thread::{
+    AudioConfig, AudioRecordingCapture, EmuCommand, FrameInput, JoypadInput, SpeculationBlockers,
+};
 use crate::platform::Instant;
 
 mod input;
@@ -51,6 +53,8 @@ impl App {
     }
 
     pub(super) fn tick(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        self.poll_retired_wasm_threads();
         #[cfg(not(target_arch = "wasm32"))]
         if self.pce_mouse_captured
             && (!super::window_events::pce_mouse_capture_allowed(
@@ -195,9 +199,36 @@ impl App {
                 let remote_capture_pending = self.remote_debug_frames_remaining > 0
                     || self.remote_memory_frames_remaining > 0
                     || self.remote_graphics_frames_remaining > 0;
-                let has_pending = self.debug_requests.has_pending()
-                    || self.pending_debug_actions.has_pending()
-                    || remote_capture_pending;
+                #[cfg(not(test))]
+                let speculation_blockers = SpeculationBlockers::feature_disabled();
+                #[cfg(test)]
+                let speculation_blockers = {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let live_control_active = self.live_control.is_enabled();
+                    #[cfg(target_arch = "wasm32")]
+                    let live_control_active = false;
+                    SpeculationBlockers::from_app_for_test(
+                        self.recording.replay_timeline_active(),
+                        live_control_active,
+                    )
+                };
+                let debug_request_pending = self.debug_requests.has_pending();
+                let debug_actions_pending = self.pending_debug_actions.has_pending();
+                let has_pending =
+                    debug_request_pending || debug_actions_pending || remote_capture_pending;
+                #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+                {
+                    let perf_requirement = self.debug_workspace_visible()
+                        && debug::compute_tab_requirements(&self.debug_dock).needs_perf_info;
+                    super::browser_speculation_test::record_tick_request_state(
+                        frames_to_step,
+                        debug_request_pending,
+                        debug_actions_pending,
+                        remote_capture_pending,
+                        is_tab_open(&self.debug_dock, DebugTab::Performance),
+                        perf_requirement,
+                    );
+                }
 
                 if frames_to_step > 0 || has_pending {
                     let throttle_viewers = self.active_debug_presentation
@@ -317,6 +348,7 @@ impl App {
 
                     let input = FrameInput {
                         frames: frames_to_step,
+                        speculation_blockers,
                         replay_joypad_frames,
                         host_tilt,
                         host_camera_frame,
@@ -478,6 +510,8 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         self.render_native_auxiliary_windows(ui_frame_data.as_ref());
         self.cached_ui_data = ui_frame_data;
+        #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+        super::browser_speculation_test::observe_app_tick(self, rendered);
         if !rendered {
             return;
         }
@@ -565,6 +599,15 @@ mod tests {
     use super::*;
     use crate::audio_recorder::AudioRecorder;
     use crate::settings::AudioRecordingFormat;
+
+    #[test]
+    fn speculation_blockers_require_an_inactive_replay_timeline_and_live_control() {
+        assert!(SpeculationBlockers::feature_disabled().any());
+        assert!(!SpeculationBlockers::from_app_for_test(false, false).any());
+        assert!(SpeculationBlockers::from_app_for_test(true, false).any());
+        assert!(SpeculationBlockers::from_app_for_test(false, true).any());
+        assert!(SpeculationBlockers::from_app_for_test(true, true).any());
+    }
 
     #[test]
     fn recording_rate_change_is_rejected_and_wav_metadata_stays_at_core_rate() {

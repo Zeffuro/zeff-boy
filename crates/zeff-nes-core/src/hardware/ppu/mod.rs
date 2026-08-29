@@ -48,6 +48,7 @@ const SCROLL_VERTICAL_MASK: u16 = 0x7BE0;
 const PPUMASK_RENDERING_BITS: u8 = MASK_SHOW_BG | MASK_SHOW_SPRITES;
 const PPUMASK_RENDERING_DELAY_DOTS: u8 = 1;
 
+#[derive(Clone)]
 pub struct Ppu {
     pub(crate) regs: PpuRegisters,
 
@@ -544,7 +545,6 @@ impl Ppu {
         r.read_exact(&mut self.sprite_x_counters)?;
         self.sprite_zero_rendering = r.read_bool()?;
 
-        self.frame_ready = false;
         self.suppress_vblank_edge = false;
         self.rendering_mask_delay = 0;
         self.rendering_mask_latched_bits = self.regs.mask & PPUMASK_RENDERING_BITS;

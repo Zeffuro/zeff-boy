@@ -26,6 +26,8 @@ pub(super) fn run_ws_headless(
     }
 
     let mut emulator = WsEmulator::new(rom_data, zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE)?;
+    let mut sram_recovery =
+        crate::save_paths::battery_sram_session(path, "ws", emulator.rom_hash());
     if !opts.no_sram
         && let Some(sram_path) = crate::emu_backend::ws::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {
@@ -154,6 +156,13 @@ pub(super) fn run_ws_headless(
             emulator.step_frame();
         }
         frames_run = frame_number;
+        check_tas_assertions(
+            opts,
+            frames_run,
+            emulator.cpu_pc(),
+            emulator.framebuffer(),
+            || emulator.encode_state(),
+        )?;
 
         write_screenshot_if_requested(
             opts,
@@ -224,6 +233,7 @@ pub(super) fn run_ws_headless(
             break;
         }
     }
+    ensure_tas_completed(opts, frames_run)?;
 
     if opts.trace_opcodes {
         println!("[ws-op-tail] ---- last {} ops ----", tail.len());
@@ -259,7 +269,13 @@ pub(super) fn run_ws_headless(
         }),
     )?;
     if !opts.no_sram {
-        flush_battery(path, emulator.dump_battery_sram());
+        flush_battery(
+            &mut sram_recovery,
+            path,
+            ActiveSystem::Ws,
+            emulator.rom_hash(),
+            emulator.dump_battery_sram(),
+        );
     }
     if let Some(path) = &opts.audio_dump_path {
         write_audio_dump_f32le(path, &audio_dump, emulator.apu_debug_snapshot().sample_rate)?;

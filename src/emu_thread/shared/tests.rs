@@ -51,6 +51,25 @@ fn build_frame_result_does_not_republish_stale_recycled_audio() {
     assert_eq!(result.audio_playback_speed, 1);
 }
 
+#[test]
+fn failed_rewind_restore_preserves_history() {
+    let rom = minimal_ws_rom();
+    let emu = zeff_ws_core::emulator::Emulator::from_rom_data(&rom).unwrap();
+    let mut backend = EmuBackend::from_ws(emu, PathBuf::from("test.wsc"));
+    let mut rewind = zeff_emu_common::rewind::RewindBuffer::new(1, 1);
+    rewind.push(&[0xFF], &[0xAA]);
+    let before = rewind.peek().unwrap();
+    let shared_fb: SharedFramebuffer = Default::default();
+
+    let response = EmuThread::handle_rewind(&mut backend, &mut rewind, &shared_fb, 1);
+
+    assert!(matches!(response, EmuResponse::RewindFailed(_)));
+    assert_eq!(rewind.len(), 1);
+    let after = rewind.peek().unwrap();
+    assert_eq!(after.state_bytes, before.state_bytes);
+    assert_eq!(after.framebuffer, before.framebuffer);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn load_state_response_reports_authoritative_game_boy_serial_device() {
@@ -227,6 +246,70 @@ fn gbc_rewind_cadence_tracks_advanced_frames_across_batches() {
             ..
         }
     ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn gb_rewind_uses_v13_state_framebuffer_without_a_sidecar() {
+    let mut backend = gb_backend();
+    backend.step_frame();
+    let expected_frame = backend.frame_count();
+    let expected_framebuffer = backend.framebuffer().to_vec();
+    let mut rewind = zeff_emu_common::rewind::RewindBuffer::new(1, 1);
+
+    EmuThread::capture_rewind_snapshot(&backend, &mut rewind, true, 1);
+    assert!(rewind.peek().unwrap().framebuffer.is_empty());
+    backend.step_frame();
+
+    let shared_fb: SharedFramebuffer = Default::default();
+    let response = EmuThread::handle_rewind(&mut backend, &mut rewind, &shared_fb, 1);
+
+    assert!(matches!(response, EmuResponse::RewindOk { .. }));
+    assert_eq!(backend.frame_count(), expected_frame);
+    assert!(
+        backend.framebuffer() == expected_framebuffer,
+        "rewound framebuffer differs"
+    );
+    assert!(
+        shared_fb.load_full().unwrap().as_slice() == expected_framebuffer,
+        "published rewind framebuffer differs"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn nes_rewind_uses_v11_state_framebuffer_without_a_sidecar() {
+    let mut backend = nes_backend();
+    backend.step_frame();
+    let expected_frame = backend.frame_count();
+    let expected_framebuffer = backend.framebuffer().to_vec();
+    let mut rewind = zeff_emu_common::rewind::RewindBuffer::new(1, 1);
+
+    EmuThread::capture_rewind_snapshot(&backend, &mut rewind, true, 1);
+    assert!(rewind.peek().unwrap().framebuffer.is_empty());
+    assert_eq!(
+        u32::from_le_bytes(
+            rewind.peek().unwrap().state_bytes[8..12]
+                .try_into()
+                .unwrap()
+        ),
+        11
+    );
+    backend.step_frame();
+
+    let shared_fb: SharedFramebuffer = Default::default();
+    let response = EmuThread::handle_rewind(&mut backend, &mut rewind, &shared_fb, 1);
+
+    assert!(matches!(response, EmuResponse::RewindOk { .. }));
+    assert_eq!(backend.frame_count(), expected_frame);
+    assert!(
+        backend.framebuffer() == expected_framebuffer,
+        "rewound NES framebuffer differs"
+    );
+    assert!(
+        shared_fb.load_full().unwrap().as_slice() == expected_framebuffer,
+        "published NES rewind framebuffer differs"
+    );
 }
 
 #[test]
@@ -668,4 +751,17 @@ fn gb_backend() -> EmuBackend {
     let gb =
         zeff_gb_core::emulator::Emulator::new(&rom, 44_100).expect("GB emulator should initialize");
     EmuBackend::from_gb(gb, PathBuf::from("test.gb"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn nes_backend() -> EmuBackend {
+    let mut rom = vec![0; 16 + 0x4000 + 0x2000];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    rom[16..19].copy_from_slice(&[0x4C, 0x00, 0x80]);
+    rom[16 + 0x3FFC..16 + 0x3FFE].copy_from_slice(&0x8000_u16.to_le_bytes());
+    let nes = zeff_nes_core::emulator::Emulator::new(&rom, 44_100.0)
+        .expect("NES emulator should initialize");
+    EmuBackend::from_nes(nes, PathBuf::from("test.nes"))
 }

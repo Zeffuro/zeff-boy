@@ -14,6 +14,49 @@ fn settings_default_roundtrip() {
 }
 
 #[test]
+fn recovery_policy_migrates_from_raw_flattened_key_presence() {
+    let fresh = Settings::from_json("{}").unwrap();
+    assert!(fresh.emulation.save_recovery_state);
+    assert!(!fresh.emulation.resume_recovery_state);
+    assert!(!fresh.emulation.recovery_migration_notice_pending);
+
+    let legacy_off = Settings::from_json(r#"{"auto_save_state":false}"#).unwrap();
+    assert!(!legacy_off.emulation.save_recovery_state);
+    assert!(!legacy_off.emulation.resume_recovery_state);
+    assert!(!legacy_off.emulation.recovery_migration_notice_pending);
+
+    let legacy_on = Settings::from_json(r#"{"auto_save_state":true}"#).unwrap();
+    assert!(legacy_on.emulation.save_recovery_state);
+    assert!(!legacy_on.emulation.resume_recovery_state);
+    assert!(legacy_on.emulation.recovery_migration_notice_pending);
+
+    let new_key_suppresses_legacy =
+        Settings::from_json(r#"{"auto_save_state":true,"resume_recovery_state":true}"#).unwrap();
+    assert!(new_key_suppresses_legacy.emulation.save_recovery_state);
+    assert!(new_key_suppresses_legacy.emulation.resume_recovery_state);
+    assert!(
+        !new_key_suppresses_legacy
+            .emulation
+            .recovery_migration_notice_pending
+    );
+}
+
+#[test]
+fn recovery_policy_serialization_removes_legacy_key() {
+    let settings = Settings::from_json(r#"{"auto_save_state":true}"#).unwrap();
+    let json = serde_json::to_value(settings).unwrap();
+    let object = json.as_object().unwrap();
+
+    assert!(!object.contains_key("auto_save_state"));
+    assert_eq!(object.get("save_recovery_state"), Some(&true.into()));
+    assert_eq!(object.get("resume_recovery_state"), Some(&false.into()));
+    assert_eq!(
+        object.get("recovery_migration_notice_pending"),
+        Some(&true.into())
+    );
+}
+
+#[test]
 fn settings_with_modified_values_roundtrip() {
     let mut s = Settings::default();
     s.emulation.fast_forward_multiplier = 8;

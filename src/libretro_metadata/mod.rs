@@ -24,7 +24,7 @@ mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{build_cheat_search_hints, lookup_cached, refresh_cache_from_libretro};
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 use native::{build_index, deserialize_entries, parse_dat_entries, serialize_entries};
 
 #[cfg(target_arch = "wasm32")]
@@ -32,5 +32,5 @@ mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm::*;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

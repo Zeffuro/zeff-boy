@@ -470,6 +470,95 @@ mod tests {
         rom
     }
 
+    fn seed_host_audio_output(emu: &mut Emulator) {
+        emu.bus.apu.seed_host_output_for_state_load_test();
+        assert_ne!(emu.apu_debug_snapshot().sample_buffer_len, 0);
+        for channel in 0..2 {
+            assert!(
+                emu.apu_direct_debug_samples_ordered(channel)
+                    .iter()
+                    .any(|&sample| sample != 0.0)
+            );
+        }
+        for channel in 0..4 {
+            assert!(
+                emu.apu_psg_channel_debug_samples_ordered(channel)
+                    .iter()
+                    .any(|&sample| sample != 0.0)
+            );
+        }
+        assert!(
+            emu.apu_master_debug_samples_ordered()
+                .iter()
+                .any(|&sample| sample != 0.0)
+        );
+        assert!(
+            emu.apu_psg_master_debug_samples_ordered()
+                .iter()
+                .any(|&sample| sample != 0.0)
+        );
+        let (sample_count, capture_remainder) = emu.bus.apu.psg_host_output_state_for_test();
+        assert_ne!(sample_count, 0);
+        assert_ne!(capture_remainder, 0);
+    }
+
+    fn assert_host_audio_output_cleared(emu: &Emulator) {
+        assert_eq!(emu.apu_debug_snapshot().sample_buffer_len, 0);
+        for channel in 0..2 {
+            assert!(
+                emu.apu_direct_debug_samples_ordered(channel)
+                    .iter()
+                    .all(|&sample| sample == 0.0)
+            );
+        }
+        for channel in 0..4 {
+            assert!(
+                emu.apu_psg_channel_debug_samples_ordered(channel)
+                    .iter()
+                    .all(|&sample| sample == 0.0)
+            );
+        }
+        assert!(
+            emu.apu_master_debug_samples_ordered()
+                .iter()
+                .all(|&sample| sample == 0.0)
+        );
+        assert!(
+            emu.apu_psg_master_debug_samples_ordered()
+                .iter()
+                .all(|&sample| sample == 0.0)
+        );
+        assert_eq!(emu.bus.apu.psg_host_output_state_for_test(), (0, 0));
+    }
+
+    fn assert_host_audio_output_eq(actual: &Emulator, expected: &Emulator) {
+        assert_eq!(actual.apu_debug_snapshot(), expected.apu_debug_snapshot());
+        for channel in 0..2 {
+            assert_eq!(
+                actual.apu_direct_debug_samples_ordered(channel),
+                expected.apu_direct_debug_samples_ordered(channel)
+            );
+        }
+        for channel in 0..4 {
+            assert_eq!(
+                actual.apu_psg_channel_debug_samples_ordered(channel),
+                expected.apu_psg_channel_debug_samples_ordered(channel)
+            );
+        }
+        assert_eq!(
+            actual.apu_master_debug_samples_ordered(),
+            expected.apu_master_debug_samples_ordered()
+        );
+        assert_eq!(
+            actual.apu_psg_master_debug_samples_ordered(),
+            expected.apu_psg_master_debug_samples_ordered()
+        );
+        assert_eq!(
+            actual.bus.apu.psg_host_output_state_for_test(),
+            expected.bus.apu.psg_host_output_state_for_test()
+        );
+    }
+
     fn assert_timers_eq(actual: &Timers, expected: &Timers) {
         for (actual, expected) in actual.all().iter().zip(expected.all().iter()) {
             assert_eq!(actual.reload, expected.reload);
@@ -572,6 +661,46 @@ mod tests {
         assert_eq!(apu.sample_rate, 48_000);
         assert!(!apu.sample_generation_enabled);
         assert_eq!(apu.channel_mutes, [false, true, false, true, false, true]);
+    }
+
+    #[test]
+    fn public_load_clears_host_audio_output_and_preserves_runtime_policy() {
+        let rom = minimal_rom();
+        let mut saved = Emulator::new(&rom, 96_000).unwrap();
+        saved.bus.apu.write_fifo_halfword(0, 0x2211);
+        saved.bus.apu.write_fifo_halfword(0, 0x4433);
+        saved.bus.apu.write_fifo_halfword(1, 0x6655);
+        saved.bus.apu.write_fifo_halfword(1, 0x0877);
+        saved
+            .bus
+            .apu
+            .on_timer_overflows([1, 0, 0, 0], (1 << 8) | (1 << 12));
+        let saved_apu = saved.apu_debug_snapshot();
+        assert_eq!(saved_apu.fifo_len, [3, 3]);
+        assert_eq!(saved_apu.current_sample, [0x11, 0x55]);
+        let state = saved.encode_state().unwrap();
+
+        let mut restored = Emulator::new(&rom, 44_100).unwrap();
+        let mutes = [true, false, true, false, true, false];
+        restored.set_apu_sample_generation_enabled(false);
+        restored.set_apu_channel_mutes(mutes);
+        restored.set_apu_debug_capture_enabled(true);
+        seed_host_audio_output(&mut restored);
+
+        restored.load_state(&state).unwrap();
+
+        let restored_apu = restored.apu_debug_snapshot();
+        assert_eq!(restored_apu.sample_rate, 44_100);
+        assert_eq!(restored_apu.psg_sample_rate, 44_100);
+        assert!(!restored_apu.sample_generation_enabled);
+        assert!(restored_apu.debug_capture_enabled);
+        assert_eq!(restored_apu.channel_mutes, mutes);
+        assert_eq!(restored_apu.fifo_len, saved_apu.fifo_len);
+        assert_eq!(restored_apu.current_sample, saved_apu.current_sample);
+        assert_host_audio_output_cleared(&restored);
+        let mut audio = Vec::new();
+        restored.drain_audio_samples_into(&mut audio);
+        assert!(audio.is_empty());
     }
 
     #[test]
@@ -1150,5 +1279,31 @@ mod tests {
         assert_eq!(timing.cycle_accum[0], 1);
         assert_eq!(timing.start_delay_cycles, [0; 4]);
         assert_eq!(restored.bus.irq_delay_state(), Some(7));
+    }
+
+    #[test]
+    fn public_load_rejects_trailing_data_without_mutation() {
+        let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+        emu.set_input(0x03, 0x05);
+        emu.step_frame();
+        emu.set_apu_sample_generation_enabled(false);
+        emu.set_apu_channel_mutes([true, false, true, false, true, false]);
+        emu.set_apu_debug_capture_enabled(true);
+        seed_host_audio_output(&mut emu);
+        let before = emu.encode_state().unwrap();
+        let framebuffer = emu.framebuffer().to_vec();
+        let mut expected = emu.clone();
+        let mut invalid = before.clone();
+        invalid.push(0xA5);
+
+        assert!(emu.load_state(&invalid).is_err());
+        assert_eq!(emu.encode_state().unwrap(), before);
+        assert_eq!(emu.framebuffer(), framebuffer);
+        assert_host_audio_output_eq(&emu, &expected);
+        let mut actual_audio = Vec::new();
+        let mut expected_audio = Vec::new();
+        emu.drain_audio_samples_into(&mut actual_audio);
+        expected.drain_audio_samples_into(&mut expected_audio);
+        assert_eq!(actual_audio, expected_audio);
     }
 }

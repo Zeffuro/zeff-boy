@@ -13,6 +13,8 @@ use zeff_gb_core::hardware::types::constants::{SERIAL_SB, SERIAL_SC};
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::HeadlessOptions;
+#[cfg(not(target_arch = "wasm32"))]
+use super::endpoint::run_loaded_replay_for_verification;
 use super::endpoint::run_loaded_replay_headless;
 use super::endpoint::validate_game_boy_link_replay_result_for_test;
 #[cfg(not(target_arch = "wasm32"))]
@@ -499,7 +501,7 @@ fn headless_replay_route_runs_rom_file_and_checks_final_state_hash() -> anyhow::
         }
         expected_backend.step_frame();
     }
-    let expected_hash = sha256_hex(&expected_backend.encode_state_bytes()?);
+    let expected_hash = sha256_hex(&expected_backend.encode_replay_hash_state_bytes()?);
 
     super::super::run_headless(
         &rom_path,
@@ -604,10 +606,11 @@ fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
     let summary = run_loaded_replay_headless(runner_backend, player, &HeadlessOptions::default())?;
 
     assert_eq!(summary.frames, 1);
-    assert_eq!(
-        summary.final_state_hash,
-        sha256_hex(&expected_backend.encode_state_bytes()?)
-    );
+    let raw_final_state = expected_backend.encode_state_bytes()?;
+    let replay_hash_state = expected_backend.encode_replay_hash_state_bytes()?;
+    assert_eq!(u32::from_le_bytes(raw_final_state[8..12].try_into()?), 13);
+    assert_eq!(u32::from_le_bytes(replay_hash_state[8..12].try_into()?), 12);
+    assert_eq!(summary.final_state_hash, sha256_hex(&replay_hash_state));
 
     Ok(())
 }
@@ -881,6 +884,30 @@ fn loaded_replay_reports_checkpoint_divergence_frame() -> anyhow::Result<()> {
 }
 
 #[test]
+fn loaded_replay_validates_cursor_zero_checkpoint_before_execution() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_replay_checkpoint_zero")?;
+    let replay_path = temp.path().join("checkpoint-zero.zrpl");
+    let rom_path = temp.path().join("test.nes");
+    let backend = load_nes_test_backend(&rom_path, build_nes_test_rom())?;
+    let start_state = backend.encode_state_bytes()?;
+    let metadata = backend.replay_metadata();
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    recorder.record_checkpoint(0, [0xA5; 32]);
+    recorder.finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("cursor-zero checkpoint mismatch should fail before execution");
+    assert!(
+        err.to_string()
+            .contains("replay diverged at checkpoint frame 0"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loaded_replay_validates_matching_checkpoint() -> anyhow::Result<()> {
     let temp = test_temp_dir("zeff_replay_checkpoint")?;
     let replay_path = temp.path().join("checkpoint.zrpl");
@@ -932,6 +959,27 @@ fn loaded_replay_rejects_cheat_dependent_metadata() -> anyhow::Result<()> {
         "unexpected error: {err}"
     );
 
+    Ok(())
+}
+
+#[test]
+fn loaded_replay_rejects_declared_core_family_mismatch() -> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_replay_core_family_mismatch")?;
+    let replay_path = temp.path().join("wrong-core.zrpl");
+    let rom_path = temp.path().join("test.nes");
+    let backend = load_nes_test_backend(&rom_path, build_nes_test_rom())?;
+    let start_state = backend.encode_state_bytes()?;
+    let mut metadata = backend.replay_metadata();
+    metadata.core_family = Some("different-core".to_owned());
+    ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata).finish()?;
+
+    let player = ReplayPlayer::load(&replay_path)?;
+    let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
+        .expect_err("declared replay core-family mismatch should fail preflight");
+    assert!(
+        err.to_string().contains("replay core family differs"),
+        "unexpected error: {err}"
+    );
     Ok(())
 }
 
@@ -1001,7 +1049,7 @@ fn loaded_replay_applies_fds_side_events_before_matching_frame() -> anyhow::Resu
     expected_backend.set_input(0x00, 0x00);
     expected_backend.step_frame();
 
-    let expected_hash = sha256_hex(&expected_backend.encode_state_bytes()?);
+    let expected_hash = sha256_hex(&expected_backend.encode_replay_hash_state_bytes()?);
     let player = ReplayPlayer::load(&replay_path)?;
     let summary = run_loaded_replay_headless(runner_backend, player, &HeadlessOptions::default())?;
 
@@ -1010,5 +1058,38 @@ fn loaded_replay_applies_fds_side_events_before_matching_frame() -> anyhow::Resu
     assert_eq!(summary.final_state_hash, expected_hash);
     assert_eq!(expected_backend.fds_disk_side(), Some(1));
 
+    Ok(())
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn verification_hashes_final_cursor_before_boundary_event_and_final_state_after_it()
+-> anyhow::Result<()> {
+    let temp = test_temp_dir("zeff_final_cursor_verification_order")?;
+    let replay_path = temp.path().join("final-side-change.zrpl");
+    let rom_path = temp.path().join("test.fds");
+
+    let source_backend = load_fds_test_backend(&rom_path)?;
+    let runner_backend = load_fds_test_backend(&rom_path)?;
+    let start_state = source_backend.encode_state_bytes()?;
+    let mut metadata = source_backend.replay_metadata();
+    metadata.events = vec![ReplayEvent::FdsDiskSide {
+        frame: 300,
+        side: 1,
+    }];
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(replay_path.clone(), start_state, metadata);
+    for _ in 0..300 {
+        recorder.record_joypad_frame(ReplayJoypadFrame::default());
+    }
+    recorder.finish()?;
+    let player = ReplayPlayer::load(&replay_path)?;
+
+    let run = run_loaded_replay_for_verification(runner_backend, player, true)?;
+
+    assert_eq!(run.frames, 300);
+    assert_eq!(run.checkpoints.len(), 1);
+    assert_eq!(run.checkpoints[0].frame, 300);
+    assert_ne!(run.checkpoints[0].state_sha256, run.final_state_sha256);
     Ok(())
 }

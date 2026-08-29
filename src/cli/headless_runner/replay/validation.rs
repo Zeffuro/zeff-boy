@@ -110,10 +110,17 @@ fn validate_replay_metadata(metadata: &ReplayMetadata, backend: &EmuBackend) -> 
             current.system.as_deref().unwrap_or("unknown")
         );
     }
+    if metadata.core_family.is_some() && metadata.core_family != current.core_family {
+        anyhow::bail!(
+            "replay core family differs: replay={}, current={}",
+            metadata.core_family.as_deref().unwrap_or("unknown"),
+            current.core_family.as_deref().unwrap_or("unknown")
+        );
+    }
     if metadata.rom_sha256 != current.rom_sha256 {
         anyhow::bail!("replay ROM hash differs");
     }
-    if metadata.firmware != current.firmware {
+    if !zeff_emu_common::replay::firmware_manifests_match(&metadata.firmware, &current.firmware) {
         anyhow::bail!("replay firmware differs");
     }
     if metadata.cheat_sha256.is_some() {

@@ -60,6 +60,10 @@ impl Controller {
         self.controller_type = controller_type;
     }
 
+    pub const fn controller_type(&self) -> ControllerType {
+        self.controller_type
+    }
+
     pub fn set_zapper_hit(&mut self, hit: bool) {
         match &mut self.controller_type {
             ControllerType::Zapper {

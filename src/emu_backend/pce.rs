@@ -160,6 +160,8 @@ pub(crate) struct PceBackend {
     pce_memory_base_mode: PceMemoryBaseMode,
     pce_arcade_card_mode: PceArcadeCardMode,
     mouse_host_buttons: PadButtons,
+    sram_recovery: crate::save_paths::SramRecoverySession,
+    memory_base_force_flush: bool,
 }
 
 pub(crate) struct PceCdBackendConfig {
@@ -174,11 +176,29 @@ pub(crate) struct PceCdBackendConfig {
 }
 
 impl PceBackend {
+    pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
+        let mut components = Vec::with_capacity(2);
+        if let Some(cdrom2) = self.cdrom2() {
+            components.push((crate::save_paths::SRAM_COMPONENT, cdrom2.bram().to_vec()));
+        }
+        components.push((
+            "memory-base-128",
+            self.machine
+                .devices()
+                .controller()
+                .memory_base128()
+                .ram()
+                .to_vec(),
+        ));
+        components
+    }
+
     pub(crate) fn new_cdrom2(
         system_card_rom: Vec<u8>,
         disc: CdDisc,
         config: PceCdBackendConfig,
     ) -> anyhow::Result<Self> {
+        let recovery_identity = disc.content_hash();
         let arcade_card_enabled = match config.arcade_card_mode {
             PceArcadeCardMode::Automatic => {
                 automatic_arcade_card_enabled(Some(config.source_disc_hash))
@@ -198,9 +218,18 @@ impl PceBackend {
             ControllerPort::two_button(),
             arcade_card_enabled,
         )?;
+        let paths = BackendPaths::with_source_path(config.cue_path, config.source_path);
+        let mut sram_recovery =
+            crate::save_paths::battery_sram_session(paths.rom_path(), "pce", recovery_identity);
+        sram_recovery.begin(
+            &memory_base128_path(),
+            "pce",
+            recovery_identity,
+            "memory-base-128",
+        );
         let mut backend = Self {
             machine,
-            paths: BackendPaths::with_source_path(config.cue_path, config.source_path),
+            paths,
             rom_hash: config.content_hash,
             source_crc32: Some(config.content_crc32),
             source_disc_hash: Some(config.source_disc_hash),
@@ -217,6 +246,8 @@ impl PceBackend {
                 PceArcadeCardMode::Disabled
             },
             mouse_host_buttons: PadButtons::empty(),
+            sram_recovery,
+            memory_base_force_flush: false,
         };
         backend.project_presented_frame();
         backend.update_controller_mode(PceControllerMode::Automatic);
@@ -313,6 +344,9 @@ impl PceBackend {
             cartridge,
             ControllerPort::two_button(),
         )?;
+        let mut sram_recovery =
+            crate::save_paths::battery_sram_session(paths.rom_path(), "pce", rom_hash);
+        sram_recovery.begin(&memory_base128_path(), "pce", rom_hash, "memory-base-128");
         let mut backend = Self {
             machine,
             paths,
@@ -328,6 +362,8 @@ impl PceBackend {
             pce_memory_base_mode: PceMemoryBaseMode::Automatic,
             pce_arcade_card_mode: PceArcadeCardMode::Disabled,
             mouse_host_buttons: PadButtons::empty(),
+            sram_recovery,
+            memory_base_force_flush: false,
         };
         backend.project_presented_frame();
         backend.update_controller_mode(PceControllerMode::Automatic);
@@ -748,7 +784,16 @@ impl PceBackend {
     }
 
     fn try_load_memory_base128_from_path(&mut self, path: &Path) -> anyhow::Result<Option<String>> {
-        let Some(bytes) = crate::platform::read_save_data(path)
+        #[cfg(not(target_arch = "wasm32"))]
+        let bytes = crate::platform::read_save_data(path);
+        #[cfg(target_arch = "wasm32")]
+        let bytes = crate::platform::read_sram_data(
+            path,
+            "pce",
+            self.normalized_disc_hash().unwrap_or(self.rom_hash),
+            "memory-base-128",
+        );
+        let Some(bytes) = bytes
             .with_context(|| format!("failed to read Memory Base 128 save {}", path.display()))?
         else {
             return Ok(None);
@@ -758,26 +803,74 @@ impl PceBackend {
     }
 
     fn flush_memory_base128_to_path(&mut self, path: &Path) -> anyhow::Result<Option<String>> {
-        let memory_base = self
-            .machine
-            .devices_mut()
-            .controller_mut()
-            .memory_base128_mut();
-        if !memory_base.is_dirty() {
-            return Ok(None);
+        let media_identity = self.normalized_disc_hash().unwrap_or(self.rom_hash);
+        let force_flush = self.memory_base_force_flush;
+        let bytes = {
+            let memory_base = self
+                .machine
+                .devices_mut()
+                .controller_mut()
+                .memory_base128_mut();
+            if !memory_base.is_dirty() && !force_flush {
+                return Ok(None);
+            }
+            memory_base.ram().to_vec()
+        };
+        crate::save_paths::write_recoverable_sram_file(
+            &mut self.sram_recovery,
+            path,
+            "pce",
+            media_identity,
+            "memory-base-128",
+            &bytes,
+        )
+        .with_context(|| format!("failed to write Memory Base 128 save {}", path.display()))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.machine
+                .devices_mut()
+                .controller_mut()
+                .memory_base128_mut()
+                .clear_dirty();
+            self.memory_base_force_flush = false;
         }
-        crate::platform::write_save_data(path, memory_base.ram())
-            .with_context(|| format!("failed to write Memory Base 128 save {}", path.display()))?;
-        memory_base.clear_dirty();
         Ok(Some(path.display().to_string()))
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn acknowledge_battery_commit(&mut self, snapshot_still_matches: bool) {
+        if !snapshot_still_matches {
+            return;
+        }
+        self.machine
+            .devices_mut()
+            .controller_mut()
+            .memory_base128_mut()
+            .clear_dirty();
+        self.memory_base_force_flush = false;
+    }
+
     fn flush_persistent_data(&mut self, memory_base_path: &Path) -> anyhow::Result<Option<String>> {
-        let bram_path = crate::save_paths::flush_battery_sram(
+        let media_identity = self.normalized_disc_hash().unwrap_or(self.rom_hash);
+        let bram = self.cdrom2().map(|cdrom| cdrom.bram().to_vec());
+        let bram_result = crate::save_paths::flush_battery_sram(
+            &mut self.sram_recovery,
             self.paths.rom_path(),
-            self.cdrom2().map(|cdrom| cdrom.bram().to_vec()),
-        )?;
-        let memory_base_path = self.flush_memory_base128_to_path(memory_base_path)?;
+            "pce",
+            media_identity,
+            bram,
+        );
+        let memory_base_result = self.flush_memory_base128_to_path(memory_base_path);
+        let (bram_path, memory_base_path) = match (bram_result, memory_base_result) {
+            (Ok(bram), Ok(memory_base)) => (bram, memory_base),
+            (Err(bram), Err(memory_base)) => {
+                anyhow::bail!(
+                    "failed to save PC Engine BRAM ({bram:#}) and Memory Base 128 ({memory_base:#})"
+                )
+            }
+            (Err(error), Ok(_)) => return Err(error),
+            (Ok(_), Err(error)) => return Err(error),
+        };
         Ok(match (bram_path, memory_base_path) {
             (None, None) => None,
             (Some(path), None) | (None, Some(path)) => Some(path),
@@ -951,6 +1044,7 @@ impl EmulatorCore for PceBackend {
         self.update_controller_mode(mode);
         self.mouse_host_buttons = map_pad_buttons(buttons_pressed, 0);
         if let Some(mouse) = self.machine.devices_mut().controller_mut().mouse_mut() {
+            mouse.set_buttons(self.mouse_host_buttons);
             mouse.accumulate_motion(delta_x, delta_y);
         }
     }
@@ -1056,6 +1150,12 @@ impl EmulatorCore for PceBackend {
             PceArcadeCardMode::Disabled
         };
         self.pending_runtime_fault = None;
+        self.memory_base_force_flush = self
+            .machine
+            .devices()
+            .controller()
+            .memory_base128()
+            .is_connected();
         self.project_presented_frame();
         Ok(())
     }

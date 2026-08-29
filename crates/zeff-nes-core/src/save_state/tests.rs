@@ -1,9 +1,20 @@
 use super::*;
+
+#[test]
+fn tas_state_compatibility_id_tracks_current_native_format() {
+    assert_eq!(
+        TAS_STATE_FORMAT_COMPATIBILITY_ID,
+        format!("zeff-nes-native-state-v{NES_SAVE_STATE_FORMAT_VERSION}")
+    );
+    assert!(!TAS_DETERMINISM_ABI_ID.is_empty());
+}
 use crate::hardware::bus::Bus;
 use crate::hardware::cartridge::Cartridge;
+use crate::hardware::constants::OAM_DMA;
 use crate::hardware::cpu::Cpu;
 use crate::hardware::cpu::CpuState;
 use crate::hardware::timing::NesTiming;
+use sha2::{Digest, Sha256};
 
 fn build_test_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
@@ -87,6 +98,128 @@ fn replace_current_payload_byte(state: &[u8], offset: usize, value: u8) -> Vec<u
     replaced
 }
 
+fn decode_compressed_payload(state: &[u8]) -> Vec<u8> {
+    lz4_flex::decompress_size_prepended(&state[12..]).expect("state payload")
+}
+
+fn encode_compressed_payload(version: u32, payload: &[u8]) -> Vec<u8> {
+    let compressed = lz4_flex::compress_prepend_size(payload);
+    let mut state = Vec::with_capacity(12 + compressed.len());
+    state.extend_from_slice(&NES_SAVE_STATE_MAGIC);
+    state.extend_from_slice(&version.to_le_bytes());
+    state.extend_from_slice(&compressed);
+    state
+}
+
+fn assert_bytes_equal(label: &str, actual: &[u8], expected: &[u8]) {
+    assert_eq!(actual.len(), expected.len(), "{label} length");
+    let difference = actual
+        .iter()
+        .zip(expected)
+        .position(|(actual, expected)| actual != expected);
+    assert!(
+        difference.is_none(),
+        "{label} first differs at {difference:?}"
+    );
+}
+
+fn seed_framebuffer(framebuffer: &mut [u8], seed: u8) {
+    for (index, pixel) in framebuffer.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let value = seed.wrapping_add(index as u8);
+        pixel.copy_from_slice(&[value, value.rotate_left(2), value.rotate_left(5), 0xFF]);
+    }
+}
+
+fn mutate_fds_media(emu: &mut crate::emulator::Emulator) {
+    let pristine = emu
+        .dump_persistent_data()
+        .expect("FDS media should persist");
+    emu.bus.cpu_write(0x4023, 0x01);
+    emu.bus.cpu_write(0x4025, 0xC1);
+    emu.bus.cpu_write(0x4024, 0xA5);
+    for _ in 0..700_000 {
+        emu.bus.cartridge.clock_cpu();
+        if emu.bus.cartridge.irq_pending() {
+            break;
+        }
+    }
+    assert!(
+        emu.dump_persistent_data()
+            .expect("FDS media should persist")
+            != pristine,
+        "fixture must contain a legal FDS disk write"
+    );
+}
+
+fn assert_public_load_rejection_is_atomic(emu: &mut crate::emulator::Emulator, invalid: &[u8]) {
+    let state = emu.encode_state().unwrap();
+    let framebuffer = emu.framebuffer().to_vec();
+    let frame_ready = emu.frame_ready();
+    let suppress_vblank_edge = emu.bus.ppu.suppress_vblank_edge;
+    let samples = emu.bus.apu.sample_buffer.clone();
+    let sample_rate = emu.bus.apu.output_sample_rate;
+    let bus_ephemera = emu.bus.capture_state_load_rollback();
+    let suspended = emu.is_cpu_suspended();
+    let recent_opcodes = emu.recent_opcodes(32);
+    let instruction_trace = emu.instruction_trace().iter().copied().collect::<Vec<_>>();
+    let instruction_trace_enabled = emu.instruction_trace().is_enabled();
+    let call_stack = emu.call_stack.clone();
+    let breakpoints = emu.iter_breakpoints().collect::<Vec<_>>();
+    let watchpoints = emu
+        .debug_watchpoints()
+        .iter()
+        .map(|watchpoint| {
+            (
+                watchpoint.address,
+                watchpoint.end_address,
+                watchpoint.watch_type,
+                watchpoint.last_value,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(emu.load_state(invalid).is_err());
+    assert_bytes_equal(
+        "state after rejected load",
+        &emu.encode_state().unwrap(),
+        &state,
+    );
+    assert_bytes_equal(
+        "framebuffer after rejected load",
+        emu.framebuffer(),
+        &framebuffer,
+    );
+    assert_eq!(emu.frame_ready(), frame_ready);
+    assert_eq!(emu.bus.ppu.suppress_vblank_edge, suppress_vblank_edge);
+    assert_eq!(emu.bus.apu.sample_buffer, samples);
+    assert_eq!(emu.bus.apu.output_sample_rate, sample_rate);
+    assert_eq!(emu.bus.capture_state_load_rollback(), bus_ephemera);
+    assert_eq!(emu.is_cpu_suspended(), suspended);
+    assert_eq!(emu.recent_opcodes(32), recent_opcodes);
+    assert_eq!(
+        emu.instruction_trace().iter().copied().collect::<Vec<_>>(),
+        instruction_trace
+    );
+    assert_eq!(
+        emu.instruction_trace().is_enabled(),
+        instruction_trace_enabled
+    );
+    assert_eq!(emu.call_stack, call_stack);
+    assert_eq!(emu.iter_breakpoints().collect::<Vec<_>>(), breakpoints);
+    assert_eq!(
+        emu.debug_watchpoints()
+            .iter()
+            .map(|watchpoint| (
+                watchpoint.address,
+                watchpoint.end_address,
+                watchpoint.watch_type,
+                watchpoint.last_value,
+            ))
+            .collect::<Vec<_>>(),
+        watchpoints
+    );
+}
+
 #[test]
 fn save_state_roundtrip_preserves_cpu_state() {
     let mut emu = make_emulator();
@@ -146,7 +279,169 @@ fn save_state_roundtrip_preserves_bus_state() {
 }
 
 #[test]
-fn save_state_v10_preserves_pal_cpu_ppu_phase_and_continuation() {
+fn save_state_v11_restores_frame_ready_and_framebuffer_immediately() {
+    let mut source = make_emulator();
+    source.step_frame();
+    source.bus.ppu.frame_ready = true;
+    seed_framebuffer(&mut source.bus.ppu.framebuffer[..], 0x39);
+    let expected = source.framebuffer().to_vec();
+    let state = encode_state(&source).unwrap();
+
+    let mut restored = make_emulator();
+    restored.bus.ppu.framebuffer.fill(0xE7);
+    restored.bus.ppu.frame_ready = false;
+    restored.load_state(&state).unwrap();
+
+    assert!(restored.frame_ready());
+    assert_eq!(restored.frame_count(), source.frame_count());
+    assert_bytes_equal("restored framebuffer", restored.framebuffer(), &expected);
+}
+
+#[test]
+fn save_state_v11_restores_partial_frame_continuation_for_all_timings() {
+    for timing in [NesTiming::Ntsc, NesTiming::Pal, NesTiming::Dendy] {
+        let mut control = make_emulator_with_timing(timing);
+        while control.bus.ppu.scanline < 32 {
+            control.step_instruction();
+        }
+        assert!(
+            (1..240).contains(&control.bus.ppu.scanline),
+            "fixture must be inside visible output for {timing:?}"
+        );
+        seed_framebuffer(
+            &mut control.bus.ppu.framebuffer[..],
+            0x51_u8.wrapping_add(timing.state_tag()),
+        );
+        let historical_pixel = control.framebuffer()[0..4].to_vec();
+        let state = encode_state(&control).unwrap();
+
+        let mut restored = make_emulator_with_timing(timing);
+        restored.load_state(&state).unwrap();
+        assert_bytes_equal(
+            &format!("{timing:?} restored framebuffer"),
+            restored.framebuffer(),
+            control.framebuffer(),
+        );
+        assert_eq!(restored.frame_ready(), control.frame_ready(), "{timing:?}");
+        assert_eq!(restored.frame_count(), control.frame_count(), "{timing:?}");
+
+        control.step_frame();
+        restored.step_frame();
+
+        assert_bytes_equal(
+            &format!("{timing:?} next-frame framebuffer"),
+            restored.framebuffer(),
+            control.framebuffer(),
+        );
+        assert_eq!(control.framebuffer()[0..4], historical_pixel, "{timing:?}");
+        assert_bytes_equal(
+            &format!("{timing:?} next-frame state"),
+            &restored.encode_state().unwrap(),
+            &control.encode_state().unwrap(),
+        );
+        assert_eq!(restored.frame_count(), control.frame_count(), "{timing:?}");
+    }
+}
+
+#[test]
+fn save_state_v11_restores_framebuffer_used_by_zapper_brightness() {
+    let mut source = make_emulator();
+    source.bus.ppu.framebuffer.fill(0);
+    let (x, y) = (80_u16, 60_u16);
+    let offset = (usize::from(y) * 256 + usize::from(x)) * 4;
+    source.bus.ppu.framebuffer[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+    source.bus.ppu.scanline = y + 2;
+    source.bus.ppu.dot = x + 4;
+    source.bus.set_zapper_light_sensor(Some((x, y)), false);
+    assert!(source.bus.current_zapper_light_detected());
+    let state = encode_state(&source).unwrap();
+
+    let mut restored = make_emulator();
+    restored.bus.ppu.framebuffer.fill(0);
+    restored.bus.set_zapper_light_sensor(Some((x, y)), false);
+    restored.load_state(&state).unwrap();
+
+    assert!(restored.bus.current_zapper_light_detected());
+}
+
+#[test]
+fn save_state_v10_load_preserves_legacy_best_effort_output_policy() {
+    let mut source = make_emulator();
+    source.step_frame();
+    let legacy = encode_legacy_v10_state(&source).unwrap();
+    assert_eq!(u32::from_le_bytes(legacy[8..12].try_into().unwrap()), 10);
+
+    let mut restored = make_emulator();
+    seed_framebuffer(&mut restored.bus.ppu.framebuffer[..], 0xB4);
+    let target_framebuffer = restored.framebuffer().to_vec();
+    restored.bus.ppu.frame_ready = true;
+    restored.load_state(&legacy).unwrap();
+
+    assert!(!restored.frame_ready());
+    assert_bytes_equal(
+        "legacy target framebuffer",
+        restored.framebuffer(),
+        &target_framebuffer,
+    );
+}
+
+#[test]
+fn replay_projection_matches_independent_legacy_v10_nrom_bytes_and_hash() {
+    let mut emu = make_emulator();
+    emu.step_frame();
+    let mut projected = encode_state(&emu).unwrap();
+    project_replay_state_bytes(&mut projected).unwrap();
+    let legacy = encode_legacy_v10_state(&emu).unwrap();
+
+    assert_bytes_equal("NROM legacy v10 projection", &projected, &legacy);
+    assert_eq!(Sha256::digest(&projected), Sha256::digest(&legacy));
+}
+
+#[test]
+fn replay_projection_matches_independent_legacy_v10_variable_fds_media() {
+    for side_count in [1, 2] {
+        let mut emu = make_fds_emulator_with_sides(side_count);
+        mutate_fds_media(&mut emu);
+        emu.step_frame();
+        let mut projected = encode_state(&emu).unwrap();
+        project_replay_state_bytes(&mut projected).unwrap();
+        let legacy = encode_legacy_v10_state(&emu).unwrap();
+
+        assert_bytes_equal(
+            &format!("{side_count}-side FDS legacy v10 projection"),
+            &projected,
+            &legacy,
+        );
+        assert_eq!(Sha256::digest(&projected), Sha256::digest(&legacy));
+    }
+}
+
+#[test]
+fn replay_projection_rejects_invalid_v11_suffix_without_unbounded_allocation() {
+    let emu = make_emulator();
+    let state = encode_state(&emu).unwrap();
+    let mut payload = decode_compressed_payload(&state);
+    let suffix_start = payload.len() - OUTPUT_SUFFIX_LEN;
+    payload[suffix_start] = 2;
+    let mut invalid_bool = encode_compressed_payload(NES_SAVE_STATE_FORMAT_VERSION, &payload);
+    assert!(project_replay_state_bytes(&mut invalid_bool).is_err());
+
+    let mut oversized = Vec::from(NES_SAVE_STATE_MAGIC);
+    oversized.extend_from_slice(&NES_SAVE_STATE_FORMAT_VERSION.to_le_bytes());
+    oversized.extend_from_slice(&((MAX_REPLAY_PROJECTION_PAYLOAD_LEN + 1) as u32).to_le_bytes());
+    assert!(project_replay_state_bytes(&mut oversized).is_err());
+
+    let short_payload = vec![0; OUTPUT_SUFFIX_LEN - 1];
+    let mut short = encode_compressed_payload(NES_SAVE_STATE_FORMAT_VERSION, &short_payload);
+    assert!(project_replay_state_bytes(&mut short).is_err());
+
+    let mut invalid_version = state;
+    invalid_version[8..12].copy_from_slice(&0_u32.to_le_bytes());
+    assert!(project_replay_state_bytes(&mut invalid_version).is_err());
+}
+
+#[test]
+fn save_state_v11_preserves_pal_cpu_ppu_phase_and_continuation() {
     let mut emu = make_emulator_with_timing(NesTiming::Pal);
     emu.bus.tick_peripherals(2);
     assert_eq!(emu.bus.ppu_clock.master_phase(), 2);
@@ -167,7 +462,7 @@ fn save_state_v10_preserves_pal_cpu_ppu_phase_and_continuation() {
 }
 
 #[test]
-fn save_state_v10_rejects_region_mismatch_before_machine_state_mutation() {
+fn save_state_v11_rejects_region_mismatch_before_machine_state_mutation() {
     let mut saved = make_emulator_with_timing(NesTiming::Pal);
     saved.bus.tick_peripherals(2);
     let state = encode_state(&saved).expect("PAL state should encode");
@@ -181,7 +476,7 @@ fn save_state_v10_rejects_region_mismatch_before_machine_state_mutation() {
 }
 
 #[test]
-fn save_state_v10_rejects_invalid_timing_tag_before_machine_state_mutation() {
+fn save_state_v11_rejects_invalid_timing_tag_before_machine_state_mutation() {
     let emu = make_emulator();
     let state = encode_state(&emu).expect("state should encode");
     let corrupted = replace_current_payload_byte(&state, 32, 0xFF);
@@ -195,7 +490,7 @@ fn save_state_v10_rejects_invalid_timing_tag_before_machine_state_mutation() {
 }
 
 #[test]
-fn save_state_v10_rejects_invalid_clock_phase_before_machine_state_mutation() {
+fn save_state_v11_rejects_invalid_clock_phase_before_machine_state_mutation() {
     let emu = make_emulator();
     let state = encode_state(&emu).expect("state should encode");
     let corrupted = replace_current_payload_byte(&state, 33, 1);
@@ -433,22 +728,10 @@ fn save_state_v8_defaults_sprite_evaluation_runtime() {
 #[test]
 fn current_save_state_roundtrips_mutated_fds_media() {
     let mut emu = make_fds_emulator();
-    let pristine = emu
-        .dump_persistent_data()
-        .expect("FDS media should persist");
-    emu.bus.cpu_write(0x4023, 0x01);
-    emu.bus.cpu_write(0x4025, 0xC1);
-    emu.bus.cpu_write(0x4024, 0xA5);
-    for _ in 0..700_000 {
-        emu.bus.cartridge.clock_cpu();
-        if emu.bus.cartridge.irq_pending() {
-            break;
-        }
-    }
+    mutate_fds_media(&mut emu);
     let mutated = emu
         .dump_persistent_data()
         .expect("FDS media should persist");
-    assert_ne!(mutated, pristine);
 
     let state = encode_state(&emu).expect("FDS state should encode");
     let mut restored = make_fds_emulator();
@@ -693,6 +976,69 @@ fn save_state_truncated_data_rejected() {
     let mut emu2 = make_emulator();
     let result = decode_state(&mut emu2, &truncated);
     assert!(result.is_err(), "truncated state should fail to decode");
+}
+
+#[test]
+fn public_load_rejects_trailing_payload_without_mutation() {
+    let mut emu = make_emulator();
+    emu.set_input(0x03, 0x05);
+    emu.step_frame();
+    emu.set_opcode_log_enabled(true);
+    emu.set_instruction_trace_enabled(true);
+    emu.step_instruction();
+    emu.bus.cpu_nmi_line_sampled = true;
+    emu.cpu_write(OAM_DMA, 0x00);
+    emu.bus.sprite_fetch_a12[3] = true;
+    emu.add_breakpoint(0x8123);
+    emu.add_watchpoint(0x0042, crate::debug::WatchType::ReadWrite);
+    emu.call_stack.push(crate::debug::CallStackEntry {
+        target: 0x8123,
+        return_address: 0x8042,
+        target_rom_offset: Some(0x123),
+        return_rom_offset: Some(0x42),
+        kind: crate::debug::CallStackKind::Call,
+    });
+    emu.debug_suspend();
+    let before = emu.encode_state().unwrap();
+    let mut payload = decode_compressed_payload(&before);
+    payload.push(0xA5);
+    let invalid = encode_compressed_payload(NES_SAVE_STATE_FORMAT_VERSION, &payload);
+
+    assert_public_load_rejection_is_atomic(&mut emu, &invalid);
+}
+
+#[test]
+fn public_load_rejects_malformed_v11_output_without_mutation() {
+    let mut emu = make_emulator();
+    emu.step_frame();
+    emu.bus.ppu.suppress_vblank_edge = true;
+    let state = emu.encode_state().unwrap();
+    let mut payload = decode_compressed_payload(&state);
+    let suffix_start = payload.len() - OUTPUT_SUFFIX_LEN;
+    payload[suffix_start] = 2;
+    let invalid_bool = encode_compressed_payload(NES_SAVE_STATE_FORMAT_VERSION, &payload);
+    assert_public_load_rejection_is_atomic(&mut emu, &invalid_bool);
+
+    payload[suffix_start] = u8::from(emu.frame_ready());
+    payload.pop();
+    let truncated = encode_compressed_payload(NES_SAVE_STATE_FORMAT_VERSION, &payload);
+    assert_public_load_rejection_is_atomic(&mut emu, &truncated);
+}
+
+#[test]
+fn public_load_rejects_wrong_rom_v11_state_without_mutation() {
+    let mut other_rom = build_test_rom();
+    other_rom[16 + 8] ^= 0x5A;
+    let mut source = crate::emulator::Emulator::new(&other_rom, 44_100.0).unwrap();
+    source.step_frame();
+    let wrong_rom_state = source.encode_state().unwrap();
+
+    let mut target = make_emulator();
+    target.step_frame();
+    target.bus.cpu_nmi_line_sampled = true;
+    target.bus.dma_stall_cycles = 9;
+    target.bus.ppu.suppress_vblank_edge = true;
+    assert_public_load_rejection_is_atomic(&mut target, &wrong_rom_state);
 }
 
 #[test]

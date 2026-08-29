@@ -1,10 +1,12 @@
 mod export;
 mod import;
 
-pub use export::append_bess;
 pub use import::import_bess;
 
+use std::ops::Range;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::{Result, anyhow, bail};
 
 use crate::hardware::types::hardware_mode::HardwareMode;
 
@@ -18,11 +20,18 @@ pub(super) const BLOCK_INFO: [u8; 4] = *b"INFO";
 pub(super) const BLOCK_CORE: [u8; 4] = *b"CORE";
 pub(super) const BLOCK_MBC: [u8; 4] = *b"MBC ";
 pub(super) const BLOCK_RTC: [u8; 4] = *b"RTC ";
+// Zeff-boy-private BESS extension. BESS requires readers to ignore unsupported
+// four-character blocks, so portable BESS import must never depend on this
+// block. Only the recognized Zeff native v13 format requires and interprets it.
+pub(super) const BLOCK_ZEFF_PRIVATE_EXTENSION: [u8; 4] = *b"ZBEX";
 pub(super) const BLOCK_END: [u8; 4] = *b"END ";
 
 pub(super) const CORE_BLOCK_LEN: u32 = 0xD0;
 pub(super) const INFO_BLOCK_LEN: u32 = 0x12;
 pub(super) const RTC_BLOCK_LEN: u32 = 0x30;
+pub(super) const ZEFF_EXTENSION_FRAMEBUFFER_LEN: usize =
+    crate::hardware::ppu::SCREEN_W * crate::hardware::ppu::SCREEN_H * 4;
+pub(super) const ZEFF_EXTENSION_BLOCK_LEN: u32 = (8 + ZEFF_EXTENSION_FRAMEBUFFER_LEN) as u32;
 
 const NATIVE_SAVE_STATE_MAGIC: &[u8; 8] = b"ZBSTATE\0";
 const NATIVE_LAST_OPCODE_OFFSET: usize = 97;
@@ -33,9 +42,144 @@ pub fn has_bess_footer(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[bytes.len() - 4..] == BESS_MAGIC
 }
 
+pub(super) fn append_bess_with_optional_zeff_extension(
+    writer: &mut super::StateWriter,
+    cpu: &crate::hardware::cpu::Cpu,
+    bus: &crate::hardware::bus::Bus,
+    hardware_mode: HardwareMode,
+    frame_count: Option<u64>,
+) -> Result<()> {
+    export::append_bess_with_optional_zeff_extension(writer, cpu, bus, hardware_mode, frame_count)
+}
+
+pub(super) struct ZeffExtension {
+    pub(super) frame_count: u64,
+    pub(super) lcd_framebuffer: Box<[u8]>,
+}
+
+struct LocatedZeffExtension {
+    extension: ZeffExtension,
+    block_range: Range<usize>,
+}
+
+pub(super) fn required_zeff_extension(
+    bytes: &[u8],
+    minimum_first_block_offset: usize,
+) -> Result<ZeffExtension> {
+    locate_zeff_extension(bytes, minimum_first_block_offset)?
+        .map(|located| located.extension)
+        .ok_or_else(|| {
+            anyhow!("native v13 save state is missing required Zeff-private `ZBEX` BESS extension")
+        })
+}
+
+pub fn project_replay_state_bytes(bytes: &mut Vec<u8>) -> Result<()> {
+    if !bytes.starts_with(NATIVE_SAVE_STATE_MAGIC) {
+        return Ok(());
+    }
+    if bytes.len() < 12 {
+        bail!("native save-state header is truncated");
+    }
+
+    let format_version = read_u32_le(&bytes[8..12]);
+    if format_version <= 12 {
+        return Ok(());
+    }
+    if format_version != 13 {
+        bail!("unsupported native save-state format {format_version} for replay projection");
+    }
+
+    let located = locate_zeff_extension(bytes, NATIVE_LAST_OPCODE_END)?.ok_or_else(|| {
+        anyhow!("native v13 save state is missing required Zeff-private `ZBEX` BESS extension")
+    })?;
+    bytes.drain(located.block_range);
+    bytes[8..12].copy_from_slice(&12u32.to_le_bytes());
+    Ok(())
+}
+
+fn locate_zeff_extension(
+    bytes: &[u8],
+    minimum_first_block_offset: usize,
+) -> Result<Option<LocatedZeffExtension>> {
+    if !has_bess_footer(bytes) {
+        bail!("native v13 save state is missing BESS footer");
+    }
+
+    let footer_start = bytes.len() - 8;
+    let first_offset = read_u32_le(&bytes[footer_start..footer_start + 4]) as usize;
+    if first_offset < minimum_first_block_offset {
+        bail!("BESS first-block offset precedes completed native payload");
+    }
+    if first_offset >= footer_start {
+        bail!("BESS first-block offset out of range");
+    }
+
+    let mut located: Option<LocatedZeffExtension> = None;
+    let mut pos = first_offset;
+    loop {
+        let header_end = pos
+            .checked_add(8)
+            .ok_or_else(|| anyhow!("BESS block header offset overflow"))?;
+        if header_end > footer_start {
+            bail!("BESS block header truncated");
+        }
+        let id: [u8; 4] = bytes[pos..pos + 4].try_into().expect("slice is 4 bytes");
+        let len = read_u32_le(&bytes[pos + 4..header_end]) as usize;
+        let data_end = header_end
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("BESS block data offset overflow"))?;
+        if data_end > footer_start {
+            bail!("BESS block data truncated");
+        }
+
+        if id == BLOCK_END {
+            if len != 0 {
+                bail!("BESS END block has non-zero length");
+            }
+            if data_end != footer_start {
+                bail!("BESS data follows END block");
+            }
+            if let Some(extension) = &located
+                && extension.block_range.end != pos
+            {
+                bail!("native v13 Zeff-private `ZBEX` BESS extension must immediately precede END");
+            }
+            return Ok(located);
+        }
+
+        if id == BLOCK_ZEFF_PRIVATE_EXTENSION {
+            if located.is_some() {
+                bail!("duplicate Zeff-private `ZBEX` BESS extension");
+            }
+            if len != ZEFF_EXTENSION_BLOCK_LEN as usize {
+                bail!(
+                    "invalid Zeff-private `ZBEX` BESS extension length {len} (expected {ZEFF_EXTENSION_BLOCK_LEN})"
+                );
+            }
+            let frame_count = u64::from_le_bytes(
+                bytes[header_end..header_end + 8]
+                    .try_into()
+                    .expect("ZBEX frame count is 8 bytes"),
+            );
+            located = Some(LocatedZeffExtension {
+                extension: ZeffExtension {
+                    frame_count,
+                    lcd_framebuffer: bytes[header_end + 8..data_end].to_vec().into_boxed_slice(),
+                },
+                block_range: pos..data_end,
+            });
+        }
+
+        pos = data_end;
+    }
+}
+
 pub fn canonicalize_replay_hash_bytes(bytes: &mut [u8]) {
     canonicalize_native_debug_observers(bytes);
+    canonicalize_bess_rtc_timestamp(bytes);
+}
 
+fn canonicalize_bess_rtc_timestamp(bytes: &mut [u8]) {
     let Some(footer_start) = bytes.len().checked_sub(8) else {
         return;
     };
@@ -198,6 +342,7 @@ mod tests {
     fn replay_hash_canonicalization_zeros_native_debug_observers() {
         let mut first = vec![0u8; 120];
         first[..SAVE_STATE_MAGIC.len()].copy_from_slice(&SAVE_STATE_MAGIC);
+        first[8..12].copy_from_slice(&12u32.to_le_bytes());
         first[97] = 0xF1;
         first[98..100].copy_from_slice(&0x2FEAu16.to_le_bytes());
 

@@ -10,6 +10,72 @@ use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
 #[test]
+fn parses_headless_tas_project_verification_options() {
+    let args = parse_args_from([
+        "--headless",
+        "--tas-verify",
+        "movie.ztas",
+        "--tas-branch",
+        "route-b",
+        "--tas-export",
+        "verified.zrpl",
+        "game.nes",
+    ])
+    .unwrap();
+
+    let headless = args.headless.expect("headless mode should be enabled");
+    assert_eq!(
+        headless.tas_project_path.as_deref(),
+        Some(std::path::Path::new("movie.ztas"))
+    );
+    assert_eq!(headless.tas_branch_id.as_deref(), Some("route-b"));
+    assert_eq!(
+        headless.tas_export_path.as_deref(),
+        Some(std::path::Path::new("verified.zrpl"))
+    );
+    assert_eq!(args.rom_path.as_deref(), Some("game.nes"));
+}
+
+#[test]
+fn tas_project_verification_has_an_exact_cli_surface() {
+    for args in [
+        vec!["--tas-verify", "movie.ztas", "game.nes"],
+        vec!["--headless", "--tas-verify", "movie.bin", "game.nes"],
+        vec![
+            "--headless",
+            "--tas-verify",
+            "movie.ztas",
+            "--max-frames",
+            "1",
+            "game.nes",
+        ],
+        vec![
+            "--headless",
+            "--tas-verify",
+            "movie.ztas",
+            "game.nes",
+            "other.nes",
+        ],
+        vec![
+            "--headless",
+            "--tas-verify",
+            "movie.ztas",
+            "--tas-export",
+            "movie.bin",
+            "game.nes",
+        ],
+    ] {
+        assert!(parse_args_from(args).is_err());
+    }
+}
+
+#[test]
+fn tas_branch_and_export_require_tas_verify() {
+    assert!(parse_args_from(["--headless", "--tas-branch", "main", "game.nes"]).is_err());
+    assert!(parse_args_from(["--headless", "--tas-export", "movie.zrpl", "game.nes"]).is_err());
+}
+
+#[test]
 fn parses_sgb_mode_override() {
     let args = parse_args_from(["--mode", "sgb", "game.gb"]).unwrap();
 
@@ -51,6 +117,35 @@ fn parses_headless_replay_options() {
     assert!(headless.allow_gb_link_replay_divergence);
     assert_eq!(headless.expect_replay_final_hash.as_deref(), Some("abc123"));
     assert_eq!(args.rom_path.as_deref(), Some("game.gb"));
+}
+
+#[test]
+fn tas_script_rejects_external_input_in_either_order() {
+    let path =
+        std::env::temp_dir().join(format!("zeff-tas-parse-{}.ztascript", std::process::id()));
+    std::fs::write(&path, "zeff-tas-script 1\nsystem gb\nframes 1\n").unwrap();
+    let path = path.to_string_lossy().into_owned();
+
+    let tas_first = parse_args_from([
+        "--headless",
+        "--tas-script",
+        path.as_str(),
+        "--press",
+        "a@1",
+        "game.gb",
+    ]);
+    let input_first = parse_args_from([
+        "--headless",
+        "--press",
+        "a@1",
+        "--tas-script",
+        path.as_str(),
+        "game.gb",
+    ]);
+    std::fs::remove_file(path).unwrap();
+
+    assert!(tas_first.is_err());
+    assert!(input_first.is_err());
 }
 
 #[test]

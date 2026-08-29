@@ -40,7 +40,14 @@ impl App {
             return;
         }
         if let Some(backend) = self.initial_backend.take() {
-            self.emu_thread = Some(EmuThread::spawn(backend));
+            self.emu_thread = Some(EmuThread::spawn(
+                backend,
+                self.settings.emulation.save_recovery_state,
+            ));
+            super::state_io::queue_current_layer_policy(
+                &self.debug_windows,
+                &mut self.pending_debug_actions,
+            );
             if let Some(thread) = &self.emu_thread {
                 thread.send(EmuCommand::SetUncappedBatchSize(
                     self.settings.emulation.uncapped_frames_per_tick,
@@ -52,6 +59,7 @@ impl App {
             {
                 thread.send(EmuCommand::SetUncapped(true));
             }
+            self.inspect_recovery_after_normal_open();
         }
     }
 
@@ -109,6 +117,7 @@ impl App {
             if let Some(canvas) = window.canvas() {
                 let pending_rom_load = self.pending_rom_load.clone();
                 let visible_flag = self.wasm_tab_visible.clone();
+                let persistence_wake = self.wasm_event_loop_proxy.clone();
 
                 let setup = wasm_bindgen::closure::Closure::once_into_js(move || {
                     let web_window = web_sys::window().expect("browser window must exist");
@@ -124,6 +133,7 @@ impl App {
                     let vis_cb = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
                         let hidden = doc_clone.hidden();
                         visible_flag.set(!hidden);
+                        let _ = persistence_wake.send_event(());
                     })
                         as Box<dyn Fn()>);
                     let _ = document.add_event_listener_with_callback(
@@ -231,6 +241,9 @@ impl App {
         if visible != self.wasm_tab_was_visible {
             self.wasm_tab_was_visible = visible;
             self.handle_focus_change(visible);
+            if !visible && let Some(thread) = &self.emu_thread {
+                thread.send(crate::emu_thread::EmuCommand::FlushBatterySram);
+            }
         }
     }
 
@@ -244,6 +257,8 @@ impl App {
         self.check_pending_state_load();
         self.check_pending_nes_palette_load();
         self.check_tab_visibility();
+        #[cfg(all(test, feature = "wasm-browser-tests"))]
+        super::browser_speculation_test::drive_app(self, event_loop);
         if self.gfx.is_none() && self.pending_gfx.is_some() {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         }

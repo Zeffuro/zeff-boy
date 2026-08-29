@@ -6,6 +6,7 @@ use super::{
     ReplayZapperFrame,
 };
 use crate::media::{MediaEvent, MediaObjectId, MediaSlotId};
+use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -51,6 +52,133 @@ fn roundtrip(state: Vec<u8>, frames: &[(u8, u8)]) {
 #[test]
 fn replay_roundtrip_empty() {
     roundtrip(vec![1, 2, 3], &[]);
+}
+
+#[test]
+fn in_memory_replay_encoding_matches_finished_file_bytes() {
+    let path = unique_path("in_memory_encoding");
+    let metadata = ReplayMetadata {
+        system: Some("nes".to_owned()),
+        events: vec![ReplayEvent::FdsDiskSide { frame: 1, side: 1 }],
+        ..ReplayMetadata::default()
+    };
+    let frame = ReplayJoypadFrame {
+        buttons: 0x12,
+        camera_frame: Some(vec![1, 2, 3, 4]),
+        ..ReplayJoypadFrame::default()
+    };
+    let mut memory = ReplayRecorder::new_with_metadata(
+        std::path::PathBuf::new(),
+        vec![0xA5; 16],
+        metadata.clone(),
+    );
+    memory.record_joypad_frame(frame.clone());
+    let expected = memory.into_bytes().unwrap();
+
+    let mut file = ReplayRecorder::new_with_metadata(path.clone(), vec![0xA5; 16], metadata);
+    file.record_joypad_frame(frame);
+    file.finish().unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), expected);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn replay_encoding_matches_compatibility_hash() {
+    let metadata = ReplayMetadata {
+        system: Some("nes".to_owned()),
+        events: vec![ReplayEvent::FdsDiskSide { frame: 3, side: 1 }],
+        ..ReplayMetadata::default()
+    };
+    let camera_frame = ReplayJoypadFrame {
+        buttons: 0x12,
+        camera_frame: Some(vec![1, 2, 3, 4]),
+        ..ReplayJoypadFrame::default()
+    };
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(std::path::PathBuf::new(), vec![0xA5; 16], metadata);
+    recorder.record_joypad_frame(camera_frame.clone());
+    recorder.record_joypad_frame(camera_frame);
+
+    let bytes = recorder.into_bytes().unwrap();
+    let digest = Sha256::digest(bytes);
+    let digest_hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    assert_eq!(
+        digest_hex,
+        "6bfb84a028844e354b262592c64c6793b5d22dacc29188eb7b68e2ef5f107170"
+    );
+}
+
+#[test]
+fn bounded_replay_load_rejects_metadata_padding_and_camera_expansion_limits() {
+    let padding_path = unique_path("bounded_padding");
+    let metadata = ReplayMetadata {
+        checkpoints: vec![ReplayCheckpoint {
+            frame: 3,
+            state_sha256: [1; 32],
+        }],
+        ..ReplayMetadata::default()
+    };
+    let mut padding_recorder =
+        ReplayRecorder::new_with_metadata(padding_path.clone(), Vec::new(), metadata);
+    padding_recorder.record_joypad_frame(ReplayJoypadFrame {
+        camera_frame: Some(vec![1, 2, 3, 4]),
+        ..ReplayJoypadFrame::default()
+    });
+    padding_recorder.finish().unwrap();
+    let mut padding_bytes = std::fs::read(&padding_path).unwrap();
+    let metadata_len = u32::from_le_bytes(padding_bytes[8..12].try_into().unwrap()) as usize;
+    let state_len_offset = 12 + metadata_len;
+    let state_len = u32::from_le_bytes(
+        padding_bytes[state_len_offset..state_len_offset + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let frame_count_offset = state_len_offset + 4 + state_len;
+    padding_bytes[frame_count_offset..frame_count_offset + 4].copy_from_slice(&1u32.to_le_bytes());
+    padding_bytes.truncate(frame_count_offset + 4 + 24 + 4 + 4);
+    std::fs::write(&padding_path, padding_bytes).unwrap();
+    let limits = super::ReplayLoadLimits {
+        max_file_bytes: 4096,
+        max_metadata_bytes: 1024,
+        max_state_bytes: 1024,
+        max_frames: 3,
+        max_decoded_camera_bytes: 7,
+    };
+    assert!(ReplayPlayer::load_bounded(&padding_path, limits).is_err());
+
+    let camera_path = unique_path("bounded_camera");
+    let mut recorder = ReplayRecorder::new(camera_path.clone(), Vec::new());
+    let frame = ReplayJoypadFrame {
+        camera_frame: Some(vec![1, 2, 3, 4]),
+        ..ReplayJoypadFrame::default()
+    };
+    recorder.record_joypad_frame(frame.clone());
+    recorder.record_joypad_frame(frame);
+    recorder.finish().unwrap();
+    let limits = super::ReplayLoadLimits {
+        max_file_bytes: 4096,
+        max_metadata_bytes: 1024,
+        max_state_bytes: 1024,
+        max_frames: 2,
+        max_decoded_camera_bytes: 7,
+    };
+    assert!(ReplayPlayer::load_bounded(&camera_path, limits).is_err());
+    let limits = super::ReplayLoadLimits {
+        max_file_bytes: std::fs::metadata(&camera_path).unwrap().len() - 1,
+        max_metadata_bytes: 1024,
+        max_state_bytes: 1024,
+        max_frames: 2,
+        max_decoded_camera_bytes: 8,
+    };
+    assert!(ReplayPlayer::load_bounded(&camera_path, limits).is_err());
+
+    let _ = std::fs::remove_file(padding_path);
+    let _ = std::fs::remove_file(camera_path);
 }
 
 #[test]
@@ -101,6 +229,87 @@ fn replay_roundtrip_with_metadata() {
 }
 
 #[test]
+fn firmware_manifest_matching_ignores_order_but_preserves_multiplicity_and_fields() {
+    let external = ReplayFirmwareManifest::External {
+        firmware_id: "external".to_owned(),
+        variant: Some("v1".to_owned()),
+        sha256: [1; 32],
+    };
+    let skipped = ReplayFirmwareManifest::Skipped {
+        firmware_id: "skipped".to_owned(),
+        compatibility_version: 2,
+    };
+    assert!(super::firmware_manifests_match(
+        &[external.clone(), skipped.clone()],
+        &[skipped.clone(), external.clone()]
+    ));
+    assert!(!super::firmware_manifests_match(
+        &[external.clone(), external.clone()],
+        &[external.clone(), skipped.clone()]
+    ));
+    assert!(!super::firmware_manifests_match(
+        &[external],
+        &[ReplayFirmwareManifest::External {
+            firmware_id: "external".to_owned(),
+            variant: Some("v2".to_owned()),
+            sha256: [1; 32],
+        }]
+    ));
+}
+
+#[test]
+fn metadata_rejects_declared_firmware_and_event_counts_before_large_reservations() {
+    let mut firmware = ReplayMetadata::default().encode().unwrap();
+    firmware[7..11].copy_from_slice(&5000u32.to_le_bytes());
+    assert!(ReplayMetadata::decode(&firmware).is_err());
+
+    let mut events = ReplayMetadata::default().encode().unwrap();
+    events[11..15].copy_from_slice(&100_001u32.to_le_bytes());
+    assert!(ReplayMetadata::decode(&events).is_err());
+}
+
+#[test]
+fn replay_finish_rejects_undecodable_metadata_counts_before_touching_output() {
+    let path = unique_path("metadata_count_output");
+    std::fs::write(&path, b"existing replay").unwrap();
+
+    let cases = [
+        ReplayMetadata {
+            firmware: vec![
+                ReplayFirmwareManifest::Skipped {
+                    firmware_id: "firmware".to_owned(),
+                    compatibility_version: 1,
+                };
+                4097
+            ],
+            ..ReplayMetadata::default()
+        },
+        ReplayMetadata {
+            events: vec![ReplayEvent::FdsDiskSide { frame: 0, side: 0 }; 100_001],
+            ..ReplayMetadata::default()
+        },
+        ReplayMetadata {
+            checkpoints: vec![
+                ReplayCheckpoint {
+                    frame: 0,
+                    state_sha256: [0; 32],
+                };
+                100_001
+            ],
+            ..ReplayMetadata::default()
+        },
+    ];
+
+    for metadata in cases {
+        let recorder = ReplayRecorder::new_with_metadata(path.clone(), Vec::new(), metadata);
+        assert!(recorder.finish().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing replay");
+    }
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn idle_game_boy_link_state_requires_initial_serial_generation() {
     let state = ReplayGameBoyLinkState {
         peer_present: false,
@@ -146,7 +355,7 @@ fn metadata_v2_roundtrips_passive_completion_in_all_link_state_locations() {
         ..ReplayMetadata::default()
     };
 
-    let decoded = ReplayMetadata::decode(&metadata.encode()).unwrap();
+    let decoded = ReplayMetadata::decode(&metadata.encode().unwrap()).unwrap();
 
     assert_eq!(decoded, metadata);
 }
@@ -167,7 +376,7 @@ fn metadata_v1_defaults_passive_completion_to_none() {
         ..ReplayMetadata::default()
     };
 
-    let decoded = ReplayMetadata::decode(&metadata.encode_with_version(1)).unwrap();
+    let decoded = ReplayMetadata::decode(&metadata.encode_with_version(1).unwrap()).unwrap();
 
     assert_eq!(decoded.game_boy_link_start_state, Some(state));
     assert_eq!(decoded.events, metadata.events);
@@ -239,7 +448,7 @@ fn metadata_v3_roundtrips_both_master_continuation_owners() {
         };
 
         assert_eq!(
-            ReplayMetadata::decode(&metadata.encode()).unwrap(),
+            ReplayMetadata::decode(&metadata.encode().unwrap()).unwrap(),
             metadata
         );
     }
@@ -258,7 +467,8 @@ fn metadata_v1_and_v2_default_master_continuation_to_none() {
     };
 
     for version in [1, 2] {
-        let decoded = ReplayMetadata::decode(&metadata.encode_with_version(version)).unwrap();
+        let decoded =
+            ReplayMetadata::decode(&metadata.encode_with_version(version).unwrap()).unwrap();
         assert_eq!(decoded.game_boy_link_coordinator_start_state, None);
     }
 }
@@ -305,7 +515,7 @@ fn metadata_v3_rejects_malformed_master_continuations() {
             game_boy_link_coordinator_start_state: Some(coordinator),
             ..ReplayMetadata::default()
         };
-        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+        assert!(ReplayMetadata::decode(&metadata.encode().unwrap()).is_err());
     }
 }
 
@@ -360,7 +570,7 @@ fn metadata_v3_rejects_missing_duplicate_or_reapplied_continuation_replies() {
             events,
             ..ReplayMetadata::default()
         };
-        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+        assert!(ReplayMetadata::decode(&metadata.encode().unwrap()).is_err());
     }
 }
 
@@ -388,7 +598,7 @@ fn metadata_v3_rejects_zero_id_and_impossible_applied_completion_boundary() {
             game_boy_link_coordinator_start_state: Some(coordinator),
             ..ReplayMetadata::default()
         };
-        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+        assert!(ReplayMetadata::decode(&metadata.encode().unwrap()).is_err());
     }
 }
 
@@ -416,7 +626,10 @@ fn metadata_v3_requires_an_owner_or_matching_future_start_for_master_state() {
         events: vec![matching_start.clone()],
         ..ReplayMetadata::default()
     };
-    assert_eq!(ReplayMetadata::decode(&valid.encode()).unwrap(), valid);
+    assert_eq!(
+        ReplayMetadata::decode(&valid.encode().unwrap()).unwrap(),
+        valid
+    );
 
     for (state, events) in [
         (consumed, Vec::new()),
@@ -441,7 +654,7 @@ fn metadata_v3_requires_an_owner_or_matching_future_start_for_master_state() {
             events,
             ..ReplayMetadata::default()
         };
-        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+        assert!(ReplayMetadata::decode(&metadata.encode().unwrap()).is_err());
     }
 }
 
@@ -456,16 +669,16 @@ fn metadata_v3_rejects_invalid_master_continuation_tags_and_truncation() {
         ..ReplayMetadata::default()
     };
 
-    let mut invalid_owner = metadata.encode();
+    let mut invalid_owner = metadata.encode().unwrap();
     let owner_index = invalid_owner.len() - 2;
     invalid_owner[owner_index] = 2;
     assert!(ReplayMetadata::decode(&invalid_owner).is_err());
 
-    let mut invalid_reply_presence = metadata.encode();
+    let mut invalid_reply_presence = metadata.encode().unwrap();
     *invalid_reply_presence.last_mut().unwrap() = 2;
     assert!(ReplayMetadata::decode(&invalid_reply_presence).is_err());
 
-    let mut truncated = ReplayMetadata::default().encode();
+    let mut truncated = ReplayMetadata::default().encode().unwrap();
     truncated.pop();
     assert!(ReplayMetadata::decode(&truncated).is_err());
 }
@@ -526,7 +739,7 @@ fn metadata_v2_rejects_invalid_passive_completion_states() {
             game_boy_link_start_state: Some(state),
             ..ReplayMetadata::default()
         };
-        assert!(ReplayMetadata::decode(&metadata.encode()).is_err());
+        assert!(ReplayMetadata::decode(&metadata.encode().unwrap()).is_err());
     }
 }
 
@@ -973,7 +1186,7 @@ fn replay_v2_roundtrip_preserves_multitap_players() {
 #[test]
 fn replay_v1_input_defaults_multitap_players() {
     let path = unique_path("v1_multitap_default");
-    let metadata = ReplayMetadata::default().encode();
+    let metadata = ReplayMetadata::default().encode().unwrap();
     let mut data = Vec::new();
     data.extend_from_slice(b"ZRPL");
     data.extend_from_slice(&1u32.to_le_bytes());
@@ -1142,7 +1355,7 @@ fn replay_load_rejects_truncated_input() {
     let mut data = Vec::new();
     data.extend_from_slice(b"ZRPL");
     data.extend_from_slice(&1u32.to_le_bytes());
-    let metadata = ReplayMetadata::default().encode();
+    let metadata = ReplayMetadata::default().encode().unwrap();
     data.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
     data.extend_from_slice(&metadata);
     data.extend_from_slice(&0u32.to_le_bytes());
@@ -1226,7 +1439,7 @@ fn replay_load_handles_odd_trailing_byte() {
     let mut data = Vec::new();
     data.extend_from_slice(b"ZRPL");
     data.extend_from_slice(&1u32.to_le_bytes());
-    let metadata = ReplayMetadata::default().encode();
+    let metadata = ReplayMetadata::default().encode().unwrap();
     data.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
     data.extend_from_slice(&metadata);
     data.extend_from_slice(&0u32.to_le_bytes());
@@ -1256,7 +1469,7 @@ fn replay_load_empty_metadata() {
     let mut data = Vec::new();
     data.extend_from_slice(b"ZRPL");
     data.extend_from_slice(&1u32.to_le_bytes());
-    let metadata = ReplayMetadata::default().encode();
+    let metadata = ReplayMetadata::default().encode().unwrap();
     data.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
     data.extend_from_slice(&metadata);
     data.extend_from_slice(&1u32.to_le_bytes());

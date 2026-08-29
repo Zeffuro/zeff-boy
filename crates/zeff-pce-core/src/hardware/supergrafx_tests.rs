@@ -350,6 +350,23 @@ fn supergrafx_renderer_aligns_different_hds_and_records_the_union_origin() {
     assert_eq!(metadata.active_width(), 16);
     assert_eq!(frame_pixel(&frame, 0, 0), [0, 0, 255, 255]);
     assert_eq!(frame_pixel(&frame, 8, 0), [0, 255, 0, 255]);
+
+    vce.write_port(VcePort::from_offset(0), 0x80);
+    frame.begin_frame();
+    frame
+        .render_supergrafx_active_line(
+            &mut one,
+            &mut two,
+            &vpc,
+            &vce,
+            Some(display_one),
+            Some(display_two),
+            0,
+            VcePixelClock::DivideByFour,
+        )
+        .unwrap();
+    assert_eq!(frame_pixel(&frame, 0, 0), [29, 29, 29, 255]);
+    assert_eq!(frame_pixel(&frame, 8, 0), [149, 149, 149, 255]);
 }
 
 #[test]

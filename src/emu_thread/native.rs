@@ -25,7 +25,7 @@ pub(crate) struct EmuThread {
 }
 
 impl EmuThread {
-    pub(crate) fn spawn(backend: EmuBackend) -> Self {
+    pub(crate) fn spawn(backend: EmuBackend, save_recovery_on_shutdown: bool) -> Self {
         let capabilities = backend.capabilities();
         let frame_duration_ns = backend.nominal_frame_duration_ns();
         let shared_frame_duration_ns = Arc::new(AtomicU64::new(frame_duration_ns));
@@ -49,8 +49,19 @@ impl EmuThread {
         let emu_frame_duration_ns = Arc::clone(&shared_frame_duration_ns);
 
         let join = thread::spawn(move || {
-            let mut emu_loop =
-                emu_loop::EmuLoop::new(backend, cmd_rx, frame_tx, drain_rx, resp_tx, emu_fb);
+            let mut emu_loop = emu_loop::EmuLoop::new(
+                backend,
+                cmd_rx,
+                frame_tx,
+                drain_rx,
+                resp_tx,
+                emu_loop::EmuLoopConfig {
+                    shared_framebuffer: emu_fb,
+                    save_recovery_on_shutdown,
+                    #[cfg(test)]
+                    recovery: None,
+                },
+            );
             emu_loop.set_frame_duration_handle(emu_frame_duration_ns);
             emu_loop.run();
         });
@@ -121,6 +132,15 @@ impl EmuThread {
                 Ok(EmuResponse::ShutdownComplete) => break,
                 Ok(EmuResponse::SramFlushed(Some(path))) => {
                     log::info!("Saved battery RAM to {}", path);
+                }
+                Ok(EmuResponse::SramFlushFailed(error)) => {
+                    log::warn!("Battery save failed: {error}");
+                }
+                Ok(EmuResponse::RecoverySaved(path)) => {
+                    log::info!("Saved recovery state to {}", path.display());
+                }
+                Ok(EmuResponse::RecoverySaveFailed(error)) => {
+                    log::warn!("Recovery save failed: {error}");
                 }
                 Ok(_) => continue,
                 Err(_) => break,

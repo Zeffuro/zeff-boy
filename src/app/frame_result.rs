@@ -53,6 +53,49 @@ impl App {
                 None => continue,
             };
             match resp {
+                #[cfg(target_arch = "wasm32")]
+                EmuResponse::SaveStateOk {
+                    path,
+                    backup_created,
+                } => {
+                    log::info!("Committed browser save state to {}", path.display());
+                    self.update_undo_save_path(path, backup_created);
+                    self.refresh_slot_info();
+                    self.toast_manager.success("State saved");
+                    continue;
+                }
+                #[cfg(target_arch = "wasm32")]
+                EmuResponse::SaveStateFailed(error) => {
+                    log::error!("Browser save state failed: {error}");
+                    self.toast_manager.error(format!("Save failed: {error}"));
+                    continue;
+                }
+                #[cfg(target_arch = "wasm32")]
+                EmuResponse::StateBackupRestored(path) => {
+                    self.undo_save_state_path = Some(path);
+                    self.refresh_slot_info();
+                    self.toast_manager.success("Restored previous save state");
+                    continue;
+                }
+                #[cfg(target_arch = "wasm32")]
+                EmuResponse::StateBackupRestoreFailed(error) => {
+                    self.toast_manager
+                        .error(format!("Undo save failed: {error}"));
+                    continue;
+                }
+                #[cfg(target_arch = "wasm32")]
+                EmuResponse::SramFlushFailed(error) => {
+                    log::error!("Browser battery save failed: {error}");
+                    self.toast_manager
+                        .error(format!("Battery save failed: {error}"));
+                    continue;
+                }
+                EmuResponse::SramFlushed(path) => {
+                    if let Some(path) = path {
+                        log::info!("Committed battery data to {path}");
+                    }
+                    continue;
+                }
                 EmuResponse::GuestCallCompleted {
                     name,
                     instructions,
@@ -149,6 +192,8 @@ impl App {
     }
 
     pub(super) fn process_frame_result(&mut self, mut result: FrameResult) {
+        #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+        super::browser_speculation_test::record_frame_result(self, &result);
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
         if let Some(fault) = result.runtime_fault.take() {
             log::error!("Emulation stopped: {fault}");

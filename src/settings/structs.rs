@@ -781,7 +781,9 @@ pub(crate) struct EmulationSettings {
     pub(crate) uncapped_frames_per_tick: usize,
     pub(crate) uncapped_speed: bool,
     pub(crate) frame_skip: bool,
-    pub(crate) auto_save_state: bool,
+    pub(crate) save_recovery_state: bool,
+    pub(crate) resume_recovery_state: bool,
+    pub(crate) recovery_migration_notice_pending: bool,
     #[serde(default = "default_tcp_link_addr")]
     pub(crate) tcp_link_addr: String,
     #[serde(default)]
@@ -835,7 +837,9 @@ impl Default for EmulationSettings {
             uncapped_frames_per_tick: 60,
             uncapped_speed: false,
             frame_skip: false,
-            auto_save_state: false,
+            save_recovery_state: true,
+            resume_recovery_state: false,
+            recovery_migration_notice_pending: false,
             tcp_link_addr: default_tcp_link_addr(),
             sgb_border_enabled: false,
             nes_zapper_enabled: false,

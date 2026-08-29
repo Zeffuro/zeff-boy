@@ -133,13 +133,28 @@ impl crate::emu_core_trait::DebuggableEmulator for Sega8Emulator {
 pub(crate) struct Sega8Backend {
     pub(crate) emu: Sega8Emulator,
     paths: BackendPaths,
+    sram_recovery: crate::save_paths::SramRecoverySession,
 }
 
 impl Sega8Backend {
+    pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
+        self.emu
+            .dump_battery_sram()
+            .map(|bytes| vec![(crate::save_paths::SRAM_COMPONENT, bytes)])
+            .unwrap_or_default()
+    }
+
     pub(crate) fn new(emu: Sega8Emulator, rom_path: PathBuf) -> Self {
+        let system = active_system_for_sega8(emu.system());
+        let sram_recovery = crate::save_paths::battery_sram_session(
+            &rom_path,
+            system.storage_subdir(),
+            emu.rom_hash(),
+        );
         Self {
             emu,
             paths: BackendPaths::new(rom_path),
+            sram_recovery,
         }
     }
 
@@ -148,9 +163,16 @@ impl Sega8Backend {
         rom_path: PathBuf,
         source_path: PathBuf,
     ) -> Self {
+        let system = active_system_for_sega8(emu.system());
+        let sram_recovery = crate::save_paths::battery_sram_session(
+            &rom_path,
+            system.storage_subdir(),
+            emu.rom_hash(),
+        );
         Self {
             emu,
             paths: BackendPaths::with_source_path(rom_path, source_path),
+            sram_recovery,
         }
     }
 
@@ -219,7 +241,16 @@ impl EmulatorCore for Sega8Backend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
-        crate::save_paths::flush_battery_sram(self.paths.rom_path(), self.emu.dump_battery_sram())
+        let system_subdir = self.system().storage_subdir();
+        let media_identity = self.emu.rom_hash();
+        let sram = self.emu.dump_battery_sram();
+        crate::save_paths::flush_battery_sram(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            system_subdir,
+            media_identity,
+            sram,
+        )
     }
 
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -463,9 +494,26 @@ pub(crate) fn try_load_battery_sram(
     emu: &mut Sega8Emulator,
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
-    crate::save_paths::try_load_battery_sram(rom_path, "Sega 8-bit", emu.has_battery(), |bytes| {
-        emu.load_battery_sram(bytes)
-    })
+    #[cfg(not(target_arch = "wasm32"))]
+    let result = crate::save_paths::try_load_battery_sram(
+        rom_path,
+        "Sega 8-bit",
+        emu.has_battery(),
+        |bytes| emu.load_battery_sram(bytes),
+    );
+    #[cfg(target_arch = "wasm32")]
+    let result = crate::save_paths::try_load_browser_battery_sram(
+        crate::save_paths::BrowserBatterySramRequest {
+            rom_path,
+            system_subdir: active_system_for_sega8(emu.system()).storage_subdir(),
+            media_identity: emu.rom_hash(),
+            component: crate::save_paths::SRAM_COMPONENT,
+            system_label: "Sega 8-bit",
+            has_battery: emu.has_battery(),
+        },
+        |bytes| emu.load_battery_sram(bytes),
+    );
+    result
 }
 
 #[cfg(test)]

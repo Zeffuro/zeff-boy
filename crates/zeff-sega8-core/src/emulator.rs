@@ -106,7 +106,7 @@ impl Sega8LoadConfig {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,

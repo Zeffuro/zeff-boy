@@ -145,6 +145,7 @@ pub(in crate::cli::headless_runner) fn pce_debug_state(
                 "controller_mode": format!("{:?}", title.controller_mode),
                 "memory_base_128": title.memory_base_128,
                 "arcade_card": title.arcade_card,
+                "minimum_system_card": title.minimum_system_card.map(|tier| format!("{tier:?}")),
             })),
             "memory_base_128": {
                 "mode": format!("{:?}", request.backend.memory_base_mode()),

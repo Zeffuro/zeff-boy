@@ -128,7 +128,7 @@ impl Settings {
 
     pub(crate) fn load_or_default() -> Self {
         if let Some(json) = platform::load_settings_json()
-            && let Ok(mut settings) = serde_json::from_str::<Self>(&json)
+            && let Ok(mut settings) = Self::from_json(&json)
         {
             settings.video.migrate_shader_preset();
             settings.gamepad_bindings.migrate_wonderswan_defaults();
@@ -141,6 +141,40 @@ impl Settings {
             },
             ..Default::default()
         }
+    }
+
+    fn from_json(json: &str) -> serde_json::Result<Self> {
+        const SAVE_KEY: &str = "save_recovery_state";
+        const RESUME_KEY: &str = "resume_recovery_state";
+        const NOTICE_KEY: &str = "recovery_migration_notice_pending";
+        const LEGACY_KEY: &str = "auto_save_state";
+
+        let raw = serde_json::from_str::<serde_json::Value>(json)?;
+        let object = raw.as_object();
+        let has_new_policy = object.is_some_and(|object| {
+            object.contains_key(SAVE_KEY)
+                || object.contains_key(RESUME_KEY)
+                || object.contains_key(NOTICE_KEY)
+        });
+        let legacy = object
+            .and_then(|object| object.get(LEGACY_KEY))
+            .and_then(serde_json::Value::as_bool);
+        let mut settings = serde_json::from_value::<Self>(raw)?;
+        if !has_new_policy {
+            match legacy {
+                Some(false) => {
+                    settings.emulation.save_recovery_state = false;
+                    settings.emulation.resume_recovery_state = false;
+                }
+                Some(true) => {
+                    settings.emulation.save_recovery_state = true;
+                    settings.emulation.resume_recovery_state = false;
+                    settings.emulation.recovery_migration_notice_pending = true;
+                }
+                None => {}
+            }
+        }
+        Ok(settings)
     }
 
     pub(crate) fn auto_detect_ui_scale(&mut self, monitor_height: u32, os_scale_factor: f64) {

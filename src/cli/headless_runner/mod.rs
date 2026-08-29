@@ -57,10 +57,17 @@ mod sega8;
 mod state_artifacts;
 mod stuck;
 mod support;
+mod tas;
+mod tas_project;
 #[cfg(test)]
 mod tests;
 mod trace;
 mod ws;
+
+use tas::{check_tas_assertions, ensure_tas_completed, validate_tas_system};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use replay::run_loaded_replay_for_verification;
 
 pub(crate) fn run_headless(
     path: &Path,
@@ -68,7 +75,11 @@ pub(crate) fn run_headless(
     firmware_search_dirs: Vec<std::path::PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
+    if opts.tas_project_path.is_some() {
+        return tas_project::run_tas_project_headless(path, firmware_search_dirs, opts);
+    }
     if crate::app::is_native_archive_path(path) {
+        validate_tas_system(opts, "pce")?;
         if opts.replay_path.is_some() {
             anyhow::bail!("replay playback from archives is not supported in headless mode");
         }
@@ -76,6 +87,7 @@ pub(crate) fn run_headless(
     }
 
     let (rom_path, preloaded_data, system) = crate::app::detect_and_extract_rom(path)?;
+    validate_tas_system(opts, system.code())?;
     if system == ActiveSystem::Pce {
         if opts.replay_path.is_some() {
             anyhow::bail!("PC Engine replay playback is not supported yet");

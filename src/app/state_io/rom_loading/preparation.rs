@@ -62,6 +62,7 @@ impl App {
         auto_load_state: bool,
     ) {
         self.cancel_pending_rom_preparation(false);
+        self.stop_emu_thread();
         let request_id = self.next_rom_preparation_id;
         self.next_rom_preparation_id = self.next_rom_preparation_id.wrapping_add(1);
         let cancel = Arc::new(AtomicBool::new(false));

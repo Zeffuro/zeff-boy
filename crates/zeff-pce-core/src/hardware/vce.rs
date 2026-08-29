@@ -167,6 +167,17 @@ impl HuC6260 {
     }
 
     #[inline]
+    pub(crate) fn resolve_color(&self, palette_index: u16) -> [u8; 3] {
+        let [red, green, blue] = self.palette[usize::from(palette_index)].rgb8();
+        if !self.monochrome_enabled() {
+            return [red, green, blue];
+        }
+        let luminance =
+            (299 * u32::from(red) + 587 * u32::from(green) + 114 * u32::from(blue)) / 1_000;
+        [luminance as u8; 3]
+    }
+
+    #[inline]
     pub fn read_port(&mut self, port: VcePort) -> u8 {
         match port.offset() {
             4 => self.current_color().raw() as u8,

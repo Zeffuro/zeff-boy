@@ -95,4 +95,15 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn sega8_systems_have_no_remote_link_adapter() {
+        for system in [
+            ActiveSystem::MasterSystem,
+            ActiveSystem::GameGear,
+            ActiveSystem::Sg1000,
+        ] {
+            assert_eq!(remote_link_system_for_active_system(system), None);
+        }
+    }
 }

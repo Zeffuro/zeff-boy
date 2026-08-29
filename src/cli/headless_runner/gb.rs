@@ -18,6 +18,11 @@ pub(super) fn run_gb_headless(
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
     let mut emulator = GbEmulator::from_rom_data(rom_data, mode_preference)?;
+    let mut sram_recovery = crate::save_paths::battery_sram_session(
+        path,
+        ActiveSystem::Gb.storage_subdir(),
+        emulator.rom_hash(),
+    );
     if !opts.no_sram
         && let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {
@@ -44,11 +49,17 @@ pub(super) fn run_gb_headless(
         log::info!("Applied DMG palette preset {}", preset.label());
     }
     ensure_no_reset_events("gb", opts)?;
-    let flush_battery = |emulator: &GbEmulator| {
+    let mut flush_battery = |emulator: &GbEmulator| {
         if opts.no_sram {
             return;
         }
-        match crate::save_paths::flush_battery_sram(path, emulator.dump_battery_sram()) {
+        match crate::save_paths::flush_battery_sram(
+            &mut sram_recovery,
+            path,
+            ActiveSystem::Gb.storage_subdir(),
+            emulator.rom_hash(),
+            emulator.dump_battery_sram(),
+        ) {
             Ok(Some(save_path)) => log::info!("Saved battery RAM to {}", save_path),
             Ok(None) => {}
             Err(err) => log::error!("Failed to save battery RAM: {}", err),
@@ -68,7 +79,6 @@ pub(super) fn run_gb_headless(
                 emulator.cpu_sp(),
             )
         );
-        flush_battery(emulator);
         Some(Ok(()))
     };
     if let Some(addr) = opts.break_at {
@@ -109,6 +119,7 @@ pub(super) fn run_gb_headless(
             while emulator.cpu_cycles() < target {
                 let (pc, op, cb_prefix, step_cycles) = emulator.step_instruction();
                 if let Some(result) = check_breakpoint(&emulator) {
+                    flush_battery(&emulator);
                     return result;
                 }
                 if opts.expect_test_pass {
@@ -307,11 +318,19 @@ pub(super) fn run_gb_headless(
         } else {
             emulator.step_frame();
             if let Some(result) = check_breakpoint(&emulator) {
+                flush_battery(&emulator);
                 return result;
             }
         }
 
         frames_run = frame_number;
+        check_tas_assertions(
+            opts,
+            frames_run,
+            u32::from(emulator.cpu_pc()),
+            emulator.framebuffer(),
+            || emulator.encode_state(),
+        )?;
         write_screenshot_if_requested(
             opts,
             frames_run,
@@ -338,6 +357,7 @@ pub(super) fn run_gb_headless(
             &mut stuck_active,
         );
     }
+    ensure_tas_completed(opts, frames_run)?;
 
     if opts.trace_opcodes {
         println!("[op-tail] ---- last {} ops ----", tail.len());

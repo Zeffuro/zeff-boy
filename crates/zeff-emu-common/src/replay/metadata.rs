@@ -8,6 +8,9 @@ use super::{
 
 const METADATA_VERSION: u32 = 3;
 const MIN_METADATA_VERSION: u32 = 1;
+const MAX_REPLAY_FIRMWARE_MANIFESTS: usize = 4096;
+const MAX_REPLAY_EVENTS: usize = 100_000;
+const MAX_REPLAY_CHECKPOINTS: usize = 100_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayCheckpoint {
@@ -31,6 +34,27 @@ pub struct ReplayMetadata {
     pub game_boy_link_coordinator_start_state: Option<ReplayGameBoyLinkCoordinatorState>,
 }
 
+pub fn firmware_manifests_match(
+    left: &[ReplayFirmwareManifest],
+    right: &[ReplayFirmwareManifest],
+) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut matched = vec![false; right.len()];
+    left.iter().all(|expected| {
+        let Some(index) = right
+            .iter()
+            .enumerate()
+            .position(|(index, actual)| !matched[index] && actual == expected)
+        else {
+            return false;
+        };
+        matched[index] = true;
+        true
+    })
+}
+
 impl ReplayMetadata {
     pub fn is_empty(&self) -> bool {
         self.system.is_none()
@@ -47,11 +71,12 @@ impl ReplayMetadata {
             && self.game_boy_link_coordinator_start_state.is_none()
     }
 
-    pub(super) fn encode(&self) -> Vec<u8> {
+    pub(super) fn encode(&self) -> Result<Vec<u8>> {
         self.encode_with_version(METADATA_VERSION)
     }
 
-    pub(super) fn encode_with_version(&self, version: u32) -> Vec<u8> {
+    pub(super) fn encode_with_version(&self, version: u32) -> Result<Vec<u8>> {
+        self.validate_encoding_limits()?;
         let mut out = Vec::new();
         write_u32(&mut out, version);
         write_optional_string(&mut out, self.system.as_deref());
@@ -85,7 +110,66 @@ impl ReplayMetadata {
                 self.game_boy_link_coordinator_start_state,
             );
         }
-        out
+        Ok(out)
+    }
+
+    fn validate_encoding_limits(&self) -> Result<()> {
+        validate_count(
+            "firmware manifests",
+            self.firmware.len(),
+            MAX_REPLAY_FIRMWARE_MANIFESTS,
+        )?;
+        validate_count("events", self.events.len(), MAX_REPLAY_EVENTS)?;
+        validate_count(
+            "checkpoints",
+            self.checkpoints.len(),
+            MAX_REPLAY_CHECKPOINTS,
+        )?;
+        for value in [self.system.as_deref(), self.core_family.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            validate_string_len(value)?;
+        }
+        for firmware in &self.firmware {
+            match firmware {
+                ReplayFirmwareManifest::External {
+                    firmware_id,
+                    variant,
+                    ..
+                } => {
+                    validate_string_len(firmware_id)?;
+                    if let Some(variant) = variant {
+                        validate_string_len(variant)?;
+                    }
+                }
+                ReplayFirmwareManifest::Hle {
+                    firmware_id,
+                    implementation,
+                    ..
+                }
+                | ReplayFirmwareManifest::BuiltinOpenSource {
+                    firmware_id,
+                    implementation,
+                    ..
+                } => {
+                    validate_string_len(firmware_id)?;
+                    validate_string_len(implementation)?;
+                }
+                ReplayFirmwareManifest::Skipped { firmware_id, .. } => {
+                    validate_string_len(firmware_id)?;
+                }
+            }
+        }
+        for event in &self.events {
+            if let ReplayEvent::Media { event, .. } = event {
+                validate_string_len(event.slot().as_ref())?;
+                if let crate::media::MediaEvent::Insert { media_id, .. } = event {
+                    validate_string_len(media_id.as_ref())?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
@@ -99,11 +183,23 @@ impl ReplayMetadata {
         let core_family = cursor.read_optional_string()?;
         let rom_sha256 = cursor.read_optional_hash()?;
         let firmware_count = cursor.read_u32()? as usize;
+        if firmware_count > MAX_REPLAY_FIRMWARE_MANIFESTS {
+            bail!("replay exceeds {MAX_REPLAY_FIRMWARE_MANIFESTS} firmware manifests");
+        }
+        if firmware_count > cursor.remaining() {
+            bail!("replay firmware count exceeds the remaining metadata");
+        }
         let mut firmware = Vec::with_capacity(firmware_count);
         for _ in 0..firmware_count {
             firmware.push(ReplayFirmwareManifest::decode(&mut cursor)?);
         }
         let event_count = cursor.read_u32()? as usize;
+        if event_count > MAX_REPLAY_EVENTS {
+            bail!("replay exceeds {MAX_REPLAY_EVENTS} events");
+        }
+        if event_count > cursor.remaining() {
+            bail!("replay event count exceeds the remaining metadata");
+        }
         let mut events = Vec::with_capacity(event_count);
         for _ in 0..event_count {
             events.push(ReplayEvent::decode(&mut cursor, version)?);
@@ -155,7 +251,21 @@ impl ReplayMetadata {
     }
 }
 
-fn validate_uncoordinated_game_boy_link_start(
+fn validate_count(name: &str, count: usize, maximum: usize) -> Result<()> {
+    if count > maximum {
+        bail!("replay exceeds {maximum} {name}");
+    }
+    u32::try_from(count).map_err(|_| anyhow::anyhow!("replay {name} count does not fit u32"))?;
+    Ok(())
+}
+
+fn validate_string_len(value: &str) -> Result<()> {
+    u32::try_from(value.len())
+        .map(|_| ())
+        .map_err(|_| anyhow::anyhow!("replay metadata string length does not fit u32"))
+}
+
+pub(super) fn validate_uncoordinated_game_boy_link_start(
     state: ReplayGameBoyLinkState,
     events: &[ReplayEvent],
 ) -> Result<()> {
@@ -200,7 +310,7 @@ fn validate_uncoordinated_game_boy_link_start(
     Ok(())
 }
 
-fn validate_game_boy_link_coordinator_events(
+pub(super) fn validate_game_boy_link_coordinator_events(
     coordinator: ReplayGameBoyLinkCoordinatorState,
     events: &[ReplayEvent],
 ) -> Result<()> {
@@ -341,6 +451,15 @@ fn read_checkpoints_if_present(cursor: &mut MetadataCursor<'_>) -> Result<Vec<Re
         return Ok(Vec::new());
     }
     let count = cursor.read_u32()? as usize;
+    if count > MAX_REPLAY_CHECKPOINTS {
+        bail!("replay exceeds {MAX_REPLAY_CHECKPOINTS} checkpoints");
+    }
+    let required_bytes = count
+        .checked_mul(40)
+        .ok_or_else(|| anyhow::anyhow!("replay checkpoint size overflow"))?;
+    if required_bytes > cursor.remaining() {
+        bail!("replay checkpoint count exceeds the remaining metadata");
+    }
     let mut checkpoints = Vec::with_capacity(count);
     for _ in 0..count {
         checkpoints.push(ReplayCheckpoint {

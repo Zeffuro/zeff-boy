@@ -26,6 +26,8 @@ use crate::{
 pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
 
 mod bindings;
+#[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+pub(crate) mod browser_speculation_test;
 mod camera_host;
 mod display;
 mod frame_result;
@@ -62,6 +64,23 @@ pub(crate) fn run(
     #[cfg(not(target_arch = "wasm32"))] deferred_initial_rom_load: Option<std::path::PathBuf>,
 ) -> Result<()> {
     let event_loop = EventLoop::new()?;
+    #[cfg(target_arch = "wasm32")]
+    let wasm_event_loop_proxy = event_loop.create_proxy();
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let timer_proxy = wasm_event_loop_proxy.clone();
+        let timer = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+            let _ = timer_proxy.send_event(());
+        }) as Box<dyn FnMut()>);
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
+                timer.as_ref().unchecked_ref(),
+                1_000,
+            );
+        }
+        timer.forget();
+    }
     let uncapped_speed = settings.emulation.uncapped_speed;
     let uncapped_frames_per_tick = settings
         .emulation
@@ -113,6 +132,8 @@ pub(crate) fn run(
         #[cfg(target_arch = "wasm32")]
         pending_rom_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
         #[cfg(target_arch = "wasm32")]
+        pending_wasm_rom_after_flush: None,
+        #[cfg(target_arch = "wasm32")]
         pending_state_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
         #[cfg(target_arch = "wasm32")]
         pending_nes_palette_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -120,6 +141,10 @@ pub(crate) fn run(
         wasm_tab_visible: std::rc::Rc::new(std::cell::Cell::new(true)),
         #[cfg(target_arch = "wasm32")]
         wasm_tab_was_visible: true,
+        #[cfg(target_arch = "wasm32")]
+        wasm_retired_threads: Vec::new(),
+        #[cfg(target_arch = "wasm32")]
+        wasm_event_loop_proxy,
         window_id: None,
         fps_tracker: FpsTracker::new(),
         debug_windows: DebugWindowState::new(),
@@ -291,6 +316,7 @@ pub(crate) fn run(
         },
         undo_load_state: None,
         undo_save_state_path: None,
+        recovery_state_available: false,
         paused_by_unfocus: false,
         suppress_unfocus_pause_until_focus: false,
     };
@@ -340,6 +366,8 @@ struct App {
     #[cfg(target_arch = "wasm32")]
     pending_rom_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]
+    pending_wasm_rom_after_flush: Option<(String, Vec<u8>)>,
+    #[cfg(target_arch = "wasm32")]
     pending_state_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]
     pending_nes_palette_load: crate::platform::FileDataSlot,
@@ -347,6 +375,10 @@ struct App {
     wasm_tab_visible: std::rc::Rc<std::cell::Cell<bool>>,
     #[cfg(target_arch = "wasm32")]
     wasm_tab_was_visible: bool,
+    #[cfg(target_arch = "wasm32")]
+    wasm_retired_threads: Vec<(EmuThread, bool)>,
+    #[cfg(target_arch = "wasm32")]
+    wasm_event_loop_proxy: winit::event_loop::EventLoopProxy<()>,
     window_id: Option<WindowId>,
     fps_tracker: FpsTracker,
     debug_windows: DebugWindowState,
@@ -453,6 +485,7 @@ struct App {
     cached_slot_info: state_io::SlotInfo,
     undo_load_state: Option<Vec<u8>>,
     undo_save_state_path: Option<std::path::PathBuf>,
+    recovery_state_available: bool,
     paused_by_unfocus: bool,
     suppress_unfocus_pause_until_focus: bool,
 }
@@ -762,6 +795,17 @@ impl ApplicationHandler for App {
         self.handle_device_event(event);
     }
 
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.wasm_poll_hooks(_event_loop);
+            if let Some(thread) = &self.emu_thread {
+                thread.poll_persistence();
+            }
+            self.poll_retired_wasm_threads();
+        }
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.wasm_poll_hooks(event_loop);
         #[cfg(not(target_arch = "wasm32"))]
@@ -779,6 +823,8 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         self.perform_shutdown();
+        #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+        browser_speculation_test::record_app_exiting();
     }
 }
 

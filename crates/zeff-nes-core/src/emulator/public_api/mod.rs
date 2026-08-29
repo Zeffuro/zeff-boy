@@ -4,6 +4,14 @@ mod debug;
 mod queries;
 
 impl Emulator {
+    pub fn has_standard_controller_topology(&self) -> bool {
+        use crate::hardware::controller::{ControllerType, ExpansionDevice};
+
+        self.bus.controller1.controller_type() == ControllerType::Standard
+            && self.bus.controller2.controller_type() == ControllerType::Standard
+            && self.bus.expansion_device == ExpansionDevice::None
+    }
+
     pub fn drain_audio_samples(&mut self) -> Vec<f32> {
         self.bus.apu.drain_samples()
     }

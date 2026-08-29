@@ -53,6 +53,14 @@ pub(super) fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     } else {
         false
     };
+    let extension = if format_version >= 13 {
+        Some(super::bess::required_zeff_extension(
+            bytes,
+            reader.position(),
+        )?)
+    } else {
+        None
+    };
 
     if !reader.is_exhausted() && !super::bess::has_bess_footer(bytes) {
         bail!("save-state file has unexpected trailing data");
@@ -69,6 +77,8 @@ pub(super) fn decode_state(bytes: &[u8]) -> Result<SaveState> {
         last_opcode,
         last_opcode_pc,
         boot_rom_enabled,
+        frame_count: extension.as_ref().map(|extension| extension.frame_count),
+        lcd_framebuffer: extension.map(|extension| extension.lcd_framebuffer),
     })
 }
 

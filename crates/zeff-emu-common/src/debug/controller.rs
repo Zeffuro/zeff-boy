@@ -1,5 +1,6 @@
 use super::{BreakpointHitCondition, DebugEvent, WatchHit, WatchType, Watchpoint};
 
+#[derive(Clone)]
 pub struct DebugController {
     breakpoints: Box<[bool; 65536]>,
     one_shot_breakpoints: Box<[bool; 65536]>,

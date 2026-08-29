@@ -1,3 +1,4 @@
+use zeff_firmware::PceSystemCardTier;
 use zeff_pce_core::hardware::PceControllerMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,9 +10,10 @@ pub(crate) struct PceCdTitleMetadata {
     pub(crate) controller_mode: PceControllerMode,
     pub(crate) memory_base_128: bool,
     pub(crate) arcade_card: bool,
+    pub(crate) minimum_system_card: Option<PceSystemCardTier>,
 }
 
-const fn profile(
+const fn super_cd_profile(
     id: &'static str,
     title: &'static str,
     normalized_disc_sha256: [u8; 32],
@@ -27,6 +29,7 @@ const fn profile(
         controller_mode,
         memory_base_128,
         arcade_card,
+        minimum_system_card: Some(PceSystemCardTier::Version3),
     }
 }
 
@@ -56,7 +59,7 @@ const HU_PGA_TOUR_POWERGOLF_2_GOLFER_JAPAN_DISC_SHA256: [u8; 32] = [
 ];
 
 const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
-    profile(
+    super_cd_profile(
         "pce-cd:jp:1552-tenka-tairan",
         "1552 Tenka Tairan",
         [
@@ -68,7 +71,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:a-iii-a-ressha-de-ikou-iii",
         "A.III - A Ressha de Ikou III",
         [
@@ -80,7 +83,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         true,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:atlas-renaissance-voyager",
         "Atlas Renaissance Voyager",
         [
@@ -92,7 +95,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         true,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:brandish",
         "Brandish",
         [
@@ -104,7 +107,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         true,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:dennou-tenshi-digital-angel",
         "Dennou Tenshi Digital Angel",
         [
@@ -116,7 +119,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:doukyuusei",
         "Doukyuusei",
         [
@@ -128,7 +131,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:eikan-wa-kimi-ni",
         "Eikan wa Kimi ni",
         [
@@ -140,7 +143,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         true,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:hatsukoi-monogatari",
         "Hatsukoi Monogatari",
         [
@@ -152,7 +155,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:jantei-monogatari-iii",
         "Jantei Monogatari III",
         [
@@ -164,7 +167,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:lemmings",
         "Lemmings",
         LEMMINGS_JAPAN_CANONICAL_DISC_SHA256,
@@ -172,7 +175,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:metal-angel",
         "Metal Angel",
         [
@@ -184,7 +187,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:princess-maker-2",
         "Princess Maker 2",
         [
@@ -196,7 +199,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         true,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:tokimeki-memorial",
         "Tokimeki Memorial",
         [
@@ -208,7 +211,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:vasteel-2",
         "Vasteel 2",
         [
@@ -220,7 +223,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         true,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:nemurenu-yoru-no-chiisana-ohanashi",
         "Nemurenu Yoru no Chiisana Ohanashi",
         NEMURENU_YORU_NO_CHIISANA_OHANASHI_JAPAN_DISC_SHA256,
@@ -228,7 +231,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:hu-pga-tour-powergolf-2-golfer",
         "Hu PGA Tour - PowerGolf 2 - Golfer",
         HU_PGA_TOUR_POWERGOLF_2_GOLFER_JAPAN_DISC_SHA256,
@@ -236,7 +239,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:tengai-makyou-deden-no-kabuki-den",
         "Tengai Makyou - Deden no Kabuki-den",
         TENGAI_MAKYOU_DEDEN_NO_KABUKI_DEN_CANONICAL_DISC_SHA256,
@@ -244,7 +247,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         false,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:shin-megami-tensei",
         "Shin Megami Tensei",
         SHIN_MEGAMI_TENSEI_JAPAN_NORMALIZED_DISC_SHA256,
@@ -252,7 +255,7 @@ const PCE_CD_TITLES: &[PceCdTitleMetadata] = &[
         true,
         false,
     ),
-    profile(
+    super_cd_profile(
         "pce-cd:jp:garou-densetsu-2",
         "Garou Densetsu 2 - Aratanaru Tatakai",
         GAROU_DENSETSU_2_JAPAN_NORMALIZED_DISC_SHA256,
@@ -344,6 +347,11 @@ mod tests {
                 .count(),
             1
         );
+        assert!(
+            PCE_CD_TITLES.iter().all(|profile| {
+                profile.minimum_system_card == Some(PceSystemCardTier::Version3)
+            })
+        );
     }
 
     #[test]
@@ -352,6 +360,10 @@ mod tests {
         assert_eq!(lemmings.id, "pce-cd:jp:lemmings");
         assert_eq!(lemmings.title, "Lemmings");
         assert_eq!(lemmings.region, "JP");
+        assert_eq!(
+            lemmings.minimum_system_card,
+            Some(PceSystemCardTier::Version3)
+        );
         assert_eq!(
             automatic_controller_mode(LEMMINGS_JAPAN_CANONICAL_DISC_SHA256),
             PceControllerMode::Mouse

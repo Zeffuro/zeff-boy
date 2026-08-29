@@ -72,7 +72,43 @@ pub struct Bus {
     pub(crate) zapper_fallback_hit: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StateLoadRollback {
+    cpu_nmi_line_sampled: bool,
+    dma_stall_cycles: u64,
+    cpu_step_elapsed_cycles: u64,
+    cpu_step_events: PeripheralTickEvents,
+    cpu_step_start_tick: Option<MasterTicks>,
+    cpu_access_elapsed_cycles: u64,
+    sprite_fetch_a12: [bool; 8],
+    dma: DmaController,
+}
+
 impl Bus {
+    pub(crate) fn capture_state_load_rollback(&self) -> StateLoadRollback {
+        StateLoadRollback {
+            cpu_nmi_line_sampled: self.cpu_nmi_line_sampled,
+            dma_stall_cycles: self.dma_stall_cycles,
+            cpu_step_elapsed_cycles: self.cpu_step_elapsed_cycles,
+            cpu_step_events: self.cpu_step_events,
+            cpu_step_start_tick: self.cpu_step_start_tick,
+            cpu_access_elapsed_cycles: self.cpu_access_elapsed_cycles,
+            sprite_fetch_a12: self.sprite_fetch_a12,
+            dma: self.dma,
+        }
+    }
+
+    pub(crate) fn restore_state_load_rollback(&mut self, rollback: StateLoadRollback) {
+        self.cpu_nmi_line_sampled = rollback.cpu_nmi_line_sampled;
+        self.dma_stall_cycles = rollback.dma_stall_cycles;
+        self.cpu_step_elapsed_cycles = rollback.cpu_step_elapsed_cycles;
+        self.cpu_step_events = rollback.cpu_step_events;
+        self.cpu_step_start_tick = rollback.cpu_step_start_tick;
+        self.cpu_access_elapsed_cycles = rollback.cpu_access_elapsed_cycles;
+        self.sprite_fetch_a12 = rollback.sprite_fetch_a12;
+        self.dma = rollback.dma;
+    }
+
     pub fn new(cartridge: Cartridge, sample_rate: f64) -> Self {
         Self::new_with_timing(cartridge, sample_rate, NesTiming::Ntsc)
     }

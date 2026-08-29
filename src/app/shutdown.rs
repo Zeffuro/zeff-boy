@@ -1,8 +1,15 @@
 use super::App;
-use crate::emu_thread::{EmuCommand, EmuResponse};
+#[cfg(target_arch = "wasm32")]
+use crate::emu_thread::EmuResponse;
 
 impl App {
     pub(super) fn stop_emu_thread(&mut self) {
+        self.retire_emu_thread(false);
+    }
+
+    fn retire_emu_thread(&mut self, notify_stop: bool) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = notify_stop;
         #[cfg(not(target_arch = "wasm32"))]
         if self.recording.audio_recorder.is_some()
             && !self.synchronize_audio_recording_capture(
@@ -19,6 +26,78 @@ impl App {
         }
         if let Some(mut thread) = self.emu_thread.take() {
             thread.shutdown();
+            #[cfg(target_arch = "wasm32")]
+            self.wasm_retired_threads.push((thread, notify_stop));
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn stop_emu_thread_for_user_stop(&mut self) {
+        self.retire_emu_thread(true);
+        for (_, notify_stop) in &mut self.wasm_retired_threads {
+            *notify_stop = true;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn poll_retired_wasm_threads(&mut self) {
+        let mut retained = Vec::with_capacity(self.wasm_retired_threads.len());
+        for (thread, notify_stop) in self.wasm_retired_threads.drain(..) {
+            let mut complete = false;
+            while let Some(response) = thread.try_recv_response() {
+                match response {
+                    EmuResponse::SramFlushed(path) => {
+                        if let Some(path) = path {
+                            log::info!("Committed browser battery data to {path}");
+                        }
+                    }
+                    EmuResponse::SramFlushFailed(error) => {
+                        log::error!("Browser battery save failed: {error}");
+                        self.toast_manager
+                            .error(format!("Battery save failed: {error}"));
+                    }
+                    EmuResponse::RecoverySaved(path) => {
+                        log::info!("Committed browser recovery state to {}", path.display());
+                    }
+                    EmuResponse::RecoverySaveFailed(error) => {
+                        log::error!("Browser recovery save failed: {error}");
+                        self.toast_manager
+                            .error(format!("Recovery save failed: {error}"));
+                    }
+                    EmuResponse::SaveStateOk { path, .. } => {
+                        log::info!("Committed browser save state to {}", path.display());
+                        self.toast_manager.success("State saved");
+                    }
+                    EmuResponse::SaveStateFailed(error) => {
+                        self.toast_manager.error(format!("Save failed: {error}"));
+                    }
+                    EmuResponse::StateBackupRestored(_) => {
+                        self.toast_manager.success("Restored previous save state");
+                    }
+                    EmuResponse::StateBackupRestoreFailed(error) => {
+                        self.toast_manager
+                            .error(format!("Undo save failed: {error}"));
+                    }
+                    EmuResponse::ShutdownComplete => {
+                        complete = true;
+                        #[cfg(all(test, feature = "wasm-browser-tests"))]
+                        super::browser_speculation_test::observe_retired_shutdown(&thread);
+                        if notify_stop {
+                            self.toast_manager.success("Stopped emulation");
+                        }
+                    }
+                    _ => log::debug!("Ignoring response from retired browser emulator"),
+                }
+            }
+            if !complete {
+                retained.push((thread, notify_stop));
+            }
+        }
+        self.wasm_retired_threads = retained;
+        if self.wasm_retired_threads.is_empty()
+            && let Some((name, bytes)) = self.pending_wasm_rom_after_flush.take()
+        {
+            self.load_rom_from_bytes(name, bytes);
         }
     }
 
@@ -38,22 +117,6 @@ impl App {
         self.stop_replay_recording();
         #[cfg(not(target_arch = "wasm32"))]
         self.wait_for_replay_finalization_on_shutdown();
-
-        if self.settings.emulation.auto_save_state
-            && self.core_supports_save_states()
-            && let Some(thread) = &self.emu_thread
-        {
-            thread.send(EmuCommand::AutoSaveState);
-            match self.recv_cold_response() {
-                Some(EmuResponse::SaveStateOk { path, .. }) => {
-                    log::info!("Auto-saved state to {}", path.display());
-                }
-                Some(EmuResponse::SaveStateFailed(err)) => {
-                    log::warn!("Auto-save failed: {}", err);
-                }
-                _ => {}
-            }
-        }
 
         #[cfg(not(target_arch = "wasm32"))]
         {

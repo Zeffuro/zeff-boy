@@ -22,6 +22,7 @@ default = ["camera", "audio-recording"]
 camera = ["dep:nokhwa", "dep:image"]
 audio-recording = ["dep:vorbis-encoder"]
 profile-cores = ["zeff-ws-core/profiling"]
+wasm-browser-tests = []
 
 [package]
 name = "zeff-boy"
@@ -97,6 +98,9 @@ xdelta3 = { version = "0.1.5", path = "third_party/xdelta3" }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 gimli = { version = "0.34.0", default-features = false, features = ["write", "std"] }
 object = { version = "0.39.1", default-features = false, features = ["write", "elf", "std"] }
@@ -106,20 +110,23 @@ sevenz-rust2 = { version = "0.21.5", path = "third_party/sevenz-rust2", default-
 wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4.76"
 web-sys = { version = "0.3.103", features = [
-    "Window", "Document", "HtmlCanvasElement", "HtmlElement",
+    "Window", "Document", "Node", "HtmlCanvasElement", "HtmlElement",
     "HtmlAnchorElement", "Element", "Storage", "console",
     "AudioContext", "AudioDestinationNode", "AudioBuffer",
     "AudioBufferSourceNode", "GainNode", "ScriptProcessorNode",
     "AudioProcessingEvent",
     "Blob", "BlobPropertyBag", "File", "FileList", "FileReader",
     "HtmlInputElement", "EventTarget",
-    "DragEvent", "DataTransfer",
+    "DragEvent", "DragEventInit", "DataTransfer", "DataTransferItem", "DataTransferItemList",
     "Url",
 ] }
 js-sys = "0.3.103"
 console_log = "1.1.0"
 console_error_panic_hook = "0.1"
 web-time = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "=0.3.76"
 
 [profile.dev]
 opt-level = 1

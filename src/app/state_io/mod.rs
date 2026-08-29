@@ -20,10 +20,22 @@ pub(crate) use rom_loading::detect_and_extract_rom;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use rom_loading::is_native_archive_path;
 
-use crate::debug::FpsTracker;
+use crate::debug::{DebugUiActions, DebugWindowState, FpsTracker};
 use crate::emu_backend::EmuBackend;
 use crate::emu_thread::{EmuCommand, EmuThread};
 use crate::platform::Instant;
+
+pub(super) fn queue_current_layer_policy(
+    debug_windows: &DebugWindowState,
+    pending: &mut DebugUiActions,
+) {
+    pending.layer_toggles = Some((
+        debug_windows.layer_enable_bg,
+        debug_windows.layer_enable_window,
+        debug_windows.layer_enable_sprites,
+    ));
+    pending.gba_bg_layer_toggles = Some(debug_windows.gba_layer_enable_bg);
+}
 
 impl App {
     pub(super) fn pause_for_dialog(&mut self) -> bool {
@@ -44,7 +56,11 @@ impl App {
     }
 
     pub(super) fn spawn_emu_thread(&mut self, backend: EmuBackend) {
-        self.emu_thread = Some(EmuThread::spawn(backend));
+        self.emu_thread = Some(EmuThread::spawn(
+            backend,
+            self.settings.emulation.save_recovery_state,
+        ));
+        queue_current_layer_policy(&self.debug_windows, &mut self.pending_debug_actions);
         if let Some(thread) = &self.emu_thread {
             thread.send(EmuCommand::SetUncappedBatchSize(
                 self.settings.emulation.uncapped_frames_per_tick,
@@ -73,5 +89,28 @@ impl App {
         {
             thread.send(EmuCommand::SetUncapped(true));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_layer_policy_queues_exact_single_slots() {
+        let mut debug_windows = DebugWindowState::new();
+        debug_windows.layer_enable_bg = false;
+        debug_windows.layer_enable_window = true;
+        debug_windows.layer_enable_sprites = false;
+        debug_windows.gba_layer_enable_bg = [false, true, false, true];
+        let mut pending = DebugUiActions::none();
+
+        queue_current_layer_policy(&debug_windows, &mut pending);
+
+        assert_eq!(pending.layer_toggles, Some((false, true, false)));
+        assert_eq!(
+            pending.gba_bg_layer_toggles,
+            Some([false, true, false, true])
+        );
     }
 }

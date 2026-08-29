@@ -93,10 +93,15 @@ romtest-build-ws-suite:
 romtest-build-sega8-smoke:
     powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
 
-# Build the generated PC Engine CD READ6/ADPCM/IRQ fixture into the ignored cache.
+# Build the generated PC Engine CD READ6/ADPCM/R15/IRQ fixture into the ignored cache.
 [windows]
 romtest-build-pce-cd-fixture:
     powershell -ExecutionPolicy Bypass -File scripts/build-pce-cd-adpcm-fixture.ps1
+
+# Build the generated PC Engine VDC fetch-contention diagnostic.
+[windows]
+romtest-build-pce-vdc-contention-fixture:
+    powershell -ExecutionPolicy Bypass -File scripts/build-pce-vdc-contention-fixture.ps1
 
 # Validate the asiekierka WonderSwan test-suite build plan without downloading/building.
 [windows]
@@ -110,6 +115,7 @@ romtest-build-local-suites:
     powershell -ExecutionPolicy Bypass -File scripts/build-ws-test-suite.ps1
     powershell -ExecutionPolicy Bypass -File scripts/build-sega8-smoke-roms.ps1
     powershell -ExecutionPolicy Bypass -File scripts/build-pce-cd-adpcm-fixture.ps1
+    powershell -ExecutionPolicy Bypass -File scripts/build-pce-vdc-contention-fixture.ps1
 
 # Download local-only test ROM sources and extract them into the ignored cache.
 # These may include unclear-license public test collections and stay out of default CI.

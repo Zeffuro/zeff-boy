@@ -29,6 +29,7 @@ pub(crate) enum MenuAction {
     OpenDebuggerWindow,
     SaveStateFile,
     LoadStateFile,
+    LoadRecoveryState,
     UndoLoadState,
     UndoSaveState,
     SaveStateSlot(u8),
@@ -97,6 +98,7 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) active_save_slot: u8,
     pub(crate) can_undo_load_state: bool,
     pub(crate) can_undo_save_state: bool,
+    pub(crate) recovery_state_available: bool,
     pub(crate) external_debugger: bool,
     pub(crate) debugger_window_open: bool,
     pub(crate) debug_presentation: DebugPresentation,
@@ -130,6 +132,7 @@ pub(crate) fn draw_menu_bar(
                             active_slot: mb.active_save_slot,
                             can_undo_load_state: mb.can_undo_load_state,
                             can_undo_save_state: mb.can_undo_save_state,
+                            recovery_state_available: mb.recovery_state_available,
                             is_recording_audio: mb.is_recording_audio,
                             is_recording_replay: mb.is_recording_replay,
                             is_playing_replay: mb.is_playing_replay,
@@ -218,15 +221,6 @@ pub(crate) fn draw_menu_bar(
         .response
         .rect
         .height();
-
-    actions.push(MenuAction::SetLayerToggles(
-        debug_windows.layer_enable_bg,
-        debug_windows.layer_enable_window,
-        debug_windows.layer_enable_sprites,
-    ));
-    actions.push(MenuAction::SetGbaBgLayerToggles(
-        debug_windows.gba_layer_enable_bg,
-    ));
 
     MenuBarResult {
         actions,

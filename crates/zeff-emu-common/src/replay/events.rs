@@ -127,6 +127,14 @@ impl ReplayEvent {
         }
     }
 
+    pub fn required_frame_count(&self) -> Option<u64> {
+        if self.is_frame_boundary_event() {
+            Some(self.frame())
+        } else {
+            self.frame().checked_add(1)
+        }
+    }
+
     pub(super) fn sort_key(&self) -> (u64, u64, u8, u32) {
         match self {
             Self::FdsDiskSide { frame, .. } => (*frame, 0, 0, 0),

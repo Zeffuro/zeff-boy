@@ -51,7 +51,25 @@ pub(crate) struct HeadlessRegionDump {
     pub(crate) len: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HeadlessTasAssertion {
+    pub(crate) name: String,
+    pub(crate) frame: u64,
+    pub(crate) pc: Option<u32>,
+    pub(crate) state_sha256: Option<[u8; 32]>,
+    pub(crate) framebuffer_sha256: Option<[u8; 32]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HeadlessTasScript {
+    pub(crate) system: String,
+    pub(crate) assertions: Vec<HeadlessTasAssertion>,
+}
+
 pub(crate) struct HeadlessOptions {
+    pub(crate) tas_project_path: Option<std::path::PathBuf>,
+    pub(crate) tas_branch_id: Option<String>,
+    pub(crate) tas_export_path: Option<std::path::PathBuf>,
     pub(crate) max_frames: u64,
     pub(crate) expect_serial: Option<String>,
     pub(crate) expect_ws_text: Option<String>,
@@ -85,6 +103,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) input_events_p3: Vec<HeadlessInputEvent>,
     pub(crate) input_events_p4: Vec<HeadlessInputEvent>,
     pub(crate) input_events_p5: Vec<HeadlessInputEvent>,
+    pub(crate) tas_script: Option<HeadlessTasScript>,
     pub(crate) zapper_events: Vec<HeadlessZapperEvent>,
     pub(crate) load_state_path: Option<std::path::PathBuf>,
     pub(crate) pce_save_state_path: Option<std::path::PathBuf>,
@@ -118,6 +137,9 @@ pub(crate) struct HeadlessOptions {
 impl Default for HeadlessOptions {
     fn default() -> Self {
         Self {
+            tas_project_path: None,
+            tas_branch_id: None,
+            tas_export_path: None,
             max_frames: 600,
             expect_serial: None,
             expect_ws_text: None,
@@ -151,6 +173,7 @@ impl Default for HeadlessOptions {
             input_events_p3: Vec::new(),
             input_events_p4: Vec::new(),
             input_events_p5: Vec::new(),
+            tas_script: None,
             zapper_events: Vec::new(),
             load_state_path: None,
             pce_save_state_path: None,

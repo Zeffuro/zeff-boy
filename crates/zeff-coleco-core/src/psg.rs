@@ -83,7 +83,7 @@ impl Psg {
             write_count: 0,
             latched_register: 0,
             tone_period: [0; PSG_TONE_CHANNEL_COUNT],
-            volume: [0; PSG_CHANNEL_COUNT],
+            volume: [0x0F; PSG_CHANNEL_COUNT],
             noise_control: 0,
             tone_counter: [0; PSG_TONE_CHANNEL_COUNT],
             tone_output_high: [false; PSG_TONE_CHANNEL_COUNT],
@@ -525,6 +525,21 @@ mod tests {
         assert_eq!(psg.noise_control(), 2);
         assert_eq!(psg.last_write(), Some(0x02));
         assert_eq!(psg.write_count(), 5);
+    }
+
+    #[test]
+    fn power_on_and_reset_start_with_all_channels_silent() {
+        let mut psg = Psg::new_with_sample_rate(48_000);
+        assert_eq!(psg.volumes(), [0x0F; PSG_CHANNEL_COUNT]);
+
+        psg.write(0x90);
+        psg.reset();
+        assert_eq!(psg.volumes(), [0x0F; PSG_CHANNEL_COUNT]);
+
+        psg.step_cycles(59_736);
+        let mut samples = Vec::new();
+        psg.drain_audio_samples_into(&mut samples);
+        assert!(samples.iter().all(|&sample| sample == 0.0));
     }
 
     #[test]

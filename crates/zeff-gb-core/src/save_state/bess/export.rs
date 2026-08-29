@@ -2,8 +2,9 @@ use anyhow::Result;
 
 use super::{
     BESS_MAGIC, BESS_MAJOR, BESS_MINOR, BLOCK_CORE, BLOCK_END, BLOCK_INFO, BLOCK_MBC, BLOCK_NAME,
-    BLOCK_RTC, CORE_BLOCK_LEN, EMULATOR_NAME, INFO_BLOCK_LEN, RTC_BLOCK_LEN, mode_to_bess_model,
-    now_unix_seconds, write_block_header,
+    BLOCK_RTC, BLOCK_ZEFF_PRIVATE_EXTENSION, CORE_BLOCK_LEN, EMULATOR_NAME, INFO_BLOCK_LEN,
+    RTC_BLOCK_LEN, ZEFF_EXTENSION_BLOCK_LEN, mode_to_bess_model, now_unix_seconds,
+    write_block_header,
 };
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
@@ -28,11 +29,12 @@ struct BessMemoryLayout {
     obj_pal_size: u32,
 }
 
-pub fn append_bess(
+pub(super) fn append_bess_with_optional_zeff_extension(
     writer: &mut StateWriter,
     cpu: &Cpu,
     bus: &Bus,
     hardware_mode: HardwareMode,
+    frame_count: Option<u64>,
 ) -> Result<()> {
     let rom = bus.cartridge.rom_bytes();
     let is_cgb = matches!(
@@ -120,6 +122,16 @@ pub fn append_bess(
             writer.write_u32(val as u32);
         }
         writer.write_u64(now_unix_seconds());
+    }
+
+    if let Some(frame_count) = frame_count {
+        write_block_header(
+            writer,
+            &BLOCK_ZEFF_PRIVATE_EXTENSION,
+            ZEFF_EXTENSION_BLOCK_LEN,
+        );
+        writer.write_u64(frame_count);
+        writer.write_bytes(bus.ppu_lcd_framebuffer());
     }
 
     write_block_header(writer, &BLOCK_END, 0);

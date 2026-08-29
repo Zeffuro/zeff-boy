@@ -12,9 +12,10 @@ use crate::emu_backend::{ActiveSystem, BackendLoadConfig, EmuBackend, PceBackend
 use crate::emu_core_trait::{DebuggableEmulator, EmulatorCore};
 
 use super::{
-    AudioStats, PceDebugStateRequest, StuckTracker, emit_debug_state, ensure_no_reset_events,
-    ensure_system_headless_options, fail_on_stuck_if_needed, input_for_frame, input_p2_for_frame,
-    input_p3_for_frame, input_p4_for_frame, input_p5_for_frame, observe_stuck, pce_debug_state,
+    AudioStats, PceDebugStateRequest, StuckTracker, check_tas_assertions, emit_debug_state,
+    ensure_no_reset_events, ensure_system_headless_options, ensure_tas_completed,
+    fail_on_stuck_if_needed, input_for_frame, input_p2_for_frame, input_p3_for_frame,
+    input_p4_for_frame, input_p5_for_frame, observe_stuck, pce_debug_state,
     print_memory_region_dumps, print_perf, read_headless_state_if_requested,
     screenshot_path_if_written, write_audio_dump_f32le, write_final_screenshot_if_needed,
     write_pce_state_artifact, write_screenshot_if_requested,
@@ -206,6 +207,13 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
             backend.step_frame_bounded()?;
         }
         frames_run = frame_number;
+        check_tas_assertions(
+            opts,
+            frames_run,
+            u32::from(backend.debug_cpu_snapshot().registers().pc),
+            backend.framebuffer(),
+            || backend.encode_state_bytes(),
+        )?;
 
         if !opts.no_apu {
             backend.drain_audio_samples_into(&mut audio_scratch);
@@ -303,6 +311,7 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
             break;
         }
     }
+    ensure_tas_completed(opts, frames_run)?;
 
     let snapshot = backend.debug_cpu_snapshot();
     print_pce_instruction_trace(&backend, opts);

@@ -14,7 +14,7 @@ fn all_state_file_extensions() -> Vec<&'static str> {
 }
 
 impl App {
-    fn update_undo_save_path(&mut self, path: PathBuf, backup_created: bool) {
+    pub(in crate::app) fn update_undo_save_path(&mut self, path: PathBuf, backup_created: bool) {
         self.undo_save_state_path = backup_created.then_some(path);
     }
 
@@ -99,11 +99,24 @@ impl App {
     }
 
     pub(in crate::app) fn undo_save_state(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Some(path) = self.undo_save_state_path.clone() else {
+                self.toast_manager.info("No saved state to undo");
+                return;
+            };
+            if let Some(thread) = &self.emu_thread {
+                thread.send(EmuCommand::RestoreStateBackup(path));
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         let Some(path) = self.undo_save_state_path.take() else {
             self.toast_manager.info("No saved state to undo");
             return;
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         match crate::save_paths::restore_state_file_backup(&path) {
             Ok(()) => {
                 log::info!("Undid saved state at {}", path.display());

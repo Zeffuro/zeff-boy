@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+#[derive(Clone)]
 struct RewindSnapshot {
     compressed: Vec<u8>,
     state_len: u32,
@@ -48,6 +49,7 @@ pub struct RewindFrame {
     pub rewound_frames: u64,
 }
 
+#[derive(Clone)]
 pub struct RewindBuffer {
     snapshots: VecDeque<RewindSnapshot>,
     capacity: usize,

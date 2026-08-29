@@ -157,6 +157,19 @@ fn colors_mask_to_nine_bits_and_convert_green_red_blue_components() {
 }
 
 #[test]
+fn monochrome_control_resolves_palette_colors_without_changing_palette_ram() {
+    let mut vce = HuC6260::new();
+    set_address(&mut vce, 0x123);
+    vce.write_port(port(4), 0xD1);
+    vce.write_port(port(5), 0);
+
+    assert_eq!(vce.resolve_color(0x123), [72, 109, 36]);
+    vce.write_port(port(0), 0x80);
+    assert_eq!(vce.resolve_color(0x123), [89; 3]);
+    assert_eq!(vce.palette()[0x123].raw(), 0x0D1);
+}
+
+#[test]
 fn reset_uses_named_internal_and_palette_policies() {
     let mut vce = HuC6260::new();
     assert_eq!(vce.palette()[0], DETERMINISTIC_VCE_INITIAL_COLOR);

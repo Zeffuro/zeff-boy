@@ -27,6 +27,9 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use endpoint::run_loaded_replay_for_verification;
+
 pub(super) fn run_replay_headless(
     source_path: &Path,
     rom_path: &Path,

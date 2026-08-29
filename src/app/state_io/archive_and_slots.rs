@@ -196,7 +196,7 @@ pub(crate) fn build_slot_info(rom_hash: Option<[u8; 32]>, system: ActiveSystem) 
     SlotInfo { labels, occupied }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use std::io::{Cursor, Write};

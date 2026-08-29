@@ -695,4 +695,21 @@ mod tests {
         assert_eq!(restored.bus().vdp().cram()[0], 0x00);
         assert_eq!(restored.bus().vdp().cram()[1], 0x05);
     }
+
+    #[test]
+    fn public_load_rejects_trailing_data_without_mutation() {
+        let mut emu = Emulator::new(&test_rom(), 48_000).unwrap();
+        emu.set_input(0x03, 0x05);
+        emu.step_frame();
+        let before = emu.encode_state().unwrap();
+        let framebuffer = emu.framebuffer().to_vec();
+        let mut expected = emu.clone();
+        let mut invalid = before.clone();
+        invalid.push(0xA5);
+
+        assert!(emu.load_state(&invalid).is_err());
+        assert_eq!(emu.encode_state().unwrap(), before);
+        assert_eq!(emu.framebuffer(), framebuffer);
+        assert_eq!(emu.drain_audio_samples(), expected.drain_audio_samples());
+    }
 }

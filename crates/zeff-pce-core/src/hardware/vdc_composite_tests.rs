@@ -146,6 +146,25 @@ fn selected_indices_resolve_through_the_current_vce_palette() {
 }
 
 #[test]
+fn monochrome_control_applies_during_base_composition() {
+    let mut vce = HuC6260::new();
+    write_color(&mut vce, 5, 0x00D1);
+    vce.write_port(port(0), 0x80);
+    let background = [5];
+    let mut output = [CompositedPixel::default()];
+
+    vce.compose_scanline(
+        DisplayLayerLine::Rendered(&background),
+        DisplayLayerLine::Disabled,
+        &mut output,
+    )
+    .unwrap();
+
+    assert_eq!(output[0].palette_index(), 5);
+    assert_eq!(output[0].rgb8(), [89; 3]);
+}
+
+#[test]
 fn layer_length_errors_are_transactional() {
     let vce = HuC6260::new();
     let sentinel = CompositedPixel::new(0x1FF, [1, 2, 3]);

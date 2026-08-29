@@ -211,6 +211,10 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - uses: taiki-e/install-action@v2
         with:
           tool: trunk
@@ -218,6 +222,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v3-wasm
+
+      - name: Cache wasm-bindgen test runner
+        id: wasm-bindgen-test-runner-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/wasm-bindgen-cli-0.2.126
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}
+
+      - name: Install wasm-bindgen test runner
+        if: steps.wasm-bindgen-test-runner-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked --root "${{ runner.temp }}/wasm-bindgen-cli-0.2.126"
+
+      - name: Test detached SMS transaction (WASM Node)
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: ${{ runner.temp }}/wasm-bindgen-cli-0.2.126/bin/wasm-bindgen-test-runner
+          RUST_LOG: warn
+        run: cargo test --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features wasm_sms_detached
 
       - name: Clippy (WASM)
         run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
@@ -227,6 +248,54 @@ jobs:
 
       - name: Build (Trunk release)
         run: trunk build --release --public-url /zeff-boy/
+
+  wasm-browser:
+    name: WASM Browser (Edge)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Detect Edge version
+        id: edge
+        shell: pwsh
+        run: |
+          $edge = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path -LiteralPath $edge -PathType Leaf)) {
+            throw "Microsoft Edge was not found at $edge"
+          }
+          $reported = (Get-Item -LiteralPath $edge).VersionInfo.ProductVersion
+          $match = [regex]::Match($reported, '\d+\.\d+\.\d+\.\d+')
+          if (-not $match.Success) {
+            throw "Microsoft Edge reported an invalid version: $reported"
+          }
+          "version=$($match.Value)" >> $env:GITHUB_OUTPUT
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v3-wasm-browser
+
+      - name: Cache browser test tools
+        uses: actions/cache@v5
+        with:
+          path: target/wasm-browser-tools
+          key: wasm-browser-tools-0.2.126-edge-${{ steps.edge.outputs.version }}-${{ runner.os }}
+
+      - name: Test detached GBA and SMS IndexedDB transactions (WASM Edge)
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1
+
+      - name: Test detached SMS App rendering (WASM Edge)
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_sms_browser_app_consumes_and_presents_detached_frame
+
+      - name: Test detached GBA App rendering (WASM Edge)
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_gba_browser_app_consumes_and_presents_detached_frame
 
   fuzz-check:
     name: Fuzz Compile Check

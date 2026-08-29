@@ -8,7 +8,14 @@ impl App {
     pub(in crate::app) fn check_pending_rom(&mut self) {
         let data = self.pending_rom_load.borrow_mut().take();
         if let Some((name, bytes)) = data {
-            self.load_rom_from_bytes(name, bytes);
+            if self.emu_thread.is_some() || !self.wasm_retired_threads.is_empty() {
+                self.pending_wasm_rom_after_flush = Some((name, bytes));
+                self.stop_emu_thread();
+                self.toast_manager
+                    .info("Committing battery save before loading ROM");
+            } else {
+                self.load_rom_from_bytes(name, bytes);
+            }
         }
     }
 
@@ -38,8 +45,7 @@ impl App {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn load_rom_from_bytes(&mut self, name: String, data: Vec<u8>) {
-        self.stop_emu_thread();
+    pub(in crate::app) fn load_rom_from_bytes(&mut self, name: String, data: Vec<u8>) {
         self.stop_camera_capture();
 
         self.frames_in_flight = 0;
@@ -55,6 +61,7 @@ impl App {
         self.debug_windows.disasm_target = None;
         self.undo_load_state = None;
         self.undo_save_state_path = None;
+        self.recovery_state_available = false;
 
         let path = PathBuf::from(&name);
         let is_zip = path
@@ -121,6 +128,7 @@ impl App {
         self.spawn_emu_thread(backend);
 
         self.toast_manager.info(format!("Loaded {rom_name}"));
+        self.inspect_recovery_after_normal_open();
         self.refresh_slot_info();
     }
 }

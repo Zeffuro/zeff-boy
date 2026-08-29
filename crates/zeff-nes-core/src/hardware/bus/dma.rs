@@ -1,13 +1,13 @@
 use crate::hardware::constants::PRIMARY_OAM_BYTES;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct DmaController {
     oam: Option<OamTransfer>,
     dmc: Option<DmcTransfer>,
     dmc_load_delay: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OamTransfer {
     page: u8,
     index: u16,
@@ -15,7 +15,7 @@ struct OamTransfer {
     need_halt: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DmcTransfer {
     need_halt: bool,
     need_dummy: bool,

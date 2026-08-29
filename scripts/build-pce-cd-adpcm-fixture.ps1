@@ -210,6 +210,11 @@ Add-LdaImmediate 0x0C
 Add-StaAbsolute ($cdBase + 2)
 Add-LdaImmediate 0x60
 Add-StaAbsolute ($cdBase + 13)
+Add-LdaImmediate 0x0E
+Add-StaAbsolute ($cdBase + 15)
+Add-LdaAbsolute ($cdBase + 15)
+Add-Bytes @(0xC9, 0x0E)
+Add-FailJump 0x87 "fade_start_ok"
 Add-Byte 0x58
 
 Mark-Label "count_loop"
@@ -248,6 +253,9 @@ Add-RelativeLabel 0x90 "timing_ok"
 Add-LdaImmediate 0x85
 Add-AbsoluteLabel 0x4C "fail"
 Mark-Label "timing_ok"
+Add-LdaAbsolute ($cdBase + 15)
+Add-Bytes @(0xC9, 0x0E)
+Add-FailJump 0x88 "fade_latch_ok"
 Add-LdaImmediate 0x01
 Add-StaDirect 0x04
 Mark-Label "pass_spin"
@@ -369,7 +377,7 @@ function Get-Sha256Hex {
 }
 
 $expectedHashes = @{
-    $systemCardPath = "a0a2c6a9e647f97cb531aa7c6b59e105e3681666c456e24c82075a9a5f777c52"
+    $systemCardPath = "4f85f6151a41a5b0244caa7fbb43cac8c67ceb596bcd6d6763028918d09cc81d"
     $dataPath = "8d68a7ed5321eab8e8e28f6f2e80f2b2931f841a5007fa1fa8451f7daef2983a"
     $cuePath = "bb8a1c396d686ee02f52a4122f538a2107f35bca29e26625727093a14584cb4d"
 }
