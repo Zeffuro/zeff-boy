@@ -10,7 +10,7 @@ license = "BSD-2-Clause"
 [[tests]]
 id = "coleco/nanochess/cvbasic-controller-8e5a3a19/p1-combined-input"
 core = "coleco"
-tier = "accuracy"
+tier = "local"
 max_frames = 240
 input = ["up+left+a+b+5@180-240"]
 tags = ["coleco", "source-built", "controller", "keypad", "input", "tms9918"]

@@ -93,6 +93,12 @@ try {
                 "user-data-dir=$profile"
                 "no-first-run"
                 "no-default-browser-check"
+                # Hosted runners do not expose a physical GPU. Keep this a real
+                # WebGPU surface/present proof by selecting Chromium's CPU Dawn
+                # adapter instead of falling back to WebGL or skipping graphics.
+                "enable-unsafe-webgpu"
+                "use-webgpu-adapter=swiftshader"
+                "use-gpu-in-tests"
             )
         }
     } | ConvertTo-Json -Depth 4

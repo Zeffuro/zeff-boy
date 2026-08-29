@@ -10,7 +10,7 @@ license = "GPL-2.0-or-later"
 [[tests]]
 id = "coleco/nanochess/240p-test-suite-d5c16c94/title-boot"
 core = "coleco"
-tier = "accuracy"
+tier = "local"
 max_frames = 120
 tags = ["coleco", "source-backed", "240p", "tms9918", "vdp"]
 notes = "Exact Zeff screenshot anchor. The indexed 256x192 geometry matches version-pinned Gearcoleco output; RGB palette values remain an explicitly separate analog-conversion choice. Requires a locally supplied recognized ColecoVision BIOS."
@@ -37,7 +37,7 @@ screenshot_sha256 = "c95f17f0e859f3fbe06cce757b421852803eaaddcf92ced42b8a9ab75e6
 [[tests]]
 id = "coleco/nanochess/240p-test-suite-d5c16c94/main-menu"
 core = "coleco"
-tier = "accuracy"
+tier = "local"
 max_frames = 300
 tags = ["coleco", "source-backed", "240p", "tms9918", "vdp"]
 notes = "Exact main-menu screenshot anchor. Version-pinned Gearcoleco produces identical indexed geometry; RGB palette conversion is separate. Requires a locally supplied recognized ColecoVision BIOS."
@@ -64,7 +64,7 @@ screenshot_sha256 = "13af1701310bc0636133e85dec0d7d368046fcefdbd7040894ec2508c6f
 [[tests]]
 id = "coleco/nanochess/240p-test-suite-d5c16c94/color-bleed"
 core = "coleco"
-tier = "accuracy"
+tier = "local"
 max_frames = 620
 input = ["b@320-321", "b@420-421"]
 tags = ["coleco", "source-backed", "240p", "tms9918", "vdp", "input"]
@@ -92,7 +92,7 @@ screenshot_sha256 = "96d3484b7b4e5575dd05b5d562722a0ebd1af36015dec0db6ee22806745
 [[tests]]
 id = "coleco/nanochess/240p-test-suite-d5c16c94/sound-test"
 core = "coleco"
-tier = "accuracy"
+tier = "local"
 max_frames = 620
 input = ["down@320-321", "down@340-341", "b@360-361", "b@420-421"]
 tags = ["coleco", "source-backed", "240p", "sn76489", "audio", "input"]

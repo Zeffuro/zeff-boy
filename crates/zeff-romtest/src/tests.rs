@@ -643,3 +643,13 @@ fn rejects_game_rom_outside_compat_manifest_dir() {
     let errors = validate_tests(&[loaded]);
     assert!(errors.iter().any(|error| error.contains("compat-games")));
 }
+
+#[test]
+fn rejects_clone_friendly_coleco_test_without_a_provisioned_bios() {
+    let mut loaded = sample_loaded_test("coleco/needs-bios", Tier::Accuracy);
+    loaded.test.core = Core::Coleco;
+
+    let errors = validate_tests(&[loaded]);
+
+    assert!(errors.iter().any(|error| error.contains("retail BIOS")));
+}

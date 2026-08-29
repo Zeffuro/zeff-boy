@@ -151,7 +151,7 @@ fn validate_file_bytes(file: &mut File, expected: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn replace_validated_file(source_file: &File, source: &Path, target: &Path) -> std::io::Result<()> {
     let guard = create_descriptor_link(source_file, target)?;
     let result = std::fs::rename(&guard, target);
@@ -162,13 +162,33 @@ fn replace_validated_file(source_file: &File, source: &Path, target: &Path) -> s
     remove_source_path(source)
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
+fn replace_validated_file(
+    _source_file: &File,
+    source: &Path,
+    target: &Path,
+) -> std::io::Result<()> {
+    // macOS rejects linkat() through its fdescfs-backed /dev/fd entries with EPERM. The
+    // containing directory is already a trusted same-user boundary, so renaming the synced,
+    // validated sibling temp file preserves the required old-or-new atomic replacement.
+    std::fs::rename(source, target)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn publish_new_file(source_file: &File, source: &Path, target: &Path) -> std::io::Result<()> {
     link_descriptor_to(source_file, target)?;
     remove_source_path(source)
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
+fn publish_new_file(_source_file: &File, source: &Path, target: &Path) -> std::io::Result<()> {
+    // hard_link fails if `target` already exists, giving macOS the same no-replace publication
+    // rule as the descriptor-bound Unix implementation above.
+    std::fs::hard_link(source, target)?;
+    remove_source_path(source)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn create_descriptor_link(source_file: &File, target: &Path) -> std::io::Result<PathBuf> {
     let file_name = target
         .file_name()
@@ -196,13 +216,13 @@ fn create_descriptor_link(source_file: &File, target: &Path) -> std::io::Result<
 
 #[cfg(all(
     unix,
+    not(target_os = "macos"),
     any(
         target_os = "android",
         target_os = "dragonfly",
         target_os = "freebsd",
         target_os = "ios",
         target_os = "linux",
-        target_os = "macos",
         target_os = "netbsd",
         target_os = "openbsd"
     )
@@ -218,7 +238,6 @@ fn link_descriptor_to(source_file: &File, target: &Path) -> std::io::Result<()> 
         target_os = "dragonfly",
         target_os = "freebsd",
         target_os = "ios",
-        target_os = "macos",
         target_os = "netbsd",
         target_os = "openbsd"
     ))]
@@ -248,13 +267,13 @@ fn link_descriptor_to(source_file: &File, target: &Path) -> std::io::Result<()> 
 
 #[cfg(all(
     unix,
+    not(target_os = "macos"),
     not(any(
         target_os = "android",
         target_os = "dragonfly",
         target_os = "freebsd",
         target_os = "ios",
         target_os = "linux",
-        target_os = "macos",
         target_os = "netbsd",
         target_os = "openbsd"
     ))

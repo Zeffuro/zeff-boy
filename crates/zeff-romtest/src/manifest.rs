@@ -364,6 +364,13 @@ pub(crate) fn validate_tests(tests: &[LoadedTest]) -> Vec<String> {
             ));
         }
 
+        if test.core == Core::Coleco && !matches!(test.tier, Tier::Local | Tier::Compat) {
+            errors.push(format!(
+                "{manifest}: ColecoVision test '{}' requires the user-supplied retail BIOS and must use local or compat tier",
+                test.id
+            ));
+        }
+
         if test.tier == Tier::Smoke
             && matches!(test.artifact.license_confidence, LicenseConfidence::Unknown)
         {

@@ -657,7 +657,11 @@ mod tests {
                 ..HeadlessOptions::default()
             },
         );
-        assert!(result.is_err());
+        let error = result.expect_err("an occupied replay export path must fail after saving");
+        assert!(
+            format!("{error:#}").contains("refusing to overwrite existing replay"),
+            "unexpected export failure: {error:#}"
+        );
         assert!(TasProject::load(&project_path)?.verification_is_current("main")?);
         assert_eq!(std::fs::read(export_path)?, b"keep");
         Ok(())
