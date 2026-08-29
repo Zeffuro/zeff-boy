@@ -163,15 +163,15 @@ fn replace_validated_file(source_file: &File, source: &Path, target: &Path) -> s
 }
 
 #[cfg(target_os = "macos")]
-fn replace_validated_file(
-    _source_file: &File,
-    source: &Path,
-    target: &Path,
-) -> std::io::Result<()> {
-    // macOS rejects linkat() through its fdescfs-backed /dev/fd entries with EPERM. The
-    // containing directory is already a trusted same-user boundary, so renaming the synced,
-    // validated sibling temp file preserves the required old-or-new atomic replacement.
-    std::fs::rename(source, target)
+fn replace_validated_file(source_file: &File, source: &Path, target: &Path) -> std::io::Result<()> {
+    let (guard, guard_file) = create_macos_publication_guard(source_file, target)?;
+    let result = macos_rename_guard(&guard, target, 0);
+    drop(guard_file);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&guard);
+    }
+    result?;
+    remove_source_path(source)
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -181,11 +181,123 @@ fn publish_new_file(source_file: &File, source: &Path, target: &Path) -> std::io
 }
 
 #[cfg(target_os = "macos")]
-fn publish_new_file(_source_file: &File, source: &Path, target: &Path) -> std::io::Result<()> {
-    // hard_link fails if `target` already exists, giving macOS the same no-replace publication
-    // rule as the descriptor-bound Unix implementation above.
-    std::fs::hard_link(source, target)?;
+fn publish_new_file(source_file: &File, source: &Path, target: &Path) -> std::io::Result<()> {
+    let (guard, guard_file) = create_macos_publication_guard(source_file, target)?;
+    let result = macos_rename_guard(&guard, target, libc::RENAME_EXCL);
+    drop(guard_file);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&guard);
+    }
+    result?;
     remove_source_path(source)
+}
+
+#[cfg(target_os = "macos")]
+fn create_macos_publication_guard(
+    source_file: &File,
+    target: &Path,
+) -> std::io::Result<(PathBuf, File)> {
+    // macOS rejects descriptor links through fdescfs /dev/fd with EPERM. Copying directly to
+    // the final path would expose a partial destination, so create a unique sibling guard from
+    // the held, already-validated descriptor and atomically rename that complete guard instead.
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let parent = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    for _ in 0..128 {
+        let sequence = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let mut guard_name = OsString::from(file_name);
+        guard_name.push(format!(".publish.{}.{}", std::process::id(), sequence));
+        let guard = parent.join(guard_name);
+        match copy_held_file_to_new_path(source_file, &guard) {
+            Ok(file) => return Ok((guard, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not reserve a macOS publication guard",
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn copy_held_file_to_new_path(source_file: &File, target: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let source_mode = source_file.metadata()?.permissions().mode() & 0o7777;
+    let expected_len = source_file.metadata()?.len();
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true).mode(0);
+    let mut destination = options.open(target)?;
+    let result = (|| -> std::io::Result<()> {
+        let mut held_source = source_file.try_clone()?;
+        held_source.rewind()?;
+        let copied = std::io::copy(&mut held_source, &mut destination)?;
+        if copied != expected_len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "held temporary file changed during macOS publication",
+            ));
+        }
+        destination.sync_all()?;
+        destination.set_permissions(std::fs::Permissions::from_mode(source_mode))?;
+        destination.sync_all()
+    })();
+    if let Err(error) = result {
+        drop(destination);
+        let _ = std::fs::remove_file(target);
+        return Err(error);
+    }
+    Ok(destination)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_rename_guard(guard: &Path, target: &Path, flags: libc::c_uint) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    let parent = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent_file = File::open(parent)?;
+    let guard_name = guard
+        .file_name()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let target_name = target
+        .file_name()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let guard_name = CString::new(guard_name.as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "publication guard contains a NUL byte",
+        )
+    })?;
+    let target_name = CString::new(target_name.as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "publication target contains a NUL byte",
+        )
+    })?;
+    let result = unsafe {
+        libc::renameatx_np(
+            parent_file.as_raw_fd(),
+            guard_name.as_ptr(),
+            parent_file.as_raw_fd(),
+            target_name.as_ptr(),
+            flags,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -483,13 +595,7 @@ mod tests {
                 OLD
             };
             assert_eq!(primary, expected, "failure at {phase:?}");
-            assert!(std::fs::read_dir(&root.0).unwrap().all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .contains(".tmp.")
-            }));
+            assert_no_staging_files(&root.0);
         }
     }
 
@@ -514,13 +620,7 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"complete old value");
-        assert!(std::fs::read_dir(&root.0).unwrap().all(|entry| {
-            !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains(".tmp.")
-        }));
+        assert_no_staging_files(&root.0);
     }
 
     #[test]
@@ -547,13 +647,7 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"concurrent output");
-        assert!(std::fs::read_dir(&root.0).unwrap().all(|entry| {
-            !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains(".tmp.")
-        }));
+        assert_no_staging_files(&root.0);
     }
 
     #[test]
@@ -578,13 +672,7 @@ mod tests {
         } else {
             assert!(!path.exists());
         }
-        assert!(std::fs::read_dir(&root.0).unwrap().all(|entry| {
-            !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains(".tmp.")
-        }));
+        assert_no_staging_files(&root.0);
     }
 
     #[test]
@@ -610,13 +698,7 @@ mod tests {
         } else {
             assert_eq!(std::fs::read(&path).unwrap(), b"old project");
         }
-        assert!(std::fs::read_dir(&root.0).unwrap().all(|entry| {
-            !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains(".tmp.")
-        }));
+        assert_no_staging_files(&root.0);
     }
 
     #[test]
@@ -667,5 +749,13 @@ mod tests {
                     .contains(".tmp.")
             })
             .expect("atomic writer should have one temporary file")
+    }
+
+    fn assert_no_staging_files(root: &Path) {
+        assert!(std::fs::read_dir(root).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            !name.contains(".tmp.") && !name.contains(".publish.")
+        }));
     }
 }
