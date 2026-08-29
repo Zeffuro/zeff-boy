@@ -10,10 +10,10 @@ use crate::emu_backend::firmware::resolve_coleco_bios_with_manifest;
 
 use self::trace::step_coleco_frame_with_trace;
 use super::{
-    AudioStats, InputMasks, emit_debug_state, ensure_no_reset_events,
-    ensure_system_headless_options, input_for_frame, input_p2_for_frame, print_perf,
-    read_headless_state_if_requested, write_audio_dump_f32le, write_coleco_state_artifact,
-    write_final_screenshot_if_needed, write_screenshot_if_requested,
+    AudioStats, InputMasks, check_tas_assertions, emit_debug_state, ensure_no_reset_events,
+    ensure_system_headless_options, ensure_tas_completed, input_for_frame, input_p2_for_frame,
+    print_perf, read_headless_state_if_requested, write_audio_dump_f32le,
+    write_coleco_state_artifact, write_final_screenshot_if_needed, write_screenshot_if_requested,
     write_screenshot_sequence_if_requested,
 };
 
@@ -93,6 +93,13 @@ pub(super) fn run_coleco_headless(
             emulator.step_frame();
         }
         frames_run = frame_number;
+        check_tas_assertions(
+            opts,
+            frames_run,
+            u32::from(emulator.cpu().regs().pc),
+            emulator.framebuffer(),
+            || emulator.save_state(),
+        )?;
 
         if !opts.no_apu {
             emulator.drain_audio_samples_into(&mut audio_scratch);
@@ -117,6 +124,7 @@ pub(super) fn run_coleco_headless(
             COLECO_FRAMEBUFFER_DIMENSIONS,
         )?;
     }
+    ensure_tas_completed(opts, frames_run)?;
 
     if opts.trace_opcodes {
         println!("[coleco-op-tail] ---- last {} ops ----", tail.len());

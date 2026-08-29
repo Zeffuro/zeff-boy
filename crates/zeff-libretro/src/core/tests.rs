@@ -682,6 +682,38 @@ fn pce_libretro_roundtrips_serialize_payload_above_four_mib() {
 }
 
 #[test]
+fn failed_unserialize_preserves_continuing_session() {
+    let mut source = CoreState::from_rom(&gba_rom(), "rollback.gba").unwrap();
+    source.set_input(0x03, 0x05);
+    source.step_frame();
+    let checkpoint = source.encode_state().unwrap();
+    let mut control = CoreState::from_rom(&gba_rom(), "rollback.gba").unwrap();
+    let mut target = CoreState::from_rom(&gba_rom(), "rollback.gba").unwrap();
+    control.load_state(&checkpoint).unwrap();
+    target.load_state(&checkpoint).unwrap();
+    let before_failed = target.encode_state().unwrap();
+    assert_eq!(control.encode_state().unwrap(), before_failed);
+    let mut invalid = checkpoint.clone();
+    invalid.push(0xA5);
+
+    assert!(target.load_state(&invalid).is_err());
+    assert_eq!(target.encode_state().unwrap(), before_failed);
+    control.step_frame();
+    target.step_frame();
+    control.drain_audio();
+    target.drain_audio();
+    assert_eq!(
+        target.encode_state().unwrap(),
+        control.encode_state().unwrap()
+    );
+    assert_eq!(
+        target.framebuffer_as_xrgb8888(),
+        control.framebuffer_as_xrgb8888()
+    );
+    assert_eq!(target.audio_buf, control.audio_buf);
+}
+
+#[test]
 fn pce_libretro_abi_serialization_roundtrips_above_four_mib() {
     let mut state = CoreState::from_rom(&pce_rom(), "abi-state.pce").unwrap();
     state.step_frame();

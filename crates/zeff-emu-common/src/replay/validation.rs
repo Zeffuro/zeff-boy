@@ -7,14 +7,7 @@ pub(super) fn pad_frames_to_metadata_events(
     let required_event_frames = metadata
         .events
         .iter()
-        .filter_map(|event| {
-            let frame = usize::try_from(event.frame()).ok()?;
-            if event.is_frame_boundary_event() {
-                Some(frame)
-            } else {
-                frame.checked_add(1)
-            }
-        })
+        .filter_map(|event| usize::try_from(event.required_frame_count()?).ok())
         .max();
     let required_checkpoint_frames = metadata
         .checkpoints

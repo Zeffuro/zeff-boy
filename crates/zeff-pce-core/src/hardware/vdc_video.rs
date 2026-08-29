@@ -407,10 +407,8 @@ impl PceActiveOnlyVideoFrame {
                 self.vdc_two[physical_x],
             );
             let palette_index = selected.palette_index();
-            self.composited[local_x] = CompositedPixel::new(
-                palette_index,
-                vce.palette()[usize::from(palette_index)].rgb8(),
-            );
+            self.composited[local_x] =
+                CompositedPixel::new(palette_index, vce.resolve_color(palette_index));
         }
 
         let row_start = line * PCE_ACTIVE_FRAME_WIDTH * 4;
@@ -487,10 +485,7 @@ fn render_vdc_output_line(
 fn resolve_palette(vce: &HuC6260, source: &[VpcVdcPixel], output: &mut [CompositedPixel]) {
     for (source, output) in source.iter().copied().zip(output) {
         let palette_index = source.palette_index();
-        *output = CompositedPixel::new(
-            palette_index,
-            vce.palette()[usize::from(palette_index)].rgb8(),
-        );
+        *output = CompositedPixel::new(palette_index, vce.resolve_color(palette_index));
     }
 }
 

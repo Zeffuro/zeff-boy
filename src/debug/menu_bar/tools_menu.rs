@@ -14,6 +14,42 @@ pub(super) struct ToolsMenuState<'a> {
     pub(super) game_boy_serial_device_change_allowed: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LayerControlState {
+    general: (bool, bool, bool),
+    gba_bg: [bool; 4],
+}
+
+impl LayerControlState {
+    fn capture(debug_windows: &DebugWindowState) -> Self {
+        Self {
+            general: (
+                debug_windows.layer_enable_bg,
+                debug_windows.layer_enable_window,
+                debug_windows.layer_enable_sprites,
+            ),
+            gba_bg: debug_windows.gba_layer_enable_bg,
+        }
+    }
+}
+
+fn push_changed_layer_actions(
+    actions: &mut Vec<MenuAction>,
+    before: LayerControlState,
+    after: LayerControlState,
+) {
+    if before.general != after.general {
+        actions.push(MenuAction::SetLayerToggles(
+            after.general.0,
+            after.general.1,
+            after.general.2,
+        ));
+    }
+    if before.gba_bg != after.gba_bg {
+        actions.push(MenuAction::SetGbaBgLayerToggles(after.gba_bg));
+    }
+}
+
 pub(super) fn draw(
     ui: &mut egui::Ui,
     actions: &mut Vec<MenuAction>,
@@ -159,6 +195,7 @@ pub(super) fn draw(
     }
     ui.separator();
     ui.label("PPU Layers");
+    let layers_before = LayerControlState::capture(debug_windows);
     if ui
         .checkbox(&mut debug_windows.layer_enable_bg, "Background")
         .changed()
@@ -187,6 +224,11 @@ pub(super) fn draw(
     }
     ui.checkbox(&mut debug_windows.layer_enable_window, "Window");
     ui.checkbox(&mut debug_windows.layer_enable_sprites, "Sprites");
+    push_changed_layer_actions(
+        actions,
+        layers_before,
+        LayerControlState::capture(debug_windows),
+    );
 }
 
 fn draw_fds_menu(
@@ -313,5 +355,45 @@ mod tests {
         ));
         assert_eq!(media_event_for_side(&snapshot(true, 2), 0), None);
         assert_eq!(media_event_for_side(&snapshot(true, 1), 1), None);
+    }
+
+    #[test]
+    fn unchanged_layer_controls_emit_no_actions() {
+        let state = LayerControlState {
+            general: (true, true, true),
+            gba_bg: [true; 4],
+        };
+        let mut actions = Vec::new();
+
+        push_changed_layer_actions(&mut actions, state, state);
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn changed_layer_controls_emit_exact_actions() {
+        let before = LayerControlState {
+            general: (true, true, true),
+            gba_bg: [true; 4],
+        };
+        let after = LayerControlState {
+            general: (false, true, false),
+            gba_bg: [false, true, false, true],
+        };
+        let mut actions = Vec::new();
+
+        push_changed_layer_actions(&mut actions, before, after);
+
+        assert_eq!(actions.len(), 2);
+        match &actions[0] {
+            MenuAction::SetLayerToggles(bg, window, sprites) => {
+                assert_eq!((*bg, *window, *sprites), after.general);
+            }
+            action => panic!("unexpected general layer action: {action:?}"),
+        }
+        match &actions[1] {
+            MenuAction::SetGbaBgLayerToggles(layers) => assert_eq!(*layers, after.gba_bg),
+            action => panic!("unexpected GBA layer action: {action:?}"),
+        }
     }
 }

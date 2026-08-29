@@ -187,4 +187,8 @@ impl<'a> MetadataCursor<'a> {
     pub(crate) fn is_finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
+
+    pub(crate) fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
 }

@@ -497,6 +497,8 @@ impl Graphics {
     pub(crate) fn upload_framebuffer(&self, framebuffer: &[u8]) {
         self.framebuffer
             .upload_framebuffer(&self.gpu.queue, framebuffer);
+        #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+        crate::app::browser_speculation_test::record_framebuffer_upload(framebuffer);
     }
 
     pub(crate) fn clear_framebuffer(&self) {

@@ -11,6 +11,8 @@ pub(super) fn run_gba_headless(
     ensure_system_headless_options("gba", opts)?;
 
     let mut emulator = GbaEmulator::from_rom_data(rom_data)?;
+    let mut sram_recovery =
+        crate::save_paths::battery_sram_session(path, "gba", emulator.rom_hash());
     if opts.gba_hidden_bg_layers.iter().any(|&hidden| hidden) {
         emulator.set_ppu_debug_bg_layers(std::array::from_fn(|i| !opts.gba_hidden_bg_layers[i]));
     }
@@ -173,6 +175,13 @@ pub(super) fn run_gba_headless(
             emulator.step_frame();
         }
         frames_run = frame_number;
+        check_tas_assertions(
+            opts,
+            frames_run,
+            emulator.cpu_pc(),
+            emulator.framebuffer(),
+            || emulator.encode_state(),
+        )?;
 
         write_screenshot_if_requested(
             opts,
@@ -247,6 +256,7 @@ pub(super) fn run_gba_headless(
             break;
         }
     }
+    ensure_tas_completed(opts, frames_run)?;
 
     if opts.trace_opcodes {
         println!("[gba-op-tail] ---- last {} ops ----", tail.len());
@@ -290,7 +300,13 @@ pub(super) fn run_gba_headless(
         write_audio_dump_f32le(path, &audio_dump, emulator.apu_debug_snapshot().sample_rate)?;
     }
     if !opts.no_sram {
-        flush_battery(path, emulator.dump_battery_sram());
+        flush_battery(
+            &mut sram_recovery,
+            path,
+            ActiveSystem::Gba,
+            emulator.rom_hash(),
+            emulator.dump_battery_sram(),
+        );
     }
     fail_on_stuck_if_needed("gba", stuck.as_ref(), opts)?;
 

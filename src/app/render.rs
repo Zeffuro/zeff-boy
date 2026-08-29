@@ -189,6 +189,7 @@ impl App {
             active_save_slot: self.active_save_slot,
             can_undo_load_state: self.undo_load_state.is_some(),
             can_undo_save_state: self.undo_save_state_path.is_some(),
+            recovery_state_available: self.recovery_state_available,
             archive_selection: self.pending_archive_selection.as_ref(),
             #[cfg(not(target_arch = "wasm32"))]
             package_load,
@@ -222,6 +223,7 @@ impl App {
                         MenuAction::StopGame => self.stop_game(),
                         MenuAction::SaveStateFile => self.save_state_file_dialog(),
                         MenuAction::LoadStateFile => self.load_state_file_dialog(),
+                        MenuAction::LoadRecoveryState => self.load_available_recovery(),
                         MenuAction::UndoLoadState => self.undo_load_state(),
                         MenuAction::UndoSaveState => self.undo_save_state(),
                         MenuAction::SaveStateSlot(slot) => self.save_state_slot(*slot),

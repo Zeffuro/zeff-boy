@@ -1,5 +1,6 @@
 use crate::hardware::timing::NesTiming;
 
+#[derive(Clone)]
 pub struct Dmc {
     pub enabled: bool,
     pub irq_enabled: bool,

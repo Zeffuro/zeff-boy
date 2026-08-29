@@ -2,6 +2,7 @@ use crate::address::Address;
 
 use super::{AddressWatchHit, AddressWatchpoint, BreakpointHitCondition, DebugEvent, WatchType};
 
+#[derive(Clone)]
 pub struct AddressDebugController {
     breakpoints: Vec<Address>,
     one_shot_breakpoints: Vec<Address>,

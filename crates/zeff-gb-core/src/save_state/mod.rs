@@ -4,7 +4,9 @@ mod bess;
 mod decode;
 mod encode;
 
-pub use bess::{canonicalize_replay_hash_bytes, has_bess_footer, import_bess};
+pub use bess::{
+    canonicalize_replay_hash_bytes, has_bess_footer, import_bess, project_replay_state_bytes,
+};
 #[cfg(test)]
 use decode::decode_state;
 pub use decode::{decode_on_thread, validate_compatibility};
@@ -16,8 +18,10 @@ use crate::hardware::cpu::Cpu;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 
 pub const SAVE_STATE_VERSION: u32 = 1;
-pub const SAVE_STATE_FORMAT_VERSION: u32 = 12;
+pub const SAVE_STATE_FORMAT_VERSION: u32 = 13;
 pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
+#[cfg(test)]
+pub(crate) const ZEFF_EXTENSION_BLOCK_LEN_FOR_TEST: u32 = bess::ZEFF_EXTENSION_BLOCK_LEN;
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 pub trait StateWriterGbExt {
@@ -56,6 +60,8 @@ pub struct SaveState {
     pub last_opcode: u8,
     pub last_opcode_pc: u16,
     pub boot_rom_enabled: bool,
+    pub frame_count: Option<u64>,
+    pub lcd_framebuffer: Option<Box<[u8]>>,
 }
 
 pub struct SaveStateRef<'a> {
@@ -69,6 +75,7 @@ pub struct SaveStateRef<'a> {
     pub last_opcode: u8,
     pub last_opcode_pc: u16,
     pub boot_rom_enabled: bool,
+    pub frame_count: u64,
 }
 
 pub fn encode_hardware_mode(mode: HardwareMode) -> u8 {

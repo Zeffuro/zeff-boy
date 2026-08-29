@@ -1,6 +1,7 @@
 use crate::emu_backend::EmuBackend;
-use zeff_emu_common::replay::{ReplayEvent, ReplayPlayer};
-use zeff_firmware::sha256_hex;
+use anyhow::Context;
+use zeff_emu_common::replay::{ReplayCheckpoint, ReplayEvent, ReplayPlayer};
+use zeff_firmware::{sha256_bytes, sha256_hex};
 
 use super::HeadlessOptions;
 use super::validation::{
@@ -16,13 +17,52 @@ pub(super) struct ReplayHeadlessSummary {
     pub(super) game_boy_link_events_total: usize,
     pub(super) final_state_hash: String,
     pub(super) final_framebuffer_hash: String,
+    final_state_sha256: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct ReplayVerificationRun {
+    pub(crate) frames: usize,
+    pub(crate) checkpoints: Vec<ReplayCheckpoint>,
+    pub(crate) final_state_sha256: [u8; 32],
 }
 
 pub(super) fn run_loaded_replay_headless(
+    backend: EmuBackend,
+    player: ReplayPlayer,
+    opts: &HeadlessOptions,
+) -> anyhow::Result<ReplayHeadlessSummary> {
+    run_loaded_replay(backend, player, opts, false).map(|(summary, _)| summary)
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn run_loaded_replay_for_verification(
+    backend: EmuBackend,
+    player: ReplayPlayer,
+    capture_checkpoints: bool,
+) -> anyhow::Result<ReplayVerificationRun> {
+    let (summary, checkpoints) = run_loaded_replay(
+        backend,
+        player,
+        &HeadlessOptions::default(),
+        capture_checkpoints,
+    )?;
+    Ok(ReplayVerificationRun {
+        frames: summary.frames,
+        checkpoints,
+        final_state_sha256: summary.final_state_sha256,
+    })
+}
+
+fn run_loaded_replay(
     mut backend: EmuBackend,
     mut player: ReplayPlayer,
     opts: &HeadlessOptions,
-) -> anyhow::Result<ReplayHeadlessSummary> {
+    capture_checkpoints: bool,
+) -> anyhow::Result<(ReplayHeadlessSummary, Vec<ReplayCheckpoint>)> {
     validate_replay_playback(&player, &backend)?;
     let has_game_boy_link_events = player.uses_game_boy_link();
     backend.load_state_from_bytes(player.save_state().to_vec())?;
@@ -35,6 +75,11 @@ pub(super) fn run_loaded_replay_headless(
     {
         anyhow::bail!("replay contains an invalid Game Boy link start state");
     }
+    handle_game_boy_link_validation(
+        validate_replay_checkpoint(&player, &backend),
+        has_game_boy_link_events,
+        opts.allow_gb_link_replay_divergence,
+    )?;
     #[cfg(not(target_arch = "wasm32"))]
     let mut game_boy_replay_link = {
         let mut link = crate::link::gb::GameBoyReplayLink::try_new_with_start(
@@ -60,6 +105,7 @@ pub(super) fn run_loaded_replay_headless(
 
     let mut events_applied = 0usize;
     let mut stalled_slices = 0usize;
+    let mut captured_checkpoints = Vec::new();
     while !player.is_finished() {
         apply_replay_events_at_cursor(&mut backend, &mut player, &mut events_applied)?;
         let Some(frame) = player.peek_joypad_frames(0, 1).into_iter().next() else {
@@ -92,6 +138,13 @@ pub(super) fn run_loaded_replay_headless(
                 has_game_boy_link_events,
                 opts.allow_gb_link_replay_divergence,
             )?;
+            let cursor = player.cursor();
+            if capture_checkpoints && cursor != 0 && cursor.is_multiple_of(300) {
+                captured_checkpoints.push(ReplayCheckpoint {
+                    frame: u64::try_from(cursor).context("replay cursor does not fit u64")?,
+                    state_sha256: sha256_bytes(&backend.encode_replay_hash_state_bytes()?),
+                });
+            }
             stalled_slices = 0;
         } else {
             stalled_slices += 1;
@@ -132,6 +185,7 @@ pub(super) fn run_loaded_replay_headless(
     let game_boy_link_event_progress = (0, 0);
 
     let final_state = backend.encode_replay_hash_state_bytes()?;
+    let final_state_sha256 = sha256_bytes(&final_state);
     let final_state_hash = sha256_hex(&final_state);
     let final_framebuffer_hash = sha256_hex(backend.framebuffer());
 
@@ -153,14 +207,18 @@ pub(super) fn run_loaded_replay_headless(
         );
     }
 
-    Ok(ReplayHeadlessSummary {
-        frames: player.total_frames(),
-        events_applied,
-        game_boy_link_events_delivered: game_boy_link_event_progress.0,
-        game_boy_link_events_total: game_boy_link_event_progress.1,
-        final_state_hash,
-        final_framebuffer_hash,
-    })
+    Ok((
+        ReplayHeadlessSummary {
+            frames: player.total_frames(),
+            events_applied,
+            game_boy_link_events_delivered: game_boy_link_event_progress.0,
+            game_boy_link_events_total: game_boy_link_event_progress.1,
+            final_state_hash,
+            final_framebuffer_hash,
+            final_state_sha256,
+        },
+        captured_checkpoints,
+    ))
 }
 
 fn handle_game_boy_link_validation(

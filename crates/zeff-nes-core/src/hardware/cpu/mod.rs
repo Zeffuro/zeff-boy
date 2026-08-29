@@ -120,7 +120,7 @@ impl JamPhase {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Cpu {
     pub pc: u16,
     pub sp: u8,

@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver as StdReceiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
-use zeff_emu_common::time::Reset as _;
 
 use crate::cheats::CheatPatch;
 use crate::emu_backend::EmuBackend;
@@ -14,10 +13,14 @@ use crate::link::{
     remote_link_system_for_active_system,
 };
 
+use super::persistence::BatteryFlushSchedule;
+use super::recovery::{
+    RecoveryCandidate, RecoveryCoordinator, TerminalRecoveryBarrier, should_load_recovery,
+};
+use super::speculation::{SpeculationBoundary, TerminalPersistenceReady};
 use super::{
     AudioRecordingCapture, DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
-    REWIND_CAPTURE_INTERVAL_FRAMES, ReplayStartState, SharedFramebuffer, TcpLinkMode,
-    WorkerRuntimeFault,
+    REWIND_CAPTURE_INTERVAL_FRAMES, SharedFramebuffer, TcpLinkMode, WorkerRuntimeFault,
 };
 
 const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -49,6 +52,17 @@ pub(super) struct EmuLoop {
     rewind_seconds: usize,
     frame_duration_ns: Arc<AtomicU64>,
     runtime_fault: WorkerRuntimeFault,
+    battery_flush: BatteryFlushSchedule,
+    recovery: RecoveryCoordinator,
+    speculation: SpeculationBoundary,
+    save_recovery_on_shutdown: bool,
+}
+
+pub(super) struct EmuLoopConfig {
+    pub(super) shared_framebuffer: SharedFramebuffer,
+    pub(super) save_recovery_on_shutdown: bool,
+    #[cfg(test)]
+    pub(super) recovery: Option<super::recovery::RecoveryTestConfig>,
 }
 
 impl EmuLoop {
@@ -58,18 +72,25 @@ impl EmuLoop {
         frame_tx: Sender<FrameResult>,
         drain_rx: Receiver<FrameResult>,
         resp_tx: Sender<EmuResponse>,
-        shared_framebuffer: SharedFramebuffer,
+        config: EmuLoopConfig,
     ) -> Self {
         let frame_duration_ns = backend.nominal_frame_duration_ns();
         let runtime_frame_duration_ns = Arc::new(AtomicU64::new(frame_duration_ns));
         runtime_frame_duration_ns.store(frame_duration_ns, Ordering::Release);
+        #[cfg(test)]
+        let recovery = match config.recovery {
+            Some(config) => RecoveryCoordinator::new_for_test(&backend, config),
+            None => RecoveryCoordinator::new(&backend),
+        };
+        #[cfg(not(test))]
+        let recovery = RecoveryCoordinator::new(&backend);
         Self {
             backend,
             cmd_rx,
             frame_tx,
             drain_rx,
             resp_tx,
-            shared_framebuffer,
+            shared_framebuffer: config.shared_framebuffer,
             uncapped_mode: false,
             uncapped_batch_size: super::DEFAULT_UNCAPPED_BATCH_SIZE,
             audio_recording_capture: AudioRecordingCapture::default(),
@@ -87,6 +108,10 @@ impl EmuLoop {
             rewind_seconds: DEFAULT_REWIND_SECONDS,
             frame_duration_ns: runtime_frame_duration_ns,
             runtime_fault: WorkerRuntimeFault::default(),
+            battery_flush: BatteryFlushSchedule::new(std::time::Instant::now()),
+            recovery,
+            speculation: SpeculationBoundary::default(),
+            save_recovery_on_shutdown: config.save_recovery_on_shutdown,
         }
     }
 
@@ -99,31 +124,47 @@ impl EmuLoop {
         loop {
             self.poll_tcp_link_connection();
             self.clear_disconnected_tcp_link();
+            self.flush_battery_sram_if_due(std::time::Instant::now());
 
             let command = if self.uncapped_mode {
                 match self.cmd_rx.try_recv() {
                     Ok(cmd) => Some(cmd),
                     Err(crossbeam_channel::TryRecvError::Empty) => None,
-                    Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        self.finish_shutdown();
+                        break;
+                    }
                 }
-            } else if self.pending_tcp_link.is_some() {
-                match self.cmd_rx.recv_timeout(PENDING_LINK_POLL_INTERVAL) {
+            } else if let Some(timeout) = self.command_wait_timeout(std::time::Instant::now()) {
+                match self.cmd_rx.recv_timeout(timeout) {
                     Ok(cmd) => Some(cmd),
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => None,
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        self.finish_shutdown();
+                        break;
+                    }
                 }
             } else {
                 match self.cmd_rx.recv() {
                     Ok(cmd) => Some(cmd),
-                    Err(_) => break,
+                    Err(_) => {
+                        self.finish_shutdown();
+                        break;
+                    }
                 }
             };
 
             if let Some(command) = command {
+                let is_shutdown = matches!(&command, EmuCommand::Shutdown);
                 if !self.handle_command(command) {
+                    if !is_shutdown {
+                        self.finish_shutdown();
+                    }
                     break;
                 }
             } else if self.uncapped_mode {
+                self.speculation.invalidate();
+                let frame_count = self.backend.frame_count();
                 EmuThread::run_uncapped_batch(
                     &mut self.backend,
                     &self.last_cheats,
@@ -137,6 +178,9 @@ impl EmuLoop {
                     &mut self.runtime_fault,
                     self.uncapped_batch_size,
                 );
+                if self.backend.frame_count() != frame_count {
+                    self.battery_flush.mark_potentially_dirty();
+                }
                 if !self.runtime_fault.can_step() {
                     self.uncapped_mode = false;
                 }
@@ -145,37 +189,32 @@ impl EmuLoop {
     }
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
+        self.speculation.invalidate();
+        let command = match (super::commands::CommonCommandContext {
+            backend: &mut self.backend,
+            shared_framebuffer: &self.shared_framebuffer,
+            uncapped_mode: &mut self.uncapped_mode,
+            rewind_buffer: &mut self.rewind_buffer,
+            last_cheats: &mut self.last_cheats,
+            audio_recording_capture: &mut self.audio_recording_capture,
+            pending_audio_discontinuities: &mut self.pending_audio_discontinuities,
+            runtime_fault: &mut self.runtime_fault,
+        })
+        .dispatch(command)
+        {
+            super::commands::CommonCommandDispatch::Handled(effects) => {
+                if effects.potentially_dirty {
+                    self.battery_flush.mark_potentially_dirty();
+                }
+                return effects
+                    .response
+                    .is_none_or(|response| self.send_resp(response));
+            }
+            super::commands::CommonCommandDispatch::PlatformSpecific(command) => command,
+        };
         match command {
-            EmuCommand::SetAudioRecordingCapture {
-                capture,
-                acknowledged,
-            } => {
-                if capture.semantic && !self.audio_recording_capture.semantic {
-                    self.pending_audio_discontinuities.clear();
-                }
-                self.audio_recording_capture = capture;
-                if let Some(acknowledged) = acknowledged {
-                    let _ = acknowledged.send(());
-                }
-            }
-
-            EmuCommand::SetUncapped(on) => {
-                self.uncapped_mode = on && self.runtime_fault.can_step();
-                self.backend
-                    .set_apu_sample_generation_enabled(!self.uncapped_mode);
-            }
-
             EmuCommand::SetUncappedBatchSize(frames) => {
                 self.uncapped_batch_size = frames.clamp(1, super::MAX_UNCAPPED_BATCH_SIZE);
-            }
-
-            EmuCommand::UpdateCheats(cheats) => {
-                if self.backend.supports_cheats() {
-                    self.last_cheats = cheats;
-                    self.backend.install_rom_patches(&self.last_cheats);
-                } else {
-                    self.last_cheats.clear();
-                }
             }
 
             EmuCommand::StartTcpLink(mode) => {
@@ -201,6 +240,16 @@ impl EmuLoop {
                 let input = *input;
                 self.audio_recording_capture = input.audio.recording_capture;
                 let debugger_mutation = !input.debug_actions.memory_writes.is_empty();
+                let local_context = self.game_boy_replay_link.is_none()
+                    && self.wonder_swan_replay_link.is_none()
+                    && self.tcp_link.is_none();
+                let detached_request = self.speculation.request_detached_frame(
+                    &self.backend,
+                    &input,
+                    &self.last_cheats,
+                    self.uncapped_mode,
+                    local_context,
+                );
                 let result = if let Some(replay_link) = self.game_boy_replay_link.as_mut() {
                     EmuThread::handle_step_frames_with_game_boy_replay_link(
                         &mut self.backend,
@@ -210,7 +259,6 @@ impl EmuLoop {
                         self.uncapped_mode,
                         &mut self.rewind_buffer,
                         &mut self.rewind_seconds,
-                        &self.shared_framebuffer,
                         &mut self.runtime_fault,
                     )
                 } else if let Some(replay_link) = self.wonder_swan_replay_link.as_mut() {
@@ -222,7 +270,6 @@ impl EmuLoop {
                         self.uncapped_mode,
                         &mut self.rewind_buffer,
                         &mut self.rewind_seconds,
-                        &self.shared_framebuffer,
                         &mut self.runtime_fault,
                     )
                 } else {
@@ -234,22 +281,33 @@ impl EmuLoop {
                         self.uncapped_mode,
                         &mut self.rewind_buffer,
                         &mut self.rewind_seconds,
-                        &self.shared_framebuffer,
                         &mut self.runtime_fault,
                     );
                     self.clear_disconnected_tcp_link();
                     result
                 };
-                if debugger_mutation && self.runtime_fault.can_step() {
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation,
-                    );
-                }
+                let detached_frame = self.speculation.run_detached_frame(
+                    &self.backend,
+                    detached_request,
+                    &result,
+                    self.runtime_fault.can_step(),
+                );
+                self.speculation.commit_primary_frame(
+                    &self.shared_framebuffer,
+                    self.backend.framebuffer(),
+                    detached_frame,
+                );
                 let mut result = result;
-                if !self.runtime_fault.can_step() {
-                    self.uncapped_mode = false;
+                if super::commands::finalize_step_result(
+                    &mut result,
+                    debugger_mutation,
+                    self.audio_recording_capture,
+                    &mut self.pending_audio_discontinuities,
+                    &self.runtime_fault,
+                    &mut self.uncapped_mode,
+                ) {
+                    self.battery_flush.mark_potentially_dirty();
                 }
-                self.attach_audio_discontinuities(&mut result);
                 let preserve_delivery = EmuThread::frame_requires_preserved_delivery(
                     &result,
                     self.audio_recording_capture.active,
@@ -284,14 +342,12 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state(slot);
-                let state_loaded = result.is_ok();
                 let label = result.as_ref().ok().cloned().unwrap_or_default();
                 if !self.finalize_load_state(
                     result.map(|_| ()),
                     label,
                     buttons_pressed,
                     dpad_pressed,
-                    state_loaded,
                 ) {
                     return false;
                 }
@@ -315,189 +371,28 @@ impl EmuLoop {
             } => {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
-                let state_loaded = result.is_ok();
-                if !self.finalize_load_state(
-                    result,
-                    label,
-                    buttons_pressed,
-                    dpad_pressed,
-                    state_loaded,
-                ) {
-                    return false;
-                }
-            }
-
-            EmuCommand::SetSampleRate(rate) => {
-                self.backend.set_sample_rate(rate);
-            }
-
-            EmuCommand::ApplyMediaEvent(event) => {
-                let resp = match self.backend.apply_media_event(&event) {
-                    Ok(()) => match self.backend.media_slot_snapshot() {
-                        Some(snapshot) => EmuResponse::MediaEventApplied {
-                            event,
-                            snapshot,
-                            frame_count: self.backend.frame_count(),
-                        },
-                        None => EmuResponse::MediaEventFailed {
-                            event,
-                            error: "media slot disappeared after applying event".to_string(),
-                        },
-                    },
-                    Err(err) => EmuResponse::MediaEventFailed {
-                        event,
-                        error: err.to_string(),
-                    },
-                };
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::SetGameBoySerialDevice(device) => {
-                self.backend.set_game_boy_serial_device(device);
-            }
-
-            EmuCommand::QueueBardigunBarcodeScan(bytes) => {
-                let byte_count = bytes.len();
-                let response = match self.backend.queue_bardigun_barcode_scan(bytes) {
-                    Ok(()) => EmuResponse::BardigunBarcodeScanStarted(byte_count),
-                    Err(err) => EmuResponse::BardigunBarcodeScanFailed(err.to_string()),
-                };
-                if !self.send_resp(response) {
-                    return false;
-                }
-            }
-
-            EmuCommand::TriggerBarcodeBoyScan(digits) => {
-                let response = match self.backend.trigger_barcode_boy_scan(&digits) {
-                    Ok(()) => EmuResponse::BarcodeBoyScanStarted,
-                    Err(err) => EmuResponse::BarcodeBoyScanFailed(err.to_string()),
-                };
-                if !self.send_resp(response) {
-                    return false;
-                }
-            }
-
-            EmuCommand::RestoreGameBoyLinkState(state) => {
-                self.backend.restore_game_boy_link_replay_state(state);
-            }
-
-            EmuCommand::CaptureStateBytes => {
-                let resp = match EmuThread::encode_current_state(&self.backend) {
-                    Ok(bytes) => EmuResponse::StateCaptured(bytes),
-                    Err(err) => EmuResponse::StateCaptureFailed(err.to_string()),
-                };
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::ExecuteGuestCall(request) => {
-                let name = request.name.clone();
-                let resp = match self.backend.execute_guest_call(&request) {
-                    Ok((instructions, undo_state)) => EmuResponse::GuestCallCompleted {
-                        name,
-                        instructions,
-                        undo_state,
-                    },
-                    Err(error) => EmuResponse::GuestCallFailed {
-                        name,
-                        error: error.to_string(),
-                    },
-                };
-                super::types::publish_framebuffer(
-                    &self.shared_framebuffer,
-                    self.backend.framebuffer(),
-                );
-                if matches!(&resp, EmuResponse::GuestCallCompleted { .. }) {
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation,
-                    );
-                }
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::UndoGuestCall(state) => {
-                let resp = if self.backend.supports_guest_calls() {
-                    match self.backend.load_state_from_bytes(state) {
-                        Ok(()) => EmuResponse::GuestCallUndone,
-                        Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
-                    }
-                } else {
-                    EmuResponse::GuestCallUndoFailed(
-                        "guest calls are not supported by this core".to_string(),
-                    )
-                };
-                super::types::publish_framebuffer(
-                    &self.shared_framebuffer,
-                    self.backend.framebuffer(),
-                );
-                if matches!(&resp, EmuResponse::GuestCallUndone) {
-                    self.backend.discard_game_boy_printer_jobs();
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo,
-                    );
-                }
-                if !self.send_resp(resp) {
+                if !self.finalize_load_state(result, label, buttons_pressed, dpad_pressed) {
                     return false;
                 }
             }
 
             EmuCommand::CaptureReplayStart { capture_id } => {
-                let resp = if !self.backend.supports_replay() {
-                    EmuResponse::ReplayStartCaptureFailed {
-                        capture_id,
-                        error: "replay capture is not supported by this core".to_string(),
-                    }
-                } else if let Some(blocker) = self.replay_start_capture_blocker() {
-                    EmuResponse::ReplayStartCaptureFailed {
-                        capture_id,
-                        error: format!("replay start rejected: {blocker}"),
-                    }
+                let blocker = self
+                    .backend
+                    .supports_replay()
+                    .then(|| self.replay_start_capture_blocker())
+                    .flatten();
+                let metadata = if self.backend.supports_replay() && blocker.is_none() {
+                    Some(self.capture_replay_metadata())
                 } else {
-                    let metadata = self.capture_replay_metadata();
-                    match EmuThread::encode_current_state(&self.backend) {
-                        Ok(bytes) => EmuResponse::ReplayStartCaptured {
-                            capture_id,
-                            start: Box::new(ReplayStartState {
-                                state_bytes: bytes,
-                                frame_count: self.backend.frame_count(),
-                                game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
-                                wonder_swan_cpu_cycles: self.backend.wonder_swan_cpu_cycles(),
-                                metadata,
-                            }),
-                        },
-                        Err(err) => EmuResponse::ReplayStartCaptureFailed {
-                            capture_id,
-                            error: err.to_string(),
-                        },
-                    }
+                    None
                 };
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::CaptureReplayCheckpoint { frame } => {
-                let resp = if self.backend.supports_replay() {
-                    match EmuThread::encode_current_state(&self.backend) {
-                        Ok(state_bytes) => {
-                            EmuResponse::ReplayCheckpointCaptured { frame, state_bytes }
-                        }
-                        Err(err) => EmuResponse::ReplayCheckpointCaptureFailed {
-                            frame,
-                            error: err.to_string(),
-                        },
-                    }
-                } else {
-                    EmuResponse::ReplayCheckpointCaptureFailed {
-                        frame,
-                        error: "replay capture is not supported by this core".to_string(),
-                    }
-                };
+                let resp = super::commands::capture_replay_start_response(
+                    &self.backend,
+                    capture_id,
+                    blocker,
+                    || metadata.expect("supported, unblocked replay capture has metadata"),
+                );
                 if !self.send_resp(resp) {
                     return false;
                 }
@@ -533,15 +428,36 @@ impl EmuLoop {
                         )
                     })
                 });
-                if has_game_boy_link || has_wonder_swan_link {
-                    self.disconnect_tcp_link();
-                }
-                let mut result = self.backend.load_state_from_bytes(state_bytes);
-                let state_loaded = result.is_ok();
+                let replay_load = replay_events.is_some()
+                    || has_game_boy_link
+                    || has_wonder_swan_link
+                    || game_boy_link_start_tick.is_some()
+                    || wonder_swan_link_start_tick.is_some();
+                let probe = if replay_load {
+                    self.backend
+                        .probe_replay_state_load(
+                            &state_bytes,
+                            game_boy_link_start_state,
+                            has_game_boy_link,
+                            has_wonder_swan_link,
+                        )
+                        .map(Some)
+                } else {
+                    Ok(None)
+                };
+                let mut result = probe
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|err| anyhow::anyhow!("{err:#}"));
                 if result.is_ok()
                     && let Some(expected_tick) = game_boy_link_start_tick
                 {
-                    result = match self.backend.game_boy_cpu_cycles() {
+                    result = match probe
+                        .as_ref()
+                        .ok()
+                        .and_then(|probe| probe.as_ref())
+                        .and_then(|(_, tick, _)| *tick)
+                    {
                         Some(actual_tick) if actual_tick == expected_tick => Ok(()),
                         Some(actual_tick) => Err(anyhow::anyhow!(
                             "replay GB start tick mismatch: metadata={expected_tick}, state={actual_tick}"
@@ -554,7 +470,12 @@ impl EmuLoop {
                 if result.is_ok()
                     && let Some(expected_tick) = wonder_swan_link_start_tick
                 {
-                    result = match self.backend.wonder_swan_cpu_cycles() {
+                    result = match probe
+                        .as_ref()
+                        .ok()
+                        .and_then(|probe| probe.as_ref())
+                        .and_then(|(_, _, tick)| *tick)
+                    {
                         Some(actual_tick) if actual_tick == expected_tick => Ok(()),
                         Some(actual_tick) => Err(anyhow::anyhow!(
                             "replay WonderSwan start tick mismatch: metadata={expected_tick}, state={actual_tick}"
@@ -564,128 +485,119 @@ impl EmuLoop {
                         )),
                     };
                 }
+                let target_frame = probe
+                    .as_ref()
+                    .ok()
+                    .and_then(|probe| probe.as_ref())
+                    .map_or_else(|| self.backend.frame_count(), |(frame, _, _)| *frame);
+                let target_gb_tick = probe
+                    .as_ref()
+                    .ok()
+                    .and_then(|probe| probe.as_ref())
+                    .and_then(|(_, tick, _)| *tick)
+                    .unwrap_or(0);
+                let target_ws_tick = probe
+                    .as_ref()
+                    .ok()
+                    .and_then(|probe| probe.as_ref())
+                    .and_then(|(_, _, tick)| *tick)
+                    .unwrap_or(0);
+                let mut staged_game_boy_replay_link = None;
+                let mut staged_wonder_swan_replay_link = None;
                 if result.is_ok() {
-                    self.game_boy_replay_link = None;
-                    self.wonder_swan_replay_link = None;
-                    if has_game_boy_link
-                        && let Some(state) = game_boy_link_start_state
-                        && !self.backend.restore_game_boy_link_replay_state(state)
+                    match replay_events
+                        .as_ref()
+                        .map(|events| {
+                            crate::link::gb::GameBoyReplayLink::try_new_with_start(
+                                events.clone(),
+                                target_frame,
+                                game_boy_link_start_tick,
+                                target_gb_tick,
+                                game_boy_link_coordinator_start_state,
+                            )
+                        })
+                        .transpose()
                     {
-                        result = Err(anyhow::anyhow!(
-                            "replay contains an invalid Game Boy link start state"
-                        ));
-                    }
-                    if result.is_ok() {
-                        match replay_events
-                            .as_ref()
-                            .map(|events| {
-                                crate::link::gb::GameBoyReplayLink::try_new_with_start(
-                                    events.clone(),
-                                    self.backend.frame_count(),
-                                    game_boy_link_start_tick,
-                                    self.backend.game_boy_cpu_cycles().unwrap_or(0),
-                                    game_boy_link_coordinator_start_state,
-                                )
-                            })
-                            .transpose()
-                        {
-                            Ok(Some(link)) if !link.is_empty() => {
-                                self.game_boy_replay_link = Some(link);
-                            }
-                            Ok(_) => self.game_boy_replay_link = None,
-                            Err(err) => result = Err(err),
+                        Ok(Some(link)) if !link.is_empty() => {
+                            staged_game_boy_replay_link = Some(link);
                         }
+                        Ok(_) => {}
+                        Err(err) => result = Err(err),
                     }
-                    if result.is_ok() {
-                        match replay_events
-                            .as_ref()
-                            .map(|events| {
-                                crate::link::ws_replay::WonderSwanReplayLink::try_new(
-                                    events.clone(),
-                                    self.backend.frame_count(),
-                                    wonder_swan_link_start_tick,
-                                    self.backend.wonder_swan_cpu_cycles().unwrap_or(0),
-                                )
-                            })
-                            .transpose()
-                        {
-                            Ok(Some(link)) if !link.is_empty() => {
-                                self.wonder_swan_replay_link = Some(link);
-                            }
-                            Ok(_) => self.wonder_swan_replay_link = None,
-                            Err(err) => result = Err(err),
+                }
+                if result.is_ok() {
+                    match replay_events
+                        .as_ref()
+                        .map(|events| {
+                            crate::link::ws_replay::WonderSwanReplayLink::try_new(
+                                events.clone(),
+                                target_frame,
+                                wonder_swan_link_start_tick,
+                                target_ws_tick,
+                            )
+                        })
+                        .transpose()
+                    {
+                        Ok(Some(link)) if !link.is_empty() => {
+                            staged_wonder_swan_replay_link = Some(link);
                         }
+                        Ok(_) => {}
+                        Err(err) => result = Err(err),
                     }
+                }
+                if result.is_ok() {
+                    result = self.backend.load_state_from_bytes(state_bytes);
+                }
+                let state_loaded = result.is_ok();
+                if state_loaded {
+                    if has_game_boy_link || has_wonder_swan_link {
+                        self.disconnect_tcp_link();
+                    }
+                    if has_game_boy_link && let Some(state) = game_boy_link_start_state {
+                        let restored = self.backend.restore_game_boy_link_replay_state(state);
+                        debug_assert!(restored, "preflighted Game Boy link state must commit");
+                    }
+                    self.game_boy_replay_link = staged_game_boy_replay_link;
+                    self.wonder_swan_replay_link = staged_wonder_swan_replay_link;
                 }
                 if !self.finalize_load_state(
                     result,
                     "(replay)".to_string(),
                     buttons_pressed,
                     dpad_pressed,
-                    state_loaded,
                 ) {
                     return false;
                 }
             }
 
-            EmuCommand::AutoSaveState => {
-                if let Some(path) = self.backend.auto_save_path() {
-                    if !EmuThread::save_state_async(
-                        &self.backend,
-                        path,
-                        &self.resp_tx,
-                        &self.send_resp_fn(),
-                    ) {
-                        return false;
-                    }
-                } else if !self.send_resp(EmuResponse::SaveStateFailed(
-                    "Auto-save not supported for this system".to_string(),
-                )) {
-                    return false;
-                }
-            }
-
-            EmuCommand::AutoLoadState {
+            EmuCommand::InspectRecovery {
+                resume,
                 buttons_pressed,
                 dpad_pressed,
             } => {
-                return self.handle_auto_load(buttons_pressed, dpad_pressed);
-            }
-
-            EmuCommand::Rewind(steps) => {
-                let resp = EmuThread::handle_rewind(
-                    &mut self.backend,
-                    &mut self.rewind_buffer,
-                    &self.shared_framebuffer,
-                    steps,
-                );
-                if matches!(&resp, EmuResponse::RewindOk { .. }) {
-                    self.backend.discard_game_boy_printer_jobs();
-                    self.backend.install_rom_patches(&self.last_cheats);
-                    self.mark_audio_discontinuity(
-                        crate::audio_recorder::AudioTimelineDiscontinuity::Rewind,
-                    );
-                }
-                if !self.send_resp(resp) {
-                    return false;
-                }
-            }
-
-            EmuCommand::Reset => {
-                self.backend.reset();
-                self.backend.install_rom_patches(&self.last_cheats);
-                self.rewind_buffer.clear();
-                self.runtime_fault = WorkerRuntimeFault::default();
-                self.mark_audio_discontinuity(
-                    crate::audio_recorder::AudioTimelineDiscontinuity::Reset,
-                );
+                return self.handle_recovery_inspection(resume, buttons_pressed, dpad_pressed);
             }
 
             EmuCommand::Shutdown => {
-                self.disconnect_tcp_link();
-                self.handle_shutdown();
+                self.finish_shutdown();
                 return false;
             }
+
+            EmuCommand::SetAudioRecordingCapture { .. }
+            | EmuCommand::SetSampleRate(_)
+            | EmuCommand::SetUncapped(_)
+            | EmuCommand::ApplyMediaEvent(_)
+            | EmuCommand::CaptureStateBytes
+            | EmuCommand::ExecuteGuestCall(_)
+            | EmuCommand::UndoGuestCall(_)
+            | EmuCommand::CaptureReplayCheckpoint { .. }
+            | EmuCommand::SetGameBoySerialDevice(_)
+            | EmuCommand::QueueBardigunBarcodeScan(_)
+            | EmuCommand::TriggerBarcodeBoyScan(_)
+            | EmuCommand::RestoreGameBoyLinkState(_)
+            | EmuCommand::UpdateCheats(_)
+            | EmuCommand::Rewind(_)
+            | EmuCommand::Reset => unreachable!("shared command escaped common dispatch"),
         }
         true
     }
@@ -852,7 +764,6 @@ impl EmuLoop {
         label: String,
         buttons_pressed: u8,
         dpad_pressed: u8,
-        state_loaded: bool,
     ) -> bool {
         let resp = EmuThread::respond_load_state(
             &mut self.backend,
@@ -862,74 +773,152 @@ impl EmuLoop {
             dpad_pressed,
             &self.shared_framebuffer,
         );
-        if state_loaded {
-            self.backend.discard_game_boy_printer_jobs();
-            self.reset_rewind_buffer();
-            self.backend.install_rom_patches(&self.last_cheats);
-            self.mark_audio_discontinuity(
-                crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad,
-            );
+        let loaded = (super::commands::LoadFinalizationContext {
+            rewind_buffer: &mut self.rewind_buffer,
+            rewind_seconds: self.rewind_seconds,
+            backend: &mut self.backend,
+            cheats: &self.last_cheats,
+            audio_recording_capture: self.audio_recording_capture,
+            pending_audio_discontinuities: &mut self.pending_audio_discontinuities,
+        })
+        .finalize(&resp, |frame_duration_ns| {
+            self.frame_duration_ns
+                .store(frame_duration_ns, Ordering::Release);
+        });
+        if loaded {
+            self.battery_flush.mark_potentially_dirty();
         }
         self.send_resp(resp)
     }
 
-    fn reset_rewind_buffer(&mut self) {
-        let frame_duration_ns = EmuThread::reset_rewind_for_loaded_state(
-            &mut self.rewind_buffer,
-            self.rewind_seconds,
-            &self.backend,
-        );
-        self.frame_duration_ns
-            .store(frame_duration_ns, Ordering::Release);
-    }
-
-    fn mark_audio_discontinuity(
-        &mut self,
-        reason: crate::audio_recorder::AudioTimelineDiscontinuity,
-    ) {
-        if self.audio_recording_capture.semantic {
-            self.pending_audio_discontinuities.push(reason);
-        }
-    }
-
+    #[cfg(test)]
     fn attach_audio_discontinuities(&mut self, result: &mut FrameResult) {
-        if !result.audio_semantic_frames.is_empty() {
-            result
-                .audio_timeline_discontinuities
-                .append(&mut self.pending_audio_discontinuities);
-        }
+        super::commands::attach_audio_discontinuities(
+            result,
+            &mut self.pending_audio_discontinuities,
+        );
     }
 
-    fn handle_auto_load(&mut self, buttons_pressed: u8, dpad_pressed: u8) -> bool {
-        if let Some(path) = self.backend.auto_save_path() {
-            if path.exists() {
-                let label = path.display().to_string();
-                let result = self.backend.load_state_from_path(&path);
-                let state_loaded = result.is_ok();
-                self.finalize_load_state(result, label, buttons_pressed, dpad_pressed, state_loaded)
-            } else {
-                self.send_resp(EmuResponse::LoadStateFailed("no auto-save".to_string()))
+    fn handle_recovery_inspection(
+        &mut self,
+        resume: bool,
+        buttons_pressed: u8,
+        dpad_pressed: u8,
+    ) -> bool {
+        match self.recovery.inspect(&self.backend) {
+            RecoveryCandidate::Missing => self.send_resp(EmuResponse::RecoveryMissing),
+            RecoveryCandidate::Rejected(error) => {
+                self.send_resp(EmuResponse::RecoveryRejected(error))
             }
-        } else {
-            self.send_resp(EmuResponse::LoadStateFailed("no auto-save".to_string()))
+            RecoveryCandidate::Available {
+                freshness,
+                native_payload,
+                path,
+            } if should_load_recovery(freshness, resume) => {
+                let result = self.backend.load_state_from_bytes(native_payload);
+                self.finalize_load_state(
+                    result,
+                    path.display().to_string(),
+                    buttons_pressed,
+                    dpad_pressed,
+                )
+            }
+            RecoveryCandidate::Available { freshness, .. } => {
+                self.send_resp(EmuResponse::RecoveryAvailable(freshness))
+            }
         }
     }
 
     fn handle_shutdown(&mut self) {
-        let sram_path = self.backend.flush_battery_sram().unwrap_or_else(|err| {
-            log::error!("Failed to flush SRAM on shutdown: {}", err);
-            None
-        });
-        if self
-            .resp_tx
-            .send(EmuResponse::SramFlushed(sram_path))
-            .is_err()
-        {
-            log::debug!("shutdown: SRAM flush response dropped (receiver closed)");
+        let ready = self.speculation.prepare_terminal_persistence();
+        let barrier = self.commit_terminal_battery_generation(ready);
+        let battery_response = terminal_battery_response(&barrier);
+        let _ = self.resp_tx.send(battery_response);
+        if self.save_recovery_on_shutdown && self.backend.supports_save_states() {
+            let recovery_result = barrier
+                .and_then(|(_, record)| self.recovery.write_recovery_state(&self.backend, record));
+            let response = match recovery_result {
+                Ok(path) => EmuResponse::RecoverySaved(path),
+                Err(error) => EmuResponse::RecoverySaveFailed(error.to_string()),
+            };
+            let _ = self.resp_tx.send(response);
         }
         if self.resp_tx.send(EmuResponse::ShutdownComplete).is_err() {
             log::debug!("shutdown: completion response dropped (receiver closed)");
         }
+    }
+
+    fn finish_shutdown(&mut self) {
+        self.disconnect_tcp_link();
+        self.handle_shutdown();
+    }
+
+    fn command_wait_timeout(&self, now: std::time::Instant) -> Option<Duration> {
+        let link_timeout = self
+            .pending_tcp_link
+            .is_some()
+            .then_some(PENDING_LINK_POLL_INTERVAL);
+        let save_timeout = if self.periodic_battery_flush_blocked() {
+            None
+        } else {
+            self.battery_flush.wait_timeout(now)
+        };
+        match (link_timeout, save_timeout) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (Some(timeout), None) | (None, Some(timeout)) => Some(timeout),
+            (None, None) => None,
+        }
+    }
+
+    fn periodic_battery_flush_blocked(&self) -> bool {
+        self.pending_tcp_link.is_some() || self.tcp_link.is_some()
+    }
+
+    fn flush_battery_sram_if_due(&mut self, now: std::time::Instant) {
+        if self.periodic_battery_flush_blocked() || !self.battery_flush.is_due(now) {
+            return;
+        }
+        let result = self.commit_battery_generation();
+        self.battery_flush.finish_attempt(now, result.is_ok());
+        if let Err(error) = result {
+            log::warn!("Periodic battery RAM flush failed; retrying in 30 seconds: {error:#}");
+        }
+    }
+
+    fn commit_battery_generation(
+        &mut self,
+    ) -> anyhow::Result<(
+        Option<String>,
+        crate::save_paths::recovery_state::BatteryGenerationRecord,
+    )> {
+        let mut barrier = TerminalRecoveryBarrier::default();
+        let path = self.backend.flush_battery_sram()?;
+        barrier.acknowledge_battery_commit();
+        let record = self.recovery.write_generation(&self.backend)?;
+        barrier.acknowledge_generation_commit(record)?;
+        Ok((path, barrier.envelope_witness()?))
+    }
+
+    fn commit_terminal_battery_generation(
+        &mut self,
+        _ready: TerminalPersistenceReady,
+    ) -> anyhow::Result<(
+        Option<String>,
+        crate::save_paths::recovery_state::BatteryGenerationRecord,
+    )> {
+        self.commit_battery_generation()
+    }
+}
+
+fn terminal_battery_response(
+    result: &anyhow::Result<(
+        Option<String>,
+        crate::save_paths::recovery_state::BatteryGenerationRecord,
+    )>,
+) -> EmuResponse {
+    match result {
+        Ok((path, _)) => EmuResponse::SramFlushed(path.clone()),
+        Err(error) => EmuResponse::SramFlushFailed(error.to_string()),
     }
 }
 

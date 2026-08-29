@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub(super) struct NesOutputFilter {
     high_pass_90hz: OnePoleHighPass,
     high_pass_440hz: OnePoleHighPass,
@@ -42,6 +43,7 @@ impl NesOutputFilter {
     }
 }
 
+#[derive(Clone)]
 struct OnePoleHighPass {
     cutoff_hz: f64,
     alpha: f32,
@@ -88,6 +90,7 @@ impl OnePoleHighPass {
     }
 }
 
+#[derive(Clone)]
 struct OnePoleLowPass {
     cutoff_hz: f64,
     alpha: f32,

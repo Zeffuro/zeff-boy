@@ -9,11 +9,11 @@ use crate::emu_backend::ActiveSystem;
 use self::sdsc::Sega8SdscCapture;
 use self::trace::{Sega8FrameTraceConfig, Sega8FrameTraceState, step_sega8_frame_with_trace};
 use super::{
-    AudioStats, Sega8DebugStateRequest, StuckTracker, emit_debug_state, ensure_no_reset_events,
-    ensure_system_headless_options, fail_on_stuck_if_needed, flush_battery, input_for_frame,
-    input_p2_for_frame, observe_stuck, print_perf, read_headless_state_if_requested,
-    screenshot_path_if_written, sega8_debug_state, write_audio_dump_f32le,
-    write_final_screenshot_if_needed, write_screenshot_if_requested,
+    AudioStats, Sega8DebugStateRequest, StuckTracker, check_tas_assertions, emit_debug_state,
+    ensure_no_reset_events, ensure_system_headless_options, ensure_tas_completed,
+    fail_on_stuck_if_needed, flush_battery, input_for_frame, input_p2_for_frame, observe_stuck,
+    print_perf, read_headless_state_if_requested, screenshot_path_if_written, sega8_debug_state,
+    write_audio_dump_f32le, write_final_screenshot_if_needed, write_screenshot_if_requested,
     write_screenshot_sequence_if_requested,
 };
 
@@ -46,6 +46,11 @@ pub(super) fn run_sega8_headless(
         .with_console_region(opts.sega8_console_region)
         .with_console_region_fallback(console_region_fallback);
     let mut emulator = Sega8Emulator::new_with_config(rom_data, load_config)?;
+    let mut sram_recovery = crate::save_paths::battery_sram_session(
+        rom_path,
+        system.storage_subdir(),
+        emulator.rom_hash(),
+    );
     if !opts.no_sram
         && let Some(sram_path) =
             crate::emu_backend::sega8::try_load_battery_sram(&mut emulator, rom_path)
@@ -133,6 +138,13 @@ pub(super) fn run_sega8_headless(
             audio_scratch.clear();
         }
         frames_run = frame_number;
+        check_tas_assertions(
+            opts,
+            frames_run,
+            u32::from(emulator.cpu().regs().pc),
+            emulator.framebuffer(),
+            || emulator.encode_state(),
+        )?;
 
         write_screenshot_if_requested(
             opts,
@@ -174,6 +186,7 @@ pub(super) fn run_sega8_headless(
             break;
         }
     }
+    ensure_tas_completed(opts, frames_run)?;
 
     if opts.trace_opcodes {
         println!("[sega8-op-tail] ---- last {} ops ----", tail.len());
@@ -241,7 +254,13 @@ pub(super) fn run_sega8_headless(
         }),
     )?;
     if !opts.no_sram {
-        flush_battery(rom_path, emulator.dump_battery_sram());
+        flush_battery(
+            &mut sram_recovery,
+            rom_path,
+            system,
+            emulator.rom_hash(),
+            emulator.dump_battery_sram(),
+        );
     }
     if let Some(path) = &opts.audio_dump_path {
         write_audio_dump_f32le(path, &audio_dump, emulator.sample_rate())?;

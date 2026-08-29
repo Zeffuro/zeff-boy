@@ -291,6 +291,12 @@ fn pce_rom_info(backend: &PceBackend) -> RomDebugInfo {
                     ("Controller", format!("{:?}", title.controller_mode)),
                     ("Memory Base 128", on_off(title.memory_base_128).to_owned()),
                     ("Arcade Card", on_off(title.arcade_card).to_owned()),
+                    (
+                        "Minimum System Card",
+                        title
+                            .minimum_system_card
+                            .map_or_else(|| "Unknown".to_owned(), |tier| format!("{tier:?}")),
+                    ),
                 ],
             },
         );

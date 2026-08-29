@@ -50,10 +50,7 @@ impl HuC6260 {
         validate_layer_lengths(background, sprites, output.len())?;
         for (index, output_pixel) in output.iter_mut().enumerate() {
             let palette_index = vdc_output_pixel(background, sprites, index).palette_index();
-            *output_pixel = CompositedPixel::new(
-                palette_index,
-                self.palette()[usize::from(palette_index)].rgb8(),
-            );
+            *output_pixel = CompositedPixel::new(palette_index, self.resolve_color(palette_index));
         }
         Ok(())
     }

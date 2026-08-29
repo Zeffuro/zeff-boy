@@ -17,12 +17,12 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$sessionRoot = Join-Path $repoRoot "target\pgo\$stamp"
+$sessionRoot = Join-Path $repoRoot "local-artifacts\pgo\$stamp"
 $dataDir = Join-Path $sessionRoot 'data'
 $generateTarget = Join-Path $sessionRoot 'generate'
 $useTarget = Join-Path $sessionRoot 'use'
 $mergedProfile = Join-Path $dataDir 'merged.profdata'
-$outputDir = Join-Path $repoRoot 'target\pgo'
+$outputDir = Join-Path $repoRoot 'local-artifacts\pgo'
 $outputExe = Join-Path $outputDir 'zeff-boy.exe'
 
 function Invoke-Cargo {
@@ -118,11 +118,27 @@ function ConvertFrom-ManifestInput {
     param([Parameter(Mandatory)][string]$Value)
 
     try {
-        return @($Value | ConvertFrom-Json) -join ','
+        $parsed = ConvertFrom-Json -InputObject ($Value -replace ',\s*\]$', ']')
+        return @($parsed) -join ','
     }
     catch {
         return $null
     }
+}
+
+function Get-GameplayTrainingFrames {
+    param(
+        [Parameter(Mandatory)]$Entry,
+        [Parameter(Mandatory)][int]$RequestedFrames
+    )
+
+    if ($Entry.SourcePriority -eq 0 -and $Entry.InputSource -eq 'manifest' -and $null -ne $Entry.MaxFrames) {
+        return [int]$Entry.MaxFrames
+    }
+    if ($null -eq $Entry.MaxFrames) {
+        return $RequestedFrames
+    }
+    return [Math]::Min($RequestedFrames, [int]$Entry.MaxFrames)
 }
 
 function Select-GameplayCorpusEntries {
@@ -173,6 +189,17 @@ function Test-GameplayCorpusSelectionPriorities {
     if ($labels.Count -ne 2 -or $labels -notcontains 'real-a' -or $labels -notcontains 'real-b') {
         throw 'PGO corpus selection did not exhaust the highest-priority entries first.'
     }
+
+    $parsedInput = ConvertFrom-ManifestInput -Value "[`n`"start@10-11`",`n`"right@20-30`",`n]"
+    if ($parsedInput -ne 'start@10-11,right@20-30') {
+        throw 'PGO corpus input parser did not preserve a multiline TOML schedule.'
+    }
+    $manifestEntry = [pscustomobject]@{ MaxFrames = 3000; InputSource = 'manifest'; SourcePriority = 0 }
+    $diagnosticEntry = [pscustomobject]@{ MaxFrames = 220000; InputSource = 'manifest'; SourcePriority = 1 }
+    if ((Get-GameplayTrainingFrames -Entry $manifestEntry -RequestedFrames 600) -ne 3000 -or
+        (Get-GameplayTrainingFrames -Entry $diagnosticEntry -RequestedFrames 600) -ne 600) {
+        throw 'PGO corpus training frame selection did not separate gameplay from diagnostics.'
+    }
 }
 
 function Add-ManifestGameplayCorpus {
@@ -188,10 +215,26 @@ function Add-ManifestGameplayCorpus {
     $group = $null
     $groupRom = $null
     $section = $null
+    $inputLines = $null
+    $inputOwner = $null
 
     foreach ($line in Get-Content -LiteralPath $ManifestPath) {
+        if ($null -ne $inputLines) {
+            $inputLines.Add($line.Trim())
+            if ($line -match '\]\s*$') {
+                $input = ConvertFrom-ManifestInput -Value ($inputLines -join '')
+                if ($null -eq $input) {
+                    throw "Invalid input schedule in $ManifestPath"
+                }
+                $inputOwner.Input = $input
+                $inputOwner.InputSource = 'manifest'
+                $inputLines = $null
+                $inputOwner = $null
+            }
+            continue
+        }
         if ($line -match '^\s*\[\[(?<section>[^\]]+)\]\]\s*$') {
-            if ($null -ne $test -and $null -ne $test.Core -and $null -ne $test.Path) {
+            if ($null -ne $test -and $null -ne $test.Core -and $null -ne $test.Path -and $test.ArtifactKind -ne 'firmware') {
                 Add-GameplayCorpusEntry -Entries $Entries -Seen $Seen -Core $test.Core `
                     -Label $test.Label -RomPath $test.Path -MaxFrames $test.MaxFrames `
                     -Input $test.Input -InputSource $test.InputSource -SourcePriority $SourcePriority
@@ -208,7 +251,7 @@ function Add-ManifestGameplayCorpus {
                 'tests' {
                     $test = [pscustomobject]@{
                         Core = $null; Label = $null; Path = $null; MaxFrames = $null
-                        Input = $null; InputSource = if ($UseGenericInput) { 'generic' } else { 'none' }
+                        Input = $null; InputSource = if ($UseGenericInput) { 'generic' } else { 'none' }; ArtifactKind = $null
                     }
                 }
                 'test_groups' {
@@ -231,6 +274,12 @@ function Add-ManifestGameplayCorpus {
         }
         if ($line -match '^\s*\[(?<section>[^\]]+)\]\s*$') {
             $section = $Matches.section
+            continue
+        }
+        if ($line -match '^\s*kind\s*=\s*"(?<value>[^"]+)"\s*$') {
+            if ($null -ne $test -and $section -eq 'tests.artifact') {
+                $test.ArtifactKind = $Matches.value
+            }
             continue
         }
         if ($line -match '^\s*id\s*=\s*"(?<value>[^"]+)"\s*$') {
@@ -261,18 +310,28 @@ function Add-ManifestGameplayCorpus {
             }
             continue
         }
-        if ($line -match '^\s*input\s*=\s*(?<value>\[.*\])\s*$') {
-            $input = ConvertFrom-ManifestInput -Value $Matches.value
-            if ($null -eq $input) {
-                continue
-            }
-            if ($null -ne $test) {
-                $test.Input = $input
-                $test.InputSource = 'manifest'
+        if ($line -match '^\s*input\s*=\s*(?<value>\[.*)$') {
+            $inputValue = $Matches.value
+            $inputOwner = if ($null -ne $test) {
+                $test
             }
             elseif ($null -ne $group -and $null -eq $groupRom) {
-                $group.Input = $input
-                $group.InputSource = 'manifest'
+                $group
+            }
+            if ($null -ne $inputOwner) {
+                if ($inputValue -match '\]\s*$') {
+                    $input = ConvertFrom-ManifestInput -Value $inputValue
+                    if ($null -eq $input) {
+                        throw "Invalid input schedule in $ManifestPath"
+                    }
+                    $inputOwner.Input = $input
+                    $inputOwner.InputSource = 'manifest'
+                    $inputOwner = $null
+                }
+                else {
+                    $inputLines = [System.Collections.Generic.List[string]]::new()
+                    $inputLines.Add($inputValue.Trim())
+                }
             }
             continue
         }
@@ -291,7 +350,11 @@ function Add-ManifestGameplayCorpus {
         }
     }
 
-    if ($null -ne $test -and $null -ne $test.Core -and $null -ne $test.Path) {
+    if ($null -ne $inputLines) {
+        throw "Unterminated input schedule in $ManifestPath"
+    }
+
+    if ($null -ne $test -and $null -ne $test.Core -and $null -ne $test.Path -and $test.ArtifactKind -ne 'firmware') {
         Add-GameplayCorpusEntry -Entries $Entries -Seen $Seen -Core $test.Core `
             -Label $test.Label -RomPath $test.Path -MaxFrames $test.MaxFrames `
             -Input $test.Input -InputSource $test.InputSource -SourcePriority $SourcePriority
@@ -375,8 +438,8 @@ function Show-GameplayCorpus {
 
     Write-Output "Selected $($corpus.Count) deterministic local PGO entries:"
     foreach ($entry in $corpus) {
-        $frameCap = if ($null -eq $entry.MaxFrames) { 'requested' } else { $entry.MaxFrames }
-        Write-Output "  $($entry.Core): $($entry.Label) (frames: $frameCap; input: $($entry.InputSource))"
+        $entryFrames = Get-GameplayTrainingFrames -Entry $entry -RequestedFrames $GameplayFrames
+        Write-Output "  $($entry.Core): $($entry.Label) (frames: $entryFrames; input: $($entry.InputSource))"
     }
 }
 
@@ -405,15 +468,10 @@ function Invoke-GameplayTraining {
         'right@540-599'
     ) -join ','
 
-    Write-Output "Training $($corpus.Count) local deterministic ROM entries for up to $GameplayFrames frames each"
+    Write-Output "Training $($corpus.Count) local deterministic ROM entries"
     $completed = 0
     foreach ($entry in $corpus) {
-        $entryFrames = if ($null -eq $entry.MaxFrames) {
-            $GameplayFrames
-        }
-        else {
-            [Math]::Min($GameplayFrames, $entry.MaxFrames)
-        }
+        $entryFrames = Get-GameplayTrainingFrames -Entry $entry -RequestedFrames $GameplayFrames
         $input = if ($entry.InputSource -eq 'manifest') { $entry.Input } elseif ($entry.InputSource -eq 'generic') { $genericInput } else { $null }
         Write-Output "  $($entry.Core): $($entry.Label) ($entryFrames frames; input: $($entry.InputSource))"
         $arguments = @('--headless', '--max-frames', $entryFrames, '--no-sram')
@@ -471,7 +529,7 @@ try {
     $env:LLVM_PROFILE_FILE = Join-Path $dataDir '%m-%p.profraw'
     $env:ZEFF_MUTE_AUDIO = '1'
 
-    Invoke-Cargo @('build', '--profile', 'profiling', '--bin', 'profile_cores', '--features', 'profile-cores')
+    Invoke-Cargo @('build', '--profile', 'profiling', '--bin', 'profile_cores', '--features', 'profile-cores', '--jobs', '1')
 
     $trainingExe = Join-Path $generateTarget 'profiling\profile_cores.exe'
     Invoke-TrainingRun -Executable $trainingExe -TrainingFrames $Frames
@@ -483,7 +541,7 @@ try {
     Invoke-TrainingRun -Executable $trainingExe -TrainingFrames $auxiliaryFrames -Trace
 
     if (-not $SkipGameplayTraining) {
-        Invoke-Cargo @('build', '--profile', 'profiling', '--bin', 'zeff-boy')
+        Invoke-Cargo @('build', '--profile', 'profiling', '--bin', 'zeff-boy', '--jobs', '1')
         $gameplayTrainingExe = Join-Path $generateTarget 'profiling\zeff-boy.exe'
         Invoke-GameplayTraining -Executable $gameplayTrainingExe
     }
@@ -509,7 +567,7 @@ try {
     $env:ZEFF_PROFILE_FRAMES = $null
     $env:ZEFF_PROFILE_TRACE = $null
 
-    Invoke-Cargo @('build', '--release', '--bin', 'zeff-boy')
+    Invoke-Cargo @('build', '--release', '--bin', 'zeff-boy', '--jobs', '1')
 
     $builtExe = Join-Path $useTarget 'release\zeff-boy.exe'
     Copy-Item -LiteralPath $builtExe -Destination $outputExe -Force

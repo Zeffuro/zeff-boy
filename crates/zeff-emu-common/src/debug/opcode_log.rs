@@ -1,6 +1,7 @@
 const OPCODE_LOG_CAPACITY: usize = 32;
 const OPCODE_LOG_MASK: usize = OPCODE_LOG_CAPACITY - 1;
 
+#[derive(Clone)]
 pub struct OpcodeLog<E: Copy + Default> {
     entries: [E; OPCODE_LOG_CAPACITY],
     cursor: usize,

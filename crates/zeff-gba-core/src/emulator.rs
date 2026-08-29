@@ -47,6 +47,7 @@ impl From<FetchedInstruction> for GbaOpcodeRecord {
     }
 }
 
+#[derive(Clone)]
 pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,

@@ -130,6 +130,7 @@ impl Emulator {
         let boot_rom = self.bus.boot_rom_bytes().map(<[u8]>::to_vec);
         let mode_preference = self.hardware_mode_preference;
         let serial_device = self.game_boy_serial_device();
+        let ppu_debug_flags = self.bus.ppu_debug_flags();
         let trace_enabled = self.instruction_trace.is_enabled();
         let trace_capacity = self.instruction_trace.capacity();
 
@@ -141,6 +142,11 @@ impl Emulator {
             Ok(mut emulator) => {
                 emulator.set_sample_rate(sample_rate);
                 emulator.set_game_boy_serial_device(serial_device);
+                emulator.set_ppu_debug_flags(
+                    ppu_debug_flags.bg,
+                    ppu_debug_flags.window,
+                    ppu_debug_flags.sprites,
+                );
                 emulator.instruction_trace.set_capacity(trace_capacity);
                 emulator.instruction_trace.set_enabled(trace_enabled);
                 *self = emulator;

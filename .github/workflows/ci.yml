@@ -4,9 +4,13 @@ on:
   push:
     branches: [master]
   pull_request:
+  schedule:
+    # Run expensive conformance and browser proofs after the normal PR gate.
+    - cron: "17 3 * * 1-5"
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -33,15 +37,24 @@ jobs:
           - name: Linux
             os: ubuntu-latest
             deps: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+            args: --all-features
+          - name: Linux (no default features)
+            os: ubuntu-latest
+            deps: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+            args: --no-default-features
           - name: Windows
             os: windows-latest
+            deps: ""
+            args: --all-features
           - name: macOS
             os: macos-latest
+            deps: ""
+            args: --all-features
     steps:
       - uses: actions/checkout@v6
 
       - name: Install system dependencies
-        if: matrix.deps
+        if: matrix.deps != ''
         run: ${{ matrix.deps }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -50,13 +63,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v3-${{ matrix.name }}
+          prefix-key: v4-clippy-${{ matrix.name }}
 
-      - name: Clippy (all features)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Clippy (no default features)
-        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets ${{ matrix.args }} -- -D warnings
 
   test:
     name: Test (${{ matrix.name }})
@@ -70,17 +79,27 @@ jobs:
             os: ubuntu-latest
             deps: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev xvfb
             wrapper: xvfb-run --auto-servernum
+            args: ""
+          - name: Linux (no default features)
+            os: ubuntu-latest
+            deps: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev xvfb
+            wrapper: xvfb-run --auto-servernum
+            args: --no-default-features
           - name: Windows
             os: windows-latest
+            deps: ""
             wrapper: ""
+            args: ""
           - name: macOS
             os: macos-latest
+            deps: ""
             wrapper: ""
+            args: ""
     steps:
       - uses: actions/checkout@v6
 
       - name: Install system dependencies
-        if: matrix.deps
+        if: matrix.deps != ''
         run: ${{ matrix.deps }}
 
       - uses: dtolnay/rust-toolchain@stable
@@ -91,20 +110,94 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v3-${{ matrix.name }}
+          prefix-key: v4-test-${{ matrix.name }}
 
       - name: Run tests
-        run: ${{ matrix.wrapper }} cargo nextest run --workspace
-
-      - name: Run tests (no default features)
-        run: ${{ matrix.wrapper }} cargo nextest run --workspace --no-default-features
+        run: ${{ matrix.wrapper }} cargo nextest run --workspace ${{ matrix.args }}
 
       - name: Profile structural gate
-        run: ${{ matrix.wrapper }} cargo test --no-default-features --features profile-cores --test profile_cores_regression
+        if: matrix.name == 'Linux (no default features)'
+        run: xvfb-run --auto-servernum cargo test --no-default-features --features profile-cores --test profile_cores_regression
+
+  platform-audit:
+    name: Platform-leak audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check for platform API leaks
+        run: |
+          ! grep -rn --include='*.rs' --exclude='*native.rs' \
+            -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
+            --exclude-dir=platform --exclude-dir=input --exclude-dir=audio --exclude-dir=camera \
+            | grep -v 'cli/' | grep -v 'libretro_common\.rs' | grep -v '// platform-ok'
+      - name: Enforce tooling ownership and CI tiers
+        run: cargo run -p zeff-romtest -- audit-tooling
+
+  wasm:
+    name: WASM build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v4-wasm
+
+      - name: Clippy
+        run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
+
+      - name: Check
+        run: cargo check --target wasm32-unknown-unknown --no-default-features
+
+      - name: Build browser deployment
+        run: trunk build --release --public-url /zeff-boy/
+
+  deny:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify archive dependency notices
+        shell: bash
+        run: |
+          test -s THIRD_PARTY_NOTICES.md
+          grep -Fq 'sevenz-rust2 0.21.5' THIRD_PARTY_NOTICES.md
+          grep -Fq 'lzma-rust2 0.19.0' THIRD_PARTY_NOTICES.md
+          grep -Fq 'liblzma and liblzma-sys 0.4.8' THIRD_PARTY_NOTICES.md
+          grep -Fq 'XZ Utils liblzma 5.8.3' THIRD_PARTY_NOTICES.md
+          grep -Fq '0525275fe4b553a10f38e455d30c60dc6ed9b45d' third_party/xdelta3/ZEFF_PATCH.md
+          test -s third_party/xdelta3/vendor/LICENSE
+          test -s third_party/xdelta3/vendor/xdelta3.c
+          grep -Fq 'e8994adc584650d7b179f4d1d68685e064cc7534' third_party/sevenz-rust2/ZEFF_PATCH.md
+          for file in \
+            third_party/sevenz-rust2/src/archive.rs \
+            third_party/sevenz-rust2/src/decoder.rs \
+            third_party/sevenz-rust2/src/lib.rs \
+            third_party/sevenz-rust2/src/reader.rs \
+            third_party/sevenz-rust2/src/writer/unpack_info.rs; do
+            grep -Fq 'Modified by Zeff Boy' "$file"
+          done
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
 
   romtest:
     name: ROM tests
-    needs: clippy
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -118,7 +211,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v3-romtest
+          prefix-key: v4-romtest
 
       - name: Validate ROM test manifests
         run: cargo run -p zeff-romtest -- check
@@ -159,21 +252,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  platform-audit:
-    name: Platform-leak audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Check for platform API leaks
-        run: |
-          ! grep -rn --include='*.rs' --exclude='*native.rs' \
-            -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
-            --exclude-dir=platform --exclude-dir=input --exclude-dir=audio --exclude-dir=camera \
-            | grep -v 'cli/' | grep -v 'libretro_common\.rs' | grep -v '// platform-ok'
-
   bench:
     name: Benchmarks
-    needs: clippy
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -187,21 +268,21 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v3-bench
+          prefix-key: v4-bench
 
       - name: Run benchmarks
         run: cargo bench --workspace -- --output-format bencher 2>/dev/null | tee benchmark-results.txt
 
       - name: Upload benchmark results
-        if: github.ref == 'refs/heads/master'
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: benchmark-results.txt
           retention-days: 90
 
-  wasm:
-    name: WASM
+  wasm-detached:
+    name: WASM detached-frame proof (Node)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -209,27 +290,86 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-          components: clippy
 
-      - uses: taiki-e/install-action@v2
+      - uses: actions/setup-node@v6
         with:
-          tool: trunk
+          node-version: 24
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v3-wasm
+          prefix-key: v4-wasm-detached
 
-      - name: Clippy (WASM)
-        run: cargo clippy --target wasm32-unknown-unknown --no-default-features -- -D warnings
+      - name: Cache wasm-bindgen test runner
+        id: wasm-bindgen-test-runner-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/wasm-bindgen-cli-0.2.126
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}
 
-      - name: Check (WASM)
-        run: cargo check --target wasm32-unknown-unknown --no-default-features
+      - name: Install wasm-bindgen test runner
+        if: steps.wasm-bindgen-test-runner-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked --root "${{ runner.temp }}/wasm-bindgen-cli-0.2.126"
 
-      - name: Build (Trunk release)
-        run: trunk build --release --public-url /zeff-boy/
+      - name: Test detached SMS and GBA transactions
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: ${{ runner.temp }}/wasm-bindgen-cli-0.2.126/bin/wasm-bindgen-test-runner
+          RUST_LOG: warn
+        run: |
+          cargo test --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features wasm_sms_detached
+          cargo test --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features wasm_gba_detached
+
+  wasm-browser:
+    name: WASM browser proof (Edge)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Detect Edge version
+        id: edge
+        shell: pwsh
+        run: |
+          $edge = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path -LiteralPath $edge -PathType Leaf)) {
+            throw "Microsoft Edge was not found at $edge"
+          }
+          $reported = (Get-Item -LiteralPath $edge).VersionInfo.ProductVersion
+          $match = [regex]::Match($reported, '\d+\.\d+\.\d+\.\d+')
+          if (-not $match.Success) {
+            throw "Microsoft Edge reported an invalid version: $reported"
+          }
+          "version=$($match.Value)" >> $env:GITHUB_OUTPUT
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v4-wasm-browser
+
+      - name: Cache browser test tools
+        uses: actions/cache@v5
+        with:
+          path: target/wasm-browser-tools
+          key: wasm-browser-tools-0.2.126-edge-${{ steps.edge.outputs.version }}-${{ runner.os }}
+
+      - name: Test detached GBA and SMS IndexedDB transactions
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1
+
+      - name: Test detached SMS App rendering
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_sms_browser_app_consumes_and_presents_detached_frame
+
+      - name: Test detached GBA App rendering
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_gba_browser_app_consumes_and_presents_detached_frame
 
   fuzz-check:
-    name: Fuzz Compile Check
+    name: Fuzz compile check
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -243,36 +383,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v3-fuzz
+          prefix-key: v4-fuzz
           workspaces: "fuzz -> fuzz/target"
 
       - run: cargo +nightly check --manifest-path fuzz/Cargo.toml
-
-  deny:
-    name: Dependency Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Verify archive dependency notices
-        shell: bash
-        run: |
-          test -s THIRD_PARTY_NOTICES.md
-          grep -Fq 'sevenz-rust2 0.21.5' THIRD_PARTY_NOTICES.md
-          grep -Fq 'lzma-rust2 0.19.0' THIRD_PARTY_NOTICES.md
-          grep -Fq 'liblzma and liblzma-sys 0.4.8' THIRD_PARTY_NOTICES.md
-          grep -Fq 'XZ Utils liblzma 5.8.3' THIRD_PARTY_NOTICES.md
-          grep -Fq '0525275fe4b553a10f38e455d30c60dc6ed9b45d' third_party/xdelta3/ZEFF_PATCH.md
-          test -s third_party/xdelta3/vendor/LICENSE
-          test -s third_party/xdelta3/vendor/xdelta3.c
-          grep -Fq 'e8994adc584650d7b179f4d1d68685e064cc7534' third_party/sevenz-rust2/ZEFF_PATCH.md
-          for file in \
-            third_party/sevenz-rust2/src/archive.rs \
-            third_party/sevenz-rust2/src/decoder.rs \
-            third_party/sevenz-rust2/src/lib.rs \
-            third_party/sevenz-rust2/src/reader.rs \
-            third_party/sevenz-rust2/src/writer/unpack_info.rs; do
-            grep -Fq 'Modified by Zeff Boy' "$file"
-          done
-
-      - uses: EmbarkStudios/cargo-deny-action@v2

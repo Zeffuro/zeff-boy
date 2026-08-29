@@ -245,6 +245,30 @@ impl Psg {
     pub(super) fn disable_host_sample_generation(&mut self) {
         self.sample_generation_enabled = false;
     }
+
+    pub(in crate::hardware::apu) fn clear_host_output_after_state_load(&mut self) {
+        self.sample_buffer.clear();
+        self.debug_capture_cycle_accum = 0;
+        for history in &mut self.channel_debug_history {
+            history.clear();
+        }
+        self.master_debug_history.clear();
+    }
+
+    #[cfg(test)]
+    pub(in crate::hardware::apu) fn seed_host_output_for_state_load_test(&mut self) {
+        self.sample_buffer.extend([0.75, -0.75]);
+        self.debug_capture_cycle_accum = 17;
+        for (index, history) in self.channel_debug_history.iter_mut().enumerate() {
+            history.push((index + 1) as f32);
+        }
+        self.master_debug_history.push(5.0);
+    }
+
+    #[cfg(test)]
+    pub(in crate::hardware::apu) fn host_output_state_for_test(&self) -> (usize, u64) {
+        (self.sample_buffer.len(), self.debug_capture_cycle_accum)
+    }
 }
 
 impl fmt::Debug for Psg {

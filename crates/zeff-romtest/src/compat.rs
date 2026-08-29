@@ -115,6 +115,7 @@ fn scan_dir_recursive(
         } else if file_type.is_file()
             && let Some(core) = infer_core_from_path(&path, core_filter)
             && core_filter.is_none_or(|filter| filter == core)
+            && !is_obvious_firmware_file_name(&path)
             && file_name_matches(&path, name_matches)
         {
             entries.push(CompatEntry { core, path });
@@ -143,6 +144,16 @@ fn file_name_matches(path: &Path, name_matches: &[String]) -> bool {
     name_matches
         .iter()
         .any(|name_match| file_name.contains(name_match))
+}
+
+fn is_obvious_firmware_file_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|file_name| {
+            file_name
+                .split(|ch: char| !ch.is_ascii_alphanumeric())
+                .any(|word| word.eq_ignore_ascii_case("bios"))
+        })
 }
 
 fn infer_core_from_path(path: &Path, core_filter: Option<Core>) -> Option<Core> {
@@ -387,5 +398,19 @@ mod tests {
             Path::new("Example Gem.gbc"),
             &normalized_name_matches(&["emerald".to_string()])
         ));
+    }
+
+    #[test]
+    fn compatibility_scan_excludes_bios_names_without_excluding_game_names() {
+        assert!(is_obvious_firmware_file_name(Path::new(
+            "[BIOS] ColecoVision (USA, Europe).zip"
+        )));
+        assert!(is_obvious_firmware_file_name(Path::new(
+            "ColecoVision BIOS.zip"
+        )));
+        assert!(!is_obvious_firmware_file_name(Path::new(
+            "Zaxxon (USA, Europe).zip"
+        )));
+        assert!(!is_obvious_firmware_file_name(Path::new("Bioshock.gba")));
     }
 }

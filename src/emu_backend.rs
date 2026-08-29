@@ -72,6 +72,84 @@ pub(crate) enum EmuBackend {
     Ws(Box<WsBackend>),
 }
 
+pub(crate) enum DetachedFrameBackend {
+    Gba {
+        emu: Box<zeff_gba_core::emulator::Emulator>,
+        #[cfg(test)]
+        force_operational_failure: bool,
+    },
+    Sega8 {
+        emu: Box<zeff_sega8_core::emulator::Emulator>,
+        #[cfg(test)]
+        force_operational_failure: bool,
+    },
+}
+
+impl DetachedFrameBackend {
+    pub(crate) fn frame_count(&self) -> u64 {
+        match self {
+            Self::Gba { emu, .. } => FrameLifecycle::frame_count(emu.as_ref()),
+            Self::Sega8 { emu, .. } => FrameLifecycle::frame_count(emu.as_ref()),
+        }
+    }
+
+    pub(crate) fn step_frames(&mut self, frames: usize) -> bool {
+        #[cfg(test)]
+        if matches!(
+            self,
+            Self::Gba {
+                force_operational_failure: true,
+                ..
+            } | Self::Sega8 {
+                force_operational_failure: true,
+                ..
+            }
+        ) {
+            return false;
+        }
+        for _ in 0..frames {
+            let before = self.frame_count();
+            match self {
+                Self::Gba { emu, .. } => FrameLifecycle::step_frame(emu.as_mut()),
+                Self::Sega8 { emu, .. } => FrameLifecycle::step_frame(emu.as_mut()),
+            }
+            let after = self.frame_count();
+            if before.checked_add(1) != Some(after) {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub(crate) fn disable_audio_output(&mut self) {
+        match self {
+            Self::Gba { emu, .. } => emu.set_apu_sample_generation_enabled(false),
+            Self::Sega8 { emu, .. } => emu.set_apu_sample_generation_enabled(false),
+        }
+    }
+
+    pub(crate) fn framebuffer(&self) -> &[u8] {
+        match self {
+            Self::Gba { emu, .. } => emu.framebuffer(),
+            Self::Sega8 { emu, .. } => emu.framebuffer(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn force_operational_failure_for_test(&mut self) {
+        match self {
+            Self::Gba {
+                force_operational_failure,
+                ..
+            }
+            | Self::Sega8 {
+                force_operational_failure,
+                ..
+            } => *force_operational_failure = true,
+        }
+    }
+}
+
 macro_rules! dispatch {
     ($self:expr, $method:ident ( $($arg:expr),* )) => {
         match $self {
@@ -87,6 +165,36 @@ macro_rules! dispatch {
 }
 
 impl EmuBackend {
+    pub(crate) fn nes_has_standard_controller_topology(&self) -> Option<bool> {
+        match self {
+            Self::Nes(backend) => Some(backend.emu.has_standard_controller_topology()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn supports_detached_speculation(&self) -> bool {
+        matches!(self, Self::Gba(_))
+            || matches!(self, Self::Sega8(_)) && self.system() == ActiveSystem::MasterSystem
+    }
+
+    pub(crate) fn fork_detached_for_speculation(&self) -> Option<DetachedFrameBackend> {
+        match self {
+            Self::Gba(backend) => Some(DetachedFrameBackend::Gba {
+                emu: Box::new(backend.emu.clone()),
+                #[cfg(test)]
+                force_operational_failure: false,
+            }),
+            Self::Sega8(backend) if backend.system() == ActiveSystem::MasterSystem => {
+                Some(DetachedFrameBackend::Sega8 {
+                    emu: Box::new(backend.emu.clone()),
+                    #[cfg(test)]
+                    force_operational_failure: false,
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn from_gb(emu: zeff_gb_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Gb(Box::new(GbBackend::new(emu, rom_path)))
     }
@@ -300,8 +408,12 @@ impl EmuBackend {
 
     pub(crate) fn encode_replay_hash_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes = self.encode_state_bytes()?;
-        canonicalize_state_bytes_for_replay_hash(self.system(), &mut bytes);
+        canonicalize_state_bytes_for_replay_hash(self.system(), &mut bytes)?;
         Ok(bytes)
+    }
+
+    pub(crate) fn encode_replay_start_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        self.encode_state_bytes()
     }
 
     pub(crate) fn rom_path(&self) -> &Path {
@@ -338,6 +450,31 @@ impl EmuBackend {
 
     pub(crate) fn rom_hash(&self) -> [u8; 32] {
         dispatch!(self, rom_hash())
+    }
+
+    pub(crate) fn recovery_discriminator(&self) -> String {
+        format!(
+            "zeff-{}-native-{}",
+            self.system().storage_subdir(),
+            self.state_extension()
+        )
+    }
+
+    pub(crate) fn battery_component_hash(&self) -> [u8; 32] {
+        let components = match self {
+            Self::Gb(backend) => backend.battery_components(),
+            Self::Gba(backend) => backend.battery_components(),
+            Self::Nes(backend) => backend.battery_components(),
+            Self::Coleco(backend) => backend.battery_components(),
+            Self::Pce(backend) => backend.battery_components(),
+            Self::Sega8(backend) => backend.battery_components(),
+            Self::Ws(backend) => backend.battery_components(),
+        };
+        let borrowed = components
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect::<Vec<_>>();
+        crate::save_paths::recovery_state::canonical_battery_component_hash(&borrowed)
     }
 
     pub(crate) fn pce_controller_profile_hash(&self) -> Option<[u8; 32]> {
@@ -493,6 +630,43 @@ impl EmuBackend {
         match self {
             Self::Gb(gb) => Some(gb.emu.cpu_cycles()),
             _ => None,
+        }
+    }
+
+    pub(crate) fn probe_replay_state_load(
+        &self,
+        bytes: &[u8],
+        game_boy_link_start_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+        has_game_boy_link: bool,
+        has_wonder_swan_link: bool,
+    ) -> anyhow::Result<(u64, Option<u64>, Option<u64>)> {
+        match self {
+            Self::Gb(gb) => {
+                anyhow::ensure!(
+                    !has_wonder_swan_link,
+                    "replay contains WonderSwan link data for a Game Boy state"
+                );
+                let (frame_count, cpu_cycles) = gb
+                    .emu
+                    .probe_native_state_for_replay(bytes, game_boy_link_start_state)?;
+                Ok((frame_count, Some(cpu_cycles), None))
+            }
+            Self::Ws(ws) => {
+                anyhow::ensure!(
+                    !has_game_boy_link,
+                    "replay contains Game Boy link data for a WonderSwan state"
+                );
+                let mut candidate = ws.emu.clone();
+                candidate.load_state(bytes)?;
+                Ok((candidate.frame_count(), None, Some(candidate.cpu_cycles())))
+            }
+            _ => {
+                anyhow::ensure!(
+                    !has_game_boy_link && !has_wonder_swan_link,
+                    "replay link data does not match the current system"
+                );
+                Ok((self.frame_count(), None, None))
+            }
         }
     }
 
@@ -1073,6 +1247,13 @@ impl EmuBackend {
         dispatch!(self, flush_battery_sram())
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn acknowledge_battery_commit(&mut self, snapshot_still_matches: bool) {
+        if let Self::Pce(backend) = self {
+            backend.acknowledge_battery_commit(snapshot_still_matches);
+        }
+    }
+
     pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
         if !self.supports_state_capture() {
             anyhow::bail!("state restore is not supported by this core");
@@ -1094,16 +1275,6 @@ impl EmuBackend {
             self.rom_hash(),
             slot,
         )
-    }
-
-    pub(crate) fn auto_save_path(&self) -> Option<PathBuf> {
-        self.supports_save_states().then(|| {
-            crate::save_paths::auto_save_path(
-                self.system().storage_subdir(),
-                self.state_extension(),
-                self.rom_hash(),
-            )
-        })
     }
 
     pub(crate) fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
@@ -1152,10 +1323,17 @@ impl FrameLifecycle for EmuBackend {
     }
 }
 
-pub(crate) fn canonicalize_state_bytes_for_replay_hash(system: ActiveSystem, bytes: &mut [u8]) {
+pub(crate) fn canonicalize_state_bytes_for_replay_hash(
+    system: ActiveSystem,
+    bytes: &mut Vec<u8>,
+) -> anyhow::Result<()> {
     if system == ActiveSystem::GameBoy {
+        zeff_gb_core::save_state::project_replay_state_bytes(bytes)?;
         zeff_gb_core::save_state::canonicalize_replay_hash_bytes(bytes);
+    } else if system == ActiveSystem::Nes {
+        zeff_nes_core::save_state::project_replay_state_bytes(bytes)?;
     }
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

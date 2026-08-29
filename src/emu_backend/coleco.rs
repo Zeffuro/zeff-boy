@@ -140,6 +140,10 @@ pub(crate) struct ColecoBackend {
 }
 
 impl ColecoBackend {
+    pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
+        Vec::new()
+    }
+
     pub(crate) fn new(
         emu: zeff_coleco_core::Emulator,
         rom_path: PathBuf,

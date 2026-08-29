@@ -153,6 +153,17 @@ impl RecordingState {
             || !self.pending_replay_checkpoint_hashes.is_empty()
     }
 
+    #[cfg(test)]
+    pub(super) fn replay_timeline_active(&self) -> bool {
+        self.is_replay_active()
+            || self.queued_replay_playback_frames != 0
+            || self.replay_media_events_pending != 0
+            || self
+                .pending_media_commands
+                .iter()
+                .any(|command| command.replay_origin_frame.is_some())
+    }
+
     pub(super) fn allows_cheat_updates(&self) -> bool {
         !self.is_replay_active()
     }
@@ -385,7 +396,7 @@ pub(super) const UI_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 pub(super) const VIEWER_UPDATE_INTERVAL: Duration = Duration::from_millis(33);
 pub(super) const SETTINGS_UPDATE_INTERVAL: Duration = Duration::from_millis(250);
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
@@ -511,6 +522,30 @@ mod tests {
         state.pending_replay_batches.clear();
         state.pending_replay_checkpoint_hashes.clear();
         assert!(state.allows_cheat_updates());
+    }
+
+    #[test]
+    fn speculation_replay_timeline_includes_transitional_work() {
+        let mut state = recording_state();
+        assert!(!state.replay_timeline_active());
+
+        state.queued_replay_playback_frames = 1;
+        assert!(state.replay_timeline_active());
+        state.queued_replay_playback_frames = 0;
+
+        state.replay_media_events_pending = 1;
+        assert!(state.replay_timeline_active());
+        state.replay_media_events_pending = 0;
+
+        state.pending_media_commands.push_back(PendingMediaCommand {
+            replay_origin_frame: None,
+            event: zeff_emu_common::media::MediaEvent::Eject {
+                slot: "test".into(),
+            },
+        });
+        assert!(!state.replay_timeline_active());
+        state.pending_media_commands[0].replay_origin_frame = Some(7);
+        assert!(state.replay_timeline_active());
     }
 
     #[test]

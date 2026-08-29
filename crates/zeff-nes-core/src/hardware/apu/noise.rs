@@ -1,6 +1,7 @@
 use super::pulse::LENGTH_TABLE;
 use crate::hardware::timing::NesTiming;
 
+#[derive(Clone)]
 pub struct Noise {
     pub enabled: bool,
     pub length_counter: u8,

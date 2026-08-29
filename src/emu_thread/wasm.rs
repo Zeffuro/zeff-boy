@@ -1,15 +1,52 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::Duration;
 
 use zeff_emu_common::rewind::RewindBuffer;
-use zeff_emu_common::time::Reset as _;
 
-use super::ReplayStartState;
+use super::recovery::{
+    RecoveryCandidate, RecoveryCoordinator, browser_battery_flush_due, should_load_recovery,
+};
+use super::speculation::SpeculationBoundary;
 use super::types::{self, EmuCommand, EmuResponse, FrameInput, FrameResult, SharedFramebuffer};
 use super::{DEFAULT_REWIND_SECONDS, REWIND_CAPTURE_INTERVAL_FRAMES, WorkerRuntimeFault};
 use crate::cheats::CheatPatch;
 use crate::emu_backend::{CoreCapabilities, EmuBackend};
 use zeff_emu_common::time::MachineTiming;
+
+const BATTERY_FLUSH_INTERVAL: Duration = Duration::from_secs(30);
+const MAX_DEFERRED_STORAGE_COMMANDS: usize = 16;
+
+enum StorageCompletion {
+    SaveState {
+        path: PathBuf,
+        backup_created: bool,
+    },
+    RestoreStateBackup {
+        path: PathBuf,
+    },
+    Battery {
+        epoch: u64,
+        snapshot: Vec<crate::platform::SaveWrite>,
+        path: Option<String>,
+        generation: crate::save_paths::recovery_state::BatteryGenerationRecord,
+        recovery_path: Option<PathBuf>,
+        shutdown: bool,
+    },
+}
+
+struct PendingStorage {
+    completion: crate::platform::SaveBatchCompletion,
+    response: StorageCompletion,
+}
+
+struct CapturedBatteryWrites {
+    path: Option<String>,
+    generation: crate::save_paths::recovery_state::BatteryGenerationRecord,
+    recovery_path: Option<PathBuf>,
+}
 
 struct Inner {
     backend: EmuBackend,
@@ -23,6 +60,16 @@ struct Inner {
     audio_recording_capture: super::AudioRecordingCapture,
     pending_audio_discontinuities: Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
     runtime_fault: WorkerRuntimeFault,
+    pending_storage: Option<PendingStorage>,
+    deferred_storage_commands: VecDeque<EmuCommand>,
+    next_battery_flush: web_time::Instant,
+    battery_dirty: crate::platform::DirtyEpoch<Vec<crate::platform::SaveWrite>>,
+    battery_flush_requested: bool,
+    battery_potentially_dirty: bool,
+    shutdown_requested: bool,
+    recovery: RecoveryCoordinator,
+    speculation: SpeculationBoundary,
+    save_recovery_on_shutdown: bool,
 }
 
 pub(crate) struct EmuThread {
@@ -33,7 +80,7 @@ pub(crate) struct EmuThread {
 }
 
 impl EmuThread {
-    pub(crate) fn spawn(backend: EmuBackend) -> Self {
+    pub(crate) fn spawn(backend: EmuBackend, save_recovery_on_shutdown: bool) -> Self {
         let capabilities = backend.capabilities();
         let frame_duration_ns = backend.nominal_frame_duration_ns();
         let audio_recording_context =
@@ -46,6 +93,7 @@ impl EmuThread {
                 });
         let shared_framebuffer = types::new_shared_framebuffer();
         types::publish_framebuffer(&shared_framebuffer, backend.framebuffer());
+        let recovery = RecoveryCoordinator::new(&backend);
         Self {
             inner: RefCell::new(Inner {
                 backend,
@@ -63,6 +111,16 @@ impl EmuThread {
                 audio_recording_capture: super::AudioRecordingCapture::default(),
                 pending_audio_discontinuities: Vec::new(),
                 runtime_fault: WorkerRuntimeFault::default(),
+                pending_storage: None,
+                deferred_storage_commands: VecDeque::new(),
+                next_battery_flush: web_time::Instant::now() + BATTERY_FLUSH_INTERVAL,
+                battery_dirty: crate::platform::DirtyEpoch::default(),
+                battery_flush_requested: false,
+                battery_potentially_dirty: false,
+                shutdown_requested: false,
+                recovery,
+                speculation: SpeculationBoundary::default(),
+                save_recovery_on_shutdown,
             }),
             shared_framebuffer,
             capabilities,
@@ -88,7 +146,66 @@ impl EmuThread {
         &self.shared_framebuffer
     }
 
+    #[cfg(all(test, feature = "wasm-browser-tests"))]
+    pub(crate) fn force_detached_frame_for_browser_test(&self) {
+        self.inner.borrow_mut().speculation.force_frames_for_test(1);
+    }
+
+    #[cfg(all(test, feature = "wasm-browser-tests"))]
+    pub(crate) fn speculation_counts_for_browser_test(&self) -> (usize, usize) {
+        let inner = self.inner.borrow();
+        (
+            inner.speculation.completed_runs_for_test(),
+            inner.speculation.committed_frames_for_test(),
+        )
+    }
+
+    #[cfg(all(test, feature = "wasm-browser-tests"))]
+    pub(crate) fn primary_framebuffer_for_browser_test(&self) -> Vec<u8> {
+        self.inner.borrow().backend.framebuffer().to_vec()
+    }
+
     pub(crate) fn send(&self, cmd: EmuCommand) {
+        self.poll_storage();
+        self.inner.borrow_mut().speculation.invalidate();
+        if Self::is_storage_ordered_command(&cmd) && self.inner.borrow().pending_storage.is_some() {
+            let mut inner = self.inner.borrow_mut();
+            match cmd {
+                EmuCommand::FlushBatterySram => inner.battery_flush_requested = true,
+                EmuCommand::Shutdown => {
+                    inner.shutdown_requested = true;
+                    inner.battery_flush_requested = true;
+                }
+                command
+                    if inner.deferred_storage_commands.len() < MAX_DEFERRED_STORAGE_COMMANDS =>
+                {
+                    inner.deferred_storage_commands.push_back(command);
+                }
+                EmuCommand::SaveStateSlot(_) | EmuCommand::SaveStateToPath(_) => inner
+                    .pending_responses
+                    .push_back(EmuResponse::SaveStateFailed(
+                        "browser storage is busy".to_string(),
+                    )),
+                EmuCommand::RestoreStateBackup(_) => {
+                    inner
+                        .pending_responses
+                        .push_back(EmuResponse::StateBackupRestoreFailed(
+                            "browser storage is busy".to_string(),
+                        ))
+                }
+                EmuCommand::LoadStateSlot { .. }
+                | EmuCommand::LoadStateFromPath { .. }
+                | EmuCommand::InspectRecovery { .. } => {
+                    inner
+                        .pending_responses
+                        .push_back(EmuResponse::LoadStateFailed(
+                            "browser storage is busy".to_string(),
+                        ))
+                }
+                _ => unreachable!("non-storage command passed storage ordering gate"),
+            }
+            return;
+        }
         let inner = &mut *self.inner.borrow_mut();
         let Inner {
             backend,
@@ -102,12 +219,52 @@ impl EmuThread {
             audio_recording_capture,
             pending_audio_discontinuities,
             runtime_fault,
+            pending_storage,
+            next_battery_flush,
+            battery_dirty,
+            battery_flush_requested,
+            battery_potentially_dirty,
+            shutdown_requested,
+            recovery,
+            speculation,
+            save_recovery_on_shutdown,
+            deferred_storage_commands: _,
         } = inner;
+        let cmd = match (super::commands::CommonCommandContext {
+            backend,
+            shared_framebuffer: &self.shared_framebuffer,
+            uncapped_mode,
+            rewind_buffer,
+            last_cheats,
+            audio_recording_capture,
+            pending_audio_discontinuities,
+            runtime_fault,
+        })
+        .dispatch(cmd)
+        {
+            super::commands::CommonCommandDispatch::Handled(effects) => {
+                if effects.potentially_dirty {
+                    *battery_potentially_dirty = true;
+                }
+                if let Some(response) = effects.response {
+                    pending_responses.push_back(response);
+                }
+                return;
+            }
+            super::commands::CommonCommandDispatch::PlatformSpecific(command) => command,
+        };
         match cmd {
             EmuCommand::StepFrames(input) => {
                 let input = *input;
                 *audio_recording_capture = input.audio.recording_capture;
                 let debugger_mutation = !input.debug_actions.memory_writes.is_empty();
+                let detached_request = speculation.request_detached_frame(
+                    backend,
+                    &input,
+                    last_cheats,
+                    *uncapped_mode,
+                    true,
+                );
                 let mut result = Self::handle_step_frames(
                     backend,
                     input,
@@ -115,68 +272,41 @@ impl EmuThread {
                     *uncapped_mode,
                     rewind_buffer,
                     rewind_seconds,
-                    &self.shared_framebuffer,
                     runtime_fault,
                 );
-                if !runtime_fault.can_step() {
-                    *uncapped_mode = false;
-                }
-                if debugger_mutation && runtime_fault.can_step() && audio_recording_capture.semantic
-                {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation);
-                }
-                if !result.audio_semantic_frames.is_empty() {
-                    result
-                        .audio_timeline_discontinuities
-                        .append(pending_audio_discontinuities);
-                }
+                let detached_frame = speculation.run_detached_frame(
+                    backend,
+                    detached_request,
+                    &result,
+                    runtime_fault.can_step(),
+                );
+                speculation.commit_primary_frame(
+                    &self.shared_framebuffer,
+                    backend.framebuffer(),
+                    detached_frame,
+                );
+                let potentially_dirty = super::commands::finalize_step_result(
+                    &mut result,
+                    debugger_mutation,
+                    *audio_recording_capture,
+                    pending_audio_discontinuities,
+                    runtime_fault,
+                    uncapped_mode,
+                );
                 pending_frames.push_back(result);
-            }
-            EmuCommand::SetAudioRecordingCapture {
-                capture,
-                acknowledged,
-            } => {
-                if capture.semantic && !audio_recording_capture.semantic {
-                    pending_audio_discontinuities.clear();
+                if potentially_dirty {
+                    *battery_potentially_dirty = true;
                 }
-                *audio_recording_capture = capture;
-                if let Some(acknowledged) = acknowledged {
-                    let _ = acknowledged.send(());
-                }
-            }
-            EmuCommand::SetSampleRate(rate) => {
-                backend.set_sample_rate(rate);
-            }
-            EmuCommand::SetUncapped(on) => {
-                *uncapped_mode = on && runtime_fault.can_step();
-                backend.set_apu_sample_generation_enabled(!*uncapped_mode);
             }
             EmuCommand::SetUncappedBatchSize(_) => {}
-            EmuCommand::ApplyMediaEvent(event) => {
-                let resp = match backend.apply_media_event(&event) {
-                    Ok(()) => match backend.media_slot_snapshot() {
-                        Some(snapshot) => EmuResponse::MediaEventApplied {
-                            event,
-                            snapshot,
-                            frame_count: backend.frame_count(),
-                        },
-                        None => EmuResponse::MediaEventFailed {
-                            event,
-                            error: "media slot disappeared after applying event".to_string(),
-                        },
-                    },
-                    Err(err) => EmuResponse::MediaEventFailed {
-                        event,
-                        error: err.to_string(),
-                    },
-                };
-                pending_responses.push_back(resp);
-            }
-            EmuCommand::SaveStateSlot(slot) => {
-                let resp = Self::save_state_sync(backend, slot);
-                pending_responses.push_back(resp);
-            }
+            EmuCommand::SaveStateSlot(slot) => match backend.slot_path(slot) {
+                Ok(path) => {
+                    Self::begin_save_state(backend, pending_storage, pending_responses, path)
+                }
+                Err(error) => {
+                    pending_responses.push_back(EmuResponse::SaveStateFailed(error.to_string()))
+                }
+            },
             EmuCommand::LoadStateSlot {
                 slot,
                 buttons_pressed,
@@ -189,25 +319,24 @@ impl EmuThread {
                     dpad_pressed,
                     &self.shared_framebuffer,
                 );
-                Self::finalize_load_state(
-                    &resp,
+                let loaded = (super::commands::LoadFinalizationContext {
                     rewind_buffer,
-                    *rewind_seconds,
-                    frame_duration_ns,
+                    rewind_seconds: *rewind_seconds,
                     backend,
-                    last_cheats,
-                );
-                if matches!(&resp, EmuResponse::LoadStateOk { .. })
-                    && audio_recording_capture.semantic
-                {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
+                    cheats: last_cheats,
+                    audio_recording_capture: *audio_recording_capture,
+                    pending_audio_discontinuities,
+                })
+                .finalize(&resp, |loaded_frame_duration| {
+                    *frame_duration_ns = loaded_frame_duration;
+                });
+                if loaded {
+                    *battery_potentially_dirty = true;
                 }
                 pending_responses.push_back(resp);
             }
             EmuCommand::SaveStateToPath(path) => {
-                let resp = Self::encode_and_write_state(backend, &path);
-                pending_responses.push_back(resp);
+                Self::begin_save_state(backend, pending_storage, pending_responses, path);
             }
             EmuCommand::LoadStateFromPath {
                 path,
@@ -223,36 +352,36 @@ impl EmuThread {
                     dpad_pressed,
                     &self.shared_framebuffer,
                 );
-                Self::finalize_load_state(
-                    &resp,
+                let loaded = (super::commands::LoadFinalizationContext {
                     rewind_buffer,
-                    *rewind_seconds,
-                    frame_duration_ns,
+                    rewind_seconds: *rewind_seconds,
                     backend,
-                    last_cheats,
-                );
-                if matches!(&resp, EmuResponse::LoadStateOk { .. })
-                    && audio_recording_capture.semantic
-                {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
+                    cheats: last_cheats,
+                    audio_recording_capture: *audio_recording_capture,
+                    pending_audio_discontinuities,
+                })
+                .finalize(&resp, |loaded_frame_duration| {
+                    *frame_duration_ns = loaded_frame_duration;
+                });
+                if loaded {
+                    *battery_potentially_dirty = true;
                 }
                 pending_responses.push_back(resp);
             }
-            EmuCommand::AutoSaveState => {
-                let resp = match backend.auto_save_path() {
-                    Some(path) => Self::encode_and_write_state(backend, &path),
-                    None => EmuResponse::SaveStateFailed("no auto-save path".to_string()),
-                };
-                pending_responses.push_back(resp);
-            }
-            EmuCommand::AutoLoadState {
+            EmuCommand::InspectRecovery {
+                resume,
                 buttons_pressed,
                 dpad_pressed,
             } => {
-                let resp = match backend.auto_save_path() {
-                    Some(path) => {
-                        let result = backend.load_state_from_path(&path);
+                let resp = match recovery.inspect(backend) {
+                    RecoveryCandidate::Missing => EmuResponse::RecoveryMissing,
+                    RecoveryCandidate::Rejected(error) => EmuResponse::RecoveryRejected(error),
+                    RecoveryCandidate::Available {
+                        freshness,
+                        native_payload,
+                        path,
+                    } if should_load_recovery(freshness, resume) => {
+                        let result = backend.load_state_from_bytes(native_payload);
                         Self::respond_load_state(
                             backend,
                             result,
@@ -262,118 +391,33 @@ impl EmuThread {
                             &self.shared_framebuffer,
                         )
                     }
-                    None => EmuResponse::LoadStateFailed("no auto-save path".to_string()),
-                };
-                Self::finalize_load_state(
-                    &resp,
-                    rewind_buffer,
-                    *rewind_seconds,
-                    frame_duration_ns,
-                    backend,
-                    last_cheats,
-                );
-                if matches!(&resp, EmuResponse::LoadStateOk { .. })
-                    && audio_recording_capture.semantic
-                {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
-                }
-                pending_responses.push_back(resp);
-            }
-            EmuCommand::CaptureStateBytes => {
-                let resp = match backend.encode_state_bytes() {
-                    Ok(bytes) => EmuResponse::StateCaptured(bytes),
-                    Err(e) => EmuResponse::StateCaptureFailed(e.to_string()),
-                };
-                pending_responses.push_back(resp);
-            }
-            EmuCommand::ExecuteGuestCall(request) => {
-                let name = request.name.clone();
-                let resp = match backend.execute_guest_call(&request) {
-                    Ok((instructions, undo_state)) => EmuResponse::GuestCallCompleted {
-                        name,
-                        instructions,
-                        undo_state,
-                    },
-                    Err(error) => EmuResponse::GuestCallFailed {
-                        name,
-                        error: error.to_string(),
-                    },
-                };
-                types::publish_framebuffer(&self.shared_framebuffer, backend.framebuffer());
-                if matches!(&resp, EmuResponse::GuestCallCompleted { .. })
-                    && audio_recording_capture.semantic
-                {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::DebuggerMutation);
-                }
-                pending_responses.push_back(resp);
-            }
-            EmuCommand::UndoGuestCall(state) => {
-                let resp = if backend.supports_guest_calls() {
-                    match backend.load_state_from_bytes(state) {
-                        Ok(()) => EmuResponse::GuestCallUndone,
-                        Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
+                    RecoveryCandidate::Available { freshness, .. } => {
+                        EmuResponse::RecoveryAvailable(freshness)
                     }
-                } else {
-                    EmuResponse::GuestCallUndoFailed(
-                        "guest calls are not supported by this core".to_string(),
-                    )
                 };
-                types::publish_framebuffer(&self.shared_framebuffer, backend.framebuffer());
-                if matches!(&resp, EmuResponse::GuestCallUndone) && audio_recording_capture.semantic
-                {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::GuestCallUndo);
-                }
-                if matches!(&resp, EmuResponse::GuestCallUndone) {
-                    backend.discard_game_boy_printer_jobs();
+                let loaded = (super::commands::LoadFinalizationContext {
+                    rewind_buffer,
+                    rewind_seconds: *rewind_seconds,
+                    backend,
+                    cheats: last_cheats,
+                    audio_recording_capture: *audio_recording_capture,
+                    pending_audio_discontinuities,
+                })
+                .finalize(&resp, |loaded_frame_duration| {
+                    *frame_duration_ns = loaded_frame_duration;
+                });
+                if loaded {
+                    *battery_potentially_dirty = true;
                 }
                 pending_responses.push_back(resp);
             }
             EmuCommand::CaptureReplayStart { capture_id } => {
-                let resp = if !backend.supports_replay() {
-                    EmuResponse::ReplayStartCaptureFailed {
-                        capture_id,
-                        error: "replay capture is not supported by this core".to_string(),
-                    }
-                } else {
-                    match backend.encode_state_bytes() {
-                        Ok(bytes) => EmuResponse::ReplayStartCaptured {
-                            capture_id,
-                            start: Box::new(ReplayStartState {
-                                state_bytes: bytes,
-                                frame_count: backend.frame_count(),
-                                game_boy_cpu_cycles: backend.game_boy_cpu_cycles(),
-                                wonder_swan_cpu_cycles: backend.wonder_swan_cpu_cycles(),
-                                metadata: backend.replay_metadata(),
-                            }),
-                        },
-                        Err(e) => EmuResponse::ReplayStartCaptureFailed {
-                            capture_id,
-                            error: e.to_string(),
-                        },
-                    }
-                };
-                pending_responses.push_back(resp);
-            }
-            EmuCommand::CaptureReplayCheckpoint { frame } => {
-                let resp = if backend.supports_replay() {
-                    match backend.encode_state_bytes() {
-                        Ok(state_bytes) => {
-                            EmuResponse::ReplayCheckpointCaptured { frame, state_bytes }
-                        }
-                        Err(error) => EmuResponse::ReplayCheckpointCaptureFailed {
-                            frame,
-                            error: error.to_string(),
-                        },
-                    }
-                } else {
-                    EmuResponse::ReplayCheckpointCaptureFailed {
-                        frame,
-                        error: "replay capture is not supported by this core".to_string(),
-                    }
-                };
+                let resp = super::commands::capture_replay_start_response(
+                    backend,
+                    capture_id,
+                    None,
+                    || backend.replay_metadata(),
+                );
                 pending_responses.push_back(resp);
             }
             EmuCommand::LoadStateBytes {
@@ -395,98 +439,420 @@ impl EmuThread {
                     dpad_pressed,
                     &self.shared_framebuffer,
                 );
-                Self::finalize_load_state(
-                    &resp,
+                let loaded = (super::commands::LoadFinalizationContext {
                     rewind_buffer,
-                    *rewind_seconds,
-                    frame_duration_ns,
+                    rewind_seconds: *rewind_seconds,
                     backend,
-                    last_cheats,
-                );
-                if matches!(&resp, EmuResponse::LoadStateOk { .. })
-                    && audio_recording_capture.semantic
-                {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::StateLoad);
+                    cheats: last_cheats,
+                    audio_recording_capture: *audio_recording_capture,
+                    pending_audio_discontinuities,
+                })
+                .finalize(&resp, |loaded_frame_duration| {
+                    *frame_duration_ns = loaded_frame_duration;
+                });
+                if loaded {
+                    *battery_potentially_dirty = true;
                 }
                 pending_responses.push_back(resp);
             }
-            EmuCommand::SetGameBoySerialDevice(device) => {
-                backend.set_game_boy_serial_device(device);
+            EmuCommand::FlushBatterySram => Self::request_battery_flush(
+                backend,
+                recovery,
+                *save_recovery_on_shutdown,
+                pending_storage,
+                pending_responses,
+                next_battery_flush,
+                battery_dirty,
+                battery_flush_requested,
+                battery_potentially_dirty,
+                shutdown_requested,
+                speculation,
+                false,
+            ),
+            EmuCommand::RestoreStateBackup(path) => {
+                Self::begin_restore_state_backup(pending_storage, pending_responses, path)
             }
-            EmuCommand::QueueBardigunBarcodeScan(bytes) => {
-                let byte_count = bytes.len();
-                let response = match backend.queue_bardigun_barcode_scan(bytes) {
-                    Ok(()) => EmuResponse::BardigunBarcodeScanStarted(byte_count),
-                    Err(err) => EmuResponse::BardigunBarcodeScanFailed(err.to_string()),
-                };
-                pending_responses.push_back(response);
-            }
-            EmuCommand::TriggerBarcodeBoyScan(digits) => {
-                let response = match backend.trigger_barcode_boy_scan(&digits) {
-                    Ok(()) => EmuResponse::BarcodeBoyScanStarted,
-                    Err(err) => EmuResponse::BarcodeBoyScanFailed(err.to_string()),
-                };
-                pending_responses.push_back(response);
-            }
-            EmuCommand::RestoreGameBoyLinkState(state) => {
-                backend.restore_game_boy_link_replay_state(state);
-            }
-            EmuCommand::UpdateCheats(patches) => {
-                if backend.supports_cheats() {
-                    *last_cheats = patches;
-                    backend.install_rom_patches(last_cheats);
-                } else {
-                    last_cheats.clear();
-                }
-            }
-            EmuCommand::Rewind(steps) => {
-                let resp =
-                    Self::handle_rewind(backend, rewind_buffer, &self.shared_framebuffer, steps);
-                if matches!(&resp, EmuResponse::RewindOk { .. }) {
-                    backend.discard_game_boy_printer_jobs();
-                    backend.install_rom_patches(last_cheats);
-                    if audio_recording_capture.semantic {
-                        pending_audio_discontinuities
-                            .push(crate::audio_recorder::AudioTimelineDiscontinuity::Rewind);
-                    }
-                }
-                pending_responses.push_back(resp);
-            }
-            EmuCommand::Reset => {
-                backend.reset();
-                backend.install_rom_patches(last_cheats);
-                rewind_buffer.clear();
-                *runtime_fault = WorkerRuntimeFault::default();
-                if audio_recording_capture.semantic {
-                    pending_audio_discontinuities
-                        .push(crate::audio_recorder::AudioTimelineDiscontinuity::Reset);
-                }
-            }
-            EmuCommand::Shutdown => {
-                pending_responses.push_back(EmuResponse::ShutdownComplete);
-            }
+            EmuCommand::Shutdown => Self::request_battery_flush(
+                backend,
+                recovery,
+                *save_recovery_on_shutdown,
+                pending_storage,
+                pending_responses,
+                next_battery_flush,
+                battery_dirty,
+                battery_flush_requested,
+                battery_potentially_dirty,
+                shutdown_requested,
+                speculation,
+                true,
+            ),
+            EmuCommand::SetAudioRecordingCapture { .. }
+            | EmuCommand::SetSampleRate(_)
+            | EmuCommand::SetUncapped(_)
+            | EmuCommand::ApplyMediaEvent(_)
+            | EmuCommand::CaptureStateBytes
+            | EmuCommand::ExecuteGuestCall(_)
+            | EmuCommand::UndoGuestCall(_)
+            | EmuCommand::CaptureReplayCheckpoint { .. }
+            | EmuCommand::SetGameBoySerialDevice(_)
+            | EmuCommand::QueueBardigunBarcodeScan(_)
+            | EmuCommand::TriggerBarcodeBoyScan(_)
+            | EmuCommand::RestoreGameBoyLinkState(_)
+            | EmuCommand::UpdateCheats(_)
+            | EmuCommand::Rewind(_)
+            | EmuCommand::Reset => unreachable!("shared command escaped common dispatch"),
         }
     }
 
     pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
+        self.poll_storage();
         self.inner.borrow_mut().pending_frames.pop_front()
     }
 
     pub(crate) fn recv(&self) -> Option<EmuResponse> {
+        self.poll_storage();
         self.inner.borrow_mut().pending_responses.pop_front()
     }
 
     pub(crate) fn try_recv_response(&self) -> Option<EmuResponse> {
+        self.poll_storage();
         self.inner.borrow_mut().pending_responses.pop_front()
     }
 
-    pub(crate) fn shutdown(&mut self) {}
+    pub(crate) fn shutdown(&mut self) {
+        self.send(EmuCommand::Shutdown);
+    }
 
-    fn save_state_sync(backend: &EmuBackend, slot: u8) -> EmuResponse {
-        match backend.slot_path(slot) {
-            Ok(path) => Self::encode_and_write_state(backend, &path),
-            Err(e) => EmuResponse::SaveStateFailed(e.to_string()),
+    pub(crate) fn poll_persistence(&self) {
+        self.poll_storage();
+    }
+
+    fn is_storage_ordered_command(command: &EmuCommand) -> bool {
+        matches!(
+            command,
+            EmuCommand::SaveStateSlot(_)
+                | EmuCommand::LoadStateSlot { .. }
+                | EmuCommand::SaveStateToPath(_)
+                | EmuCommand::LoadStateFromPath { .. }
+                | EmuCommand::InspectRecovery { .. }
+                | EmuCommand::FlushBatterySram
+                | EmuCommand::RestoreStateBackup(_)
+                | EmuCommand::Shutdown
+        )
+    }
+
+    fn begin_save_state(
+        backend: &EmuBackend,
+        pending_storage: &mut Option<PendingStorage>,
+        pending_responses: &mut VecDeque<EmuResponse>,
+        path: PathBuf,
+    ) {
+        let captured = crate::platform::capture_save_writes(|| {
+            let bytes = backend.encode_state_bytes()?;
+            crate::save_paths::write_state_bytes_to_file_with_backup(&path, &bytes)
+        });
+        let (backup_created, writes) = match captured {
+            Ok(captured) => captured,
+            Err(error) => {
+                pending_responses.push_back(EmuResponse::SaveStateFailed(error.to_string()));
+                return;
+            }
+        };
+        let completion = Rc::new(RefCell::new(None));
+        crate::platform::commit_save_writes(writes, completion.clone());
+        *pending_storage = Some(PendingStorage {
+            completion,
+            response: StorageCompletion::SaveState {
+                path,
+                backup_created,
+            },
+        });
+    }
+
+    fn begin_restore_state_backup(
+        pending_storage: &mut Option<PendingStorage>,
+        pending_responses: &mut VecDeque<EmuResponse>,
+        path: PathBuf,
+    ) {
+        let captured = crate::platform::capture_save_writes(|| {
+            crate::save_paths::restore_state_file_backup(&path)
+        });
+        let (_, writes) = match captured {
+            Ok(captured) => captured,
+            Err(error) => {
+                pending_responses
+                    .push_back(EmuResponse::StateBackupRestoreFailed(error.to_string()));
+                return;
+            }
+        };
+        let completion = Rc::new(RefCell::new(None));
+        crate::platform::commit_save_writes(writes, completion.clone());
+        *pending_storage = Some(PendingStorage {
+            completion,
+            response: StorageCompletion::RestoreStateBackup { path },
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn request_battery_flush(
+        backend: &mut EmuBackend,
+        recovery: &mut RecoveryCoordinator,
+        save_recovery_on_shutdown: bool,
+        pending_storage: &mut Option<PendingStorage>,
+        pending_responses: &mut VecDeque<EmuResponse>,
+        next_battery_flush: &mut web_time::Instant,
+        battery_dirty: &mut crate::platform::DirtyEpoch<Vec<crate::platform::SaveWrite>>,
+        battery_flush_requested: &mut bool,
+        battery_potentially_dirty: &mut bool,
+        shutdown_requested: &mut bool,
+        speculation: &mut SpeculationBoundary,
+        shutdown: bool,
+    ) {
+        *shutdown_requested |= shutdown;
+        let terminal = *shutdown_requested;
+        let terminal_ready = terminal.then(|| speculation.prepare_terminal_persistence());
+        if pending_storage.is_some() {
+            *battery_flush_requested = true;
+            return;
+        }
+        *battery_flush_requested = false;
+        *next_battery_flush = web_time::Instant::now() + BATTERY_FLUSH_INTERVAL;
+        let captured = match terminal_ready {
+            Some(ready) => Self::capture_terminal_save_writes(
+                ready,
+                backend,
+                recovery,
+                save_recovery_on_shutdown,
+            ),
+            None => Self::capture_battery_save_writes(backend, recovery, false),
+        };
+        let (captured, snapshot) = match captured {
+            Ok(captured) => captured,
+            Err(error) => {
+                pending_responses.push_back(EmuResponse::SramFlushFailed(error.to_string()));
+                if terminal && save_recovery_on_shutdown {
+                    pending_responses.push_back(EmuResponse::RecoverySaveFailed(
+                        "browser recovery transaction could not be prepared".to_string(),
+                    ));
+                }
+                if std::mem::take(shutdown_requested) {
+                    pending_responses.push_back(EmuResponse::ShutdownComplete);
+                }
+                return;
+            }
+        };
+        let CapturedBatteryWrites {
+            path,
+            generation,
+            recovery_path,
+        } = captured;
+        let epoch = battery_dirty.observe(&snapshot);
+        if crate::platform::save_writes_are_committed(&snapshot) {
+            backend.acknowledge_battery_commit(true);
+            recovery.acknowledge_generation(generation);
+            *battery_potentially_dirty = false;
+            pending_responses.push_back(EmuResponse::SramFlushed(None));
+            if let Some(path) = recovery_path {
+                pending_responses.push_back(EmuResponse::RecoverySaved(path));
+            }
+            if std::mem::take(shutdown_requested) {
+                pending_responses.push_back(EmuResponse::ShutdownComplete);
+            }
+            return;
+        }
+
+        let completion = Rc::new(RefCell::new(None));
+        crate::platform::commit_save_writes(snapshot.clone(), completion.clone());
+        *pending_storage = Some(PendingStorage {
+            completion,
+            response: StorageCompletion::Battery {
+                epoch,
+                snapshot,
+                path,
+                generation,
+                recovery_path,
+                shutdown: terminal,
+            },
+        });
+    }
+
+    fn capture_terminal_save_writes(
+        _ready: super::speculation::TerminalPersistenceReady,
+        backend: &mut EmuBackend,
+        recovery: &RecoveryCoordinator,
+        save_recovery_on_shutdown: bool,
+    ) -> anyhow::Result<(CapturedBatteryWrites, Vec<crate::platform::SaveWrite>)> {
+        let include_recovery = save_recovery_on_shutdown && backend.supports_save_states();
+        Self::capture_battery_save_writes(backend, recovery, include_recovery)
+    }
+
+    fn capture_battery_save_writes(
+        backend: &mut EmuBackend,
+        recovery: &RecoveryCoordinator,
+        include_recovery: bool,
+    ) -> anyhow::Result<(CapturedBatteryWrites, Vec<crate::platform::SaveWrite>)> {
+        crate::platform::capture_save_writes(|| {
+            let path = backend.flush_battery_sram()?;
+            let generation = recovery.capture_generation_write(backend)?;
+            let recovery_path = include_recovery
+                .then(|| recovery.encode_and_capture_recovery_write(backend, generation))
+                .transpose()?;
+            Ok(CapturedBatteryWrites {
+                path,
+                generation,
+                recovery_path,
+            })
+        })
+    }
+
+    fn poll_storage(&self) {
+        let mut next_command = None;
+        {
+            let mut inner = self.inner.borrow_mut();
+            let completed = inner.pending_storage.as_ref().and_then(|pending| {
+                pending
+                    .completion
+                    .borrow_mut()
+                    .take()
+                    .map(|result| (result, ()))
+            });
+            if let Some((result, ())) = completed {
+                let pending = inner
+                    .pending_storage
+                    .take()
+                    .expect("pending storage disappeared");
+                Self::finish_storage(&mut inner, pending.response, result);
+            }
+
+            let browser_flush_due = browser_battery_flush_due(
+                inner.battery_flush_requested,
+                inner.battery_potentially_dirty,
+                web_time::Instant::now() >= inner.next_battery_flush,
+            );
+            if inner.pending_storage.is_none()
+                && inner.deferred_storage_commands.is_empty()
+                && browser_flush_due
+            {
+                let Inner {
+                    backend,
+                    pending_responses,
+                    pending_storage,
+                    next_battery_flush,
+                    battery_dirty,
+                    battery_flush_requested,
+                    battery_potentially_dirty,
+                    shutdown_requested,
+                    recovery,
+                    save_recovery_on_shutdown,
+                    speculation,
+                    ..
+                } = &mut *inner;
+                Self::request_battery_flush(
+                    backend,
+                    recovery,
+                    *save_recovery_on_shutdown,
+                    pending_storage,
+                    pending_responses,
+                    next_battery_flush,
+                    battery_dirty,
+                    battery_flush_requested,
+                    battery_potentially_dirty,
+                    shutdown_requested,
+                    speculation,
+                    false,
+                );
+            }
+            if inner.pending_storage.is_none() {
+                next_command = inner.deferred_storage_commands.pop_front();
+            }
+        }
+        if let Some(command) = next_command {
+            self.send(command);
+        }
+    }
+
+    fn finish_storage(
+        inner: &mut Inner,
+        completion: StorageCompletion,
+        result: Result<(), String>,
+    ) {
+        match completion {
+            StorageCompletion::SaveState {
+                path,
+                backup_created,
+            } => match result {
+                Ok(()) => inner.pending_responses.push_back(EmuResponse::SaveStateOk {
+                    path,
+                    backup_created,
+                }),
+                Err(error) => inner
+                    .pending_responses
+                    .push_back(EmuResponse::SaveStateFailed(error)),
+            },
+            StorageCompletion::RestoreStateBackup { path } => match result {
+                Ok(()) => inner
+                    .pending_responses
+                    .push_back(EmuResponse::StateBackupRestored(path)),
+                Err(error) => inner
+                    .pending_responses
+                    .push_back(EmuResponse::StateBackupRestoreFailed(error)),
+            },
+            StorageCompletion::Battery {
+                epoch,
+                snapshot,
+                path,
+                generation,
+                recovery_path,
+                shutdown,
+            } => match result {
+                Ok(()) => {
+                    let still_current = inner.battery_dirty.acknowledges(epoch, &snapshot)
+                        && inner.backend.battery_component_hash() == generation.component_sha256
+                        && crate::platform::save_writes_are_committed(&snapshot);
+                    if still_current {
+                        inner.backend.acknowledge_battery_commit(true);
+                        inner.recovery.acknowledge_generation(generation);
+                        inner.battery_potentially_dirty = false;
+                        inner
+                            .pending_responses
+                            .push_back(EmuResponse::SramFlushed(path));
+                        if let Some(path) = recovery_path {
+                            inner
+                                .pending_responses
+                                .push_back(EmuResponse::RecoverySaved(path));
+                        }
+                        if shutdown || inner.shutdown_requested {
+                            inner.shutdown_requested = false;
+                            inner
+                                .pending_responses
+                                .push_back(EmuResponse::ShutdownComplete);
+                        }
+                    } else {
+                        inner.backend.acknowledge_battery_commit(false);
+                        inner.battery_potentially_dirty = true;
+                        inner.battery_flush_requested = true;
+                    }
+                }
+                Err(error) => {
+                    inner.battery_potentially_dirty = true;
+                    inner
+                        .pending_responses
+                        .push_back(EmuResponse::SramFlushFailed(error));
+                    if shutdown && inner.save_recovery_on_shutdown {
+                        inner
+                            .pending_responses
+                            .push_back(EmuResponse::RecoverySaveFailed(
+                                "browser recovery transaction did not commit".to_string(),
+                            ));
+                    }
+                    if shutdown || inner.shutdown_requested {
+                        inner.shutdown_requested = false;
+                        inner
+                            .pending_responses
+                            .push_back(EmuResponse::ShutdownComplete);
+                    }
+                }
+            },
         }
     }
 
@@ -512,3 +878,6 @@ impl EmuThread {
         )
     }
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests;

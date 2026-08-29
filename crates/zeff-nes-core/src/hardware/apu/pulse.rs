@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct Pulse {
     is_pulse1: bool,
 

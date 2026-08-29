@@ -292,7 +292,8 @@ impl App {
         if metadata.rom_sha256 != current.rom_sha256 {
             anyhow::bail!("ROM hash differs");
         }
-        if metadata.firmware != current.firmware {
+        if !zeff_emu_common::replay::firmware_manifests_match(&metadata.firmware, &current.firmware)
+        {
             anyhow::bail!("firmware differs");
         }
         let current_cheat_hash = crate::cheats::enabled_patch_hash(
@@ -497,10 +498,17 @@ impl App {
                 frame,
                 mut state_bytes,
             } => {
-                crate::emu_backend::canonicalize_state_bytes_for_replay_hash(
+                if let Err(error) = crate::emu_backend::canonicalize_state_bytes_for_replay_hash(
                     self.active_system,
                     &mut state_bytes,
-                );
+                ) {
+                    return self.consume_replay_checkpoint_response(
+                        EmuResponse::ReplayCheckpointCaptureFailed {
+                            frame,
+                            error: error.to_string(),
+                        },
+                    );
+                }
                 let hash = zeff_firmware::sha256_bytes(&state_bytes);
                 if let Some(expected) = self
                     .recording
@@ -602,11 +610,17 @@ impl App {
         let active_system = self.active_system;
         std::thread::spawn(move || {
             if let Some(mut bytes) = final_state_bytes {
-                crate::emu_backend::canonicalize_state_bytes_for_replay_hash(
+                match crate::emu_backend::canonicalize_state_bytes_for_replay_hash(
                     active_system,
                     &mut bytes,
-                );
-                recorder.set_final_state_sha256(zeff_firmware::sha256_bytes(&bytes));
+                ) {
+                    Ok(()) => {
+                        recorder.set_final_state_sha256(zeff_firmware::sha256_bytes(&bytes));
+                    }
+                    Err(error) => {
+                        log::warn!("Saving replay without final state hash: {error}");
+                    }
+                }
             }
             if let Some(err) = capture_error {
                 log::warn!("Saving replay without final state hash: {err}");
@@ -765,6 +779,16 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         #[cfg(not(target_arch = "wasm32"))]
         EmuResponse::LinkDisconnected { .. } => "LinkDisconnected",
         EmuResponse::SramFlushed(_) => "SramFlushed",
+        EmuResponse::SramFlushFailed(_) => "SramFlushFailed",
+        EmuResponse::RecoveryMissing => "RecoveryMissing",
+        EmuResponse::RecoveryAvailable(_) => "RecoveryAvailable",
+        EmuResponse::RecoveryRejected(_) => "RecoveryRejected",
+        EmuResponse::RecoverySaved(_) => "RecoverySaved",
+        EmuResponse::RecoverySaveFailed(_) => "RecoverySaveFailed",
+        #[cfg(target_arch = "wasm32")]
+        EmuResponse::StateBackupRestored(_) => "StateBackupRestored",
+        #[cfg(target_arch = "wasm32")]
+        EmuResponse::StateBackupRestoreFailed(_) => "StateBackupRestoreFailed",
         EmuResponse::ShutdownComplete => "ShutdownComplete",
     }
 }

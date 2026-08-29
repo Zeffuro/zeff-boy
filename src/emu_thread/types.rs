@@ -167,8 +167,42 @@ pub(crate) struct GuestCallRequest {
     pub(crate) instruction_budget: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpeculationBlockers {
+    feature_disabled: bool,
+    replay_timeline_active: bool,
+    live_control_active: bool,
+}
+
+impl SpeculationBlockers {
+    pub(crate) const fn feature_disabled() -> Self {
+        Self {
+            feature_disabled: true,
+            replay_timeline_active: false,
+            live_control_active: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_app_for_test(
+        replay_timeline_active: bool,
+        live_control_active: bool,
+    ) -> Self {
+        Self {
+            feature_disabled: false,
+            replay_timeline_active,
+            live_control_active,
+        }
+    }
+
+    pub(crate) fn any(self) -> bool {
+        self.feature_disabled || self.replay_timeline_active || self.live_control_active
+    }
+}
+
 pub(crate) struct FrameInput {
     pub(crate) frames: usize,
+    pub(crate) speculation_blockers: SpeculationBlockers,
     pub(crate) replay_joypad_frames: Option<Vec<ReplayJoypadFrame>>,
     pub(crate) host_tilt: (f32, f32),
     pub(crate) host_camera_frame: Option<Vec<u8>>,
@@ -259,8 +293,8 @@ pub(crate) enum EmuCommand {
         buttons_pressed: u8,
         dpad_pressed: u8,
     },
-    AutoSaveState,
-    AutoLoadState {
+    InspectRecovery {
+        resume: bool,
         buttons_pressed: u8,
         dpad_pressed: u8,
     },
@@ -299,6 +333,10 @@ pub(crate) enum EmuCommand {
     #[cfg(not(target_arch = "wasm32"))]
     DisconnectLink,
     Rewind(usize),
+    #[cfg(target_arch = "wasm32")]
+    FlushBatterySram,
+    #[cfg(target_arch = "wasm32")]
+    RestoreStateBackup(PathBuf),
     Shutdown,
 }
 
@@ -380,6 +418,16 @@ pub(crate) enum EmuResponse {
         game_boy_link_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
     },
     SramFlushed(Option<String>),
+    RecoveryMissing,
+    RecoveryAvailable(crate::save_paths::recovery_state::RecoveryFreshness),
+    RecoveryRejected(String),
+    RecoverySaved(PathBuf),
+    RecoverySaveFailed(String),
+    SramFlushFailed(String),
+    #[cfg(target_arch = "wasm32")]
+    StateBackupRestored(PathBuf),
+    #[cfg(target_arch = "wasm32")]
+    StateBackupRestoreFailed(String),
     ShutdownComplete,
 }
 

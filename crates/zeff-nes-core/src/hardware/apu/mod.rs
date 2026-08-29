@@ -31,6 +31,7 @@ pub struct ApuChannelSnapshot {
     pub dmc_output_level: u8,
 }
 
+#[derive(Clone)]
 pub struct Apu {
     pub pulse1: pulse::Pulse,
     pub pulse2: pulse::Pulse,

@@ -36,9 +36,12 @@ impl Emulator {
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
-        crate::save_state::decode_state(self, data)?;
-        self.opcode_log.clear();
-        self.instruction_trace.clear();
+        let mut candidate = self.clone();
+        crate::save_state::decode_state(&mut candidate, data)?;
+        candidate.bus.apu.clear_host_output_after_state_load();
+        candidate.opcode_log.clear();
+        candidate.instruction_trace.clear();
+        *self = candidate;
         Ok(())
     }
 

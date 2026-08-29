@@ -122,13 +122,27 @@ impl crate::emu_core_trait::DebuggableEmulator for GbEmulator {
 pub(crate) struct GbBackend {
     pub(crate) emu: GbEmulator,
     paths: BackendPaths,
+    sram_recovery: crate::save_paths::SramRecoverySession,
 }
 
 impl GbBackend {
+    pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
+        self.emu
+            .dump_battery_sram()
+            .map(|bytes| vec![(crate::save_paths::SRAM_COMPONENT, bytes)])
+            .unwrap_or_default()
+    }
+
     pub(crate) fn new(emu: GbEmulator, rom_path: PathBuf) -> Self {
+        let sram_recovery = crate::save_paths::battery_sram_session(
+            &rom_path,
+            crate::emu_backend::ActiveSystem::Gb.storage_subdir(),
+            emu.rom_hash(),
+        );
         Self {
             emu,
             paths: BackendPaths::new(rom_path),
+            sram_recovery,
         }
     }
 
@@ -137,9 +151,15 @@ impl GbBackend {
         rom_path: PathBuf,
         source_path: PathBuf,
     ) -> Self {
+        let sram_recovery = crate::save_paths::battery_sram_session(
+            &rom_path,
+            crate::emu_backend::ActiveSystem::Gb.storage_subdir(),
+            emu.rom_hash(),
+        );
         Self {
             emu,
             paths: BackendPaths::with_source_path(rom_path, source_path),
+            sram_recovery,
         }
     }
 
@@ -195,7 +215,13 @@ impl EmulatorCore for GbBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
-        crate::save_paths::flush_battery_sram(self.paths.rom_path(), self.emu.dump_battery_sram())
+        crate::save_paths::flush_battery_sram(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            crate::emu_backend::ActiveSystem::Gb.storage_subdir(),
+            self.emu.rom_hash(),
+            self.emu.dump_battery_sram(),
+        )
     }
 
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -204,6 +230,10 @@ impl EmulatorCore for GbBackend {
 
     fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
         self.emu.load_state_from_bytes(bytes)
+    }
+
+    fn state_restores_framebuffer(&self) -> bool {
+        true
     }
 
     fn rom_path(&self) -> &Path {
@@ -422,7 +452,22 @@ pub(crate) fn try_load_battery_sram(
     emu: &mut GbEmulator,
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
-    crate::save_paths::try_load_battery_sram(rom_path, "GB", emu.has_battery(), |bytes| {
-        emu.load_battery_sram(bytes)
-    })
+    #[cfg(not(target_arch = "wasm32"))]
+    let result =
+        crate::save_paths::try_load_battery_sram(rom_path, "GB", emu.has_battery(), |bytes| {
+            emu.load_battery_sram(bytes)
+        });
+    #[cfg(target_arch = "wasm32")]
+    let result = crate::save_paths::try_load_browser_battery_sram(
+        crate::save_paths::BrowserBatterySramRequest {
+            rom_path,
+            system_subdir: "gb",
+            media_identity: emu.rom_hash(),
+            component: crate::save_paths::SRAM_COMPONENT,
+            system_label: "GB",
+            has_battery: emu.has_battery(),
+        },
+        |bytes| emu.load_battery_sram(bytes),
+    );
+    result
 }

@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, Timelike};
@@ -105,47 +104,7 @@ pub(crate) fn cache_dir() -> PathBuf {
 }
 
 pub(crate) fn write_save_data(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    use anyhow::Context;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create save directory: {}", parent.display()))?;
-    }
-
-    let suffix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let ext = path.extension().and_then(|v| v.to_str()).unwrap_or("tmp");
-    let tmp_path = path.with_extension(format!("{ext}.tmp.{suffix}"));
-
-    let write_result = (|| -> anyhow::Result<()> {
-        let mut file = std::fs::File::create(&tmp_path)
-            .with_context(|| format!("failed to create temp file: {}", tmp_path.display()))?;
-        file.write_all(bytes)
-            .with_context(|| format!("failed to write temp file: {}", tmp_path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to flush temp file: {}", tmp_path.display()))?;
-        Ok(())
-    })();
-
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(err);
-    }
-
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
-
-    if let Err(err) = std::fs::rename(&tmp_path, path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(err)
-            .map_err(|e| anyhow::anyhow!("failed to finalize save: {}: {e}", path.display()));
-    }
-
-    Ok(())
+    super::write_file_atomically(path, bytes)
 }
 
 pub(crate) fn save_data_exists(path: &Path) -> bool {

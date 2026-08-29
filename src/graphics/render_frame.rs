@@ -63,6 +63,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) active_save_slot: u8,
     pub(crate) can_undo_load_state: bool,
     pub(crate) can_undo_save_state: bool,
+    pub(crate) recovery_state_available: bool,
     pub(crate) archive_selection: Option<&'a PendingArchiveSelection>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) package_load: Option<PackageLoadView>,
@@ -500,6 +501,7 @@ impl Graphics {
                     active_save_slot: ctx.active_save_slot,
                     can_undo_load_state: ctx.can_undo_load_state,
                     can_undo_save_state: ctx.can_undo_save_state,
+                    recovery_state_available: ctx.recovery_state_available,
                     external_debugger: !ctx.show_debug_dock,
                     debugger_window_open: ctx.debugger_window_open,
                     debug_presentation: ctx.debug_presentation,
@@ -710,6 +712,8 @@ impl Graphics {
         );
 
         frame.present();
+        #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+        crate::app::browser_speculation_test::record_surface_present();
 
         Ok(RenderResult {
             actions: forwarded_actions,

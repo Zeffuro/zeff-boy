@@ -1,5 +1,6 @@
 use super::pulse::LENGTH_TABLE;
 
+#[derive(Clone)]
 pub struct Triangle {
     pub enabled: bool,
     pub length_counter: u8,

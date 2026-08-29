@@ -90,6 +90,8 @@ fn backend_with_board(board: PceHuCardBoard, image_len: usize) -> PceBackend {
         pce_memory_base_mode: PceMemoryBaseMode::Disabled,
         pce_arcade_card_mode: PceArcadeCardMode::Disabled,
         mouse_host_buttons: PadButtons::empty(),
+        sram_recovery: Default::default(),
+        memory_base_force_flush: false,
     };
     backend.project_presented_frame();
     backend
@@ -187,6 +189,41 @@ fn exact_lemmings_disc_automatically_selects_mouse_but_force_pad_wins() {
 }
 
 #[test]
+fn native_mouse_input_updates_buttons_and_motion_on_controller_lines() {
+    let mut backend =
+        PceBackend::new(rom_with_program(&[0xEA]), PathBuf::from("mouse.pce")).unwrap();
+    backend.set_pce_mouse_state(PceControllerMode::Mouse, 0x2D, -0x17, 0x03);
+
+    {
+        let controller = backend.machine.devices_mut().controller_mut();
+        controller.write_lines(true, false);
+        controller.write_lines(true, true);
+        controller.write_lines(true, false);
+        assert_eq!(controller.read_nibble(), 0x02);
+        controller.write_lines(false, false);
+        assert_eq!(controller.read_nibble(), 0x0C);
+        controller.write_lines(true, true);
+        controller.write_lines(true, false);
+        assert_eq!(controller.read_nibble(), 0x0D);
+        controller.write_lines(false, false);
+        assert_eq!(controller.read_nibble(), 0x0C);
+        controller.write_lines(true, true);
+        controller.write_lines(true, false);
+        assert_eq!(controller.read_nibble(), 0x0E);
+        controller.write_lines(false, false);
+        assert_eq!(controller.read_nibble(), 0x0C);
+        controller.write_lines(true, true);
+        controller.write_lines(true, false);
+        assert_eq!(controller.read_nibble(), 0x09);
+        controller.write_lines(false, false);
+        assert_eq!(controller.read_nibble(), 0x0C);
+    }
+
+    backend.set_pce_mouse_state(PceControllerMode::Mouse, 0, 0, 0);
+    assert_eq!(backend.machine.devices().controller().read_nibble(), 0x0F);
+}
+
+#[test]
 fn exact_deden_disc_automatically_selects_multitap_with_independent_five_pads() {
     let mut backend = backend_with_board(PceHuCardBoard::SystemCardV3, 0x40_000);
     backend.rom_hash = [0; 32];
@@ -234,6 +271,24 @@ fn exact_deden_disc_automatically_selects_multitap_with_independent_five_pads() 
     assert_eq!(p3.buttons(), PadButtons::SELECT);
     assert_eq!(p4.buttons(), PadButtons::RUN);
     assert_eq!(p5.buttons(), PadButtons::DOWN);
+
+    let controller = backend.machine.devices_mut().controller_mut();
+    controller.write_lines(true, false);
+    controller.write_lines(true, true);
+    controller.write_lines(true, false);
+    for (expected_high, expected_low) in [
+        (0x0F, 0x0E),
+        (0x0F, 0x0D),
+        (0x0F, 0x0B),
+        (0x0F, 0x07),
+        (0x0B, 0x0F),
+    ] {
+        assert_eq!(controller.read_nibble(), expected_high);
+        controller.write_lines(false, false);
+        assert_eq!(controller.read_nibble(), expected_low);
+        controller.write_lines(true, false);
+    }
+    assert_eq!(controller.read_nibble(), 0);
 }
 
 #[test]
@@ -472,6 +527,98 @@ fn memory_base_persistence_is_exact_transactional_and_coexists_with_cd_bram() {
     std::fs::remove_dir_all(temp_dir).unwrap();
 }
 
+#[test]
+fn restored_clean_memory_base_state_forces_one_exact_flush() {
+    let temp_dir = unique_temp_dir("memory-base-state-restore");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory_base_path = temp_dir.join("mb128.sav");
+    let mut backend = synthetic_cd_backend(PceHuCardBoard::SystemCardV1V2);
+    backend.paths = BackendPaths::new(temp_dir.join("disc.cue"));
+    backend.update_memory_base_mode(PceMemoryBaseMode::Enabled);
+
+    let restored = vec![0xA5; MEMORY_BASE128_RAM_LEN];
+    backend.load_memory_base128(&restored).unwrap();
+    let state = backend.encode_state_bytes().unwrap();
+
+    memory_base_write_byte(&mut backend, 0x3C);
+    backend
+        .flush_memory_base128_to_path(&memory_base_path)
+        .unwrap();
+    assert_ne!(std::fs::read(&memory_base_path).unwrap(), restored);
+
+    backend.load_state_from_bytes(state).unwrap();
+    assert!(backend.memory_base_force_flush);
+    assert!(
+        !backend
+            .machine
+            .devices()
+            .controller()
+            .memory_base128()
+            .is_dirty()
+    );
+    assert_eq!(
+        backend
+            .flush_memory_base128_to_path(&memory_base_path)
+            .unwrap(),
+        Some(memory_base_path.display().to_string())
+    );
+    assert_eq!(std::fs::read(&memory_base_path).unwrap(), restored);
+    assert_eq!(
+        backend
+            .flush_memory_base128_to_path(&memory_base_path)
+            .unwrap(),
+        None
+    );
+
+    std::fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn restored_disconnected_memory_base_leaves_primary_untouched() {
+    let temp_dir = unique_temp_dir("memory-base-disconnected-restore");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory_base_path = temp_dir.join("mb128.sav");
+    let primary = vec![0x3C; MEMORY_BASE128_RAM_LEN];
+    std::fs::write(&memory_base_path, &primary).unwrap();
+    let mut backend = synthetic_cd_backend(PceHuCardBoard::SystemCardV1V2);
+    backend.update_memory_base_mode(PceMemoryBaseMode::Disabled);
+    let state = backend.encode_state_bytes().unwrap();
+
+    backend.load_state_from_bytes(state).unwrap();
+    assert!(!backend.memory_base_force_flush);
+
+    assert_eq!(
+        backend
+            .flush_memory_base128_to_path(&memory_base_path)
+            .unwrap(),
+        None
+    );
+    assert_eq!(std::fs::read(&memory_base_path).unwrap(), primary);
+
+    std::fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn dirty_memory_base_flushes_after_disconnect() {
+    let temp_dir = unique_temp_dir("memory-base-dirty-disconnect");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let memory_base_path = temp_dir.join("mb128.sav");
+    let mut backend = synthetic_cd_backend(PceHuCardBoard::SystemCardV1V2);
+    backend.update_memory_base_mode(PceMemoryBaseMode::Enabled);
+    memory_base_write_byte(&mut backend, 0xA5);
+    backend.update_memory_base_mode(PceMemoryBaseMode::Disabled);
+
+    assert_eq!(
+        backend
+            .flush_memory_base128_to_path(&memory_base_path)
+            .unwrap(),
+        Some(memory_base_path.display().to_string())
+    );
+    assert_eq!(std::fs::read(&memory_base_path).unwrap()[0], 0xA5);
+
+    std::fs::remove_dir_all(temp_dir).unwrap();
+}
+
 fn synthetic_supergrafx_backend() -> PceBackend {
     let descriptor = PceCartridgeDescriptor::default()
         .with_required_hardware(zeff_pce_core::hardware::PceCartridgeHardware::SuperGrafx);
@@ -496,6 +643,8 @@ fn synthetic_supergrafx_backend() -> PceBackend {
         pce_memory_base_mode: PceMemoryBaseMode::Disabled,
         pce_arcade_card_mode: PceArcadeCardMode::Disabled,
         mouse_host_buttons: PadButtons::empty(),
+        sram_recovery: Default::default(),
+        memory_base_force_flush: false,
     };
     backend.project_presented_frame();
     backend
@@ -749,6 +898,41 @@ fn backend_state_roundtrips_connected_memory_base_ram_and_live_protocol() {
         zeff_pce_core::hardware::MemoryBase128Phase::IdentifySecond
     );
     assert_eq!(backend.encode_state_bytes().unwrap(), state);
+}
+
+#[test]
+fn battery_witness_includes_global_memory_base_contents() {
+    let mut backend = PceBackend::new(
+        rom_with_program(&[0xEA]),
+        PathBuf::from("memory-base-witness.pce"),
+    )
+    .unwrap();
+    let hash = |backend: &PceBackend| {
+        let components = backend.battery_components();
+        let borrowed = components
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect::<Vec<_>>();
+        crate::save_paths::recovery_state::canonical_battery_component_hash(&borrowed)
+    };
+    let before = hash(&backend);
+    let mut ram = backend
+        .machine
+        .devices()
+        .controller()
+        .memory_base128()
+        .ram()
+        .to_vec();
+    ram[17] ^= 0x80;
+    backend
+        .machine
+        .devices_mut()
+        .controller_mut()
+        .memory_base128_mut()
+        .load_ram(&ram)
+        .unwrap();
+
+    assert_ne!(hash(&backend), before);
 }
 
 fn pixel(frame: &[u8], x: usize, y: usize) -> [u8; 4] {

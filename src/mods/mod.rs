@@ -16,5 +16,5 @@ mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm::*;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

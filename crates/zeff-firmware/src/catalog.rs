@@ -66,7 +66,7 @@ pub const PCE_SYSTEM_CARD_V3_JAPAN_SHA256: [u8; 32] =
 pub const PCE_SYSTEM_CARD_V3_USA_SHA256: [u8; 32] =
     decode_sha256(b"cadac2725711b3c442bcf237b02f5a5210c96f17625c35fa58f009e0ed39e4db");
 pub const PCE_SYSTEM_CARD_ADPCM_FIXTURE_SHA256: [u8; 32] =
-    decode_sha256(b"a0a2c6a9e647f97cb531aa7c6b59e105e3681666c456e24c82075a9a5f777c52");
+    decode_sha256(b"4f85f6151a41a5b0244caa7fbb43cac8c67ceb596bcd6d6763028918d09cc81d");
 
 pub fn classify_pce_system_card_sha256(sha256: [u8; 32]) -> Option<PceSystemCardFirmware> {
     let (variant_id, region, tier, board) = match sha256 {
@@ -748,7 +748,7 @@ const CATALOG_SPECS: &[FirmwareSpec] = &[
             hashes: KnownHashes {
                 md5: None,
                 sha1: None,
-                sha256: Some("a0a2c6a9e647f97cb531aa7c6b59e105e3681666c456e24c82075a9a5f777c52"),
+                sha256: Some("4f85f6151a41a5b0244caa7fbb43cac8c67ceb596bcd6d6763028918d09cc81d"),
             },
         }],
     },

@@ -157,6 +157,7 @@ impl InstructionTraceRecord {
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionTraceStore {
     entries: Vec<InstructionTraceRecord>,
     capacity: usize,

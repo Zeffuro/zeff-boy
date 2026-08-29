@@ -27,6 +27,10 @@ fn automatic_symbol_loading_available(backend: &EmuBackend) -> bool {
     backend.supports_symbol_loading()
 }
 
+fn should_inspect_recovery(normal_rom_open: bool, supports_save_states: bool) -> bool {
+    normal_rom_open && supports_save_states
+}
+
 struct PreparedRomLoad {
     source_path: PathBuf,
     rom_path: PathBuf,
@@ -61,6 +65,7 @@ impl App {
             sample_rate: self.audio.as_ref().map(|audio| audio.sample_rate()),
             apply_mods: true,
             initial_input: Some(self.host_joypad_input_for_system(system)),
+            nes_load_battery_sram: true,
             sega8_video_standard: self
                 .settings
                 .emulation
@@ -126,6 +131,8 @@ impl App {
         system: ActiveSystem,
         auto_load_state: bool,
     ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.stop_emu_thread();
         let (backend, original_crc) =
             match self.init_backend(system, source_path, &rom_path, preloaded_data) {
                 Ok(result) => result,
@@ -188,6 +195,7 @@ impl App {
         self.debug_windows.disasm_target = None;
         self.undo_load_state = None;
         self.undo_save_state_path = None;
+        self.recovery_state_available = false;
 
         if self.recording.audio_recorder.is_some() {
             let next_audio_context = backend.audio_topology().map(|topology| {
@@ -236,38 +244,82 @@ impl App {
             self.toast_manager.info(format!("Loaded {rom_name}"));
         }
 
-        if auto_load_state
-            && self.settings.emulation.auto_save_state
-            && self.core_supports_save_states()
-        {
-            if let Some(thread) = &self.emu_thread {
-                let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
-                thread.send(EmuCommand::AutoLoadState {
-                    buttons_pressed,
-                    dpad_pressed,
-                });
-            }
-            match self.recv_cold_response() {
-                Some(EmuResponse::LoadStateOk {
-                    path: p,
-                    media_slot_snapshot,
-                    game_boy_serial_device,
-                }) => {
-                    self.media_slot_snapshot = media_slot_snapshot;
-                    if let Some(device) = game_boy_serial_device {
-                        self.game_boy_serial_device = device;
-                    }
-                    if let Some(thread) = &self.emu_thread {
-                        self.latest_frame = thread.shared_framebuffer().load_full();
-                    }
-                    log::info!("Auto-loaded state from {}", p);
-                    self.toast_manager.success("Resumed from auto-save");
-                }
-                Some(EmuResponse::LoadStateFailed(_)) => {}
-                _ => {}
-            }
+        if should_inspect_recovery(auto_load_state, self.core_supports_save_states()) {
+            self.inspect_recovery_after_normal_open();
         }
         self.refresh_slot_info();
+    }
+
+    pub(in crate::app) fn inspect_recovery_after_normal_open(&mut self) {
+        self.inspect_recovery(self.settings.emulation.resume_recovery_state);
+    }
+
+    pub(in crate::app) fn load_available_recovery(&mut self) {
+        self.inspect_recovery(true);
+    }
+
+    fn inspect_recovery(&mut self, resume: bool) {
+        if !self.core_supports_save_states() {
+            return;
+        }
+        let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
+        if let Some(thread) = &self.emu_thread {
+            thread.send(EmuCommand::InspectRecovery {
+                resume,
+                buttons_pressed,
+                dpad_pressed,
+            });
+        }
+        match self.recv_cold_response() {
+            Some(EmuResponse::LoadStateOk {
+                path,
+                media_slot_snapshot,
+                game_boy_serial_device,
+            }) => {
+                self.media_slot_snapshot = media_slot_snapshot;
+                if let Some(device) = game_boy_serial_device {
+                    self.game_boy_serial_device = device;
+                }
+                if let Some(thread) = &self.emu_thread {
+                    self.latest_frame = thread.shared_framebuffer().load_full();
+                }
+                log::info!("Resumed recovery state from {path}");
+                self.recovery_state_available = false;
+                self.toast_manager.success("Resumed recovery state");
+            }
+            Some(EmuResponse::RecoveryAvailable(freshness)) => {
+                use crate::save_paths::recovery_state::RecoveryFreshness;
+                let message = match freshness {
+                    RecoveryFreshness::Fresh => {
+                        self.recovery_state_available = true;
+                        "Recovery state available in File > Load State"
+                    }
+                    RecoveryFreshness::Stale => "A stale recovery state is available",
+                    RecoveryFreshness::Unknown | RecoveryFreshness::Inconsistent => {
+                        "Recovery state is available but could not be verified as fresh"
+                    }
+                };
+                if freshness != RecoveryFreshness::Fresh {
+                    self.recovery_state_available = false;
+                }
+                self.toast_manager.info(message);
+            }
+            Some(EmuResponse::RecoveryRejected(error)) => {
+                self.recovery_state_available = false;
+                log::warn!("Recovery state rejected: {error}");
+                self.toast_manager
+                    .error(format!("Recovery state was not loaded: {error}"));
+            }
+            Some(EmuResponse::RecoveryMissing) => {
+                self.recovery_state_available = false;
+            }
+            Some(EmuResponse::LoadStateFailed(error)) => {
+                log::warn!("Recovery state load failed: {error}");
+                self.toast_manager
+                    .error(format!("Recovery state was not loaded: {error}"));
+            }
+            _ => {}
+        }
     }
 
     fn load_rom_with_options(&mut self, path: &Path, auto_load_state: bool) {
@@ -431,14 +483,14 @@ impl App {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::preparation::{
         RomPreparationPoll, cancel_rom_preparation_slot, poll_rom_preparation_slot,
     };
     use super::{
         automatic_symbol_loading_available, dismiss_archive_selection_for_new_load,
-        is_native_archive_path,
+        is_native_archive_path, should_inspect_recovery,
     };
     use crate::emu_backend::{EmuBackend, PceBackend};
     use std::path::PathBuf;
@@ -472,6 +524,13 @@ mod tests {
             EmuBackend::from_pce(PceBackend::new(rom, PathBuf::from("symbols.pce")).unwrap());
 
         assert!(automatic_symbol_loading_available(&backend));
+    }
+
+    #[test]
+    fn recovery_inspection_is_limited_to_normal_supported_rom_opens() {
+        assert!(should_inspect_recovery(true, true));
+        assert!(!should_inspect_recovery(false, true));
+        assert!(!should_inspect_recovery(true, false));
     }
 
     #[test]

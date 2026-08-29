@@ -237,8 +237,20 @@ fn memory_region_dump_lines(
     Ok(lines)
 }
 
-pub(super) fn flush_battery(path: &Path, sram_bytes: Option<Vec<u8>>) {
-    match crate::save_paths::flush_battery_sram(path, sram_bytes) {
+pub(super) fn flush_battery(
+    recovery_session: &mut crate::save_paths::SramRecoverySession,
+    path: &Path,
+    system: ActiveSystem,
+    media_identity: [u8; 32],
+    sram_bytes: Option<Vec<u8>>,
+) {
+    match crate::save_paths::flush_battery_sram(
+        recovery_session,
+        path,
+        system.storage_subdir(),
+        media_identity,
+        sram_bytes,
+    ) {
         Ok(Some(save_path)) => log::info!("Saved battery RAM to {}", save_path),
         Ok(None) => {}
         Err(err) => log::error!("Failed to save battery RAM: {}", err),

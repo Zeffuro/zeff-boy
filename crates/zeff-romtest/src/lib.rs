@@ -6,13 +6,16 @@ mod baseline;
 mod cli;
 mod compat;
 mod fetch;
+mod fixtures;
 mod manifest;
 mod model;
 mod prepare;
+mod regional;
 mod report;
 mod runner;
 mod sources;
 mod summary;
+mod tooling_policy;
 mod util;
 
 #[cfg(test)]
@@ -106,6 +109,24 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> anyhow::Result<()> {
             }
             Ok(())
         }
+        cli::CommandKind::BuildFixture => {
+            let fixture = cli
+                .fixture
+                .context("build-fixture requires --fixture NAME")?;
+            let out_dir = cli
+                .fixture_out_dir
+                .as_deref()
+                .context("build-fixture requires --out-dir PATH")?;
+            fixtures::build_fixture(fixture, out_dir)
+        }
+        cli::CommandKind::BuildNesRegional => {
+            let out_dir = cli
+                .fixture_out_dir
+                .as_deref()
+                .context("build-nes-regional requires --out-dir PATH")?;
+            regional::build_nes_regional(out_dir)
+        }
+        cli::CommandKind::AuditTooling => tooling_policy::audit_repository(),
         cli::CommandKind::GenerateCompat => compat::generate_compat_manifest(&cli),
         cli::CommandKind::Summary => {
             if let Some(actual_path) = &cli.actual_json {

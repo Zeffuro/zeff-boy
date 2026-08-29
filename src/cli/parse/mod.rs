@@ -7,6 +7,7 @@ use self::input::{parse_input_event_arg, parse_input_script, parse_zapper_event_
 use self::numbers::{
     parse_pc_range_arg, parse_u8_arg, parse_u16_arg, parse_u64_arg, parse_usize_arg,
 };
+use self::tas::parse_tas_script;
 use self::values::{
     parse_dmg_palette_arg, parse_gba_audio_mute_list_arg, parse_gba_bg_layer_list_arg,
     parse_memory_dump_arg, parse_pce_arcade_card_mode_arg, parse_pce_controller_mode_arg,
@@ -18,6 +19,7 @@ use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
 mod bus;
 mod input;
 mod numbers;
+mod tas;
 #[cfg(test)]
 mod tests;
 mod values;
@@ -30,14 +32,38 @@ pub(crate) fn parse_args_from(
     args: impl IntoIterator<Item = impl Into<String>>,
 ) -> anyhow::Result<CliArgs> {
     let args: Vec<String> = args.into_iter().map(Into::into).collect();
+    validate_tas_project_args(&args)?;
     let mut mode_override: Option<HardwareModePreference> = None;
     let mut rom_path: Option<String> = None;
     let mut headless_enabled = false;
     let mut headless = HeadlessOptions::default();
+    let mut max_frames_explicit = false;
+    let mut external_input_seen = false;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--tas-verify" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--tas-verify requires a .ztas project path");
+                };
+                headless.tas_project_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--tas-branch" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--tas-branch requires a branch ID");
+                };
+                headless.tas_branch_id = Some(value.clone());
+                i += 2;
+            }
+            "--tas-export" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--tas-export requires a .zrpl output path");
+                };
+                headless.tas_export_path = Some(PathBuf::from(value));
+                i += 2;
+            }
             "--mode" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--mode requires one of: auto|dmg|sgb|cgb");
@@ -56,10 +82,14 @@ pub(crate) fn parse_args_from(
                 i += 1;
             }
             "--max-frames" => {
+                if headless.tas_script.is_some() {
+                    anyhow::bail!("--max-frames cannot be combined with --tas-script");
+                }
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--max-frames requires a numeric value");
                 };
                 headless.max_frames = parse_u64_arg(value, "--max-frames")?;
+                max_frames_explicit = true;
                 i += 2;
             }
             "--expect-serial" => {
@@ -324,6 +354,7 @@ pub(crate) fn parse_args_from(
                 i += 1;
             }
             "--press" | "--input" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires an input spec", args[i]);
                 };
@@ -333,6 +364,7 @@ pub(crate) fn parse_args_from(
                 i += 2;
             }
             "--press-p2" | "--input-p2" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires an input spec", args[i]);
                 };
@@ -342,6 +374,7 @@ pub(crate) fn parse_args_from(
                 i += 2;
             }
             "--press-p3" | "--input-p3" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires an input spec", args[i]);
                 };
@@ -351,6 +384,7 @@ pub(crate) fn parse_args_from(
                 i += 2;
             }
             "--press-p4" | "--input-p4" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires an input spec", args[i]);
                 };
@@ -360,6 +394,7 @@ pub(crate) fn parse_args_from(
                 i += 2;
             }
             "--press-p5" | "--input-p5" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires an input spec", args[i]);
                 };
@@ -369,6 +404,7 @@ pub(crate) fn parse_args_from(
                 i += 2;
             }
             "--input-script" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--input-script requires a file path");
                 };
@@ -376,6 +412,7 @@ pub(crate) fn parse_args_from(
                 i += 2;
             }
             "--input-script-p2" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--input-script-p2 requires a file path");
                 };
@@ -383,6 +420,7 @@ pub(crate) fn parse_args_from(
                 i += 2;
             }
             "--input-script-p3" | "--input-script-p4" | "--input-script-p5" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires a file path", args[i]);
                 };
@@ -395,7 +433,35 @@ pub(crate) fn parse_args_from(
                 }
                 i += 2;
             }
+            "--tas-script" => {
+                anyhow::ensure!(
+                    headless.tas_script.is_none(),
+                    "--tas-script may only be specified once"
+                );
+                anyhow::ensure!(
+                    !max_frames_explicit,
+                    "--tas-script cannot be combined with --max-frames"
+                );
+                anyhow::ensure!(
+                    !external_input_seen,
+                    "--tas-script cannot be combined with other input options"
+                );
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--tas-script requires a file path");
+                };
+                let parsed = parse_tas_script(value)?;
+                let [p1, p2, p3, p4, p5] = parsed.inputs;
+                headless.input_events.extend(p1);
+                headless.input_events_p2.extend(p2);
+                headless.input_events_p3.extend(p3);
+                headless.input_events_p4.extend(p4);
+                headless.input_events_p5.extend(p5);
+                headless.max_frames = parsed.frames;
+                headless.tas_script = Some(parsed.script);
+                i += 2;
+            }
             "--zapper" => {
+                external_input_seen = true;
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--zapper requires an event spec");
                 };
@@ -564,6 +630,17 @@ pub(crate) fn parse_args_from(
     if headless.replay_peer_live_link && headless.replay_peer_path.is_none() {
         anyhow::bail!("--replay-peer-live-link requires --replay-peer");
     }
+    if headless.tas_script.is_some() && headless.replay_path.is_some() {
+        anyhow::bail!("--tas-script cannot be combined with --replay");
+    }
+    if headless.tas_script.is_some() && external_input_seen {
+        anyhow::bail!("--tas-script cannot be combined with other input options");
+    }
+    if headless.tas_project_path.is_none()
+        && (headless.tas_branch_id.is_some() || headless.tas_export_path.is_some())
+    {
+        anyhow::bail!("--tas-branch and --tas-export require --tas-verify");
+    }
 
     Ok(CliArgs {
         rom_path,
@@ -574,4 +651,78 @@ pub(crate) fn parse_args_from(
             None
         },
     })
+}
+
+fn validate_tas_project_args(args: &[String]) -> anyhow::Result<()> {
+    let verify_count = args
+        .iter()
+        .filter(|arg| arg.as_str() == "--tas-verify")
+        .count();
+    let branch_count = args
+        .iter()
+        .filter(|arg| arg.as_str() == "--tas-branch")
+        .count();
+    let export_count = args
+        .iter()
+        .filter(|arg| arg.as_str() == "--tas-export")
+        .count();
+    if verify_count == 0 {
+        return Ok(());
+    }
+    anyhow::ensure!(verify_count == 1, "--tas-verify may only be specified once");
+    anyhow::ensure!(branch_count <= 1, "--tas-branch may only be specified once");
+    anyhow::ensure!(export_count <= 1, "--tas-export may only be specified once");
+    anyhow::ensure!(
+        args.iter().any(|arg| arg == "--headless"),
+        "--tas-verify requires --headless"
+    );
+
+    let mut project_path = None;
+    let mut export_path = None;
+    let mut positional = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--headless" => i += 1,
+            flag @ ("--tas-verify" | "--tas-branch" | "--tas-export") => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("{flag} requires a value");
+                };
+                anyhow::ensure!(!value.starts_with("--"), "{flag} requires a value");
+                if flag == "--tas-verify" {
+                    project_path = Some(PathBuf::from(value));
+                } else if flag == "--tas-export" {
+                    export_path = Some(PathBuf::from(value));
+                }
+                i += 2;
+            }
+            option if option.starts_with("--") => {
+                anyhow::bail!("{option} cannot be combined with --tas-verify");
+            }
+            value => {
+                positional.push(value);
+                i += 1;
+            }
+        }
+    }
+
+    anyhow::ensure!(
+        positional.len() == 1,
+        "--tas-verify requires exactly one ROM path"
+    );
+    let project_path = project_path.expect("--tas-verify was counted");
+    anyhow::ensure!(
+        crate::tas_project::TasProject::is_project_path(&project_path),
+        "--tas-verify requires a .ztas project path"
+    );
+    if let Some(export_path) = export_path {
+        anyhow::ensure!(
+            export_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("zrpl")),
+            "--tas-export requires a .zrpl output path"
+        );
+    }
+    Ok(())
 }

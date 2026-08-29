@@ -94,8 +94,8 @@ fn run_loaded_paired_game_boy_replay_headless(
 
     let mut left_final_state = left.encode_state_bytes()?;
     let mut right_final_state = right.encode_state_bytes()?;
-    canonicalize_state_bytes_for_replay_hash(ActiveSystem::GameBoy, &mut left_final_state);
-    canonicalize_state_bytes_for_replay_hash(ActiveSystem::GameBoy, &mut right_final_state);
+    canonicalize_state_bytes_for_replay_hash(ActiveSystem::GameBoy, &mut left_final_state)?;
+    canonicalize_state_bytes_for_replay_hash(ActiveSystem::GameBoy, &mut right_final_state)?;
     let left_final_state_hash = sha256_hex(&left_final_state);
     let right_final_state_hash = sha256_hex(&right_final_state);
     validate_embedded_final_state_hash(

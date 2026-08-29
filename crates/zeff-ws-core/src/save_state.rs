@@ -6,7 +6,7 @@ use crate::hardware::bus::{UartSaveState, WonderSwanTxEvent};
 use crate::hardware::cpu::CpuState;
 
 const MAGIC: &[u8; 8] = b"ZEFFWS1\0";
-const VERSION: u8 = 11;
+const VERSION: u8 = 12;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::new();
@@ -109,6 +109,7 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     for _ in apu.channel_mutes {
         w.u8(0);
     }
+    w.vec(emu.framebuffer())?;
     Ok(w.finish())
 }
 
@@ -315,6 +316,9 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     } else {
         emu.bus.apu.reset();
     }
+    if version >= 12 {
+        r.vec_into(emu.bus.ppu.framebuffer_mut())?;
+    }
     r.finish()?;
     Ok(())
 }
@@ -512,6 +516,7 @@ impl<'a> StateReader<'a> {
 mod tests {
     use super::*;
     use crate::hardware::cartridge::compute_footer_checksum;
+    use crate::hardware::constants::{FRAMEBUFFER_LEN, SCREEN_HEIGHT};
 
     fn rom_with_reset_code(code: &[u8]) -> Vec<u8> {
         let mut rom = vec![0xFF; 0x10000];
@@ -559,6 +564,95 @@ mod tests {
         assert_eq!(restored.io_peek8(0x0081), 0x02);
         assert_eq!(restored.io_peek8(0x0088), 0xF8);
         assert_eq!(restored.io_peek8(0x0090), 0x01);
+    }
+
+    #[test]
+    fn public_load_restores_framebuffer_immediately() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut saved = Emulator::from_rom_data(&rom).unwrap();
+        for (index, byte) in saved.bus.ppu.framebuffer_mut().iter_mut().enumerate() {
+            *byte = index.wrapping_mul(37) as u8;
+        }
+        let expected = saved.framebuffer().to_vec();
+        let state = saved.encode_state().unwrap();
+
+        let mut restored = Emulator::from_rom_data(&rom).unwrap();
+        restored.bus.ppu.framebuffer_mut().fill(0xA5);
+        restored.load_state(&state).unwrap();
+
+        assert_eq!(restored.framebuffer(), expected);
+        assert_eq!(restored.encode_state().unwrap(), state);
+    }
+
+    #[test]
+    fn restored_historical_pixels_survive_partial_frame_completion() {
+        let rom = rom_with_reset_code(&[0xEB, 0xFE]);
+        let mut control = Emulator::from_rom_data(&rom).unwrap();
+        control.bus.ppu.framebuffer_mut().fill(0xA5);
+        control
+            .bus
+            .ppu
+            .set_timing_state((SCREEN_HEIGHT - 1) as u16, 0, false);
+        let state = control.encode_state().unwrap();
+
+        let mut restored = Emulator::from_rom_data(&rom).unwrap();
+        restored.load_state(&state).unwrap();
+        assert_eq!(restored.framebuffer(), control.framebuffer());
+
+        control.step_frame();
+        restored.step_frame();
+
+        assert_eq!(&control.framebuffer()[..4], &[0xA5; 4]);
+        assert_eq!(restored.framebuffer(), control.framebuffer());
+        assert_eq!(
+            restored.encode_state().unwrap(),
+            control.encode_state().unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_v11_load_preserves_target_framebuffer() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut saved = Emulator::from_rom_data(&rom).unwrap();
+        saved.bus.ppu.framebuffer_mut().fill(0x3C);
+        let mut legacy = saved.encode_state().unwrap();
+        legacy[8] = 11;
+        legacy.truncate(legacy.len() - 4 - FRAMEBUFFER_LEN);
+
+        let mut restored = Emulator::from_rom_data(&rom).unwrap();
+        restored.bus.ppu.framebuffer_mut().fill(0xA7);
+        restored.load_state(&legacy).unwrap();
+
+        assert!(restored.framebuffer().iter().all(|&byte| byte == 0xA7));
+        assert_eq!(restored.cpu_registers(), saved.cpu_registers());
+        assert_eq!(restored.ppu_debug_snapshot(), saved.ppu_debug_snapshot());
+    }
+
+    #[test]
+    fn public_load_rejects_invalid_framebuffer_sections_without_mutation() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut source = Emulator::from_rom_data(&rom).unwrap();
+        source.bus.ppu.framebuffer_mut().fill(0x3C);
+        let state = source.encode_state().unwrap();
+        let framebuffer_offset = state.len() - 4 - FRAMEBUFFER_LEN;
+
+        let mut target = Emulator::from_rom_data(&rom).unwrap();
+        target.bus.ppu.framebuffer_mut().fill(0xA7);
+        target.step_frame();
+        let before_state = target.encode_state().unwrap();
+        let before_framebuffer = target.framebuffer().to_vec();
+
+        let mut bad_length = state.clone();
+        bad_length[framebuffer_offset..framebuffer_offset + 4]
+            .copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(target.load_state(&bad_length).is_err());
+        assert_eq!(target.encode_state().unwrap(), before_state);
+        assert_eq!(target.framebuffer(), before_framebuffer);
+
+        let truncated = &state[..state.len() - 1];
+        assert!(target.load_state(truncated).is_err());
+        assert_eq!(target.encode_state().unwrap(), before_state);
+        assert_eq!(target.framebuffer(), before_framebuffer);
     }
 
     #[test]
@@ -615,5 +709,27 @@ mod tests {
 
         assert_eq!(right.io_peek8(0x00B3) & 0x01, 0x01);
         assert_eq!(right.io_peek8(0x00B1), 0xA5);
+    }
+
+    #[test]
+    fn public_load_rejects_trailing_data_without_mutation() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut emu = Emulator::new(&rom, 48_000).unwrap();
+        emu.set_input(0x03, 0x05);
+        emu.step_frame();
+        let before = emu.encode_state().unwrap();
+        let framebuffer = emu.framebuffer().to_vec();
+        let mut expected = emu.clone();
+        let mut invalid = before.clone();
+        invalid.push(0xA5);
+
+        assert!(emu.load_state(&invalid).is_err());
+        assert_eq!(emu.encode_state().unwrap(), before);
+        assert_eq!(emu.framebuffer(), framebuffer);
+        let mut actual_audio = Vec::new();
+        let mut expected_audio = Vec::new();
+        emu.drain_audio_samples_into(&mut actual_audio);
+        expected.drain_audio_samples_into(&mut expected_audio);
+        assert_eq!(actual_audio, expected_audio);
     }
 }

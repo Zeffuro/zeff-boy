@@ -81,6 +81,7 @@ pub(super) fn load_pce_cd_backend(
         loaded_disc.disc.content_hash() == super::super::pce_cd::ADPCM_FIXTURE_DISC_SHA256,
     )?;
     let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
+    check_minimum_system_card(loaded_disc.source_disc_sha256, system_card_profile)?;
     let system_card_board = pce_system_card_board(system_card_profile);
     let mut backend = super::super::PceBackend::new_cdrom2(
         system_card.bytes,
@@ -162,6 +163,7 @@ fn finish_prepared_pce_cd_backend(
         loaded_disc.disc.content_hash() == super::super::pce_cd::ADPCM_FIXTURE_DISC_SHA256,
     )?;
     let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
+    check_minimum_system_card(loaded_disc.source_disc_sha256, system_card_profile)?;
     let system_card_board = pce_system_card_board(system_card_profile);
     check_package_cancel(cancel)?;
     progress.set_phase(super::super::pce_cd_archive::PceCdPackageLoadPhase::Building);
@@ -408,6 +410,28 @@ fn pce_system_card_board(profile: zeff_firmware::PceSystemCardFirmware) -> PceHu
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn check_minimum_system_card(
+    source_disc_sha256: [u8; 32],
+    selected: zeff_firmware::PceSystemCardFirmware,
+) -> Result<(), super::super::pce_cd::PceCdLoadError> {
+    let Some(title) = super::super::pce_profiles::canonical_title_metadata(source_disc_sha256)
+    else {
+        return Ok(());
+    };
+    let Some(required) = title.minimum_system_card else {
+        return Ok(());
+    };
+    if selected.tier() < required {
+        return Err(super::super::pce_cd::PceCdLoadError::SystemCardTierTooLow {
+            title: title.title,
+            required,
+            selected: selected.tier(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn pce_cd_console_wiring(config: &BackendLoadConfig, content_sha256: [u8; 32]) -> PceConsoleWiring {
     const KNOWN_TURBOGRAFX_CD_SHA256: [[u8; 32]; 2] = [
         [
@@ -476,4 +500,60 @@ pub(super) fn load_pce_cd_backend(
     _config: &BackendLoadConfig,
 ) -> anyhow::Result<LoadedBackend> {
     anyhow::bail!("PC Engine CD-ROM2 direct CUE sets are not available in the browser build")
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::emu_backend::pce_profiles::LEMMINGS_JAPAN_CANONICAL_DISC_SHA256;
+
+    fn firmware(sha256: [u8; 32]) -> zeff_firmware::PceSystemCardFirmware {
+        zeff_firmware::classify_pce_system_card_sha256(sha256).unwrap()
+    }
+
+    #[test]
+    fn known_super_cd_title_rejects_system_card_v2() {
+        let result = check_minimum_system_card(
+            LEMMINGS_JAPAN_CANONICAL_DISC_SHA256,
+            firmware(zeff_firmware::PCE_SYSTEM_CARD_V2_JAPAN_SHA256),
+        );
+        assert_eq!(
+            result,
+            Err(
+                crate::emu_backend::pce_cd::PceCdLoadError::SystemCardTierTooLow {
+                    title: "Lemmings",
+                    required: zeff_firmware::PceSystemCardTier::Version3,
+                    selected: zeff_firmware::PceSystemCardTier::Version2,
+                }
+            )
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Lemmings requires System Card Version3, but the selected firmware is Version2"
+        );
+    }
+
+    #[test]
+    fn known_super_cd_title_accepts_system_card_v3() {
+        assert!(
+            check_minimum_system_card(
+                LEMMINGS_JAPAN_CANONICAL_DISC_SHA256,
+                firmware(zeff_firmware::PCE_SYSTEM_CARD_V3_JAPAN_SHA256),
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn unknown_title_remains_allowed_with_system_card_v2() {
+        let mut unknown = LEMMINGS_JAPAN_CANONICAL_DISC_SHA256;
+        unknown[31] ^= 1;
+        assert!(
+            check_minimum_system_card(
+                unknown,
+                firmware(zeff_firmware::PCE_SYSTEM_CARD_V2_JAPAN_SHA256),
+            )
+            .is_ok()
+        );
+    }
 }

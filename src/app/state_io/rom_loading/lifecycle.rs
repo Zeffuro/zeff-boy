@@ -69,6 +69,10 @@ impl App {
     }
 
     pub(in crate::app) fn stop_game(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.pending_wasm_rom_after_flush = None;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         let preparation_pending = self.pending_rom_preparation.is_some();
         #[cfg(target_arch = "wasm32")]
@@ -84,7 +88,10 @@ impl App {
         self.release_pce_mouse(false);
 
         self.save_current_cheats();
+        #[cfg(not(target_arch = "wasm32"))]
         self.stop_emu_thread();
+        #[cfg(target_arch = "wasm32")]
+        self.stop_emu_thread_for_user_stop();
         if let Some(audio) = &mut self.audio {
             audio.discard_queued_samples();
         }
@@ -109,6 +116,7 @@ impl App {
         self.last_displayed_frame = None;
         self.undo_load_state = None;
         self.undo_save_state_path = None;
+        self.recovery_state_available = false;
         self.media_slot_snapshot = None;
         self.recording.pending_media_commands.clear();
         self.rom_info.rom_path = None;
@@ -153,7 +161,11 @@ impl App {
         self.debug_windows.mod_state.clear();
         self.ws_display_rotated = false;
         self.toast_manager.set_paused(false);
+        #[cfg(not(target_arch = "wasm32"))]
         self.toast_manager.success("Stopped emulation");
+        #[cfg(target_arch = "wasm32")]
+        self.toast_manager
+            .info("Stopping emulation; committing battery save");
         self.refresh_slot_info();
     }
 

@@ -20,11 +20,61 @@ pub struct ReplayPlayer {
     event_cursor: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ReplayLoadLimits {
+    pub max_file_bytes: u64,
+    pub max_metadata_bytes: usize,
+    pub max_state_bytes: usize,
+    pub max_frames: usize,
+    pub max_decoded_camera_bytes: usize,
+}
+
 impl ReplayPlayer {
     pub fn load(path: &Path) -> Result<Self> {
-        let mut file = File::open(path)
-            .with_context(|| format!("failed to open replay file: {}", path.display()))?;
+        Self::load_with_limits(path, None)
+    }
 
+    pub fn load_bounded(path: &Path, limits: ReplayLoadLimits) -> Result<Self> {
+        let file = File::open(path)
+            .with_context(|| format!("failed to open replay file: {}", path.display()))?;
+        if file.metadata()?.len() > limits.max_file_bytes {
+            bail!("replay file exceeds its bounded load limit");
+        }
+        let read_limit = limits
+            .max_file_bytes
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("bounded replay file limit overflow"))?;
+        let mut bytes = Vec::new();
+        file.take(read_limit).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > limits.max_file_bytes {
+            bail!("replay file exceeds its bounded load limit");
+        }
+        Self::decode(
+            std::io::Cursor::new(bytes),
+            &path.display().to_string(),
+            Some(limits),
+        )
+    }
+
+    fn load_with_limits(path: &Path, limits: Option<ReplayLoadLimits>) -> Result<Self> {
+        let file = File::open(path)
+            .with_context(|| format!("failed to open replay file: {}", path.display()))?;
+        if let Some(limits) = limits
+            && file.metadata()?.len() > limits.max_file_bytes
+        {
+            bail!("replay file exceeds its bounded load limit");
+        }
+        Self::decode(file, &path.display().to_string(), limits)
+    }
+
+    pub fn decode_bounded(bytes: &[u8], limits: ReplayLoadLimits) -> Result<Self> {
+        if bytes.len() as u64 > limits.max_file_bytes {
+            bail!("replay file exceeds its bounded load limit");
+        }
+        Self::decode(std::io::Cursor::new(bytes), "memory", Some(limits))
+    }
+
+    fn decode(mut file: impl Read, source: &str, limits: Option<ReplayLoadLimits>) -> Result<Self> {
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic)?;
         if &magic != MAGIC {
@@ -41,18 +91,27 @@ impl ReplayPlayer {
         let mut first_len_buf = [0u8; 4];
         file.read_exact(&mut first_len_buf)?;
         let first_len = u32::from_le_bytes(first_len_buf) as usize;
+        if let Some(limits) = limits
+            && first_len > limits.max_metadata_bytes.max(limits.max_state_bytes)
+        {
+            bail!("replay first block exceeds its bounded load limit");
+        }
         let mut first_block = vec![0u8; first_len];
         file.read_exact(&mut first_block)?;
 
         if legacy_v1_save_state_block(&first_block) {
+            if limits.is_some_and(|limits| first_len > limits.max_state_bytes) {
+                bail!("replay save state exceeds its bounded load limit");
+            }
             let mut input_data = Vec::new();
             file.read_to_end(&mut input_data)?;
-            let frames = decode_legacy_v1_input_frames(&input_data)?;
+            let frames =
+                decode_legacy_v1_input_frames(&input_data, limits.map(|limits| limits.max_frames))?;
 
             log::info!(
                 "Loaded legacy replay: {} frames from {}",
                 frames.len(),
-                path.display()
+                source
             );
 
             return Ok(Self {
@@ -64,25 +123,34 @@ impl ReplayPlayer {
             });
         }
 
+        if limits.is_some_and(|limits| first_len > limits.max_metadata_bytes) {
+            bail!("replay metadata exceeds its bounded load limit");
+        }
+
         let metadata = ReplayMetadata::decode(&first_block).context("invalid replay metadata")?;
+        let required_frames = limits
+            .map(|limits| validate_bounded_metadata_frames(&metadata, limits.max_frames))
+            .transpose()?;
 
         let mut state_len_buf = [0u8; 4];
         file.read_exact(&mut state_len_buf)?;
         let state_len = u32::from_le_bytes(state_len_buf) as usize;
+        if limits.is_some_and(|limits| state_len > limits.max_state_bytes) {
+            bail!("replay save state exceeds its bounded load limit");
+        }
 
         let mut save_state = vec![0u8; state_len];
         file.read_exact(&mut save_state)?;
 
         let mut input_data = Vec::new();
         file.read_to_end(&mut input_data)?;
-        let mut frames = decode_input_frames(&input_data, version)?;
+        let mut frames = decode_input_frames(&input_data, version, limits)?;
+        if let (Some(limits), Some(required_frames)) = (limits, required_frames) {
+            validate_bounded_padding(&frames, required_frames, limits.max_decoded_camera_bytes)?;
+        }
         pad_frames_to_metadata_events(&mut frames, &metadata);
 
-        log::info!(
-            "Loaded replay: {} frames from {}",
-            frames.len(),
-            path.display()
-        );
+        log::info!("Loaded replay: {} frames from {}", frames.len(), source);
 
         Ok(Self {
             save_state,
@@ -264,16 +332,24 @@ impl ReplayPlayer {
     }
 }
 
-fn decode_input_frames(input_data: &[u8], version: u32) -> Result<Vec<ReplayJoypadFrame>> {
+fn decode_input_frames(
+    input_data: &[u8],
+    version: u32,
+    limits: Option<ReplayLoadLimits>,
+) -> Result<Vec<ReplayJoypadFrame>> {
     if input_data.len() < 4 {
         bail!("replay input stream is missing frame count");
     }
     let frame_count =
         u32::from_le_bytes([input_data[0], input_data[1], input_data[2], input_data[3]]) as usize;
+    if limits.is_some_and(|limits| frame_count > limits.max_frames) {
+        bail!("replay frame count exceeds its bounded load limit");
+    }
 
     let mut frames = Vec::with_capacity(frame_count);
     let mut offset = 4usize;
     let mut previous_camera_frame: Option<Vec<u8>> = None;
+    let mut decoded_camera_bytes = 0usize;
     for frame_index in 0..frame_count {
         let fixed_len = if version == VERSION {
             FRAME_FIXED_BYTES
@@ -314,6 +390,14 @@ fn decode_input_frames(input_data: &[u8], version: u32) -> Result<Vec<ReplayJoyp
                 Some(bytes)
             }
         };
+        if let Some(camera_frame) = &camera_frame {
+            decoded_camera_bytes = decoded_camera_bytes
+                .checked_add(camera_frame.len())
+                .ok_or_else(|| anyhow::anyhow!("decoded replay camera size overflow"))?;
+            if limits.is_some_and(|limits| decoded_camera_bytes > limits.max_decoded_camera_bytes) {
+                bail!("decoded replay camera data exceeds its bounded load limit");
+            }
+        }
         frames.push(ReplayJoypadFrame {
             buttons: chunk[0],
             dpad: chunk[1],
@@ -360,12 +444,18 @@ fn legacy_v1_save_state_block(bytes: &[u8]) -> bool {
     bytes.starts_with(LEGACY_GB_SAVE_STATE_MAGIC) || bytes.starts_with(LEGACY_NES_SAVE_STATE_MAGIC)
 }
 
-fn decode_legacy_v1_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFrame>> {
+fn decode_legacy_v1_input_frames(
+    input_data: &[u8],
+    max_frames: Option<usize>,
+) -> Result<Vec<ReplayJoypadFrame>> {
     if !input_data.len().is_multiple_of(2) {
         bail!(
             "legacy replay input stream has odd byte length: {}",
             input_data.len()
         );
+    }
+    if max_frames.is_some_and(|max_frames| input_data.len() / 2 > max_frames) {
+        bail!("legacy replay frame count exceeds its bounded load limit");
     }
 
     Ok(input_data
@@ -374,6 +464,57 @@ fn decode_legacy_v1_input_frames(input_data: &[u8]) -> Result<Vec<ReplayJoypadFr
         .iter()
         .map(|chunk| ReplayJoypadFrame::p1(chunk[0], chunk[1]))
         .collect())
+}
+
+fn validate_bounded_metadata_frames(metadata: &ReplayMetadata, max_frames: usize) -> Result<usize> {
+    let max_frames_u64 = u64::try_from(max_frames).unwrap_or(u64::MAX);
+    let mut required_frames = 0u64;
+    for event in &metadata.events {
+        let required = event
+            .required_frame_count()
+            .ok_or_else(|| anyhow::anyhow!("replay event frame count overflow"))?;
+        if required > max_frames_u64 {
+            bail!("replay event exceeds the bounded frame limit");
+        }
+        required_frames = required_frames.max(required);
+    }
+    for checkpoint in &metadata.checkpoints {
+        if checkpoint.frame > max_frames_u64 {
+            bail!("replay checkpoint exceeds the bounded frame limit");
+        }
+        required_frames = required_frames.max(checkpoint.frame);
+    }
+    usize::try_from(required_frames).map_err(Into::into)
+}
+
+fn validate_bounded_padding(
+    frames: &[ReplayJoypadFrame],
+    required_frames: usize,
+    max_decoded_camera_bytes: usize,
+) -> Result<()> {
+    if required_frames <= frames.len() {
+        return Ok(());
+    }
+    let decoded_camera_bytes = frames.iter().try_fold(0usize, |total, frame| {
+        total
+            .checked_add(frame.camera_frame.as_ref().map_or(0, Vec::len))
+            .ok_or_else(|| anyhow::anyhow!("decoded replay camera size overflow"))
+    })?;
+    let pad_camera_bytes = frames
+        .last()
+        .and_then(|frame| frame.camera_frame.as_ref())
+        .map_or(Ok(0), |camera| {
+            (required_frames - frames.len())
+                .checked_mul(camera.len())
+                .ok_or_else(|| anyhow::anyhow!("padded replay camera size overflow"))
+        })?;
+    let total_camera_bytes = decoded_camera_bytes
+        .checked_add(pad_camera_bytes)
+        .ok_or_else(|| anyhow::anyhow!("padded replay camera size overflow"))?;
+    if total_camera_bytes > max_decoded_camera_bytes {
+        bail!("padded replay camera data exceeds its bounded load limit");
+    }
+    Ok(())
 }
 
 fn read_replay_input_exact<'a>(

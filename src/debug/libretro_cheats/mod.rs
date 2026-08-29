@@ -279,5 +279,5 @@ fn parse_tree_blob_names(json_body: &str, platform: LibretroPlatform) -> Vec<Str
     names
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

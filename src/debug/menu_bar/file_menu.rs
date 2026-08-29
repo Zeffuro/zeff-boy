@@ -8,6 +8,7 @@ pub(super) struct FileMenuState<'a> {
     pub active_slot: u8,
     pub can_undo_load_state: bool,
     pub can_undo_save_state: bool,
+    pub recovery_state_available: bool,
     pub is_recording_audio: bool,
     pub is_recording_replay: bool,
     pub is_playing_replay: bool,
@@ -95,6 +96,16 @@ pub(super) fn draw(
             }
             if ui.button("Load from File...").clicked() {
                 actions.push(MenuAction::LoadStateFile);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    state.recovery_state_available,
+                    egui::Button::new("Load Recovery State"),
+                )
+                .clicked()
+            {
+                actions.push(MenuAction::LoadRecoveryState);
                 ui.close();
             }
         });

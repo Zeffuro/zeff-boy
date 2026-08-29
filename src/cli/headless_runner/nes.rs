@@ -23,6 +23,8 @@ pub(super) fn run_nes_headless(
     } else {
         NesEmulator::new(rom_data, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)?
     };
+    let mut sram_recovery =
+        crate::save_paths::battery_sram_session(path, "nes", emulator.rom_hash());
     if !opts.no_sram
         && let Some(sram_path) = crate::emu_backend::nes::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {
@@ -173,6 +175,13 @@ pub(super) fn run_nes_headless(
             emulator.step_frame();
         }
         frames_run = frame_number;
+        check_tas_assertions(
+            opts,
+            frames_run,
+            u32::from(emulator.cpu_pc()),
+            emulator.framebuffer(),
+            || emulator.encode_state(),
+        )?;
 
         write_screenshot_if_requested(
             opts,
@@ -248,6 +257,7 @@ pub(super) fn run_nes_headless(
             break;
         }
     }
+    ensure_tas_completed(opts, frames_run)?;
 
     if opts.trace_opcodes {
         println!("[nes-op-tail] ---- last {} ops ----", tail.len());
@@ -298,7 +308,13 @@ pub(super) fn run_nes_headless(
         }
     }
     if !opts.no_sram {
-        flush_battery(path, emulator.dump_persistent_data());
+        flush_battery(
+            &mut sram_recovery,
+            path,
+            ActiveSystem::Nes,
+            emulator.rom_hash(),
+            emulator.dump_persistent_data(),
+        );
     }
     fail_on_stuck_if_needed("nes", stuck.as_ref(), opts)?;
 

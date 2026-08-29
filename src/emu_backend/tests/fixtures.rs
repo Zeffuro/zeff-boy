@@ -60,6 +60,17 @@ pub(super) fn build_gba_test_rom() -> Vec<u8> {
     rom
 }
 
+pub(super) fn build_gba_sram_rtc_test_rom() -> Vec<u8> {
+    build_gba_sram_test_rom(*b"BPEE")
+}
+
+pub(super) fn build_gba_sram_test_rom(game_code: [u8; 4]) -> Vec<u8> {
+    let mut rom = build_gba_test_rom();
+    rom[0xAC..0xB0].copy_from_slice(&game_code);
+    rom.extend_from_slice(b"SRAM_V113");
+    rom
+}
+
 pub(super) fn build_ws_test_rom() -> Vec<u8> {
     let mut rom = vec![0xFF; 0x10000];
     rom[0] = 0xF4;

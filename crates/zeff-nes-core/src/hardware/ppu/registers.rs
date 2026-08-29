@@ -1,5 +1,6 @@
 use crate::hardware::constants::*;
 
+#[derive(Clone)]
 pub struct PpuRegisters {
     pub ctrl: u8,
     pub mask: u8,

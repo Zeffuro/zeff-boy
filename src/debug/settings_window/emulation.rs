@@ -196,10 +196,35 @@ pub(super) fn draw(
     );
     ui.checkbox(&mut settings.emulation.frame_skip, "Frame skip when behind")
         .on_hover_text("Drops host timing debt; emulated frames still run.");
-    ui.checkbox(
-        &mut settings.emulation.auto_save_state,
-        "Auto save/load state",
+    let recovery_save = ui.checkbox(
+        &mut settings.emulation.save_recovery_state,
+        "Save recovery state when stopping",
     );
+    #[cfg(target_arch = "wasm32")]
+    recovery_save.on_hover_text(
+        "Keep this page open until saving finishes; abruptly closing it can interrupt browser storage.",
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = recovery_save;
+    ui.checkbox(
+        &mut settings.emulation.resume_recovery_state,
+        "Resume fresh recovery state automatically",
+    );
+    if settings.emulation.recovery_migration_notice_pending {
+        ui.group(|ui| {
+            ui.label("Automatic save and resume are now separate settings.");
+            ui.horizontal(|ui| {
+                if ui.button("Keep automatic resume").clicked() {
+                    settings.emulation.resume_recovery_state = true;
+                    settings.emulation.recovery_migration_notice_pending = false;
+                }
+                if ui.button("Keep resume off").clicked() {
+                    settings.emulation.resume_recovery_state = false;
+                    settings.emulation.recovery_migration_notice_pending = false;
+                }
+            });
+        });
+    }
     ui.checkbox(
         &mut settings.emulation.pause_on_unfocus,
         "Pause when window loses focus",

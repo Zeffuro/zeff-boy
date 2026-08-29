@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 use crate::baseline::{BaselineDiffKind, BaselineReport, compare_baseline};
 use crate::cli::TestFilter;
+use crate::fixtures::{FixtureKind, fixture_bytes};
 use crate::manifest::{expand_manifest_tests, select_tests, validate_tests};
 use crate::model::*;
 use crate::report::{junit_failure_status, junit_report};
@@ -255,8 +258,8 @@ kind = "test_rom"
 license = "MIT OR Apache-2.0"
 license_confidence = "verified"
 redistributable = true
-source_url = "scripts/build-pce-cd-adpcm-fixture.ps1"
-source_version = "repository script"
+source_url = "crates/zeff-romtest/src/fixtures.rs"
+source_version = "repository Rust fixture builder"
 
 [tests.rom]
 path = "rom-tests/cache/pce/sample.cue"
@@ -569,6 +572,23 @@ fn sha256_validation_rejects_bad_values() {
     assert!(!is_valid_sha256_hex(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"
     ));
+}
+
+#[test]
+fn generated_fixture_bytes_match_committed_manifest_hashes() {
+    for kind in [
+        FixtureKind::Sega8,
+        FixtureKind::PceCdAdpcmIrq,
+        FixtureKind::PceVdcFetchContention,
+    ] {
+        for (name, bytes, expected_hash) in fixture_bytes(kind) {
+            let actual_hash = Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            assert_eq!(actual_hash, expected_hash, "fixture {name}");
+        }
+    }
 }
 
 #[test]

@@ -36,6 +36,7 @@ impl From<FetchedInstruction> for WsOpcodeRecord {
     }
 }
 
+#[derive(Clone)]
 pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,

@@ -34,14 +34,19 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
 
     let mut pos = first_offset;
     loop {
-        if pos + 8 > footer_start {
+        let header_end = pos
+            .checked_add(8)
+            .ok_or_else(|| anyhow!("BESS block header offset overflow"))?;
+        if header_end > footer_start {
             bail!("BESS block header truncated");
         }
         let id = &bytes[pos..pos + 4];
         let len = read_u32_le(&bytes[pos + 4..]) as usize;
-        let data_start = pos + 8;
-        let data_end = data_start + len;
-        if data_end > bytes.len() {
+        let data_start = header_end;
+        let data_end = data_start
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("BESS block data offset overflow"))?;
+        if data_end > footer_start {
             bail!("BESS block data truncated");
         }
 
@@ -49,6 +54,11 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
             if len != 0 {
                 bail!("BESS END block has non-zero length");
             }
+            // The BESS specification says END is the last block. SameBoy has
+            // nevertheless emitted fixed zero padding between END and the
+            // footer for SGB states with commands disabled. Keep portable
+            // import tolerant of that producer quirk; Zeff's own native-v13
+            // parser and exporter remain strict about END/footer adjacency.
             break;
         }
 

@@ -36,6 +36,10 @@ impl DebugSamples {
         }
         out
     }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -305,6 +309,30 @@ impl Apu {
         self.output_pairs_generated = state.output_pairs_generated;
         self.direct_pairs_generated = state.direct_pairs_generated;
         self.psg_pairs_generated = state.psg_pairs_generated;
+    }
+
+    pub(crate) fn clear_host_output_after_state_load(&mut self) {
+        self.sample_buffer.clear();
+        for history in &mut self.direct_debug_history {
+            history.clear();
+        }
+        self.master_debug_history.clear();
+        self.psg.clear_host_output_after_state_load();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed_host_output_for_state_load_test(&mut self) {
+        self.sample_buffer.extend([0.25, -0.5]);
+        for (index, history) in self.direct_debug_history.iter_mut().enumerate() {
+            history.push((index + 1) as f32);
+        }
+        self.master_debug_history.push(3.0);
+        self.psg.seed_host_output_for_state_load_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn psg_host_output_state_for_test(&self) -> (usize, u64) {
+        self.psg.host_output_state_for_test()
     }
 }
 

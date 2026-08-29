@@ -232,6 +232,18 @@ impl Bus {
         }
     }
 
+    pub(crate) fn ppu_lcd_framebuffer(&self) -> &[u8] {
+        &self.io.ppu.framebuffer
+    }
+
+    pub(crate) fn restore_ppu_lcd_framebuffer(&mut self, framebuffer: Box<[u8]>) {
+        debug_assert_eq!(
+            framebuffer.len(),
+            crate::hardware::ppu::SCREEN_W * crate::hardware::ppu::SCREEN_H * 4
+        );
+        self.io.ppu.framebuffer = framebuffer;
+    }
+
     pub fn ppu_lcdc(&self) -> u8 {
         self.io.ppu.lcdc.bits()
     }
@@ -343,6 +355,10 @@ impl Bus {
         self.io.ppu.debug_flags.bg = bg;
         self.io.ppu.debug_flags.window = window;
         self.io.ppu.debug_flags.sprites = sprites;
+    }
+
+    pub(crate) fn ppu_debug_flags(&self) -> crate::hardware::ppu::PpuDebugFlags {
+        self.io.ppu.debug_flags
     }
 
     pub fn set_ppu_sgb_mode(&mut self, enabled: bool) {

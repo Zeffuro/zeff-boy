@@ -99,6 +99,11 @@ pub(crate) enum PceCdLoadError {
         expected: zeff_firmware::PceSystemCardRegion,
         actual: zeff_firmware::PceSystemCardRegion,
     },
+    SystemCardTierTooLow {
+        title: &'static str,
+        required: zeff_firmware::PceSystemCardTier,
+        selected: zeff_firmware::PceSystemCardTier,
+    },
     Archive(String),
     Disc(String),
 }
@@ -119,6 +124,14 @@ impl Display for PceCdLoadError {
             Self::NoSupportedArchiveContent => {
                 formatter.write_str("archive contains no supported ROM or CUE set")
             }
+            Self::SystemCardTierTooLow {
+                title,
+                required,
+                selected,
+            } => write!(
+                formatter,
+                "{title} requires System Card {required:?}, but the selected firmware is {selected:?}"
+            ),
             _ => write!(formatter, "unsupported PC Engine CD set: {self:?}"),
         }
     }

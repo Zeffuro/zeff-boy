@@ -1,11 +1,19 @@
+mod commands;
 #[cfg(not(target_arch = "wasm32"))]
 mod emu_loop;
 #[cfg(not(target_arch = "wasm32"))]
+mod persistence;
+mod recovery;
+#[cfg(not(target_arch = "wasm32"))]
 mod runner;
 mod shared;
+mod speculation;
 #[cfg(not(target_arch = "wasm32"))]
 mod state;
 mod types;
+
+#[cfg(test)]
+mod contract_tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
@@ -25,7 +33,7 @@ pub(crate) use types::{
     AudioConfig, AudioRecordingCapture, EmuCommand, EmuResponse, FrameInput, FrameResult,
     GuestCallRequest, JoypadInput, MemorySearchRequest, PceMouseInput, RenderSettings,
     ReplayJoypadFrame, ReplayStartState, ReusableBuffers, SharedFramebuffer, SnapshotRequest,
-    WorkerRuntimeFault, ZapperInput,
+    SpeculationBlockers, WorkerRuntimeFault, ZapperInput,
 };
 
 pub(crate) const DEFAULT_REWIND_SECONDS: usize = 10;
