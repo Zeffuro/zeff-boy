@@ -133,9 +133,6 @@ fn create_sibling_temp(target: &Path) -> Result<(PathBuf, File)> {
 }
 
 fn validate_file_bytes(file: &mut File, expected: &[u8]) -> Result<()> {
-    // This catches validator/checkpoint mutation before publication. On Unix, a hostile process
-    // running as the same user can still rewrite this inode after the comparison, just as it can
-    // rewrite the published target; callers therefore require a trusted destination directory.
     file.rewind()?;
     let mut actual = Vec::new();
     file.take(
@@ -197,9 +194,7 @@ fn create_macos_publication_guard(
     source_file: &File,
     target: &Path,
 ) -> std::io::Result<(PathBuf, File)> {
-    // macOS rejects descriptor links through fdescfs /dev/fd with EPERM. Copying directly to
-    // the final path would expose a partial destination, so create a unique sibling guard from
-    // the held, already-validated descriptor and atomically rename that complete guard instead.
+    // macOS rejects descriptor links, so publish through a complete sibling guard.
     let file_name = target
         .file_name()
         .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;

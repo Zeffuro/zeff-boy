@@ -13,6 +13,7 @@ mod prepare;
 mod regional;
 mod report;
 mod runner;
+mod source_size_policy;
 mod sources;
 mod summary;
 mod tooling_policy;
@@ -127,6 +128,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> anyhow::Result<()> {
             regional::build_nes_regional(out_dir)
         }
         cli::CommandKind::AuditTooling => tooling_policy::audit_repository(),
+        cli::CommandKind::AuditSourceSize => source_size_policy::audit_repository(),
         cli::CommandKind::GenerateCompat => compat::generate_compat_manifest(&cli),
         cli::CommandKind::Summary => {
             if let Some(actual_path) = &cli.actual_json {

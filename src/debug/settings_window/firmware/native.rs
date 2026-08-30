@@ -22,7 +22,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         .add_enabled(!busy, egui::Button::new("Import firmware..."))
         .clicked()
         && let Some(path) = crate::platform::FileDialog::new()
-            .add_filter("Firmware", &["bin", "rom", "bios", "sms", "gg"])
+            .add_filter("Firmware", &["bin", "rom", "bios", "col", "sms", "gg"])
             .set_title("Import firmware")
             .pick_file()
     {
@@ -452,6 +452,10 @@ mod tests {
         assert_eq!(inventory.entries().len(), 1);
         assert!(rows.iter().any(|row| {
             row.firmware_id == "nintendo.fds.bios"
+                && row.status == FirmwareInventoryStatusKind::NotFound
+        }));
+        assert!(rows.iter().any(|row| {
+            row.firmware_id == "coleco.vision.bios"
                 && row.status == FirmwareInventoryStatusKind::NotFound
         }));
         let _ = std::fs::remove_dir_all(dir);

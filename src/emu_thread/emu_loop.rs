@@ -22,6 +22,9 @@ use super::{
     AudioRecordingCapture, DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
     REWIND_CAPTURE_INTERVAL_FRAMES, SharedFramebuffer, TcpLinkMode, WorkerRuntimeFault,
 };
+use tas_control::TasControl;
+
+mod tas_control;
 
 const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -56,6 +59,7 @@ pub(super) struct EmuLoop {
     recovery: RecoveryCoordinator,
     speculation: SpeculationBoundary,
     save_recovery_on_shutdown: bool,
+    tas_control: TasControl,
 }
 
 pub(super) struct EmuLoopConfig {
@@ -112,6 +116,7 @@ impl EmuLoop {
             recovery,
             speculation: SpeculationBoundary::default(),
             save_recovery_on_shutdown: config.save_recovery_on_shutdown,
+            tas_control: TasControl::new(),
         }
     }
 
@@ -189,6 +194,10 @@ impl EmuLoop {
     }
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
+        let command = match self.dispatch_tas_control(command) {
+            std::ops::ControlFlow::Continue(command) => command,
+            std::ops::ControlFlow::Break(keep_running) => return keep_running,
+        };
         self.speculation.invalidate();
         let command = match (super::commands::CommonCommandContext {
             backend: &mut self.backend,
@@ -583,6 +592,14 @@ impl EmuLoop {
                 return false;
             }
 
+            EmuCommand::AcquireTasControl { .. }
+            | EmuCommand::ExecuteTasControl(_)
+            | EmuCommand::AdvanceTasControl(_)
+            | EmuCommand::RollbackTasControl { .. }
+            | EmuCommand::CommitTasControl { .. } => {
+                unreachable!("TAS control command escaped authority dispatch")
+            }
+
             EmuCommand::SetAudioRecordingCapture { .. }
             | EmuCommand::SetSampleRate(_)
             | EmuCommand::SetUncapped(_)
@@ -846,32 +863,6 @@ impl EmuLoop {
         if self.resp_tx.send(EmuResponse::ShutdownComplete).is_err() {
             log::debug!("shutdown: completion response dropped (receiver closed)");
         }
-    }
-
-    fn finish_shutdown(&mut self) {
-        self.disconnect_tcp_link();
-        self.handle_shutdown();
-    }
-
-    fn command_wait_timeout(&self, now: std::time::Instant) -> Option<Duration> {
-        let link_timeout = self
-            .pending_tcp_link
-            .is_some()
-            .then_some(PENDING_LINK_POLL_INTERVAL);
-        let save_timeout = if self.periodic_battery_flush_blocked() {
-            None
-        } else {
-            self.battery_flush.wait_timeout(now)
-        };
-        match (link_timeout, save_timeout) {
-            (Some(left), Some(right)) => Some(left.min(right)),
-            (Some(timeout), None) | (None, Some(timeout)) => Some(timeout),
-            (None, None) => None,
-        }
-    }
-
-    fn periodic_battery_flush_blocked(&self) -> bool {
-        self.pending_tcp_link.is_some() || self.tcp_link.is_some()
     }
 
     fn flush_battery_sram_if_due(&mut self, now: std::time::Instant) {

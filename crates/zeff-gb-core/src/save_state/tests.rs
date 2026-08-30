@@ -1,8 +1,10 @@
 use super::encode::encode_legacy_v12_state_bytes;
 use super::{
-    SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef, decode_state,
-    encode_state_bytes,
+    SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef,
+    TAS_DETERMINISM_ABI_ID, TAS_STATE_FORMAT_COMPATIBILITY_ID, decode_state, encode_state_bytes,
+    inspect_current_native_tas_state, validate_and_load_current_native_tas_state,
 };
+use crate::emulator::Emulator;
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
 use crate::hardware::rom_header::RomHeader;
@@ -19,6 +21,108 @@ fn assert_bytes_equal(label: &str, actual: &[u8], expected: &[u8]) {
     assert!(
         difference.is_none(),
         "{label} first differs at {difference:?}"
+    );
+}
+
+fn dmg_emulator(rom: &[u8]) -> Emulator {
+    Emulator::from_rom_data(rom, HardwareModePreference::ForceDmg).unwrap()
+}
+
+#[test]
+fn current_native_tas_contract_tracks_v13() {
+    assert_eq!(
+        TAS_STATE_FORMAT_COMPATIBILITY_ID,
+        format!("zeff-gb-native-state-v{SAVE_STATE_FORMAT_VERSION}")
+    );
+    assert!(!TAS_DETERMINISM_ABI_ID.is_empty());
+}
+
+#[test]
+fn current_native_tas_state_restores_authoritative_output_and_continues_exactly() {
+    let rom = vec![0; 0x8000];
+    let mut source = dmg_emulator(&rom);
+    for _ in 0..3 {
+        source.step_frame();
+    }
+    let state = source.encode_state_bytes().unwrap();
+    let expected_frame_count = source.frame_count();
+    let expected_framebuffer = source.framebuffer().to_vec();
+    let mut restored = dmg_emulator(&rom);
+
+    let projection = validate_and_load_current_native_tas_state(&mut restored, &state).unwrap();
+
+    assert_eq!(projection.frame_count, expected_frame_count);
+    assert_eq!(projection.lcd_framebuffer.as_ref(), expected_framebuffer);
+    assert_eq!(
+        projection.replay_state_bytes,
+        encode_legacy_v12_state_bytes(&source.as_save_state_ref()).unwrap()
+    );
+    assert_eq!(restored.frame_count(), expected_frame_count);
+    assert_eq!(restored.framebuffer(), expected_framebuffer);
+    source.step_frame();
+    restored.step_frame();
+    assert_eq!(restored.frame_count(), source.frame_count());
+    assert_eq!(restored.framebuffer(), source.framebuffer());
+    assert_eq!(
+        restored.encode_state_bytes().unwrap(),
+        source.encode_state_bytes().unwrap()
+    );
+}
+
+#[test]
+fn current_native_tas_state_inspection_is_nonmutating() {
+    let rom = vec![0; 0x8000];
+    let mut source = dmg_emulator(&rom);
+    source.step_frame();
+    let state = source.encode_state_bytes().unwrap();
+    let mut target = dmg_emulator(&rom);
+    target.step_frame();
+    target.step_frame();
+    let before = target.encode_state_bytes().unwrap();
+
+    let inspection = inspect_current_native_tas_state(&target, &state).unwrap();
+
+    assert_eq!(inspection.projection.frame_count, source.frame_count());
+    assert_eq!(target.encode_state_bytes().unwrap(), before);
+}
+
+#[test]
+fn current_native_tas_state_rejects_legacy_generic_and_wrong_rom_without_mutation() {
+    let rom = vec![0; 0x8000];
+    let mut source = dmg_emulator(&rom);
+    source.step_frame();
+    let current = source.encode_state_bytes().unwrap();
+    let legacy = encode_legacy_v12_state_bytes(&source.as_save_state_ref()).unwrap();
+    let state_ref = source.as_save_state_ref();
+    let mut generic_bess_writer = super::StateWriter::new();
+    super::bess::append_bess_with_optional_zeff_extension(
+        &mut generic_bess_writer,
+        state_ref.cpu,
+        state_ref.bus,
+        state_ref.hardware_mode,
+        None,
+    )
+    .unwrap();
+    let generic_bess = generic_bess_writer.into_bytes();
+    let mut target = dmg_emulator(&rom);
+    target.step_frame();
+    let before = target.encode_state_bytes().unwrap();
+
+    let truncated = &current[..current.len() - 1];
+    for bytes in [&legacy[..], &generic_bess, truncated] {
+        assert!(validate_and_load_current_native_tas_state(&mut target, bytes).is_err());
+        assert_eq!(target.encode_state_bytes().unwrap(), before);
+    }
+
+    let mut other_rom = rom.clone();
+    other_rom[0x150] = 0x5A;
+    let mut wrong_rom_target = dmg_emulator(&other_rom);
+    wrong_rom_target.step_frame();
+    let wrong_rom_before = wrong_rom_target.encode_state_bytes().unwrap();
+    assert!(validate_and_load_current_native_tas_state(&mut wrong_rom_target, &current).is_err());
+    assert_eq!(
+        wrong_rom_target.encode_state_bytes().unwrap(),
+        wrong_rom_before
     );
 }
 

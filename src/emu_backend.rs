@@ -10,9 +10,13 @@ use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot
 pub(crate) use self::capabilities::{CheatCapabilities, CoreCapabilities, InputCapabilities};
 pub(crate) use self::coleco::ColecoBackend;
 pub(crate) use self::gb::GbBackend;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use self::gb::GbTasLoadProvenanceView;
 pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
 pub(crate) use self::nes::NesBackend;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use self::nes::NesTasLoadProvenanceView;
 pub(crate) use self::pce::PceBackend;
 pub(crate) use self::runtime::BackendRuntimeConfig;
 pub(crate) use self::sega8::Sega8Backend;
@@ -165,11 +169,28 @@ macro_rules! dispatch {
 }
 
 impl EmuBackend {
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    pub(crate) fn nes_tas_load_provenance(&self) -> Option<NesTasLoadProvenanceView<'_>> {
+        self.nes()?.tas_load_provenance()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    pub(crate) fn gb_tas_load_provenance(&self) -> Option<GbTasLoadProvenanceView<'_>> {
+        self.gb()?.tas_load_provenance()
+    }
+
     pub(crate) fn nes_has_standard_controller_topology(&self) -> Option<bool> {
         match self {
             Self::Nes(backend) => Some(backend.emu.has_standard_controller_topology()),
             _ => None,
         }
+    }
+
+    pub(crate) fn nes_has_standard_or_zapper_controller_topology(&self) -> Option<bool> {
+        self.nes()
+            .map(|backend| backend.emu.has_standard_or_zapper_controller_topology())
     }
 
     pub(crate) fn supports_detached_speculation(&self) -> bool {
@@ -195,20 +216,9 @@ impl EmuBackend {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_gb(emu: zeff_gb_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Gb(Box::new(GbBackend::new(emu, rom_path)))
-    }
-
-    pub(crate) fn from_gb_with_source(
-        emu: zeff_gb_core::emulator::Emulator,
-        rom_path: PathBuf,
-        source_path: PathBuf,
-    ) -> Self {
-        Self::Gb(Box::new(GbBackend::with_source_path(
-            emu,
-            rom_path,
-            source_path,
-        )))
     }
 
     pub(crate) fn from_gba(emu: zeff_gba_core::emulator::Emulator, rom_path: PathBuf) -> Self {
@@ -227,6 +237,7 @@ impl EmuBackend {
         )))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_nes(emu: zeff_nes_core::emulator::Emulator, rom_path: PathBuf) -> Self {
         Self::Nes(Box::new(NesBackend::new(emu, rom_path)))
     }
@@ -255,18 +266,6 @@ impl EmuBackend {
 
     pub(crate) fn from_pce(backend: PceBackend) -> Self {
         Self::Pce(Box::new(backend))
-    }
-
-    pub(crate) fn from_nes_with_source(
-        emu: zeff_nes_core::emulator::Emulator,
-        rom_path: PathBuf,
-        source_path: PathBuf,
-    ) -> Self {
-        Self::Nes(Box::new(NesBackend::with_source_path(
-            emu,
-            rom_path,
-            source_path,
-        )))
     }
 
     pub(crate) fn from_sega8(emu: zeff_sega8_core::emulator::Emulator, rom_path: PathBuf) -> Self {

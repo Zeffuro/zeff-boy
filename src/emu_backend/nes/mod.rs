@@ -14,6 +14,14 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
+mod tas_provenance;
+#[cfg(test)]
+pub(crate) use tas_provenance::NesTasInitialInput;
+pub(crate) use tas_provenance::{
+    NesPersistentLoadOutcome, NesTasLoadProvenance, NesTasLoadProvenanceView, NesTasLoadSetup,
+};
+pub(crate) use tas_provenance::{NesTasLoadProvenanceSeed, persistent_load_outcome};
+
 const NES_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
         id: AudioChannelId(0),
@@ -131,9 +139,15 @@ pub(crate) struct NesBackend {
     pub(crate) emu: NesEmulator,
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
+    tas_load_provenance: Option<NesTasLoadProvenance>,
+    current_sample_rate: Option<u32>,
 }
 
 impl NesBackend {
+    pub(crate) fn has_standard_console_hardware(&self) -> bool {
+        self.emu.has_standard_console_hardware()
+    }
+
     pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
         self.emu
             .dump_persistent_data()
@@ -141,6 +155,7 @@ impl NesBackend {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn new(emu: NesEmulator, rom_path: PathBuf) -> Self {
         let sram_recovery =
             crate::save_paths::battery_sram_session(&rom_path, "nes", emu.rom_hash());
@@ -148,20 +163,8 @@ impl NesBackend {
             emu,
             paths: BackendPaths::new(rom_path),
             sram_recovery,
-        }
-    }
-
-    pub(crate) fn with_source_path(
-        emu: NesEmulator,
-        rom_path: PathBuf,
-        source_path: PathBuf,
-    ) -> Self {
-        let sram_recovery =
-            crate::save_paths::battery_sram_session(&rom_path, "nes", emu.rom_hash());
-        Self {
-            emu,
-            paths: BackendPaths::with_source_path(rom_path, source_path),
-            sram_recovery,
+            tas_load_provenance: None,
+            current_sample_rate: None,
         }
     }
 
@@ -218,6 +221,9 @@ impl EmulatorCore for NesBackend {
 
     fn set_sample_rate(&mut self, rate: u32) {
         self.emu.set_sample_rate(rate);
+        if self.tas_load_provenance.is_some() {
+            self.current_sample_rate = Some(rate);
+        }
     }
 
     fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {

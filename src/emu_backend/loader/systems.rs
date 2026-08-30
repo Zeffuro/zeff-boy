@@ -7,13 +7,20 @@ use super::{BackendLoadConfig, EmuBackend};
 use crate::emu_backend::ActiveSystem;
 use crate::emu_core_trait::EmulatorCore;
 
-pub(super) fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> u32 {
+pub(super) struct ModLoadOutcome {
+    pub(super) original_crc32: u32,
+    pub(super) any_enabled: bool,
+    pub(super) any_applied: bool,
+}
+
+pub(super) fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> ModLoadOutcome {
     let crc = crc32fast::hash(rom_data);
     let dir = crate::mods::mods_dir_for_rom(system, crc);
     let mods = crate::mods::load_mod_config(&dir);
     let enabled = mods.iter().filter(|m| m.enabled).count();
     if enabled > 0 {
         let warnings = crate::mods::apply_enabled_mods(rom_data, &dir, &mods);
+        let any_applied = warnings.len() < enabled;
         for warning in &warnings {
             log::warn!("Mod warning: {warning}");
         }
@@ -21,8 +28,17 @@ pub(super) fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) ->
             "Applied {enabled} mod(s) to ROM ({} warnings)",
             warnings.len()
         );
+        return ModLoadOutcome {
+            original_crc32: crc,
+            any_enabled: true,
+            any_applied,
+        };
     }
-    crc
+    ModLoadOutcome {
+        original_crc32: crc,
+        any_enabled: false,
+        any_applied: false,
+    }
 }
 
 pub(super) fn load_gb_backend(
@@ -30,6 +46,7 @@ pub(super) fn load_gb_backend(
     source_path: &Path,
     rom_path: &Path,
     config: &BackendLoadConfig,
+    provenance: super::super::gb::GbTasLoadProvenanceSeed,
 ) -> anyhow::Result<EmuBackend> {
     let external_boot_rom = if config.gb_use_external_boot_rom {
         let header = zeff_gb_core::hardware::rom_header::RomHeader::from_rom(rom_data)?;
@@ -70,8 +87,21 @@ pub(super) fn load_gb_backend(
     if let Some(sample_rate) = config.sample_rate {
         emu.set_sample_rate(sample_rate);
     }
-    log_sram_result(super::super::gb::try_load_battery_sram(&mut emu, rom_path));
-    let mut backend = wrap_gb_backend(emu, source_path, rom_path);
+    let persistent_load = if config.gb_load_battery_sram {
+        let result = super::super::gb::try_load_battery_sram(&mut emu, rom_path);
+        let outcome = super::super::gb::persistent_load_outcome(&result);
+        log_sram_result(result);
+        outcome
+    } else {
+        super::super::gb::GbPersistentLoadOutcome::Absent
+    };
+    let provenance = provenance.finish(
+        persistent_load,
+        emu.hardware_mode(),
+        emu.sample_rate(),
+        emu.has_boot_rom(),
+    );
+    let mut backend = wrap_gb_backend_with_provenance(emu, source_path, rom_path, provenance);
     if let Some(boot_rom) = external_boot_rom {
         let mut manifests = super::super::firmware::default_firmware_manifests_for_active_system(
             ActiveSystem::GameBoy,
@@ -97,6 +127,7 @@ pub(super) fn load_nes_backend(
     source_path: &Path,
     rom_path: &Path,
     config: &BackendLoadConfig,
+    provenance: super::super::nes::NesTasLoadProvenanceSeed,
 ) -> anyhow::Result<EmuBackend> {
     if is_fds_path(rom_path) {
         let sample_rate = config
@@ -106,10 +137,13 @@ pub(super) fn load_nes_backend(
         let bios = resolve_fds_bios(config, rom_path)?;
         let mut emu =
             zeff_nes_core::emulator::Emulator::new_fds(rom_data, bios.bytes, sample_rate)?;
-        if config.nes_load_battery_sram {
-            log_sram_result(super::super::nes::try_load_battery_sram(&mut emu, rom_path));
-        }
-        let mut backend = wrap_nes_backend(emu, source_path, rom_path);
+        let persistent_load = load_nes_persistent_data(&mut emu, rom_path, config);
+        let mut backend = wrap_nes_backend(
+            emu,
+            source_path,
+            rom_path,
+            provenance.finish(persistent_load),
+        );
         backend.set_firmware_manifests(vec![bios.manifest]);
         return Ok(backend);
     }
@@ -119,10 +153,27 @@ pub(super) fn load_nes_backend(
         .map(f64::from)
         .unwrap_or(zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE);
     let mut emu = zeff_nes_core::emulator::Emulator::new(rom_data, sample_rate)?;
-    if config.nes_load_battery_sram {
-        log_sram_result(super::super::nes::try_load_battery_sram(&mut emu, rom_path));
+    let persistent_load = load_nes_persistent_data(&mut emu, rom_path, config);
+    Ok(wrap_nes_backend(
+        emu,
+        source_path,
+        rom_path,
+        provenance.finish(persistent_load),
+    ))
+}
+
+fn load_nes_persistent_data(
+    emu: &mut zeff_nes_core::emulator::Emulator,
+    rom_path: &Path,
+    config: &BackendLoadConfig,
+) -> super::super::nes::NesPersistentLoadOutcome {
+    if !config.nes_load_battery_sram {
+        return super::super::nes::NesPersistentLoadOutcome::Absent;
     }
-    Ok(wrap_nes_backend(emu, source_path, rom_path))
+    let result = super::super::nes::try_load_battery_sram(emu, rom_path);
+    let outcome = super::super::nes::persistent_load_outcome(&result);
+    log_sram_result(result);
+    outcome
 }
 
 pub(super) fn load_coleco_backend(
@@ -131,27 +182,17 @@ pub(super) fn load_coleco_backend(
     rom_path: &Path,
     config: &BackendLoadConfig,
 ) -> anyhow::Result<EmuBackend> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (rom_data, source_path, rom_path, config);
-        anyhow::bail!("ColecoVision is currently available only in native builds")
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let bios = resolve_coleco_bios(config, rom_path)?;
-        let sample_rate = config
-            .sample_rate
-            .unwrap_or(zeff_coleco_core::constants::DEFAULT_SAMPLE_RATE);
-        let emu = zeff_coleco_core::Emulator::new(rom_data, &bios.bytes, sample_rate)?;
-        let rom_hash = super::super::ColecoBackend::rom_hash_for_bytes(rom_data);
-        let mut backend = wrap_coleco_backend(emu, source_path, rom_path, rom_hash);
-        backend.set_firmware_manifests(vec![bios.manifest]);
-        Ok(backend)
-    }
+    let bios = resolve_coleco_bios(config, rom_path)?;
+    let sample_rate = config
+        .sample_rate
+        .unwrap_or(zeff_coleco_core::constants::DEFAULT_SAMPLE_RATE);
+    let emu = zeff_coleco_core::Emulator::new(rom_data, &bios.bytes, sample_rate)?;
+    let rom_hash = super::super::ColecoBackend::rom_hash_for_bytes(rom_data);
+    let mut backend = wrap_coleco_backend(emu, source_path, rom_path, rom_hash);
+    backend.set_firmware_manifests(vec![bios.manifest]);
+    Ok(backend)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn resolve_coleco_bios(
     config: &BackendLoadConfig,
     rom_path: &Path,
@@ -351,32 +392,32 @@ pub(super) fn load_sega8_backend(
     Ok(backend)
 }
 
-fn wrap_gb_backend(
+fn wrap_gb_backend_with_provenance(
     emu: zeff_gb_core::emulator::Emulator,
     source_path: &Path,
     rom_path: &Path,
+    provenance: super::super::gb::GbTasLoadProvenance,
 ) -> EmuBackend {
-    wrap_backend_paths(
+    EmuBackend::Gb(Box::new(super::super::GbBackend::with_load_provenance(
         emu,
-        source_path,
-        rom_path,
-        EmuBackend::from_gb,
-        EmuBackend::from_gb_with_source,
-    )
+        rom_path.to_path_buf(),
+        source_path.to_path_buf(),
+        provenance,
+    )))
 }
 
 fn wrap_nes_backend(
     emu: zeff_nes_core::emulator::Emulator,
     source_path: &Path,
     rom_path: &Path,
+    provenance: super::super::nes::NesTasLoadProvenance,
 ) -> EmuBackend {
-    wrap_backend_paths(
+    EmuBackend::Nes(Box::new(super::super::NesBackend::with_load_provenance(
         emu,
-        source_path,
-        rom_path,
-        EmuBackend::from_nes,
-        EmuBackend::from_nes_with_source,
-    )
+        rom_path.to_path_buf(),
+        source_path.to_path_buf(),
+        provenance,
+    )))
 }
 
 fn wrap_coleco_backend(

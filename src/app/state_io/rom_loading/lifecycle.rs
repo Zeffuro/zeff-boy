@@ -10,12 +10,19 @@ use super::{App, is_zip_path};
 
 impl App {
     pub(in crate::app) fn reset_game(&mut self) {
+        if let Err(error) = self.preflight_emu_command(&EmuCommand::Reset) {
+            self.toast_manager.error(error.to_string());
+            return;
+        }
         if !self.debug_windows.mod_state.needs_reload
             && self.recording.replay_player.is_none()
             && self.recording.replay_recorder.is_none()
-            && let Some(thread) = &self.emu_thread
+            && self.emu_thread.is_some()
         {
-            thread.send(EmuCommand::Reset);
+            if let Err(error) = self.send_emu_command_checked(EmuCommand::Reset) {
+                self.toast_manager.error(error.to_string());
+                return;
+            }
             if let Some(audio) = &mut self.audio {
                 audio.discard_queued_samples();
             }
@@ -36,7 +43,7 @@ impl App {
                 scheduled_frames: 0,
                 active_mode: None,
             };
-            self.speed.paused = false;
+            self.set_user_paused(false);
             self.timing.last_frame_time = crate::platform::Instant::now();
             self.toast_manager.success("Game reset");
             return;
@@ -95,7 +102,7 @@ impl App {
         if let Some(audio) = &mut self.audio {
             audio.discard_queued_samples();
         }
-        self.stop_audio_recording();
+        self.finish_audio_recording_for_teardown();
         self.stop_camera_capture();
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -121,6 +128,8 @@ impl App {
         self.recording.pending_media_commands.clear();
         self.rom_info.rom_path = None;
         self.rom_info.source_path = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        self.reevaluate_tas_execution_attachment();
         self.rom_info.rom_hash = None;
         self.rom_info.pce_controller_profile_hash = None;
         self.rom_info.replay_metadata = None;
@@ -134,7 +143,7 @@ impl App {
         self.debug_windows.last_disasm_pc = None;
         self.debug_windows.last_disasm_mapping = None;
         self.debug_windows.disasm_target = None;
-        self.speed.paused = false;
+        self.set_user_paused(false);
         self.rewind.held = false;
         self.rewind.fill = 0.0;
         self.rewind.frames_rewound = 0;
@@ -160,7 +169,6 @@ impl App {
 
         self.debug_windows.mod_state.clear();
         self.ws_display_rotated = false;
-        self.toast_manager.set_paused(false);
         #[cfg(not(target_arch = "wasm32"))]
         self.toast_manager.success("Stopped emulation");
         #[cfg(target_arch = "wasm32")]
@@ -172,7 +180,7 @@ impl App {
     pub(in crate::app) fn open_file_dialog(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let was_paused = self.pause_for_dialog();
+            self.pause_for_dialog();
             let mut dialog =
                 crate::platform::FileDialog::new().add_filter("ROMs", ROM_AND_ARCHIVE_EXTENSIONS);
             for spec in system_specs() {
@@ -184,7 +192,7 @@ impl App {
                 .set_title("Open ROM")
                 .pick_file();
 
-            self.resume_after_dialog(was_paused);
+            self.resume_after_dialog();
             if let Some(path) = file {
                 self.load_rom(&path);
             }

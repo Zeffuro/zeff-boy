@@ -154,10 +154,24 @@ impl EguiRenderer {
             .render(render_pass, paint_jobs, screen_descriptor);
     }
 
-    pub(crate) fn cleanup(&mut self, output: &EguiFrameOutput) {
+    fn cleanup(&mut self, output: &EguiFrameOutput) {
         for id in &output.full_output.textures_delta.free {
             self.renderer.free_texture(id);
         }
+    }
+
+    pub(crate) fn submit_and_cleanup(
+        &mut self,
+        queue: &wgpu::Queue,
+        encoder: wgpu::CommandEncoder,
+        output: &EguiFrameOutput,
+    ) {
+        submit_before_texture_cleanup(
+            || {
+                queue.submit(Some(encoder.finish()));
+            },
+            || self.cleanup(output),
+        );
     }
 
     pub(crate) fn register_native_texture(
@@ -179,6 +193,11 @@ impl EguiRenderer {
         self.renderer
             .update_egui_texture_from_wgpu_texture(device, view, filter, id);
     }
+}
+
+fn submit_before_texture_cleanup(submit: impl FnOnce(), cleanup: impl FnOnce()) {
+    submit();
+    cleanup();
 }
 
 pub(super) fn dock_style(ctx: &egui::Context, density: UiDensity) -> egui_dock::Style {
@@ -363,4 +382,23 @@ fn build_retro() -> egui::Visuals {
     v.extreme_bg_color = egui::Color32::from_rgb(12, 14, 10);
 
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::submit_before_texture_cleanup;
+
+    #[test]
+    fn freed_textures_are_cleaned_up_only_after_submission() {
+        let events = RefCell::new(Vec::new());
+
+        submit_before_texture_cleanup(
+            || events.borrow_mut().push("submit"),
+            || events.borrow_mut().push("cleanup"),
+        );
+
+        assert_eq!(*events.borrow(), ["submit", "cleanup"]);
+    }
 }

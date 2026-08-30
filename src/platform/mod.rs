@@ -6,6 +6,8 @@ mod firmware_store;
 mod managed_firmware;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(not(target_arch = "wasm32"))]
+mod stable_directory;
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -23,6 +25,8 @@ pub(crate) use managed_firmware::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use stable_directory::{StableDirectory, metadata_is_redirect};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web::*;
 #[cfg(target_arch = "wasm32")]

@@ -20,9 +20,9 @@ use super::paired_transport::{
 use super::timeline::{
     PairedGameBoyReplayTimeline, first_game_boy_peer_present_state, paired_game_boy_replay_timeline,
 };
-use super::validation::{
-    digest_hex, validate_game_boy_replay_start_tick, validate_replay_checkpoint,
-    validate_replay_playback,
+use super::validation::digest_hex;
+use crate::replay_execution::{
+    validate_game_boy_replay_start_tick, validate_replay_checkpoint, validate_replay_playback,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -150,6 +150,11 @@ impl Server {
             "zeff_load_state" => self.tool_load_state(args),
             "zeff_state_slot" => self.tool_state_slot(args),
             "zeff_replay" => self.tool_replay(args),
+            "zeff_tas_open" => self.tool_tas_open(args),
+            "zeff_tas_status" => self.call_live(json!({ "command": "tas_status" })),
+            "zeff_tas_link" => self.tool_tas_link(args),
+            "zeff_tas_record_frame" => self.call_live(json!({ "command": "tas_record_frame" })),
+            "zeff_tas_disconnect" => self.tool_tas_disconnect(args),
             "zeff_link" => self.tool_link(args),
             "zeff_memory" => self.tool_memory(args),
             "zeff_graphics" => self.tool_graphics(),
@@ -381,6 +386,28 @@ impl Server {
         }
     }
 
+    fn tool_tas_open(&self, args: &Value) -> anyhow::Result<Value> {
+        self.call_live(json!({
+            "command": "tas_open",
+            "path": required_string(args, "path")?,
+        }))
+    }
+
+    fn tool_tas_link(&self, args: &Value) -> anyhow::Result<Value> {
+        self.call_live(json!({
+            "command": "tas_link",
+            "at_end": optional_bool(args, "at_end").unwrap_or(false),
+            "record": optional_bool(args, "record").unwrap_or(false),
+        }))
+    }
+
+    fn tool_tas_disconnect(&self, args: &Value) -> anyhow::Result<Value> {
+        self.call_live(json!({
+            "command": "tas_disconnect",
+            "keep": optional_bool(args, "keep").unwrap_or(false),
+        }))
+    }
+
     fn tool_link(&self, args: &Value) -> anyhow::Result<Value> {
         let action = required_string(args, "action")?;
         let command = match normalized_action(&action).as_str() {
@@ -498,6 +525,11 @@ mod tests {
         assert!(names.contains(&"zeff_load_state".to_string()));
         assert!(names.contains(&"zeff_state_slot".to_string()));
         assert!(names.contains(&"zeff_replay".to_string()));
+        assert!(names.contains(&"zeff_tas_open".to_string()));
+        assert!(names.contains(&"zeff_tas_status".to_string()));
+        assert!(names.contains(&"zeff_tas_link".to_string()));
+        assert!(names.contains(&"zeff_tas_record_frame".to_string()));
+        assert!(names.contains(&"zeff_tas_disconnect".to_string()));
         assert!(names.contains(&"zeff_link".to_string()));
         assert!(names.contains(&"zeff_memory".to_string()));
         assert!(names.contains(&"zeff_graphics".to_string()));

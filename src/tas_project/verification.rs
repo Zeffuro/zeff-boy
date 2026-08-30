@@ -34,6 +34,10 @@ impl TasExecutionSession {
     pub(crate) fn identity(&self) -> &TasProjectIdentity {
         &self.identity
     }
+
+    pub(super) fn into_parts(self) -> (EmuBackend, TasProjectIdentity) {
+        (self.backend, self.identity)
+    }
 }
 
 impl TasProject {
@@ -177,7 +181,7 @@ impl TasProject {
         self.validate_execution_identity(&witness.identity, "execution witness")
     }
 
-    fn validate_execution_identity(
+    pub(super) fn validate_execution_identity(
         &self,
         identity: &TasProjectIdentity,
         label: &str,
@@ -223,7 +227,10 @@ fn validate_and_execute_temporary_replay(
     ensure_frame_count(project, branch_id, run.frames)
 }
 
-fn validate_backend_observable_identity(player: &ReplayPlayer, backend: &EmuBackend) -> Result<()> {
+pub(super) fn validate_backend_observable_identity(
+    player: &ReplayPlayer,
+    backend: &EmuBackend,
+) -> Result<()> {
     let expected = player.metadata();
     let actual = backend.replay_metadata();
     if expected.system != actual.system {

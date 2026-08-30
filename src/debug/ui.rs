@@ -100,6 +100,16 @@ impl DebugUiActions {
             || self.trace_clear
             || self.trace_capacity.is_some()
     }
+
+    pub(crate) fn requires_emulator_authority(&self) -> bool {
+        self.has_pending()
+            || self.step_requested
+            || self.next_frame_requested
+            || self.continue_requested
+            || self.backstep_requested
+            || self.guest_call.is_some()
+            || self.undo_guest_call.is_some()
+    }
 }
 
 pub(super) fn draw_cpu_debug_content(
@@ -283,4 +293,25 @@ fn draw_cpu_debug_rows(
         );
         ui.weak(format!("{} cycles", info.cycles));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DebugUiActions;
+
+    #[test]
+    fn emulator_debug_actions_are_distinct_from_local_navigation() {
+        let mut actions = DebugUiActions::none();
+        actions.follow_disasm_pc = true;
+        assert!(!actions.requires_emulator_authority());
+
+        actions.step_requested = true;
+        assert!(actions.requires_emulator_authority());
+        actions.step_requested = false;
+        actions.backstep_requested = true;
+        assert!(actions.requires_emulator_authority());
+        actions.backstep_requested = false;
+        actions.trace_clear = true;
+        assert!(actions.requires_emulator_authority());
+    }
 }

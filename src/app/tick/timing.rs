@@ -6,18 +6,22 @@ impl App {
     pub(super) fn sync_speed_setting(&mut self) {
         let uncapped_batch_size =
             uncapped_batch_size(self.settings.emulation.uncapped_frames_per_tick);
-        if self.timing.last_uncapped_frames_per_tick != uncapped_batch_size {
+        if self.timing.last_uncapped_frames_per_tick != uncapped_batch_size
+            && self
+                .send_emu_command_checked(EmuCommand::SetUncappedBatchSize(uncapped_batch_size))
+                .is_ok()
+        {
             self.timing.last_uncapped_frames_per_tick = uncapped_batch_size;
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::SetUncappedBatchSize(uncapped_batch_size));
-            }
         }
         if self.timing.uncapped_speed != self.settings.emulation.uncapped_speed {
-            self.timing.uncapped_speed = self.settings.emulation.uncapped_speed;
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::SetUncapped(
-                    self.timing.uncapped_speed && self.recording.allows_uncapped_worker(),
-                ));
+            let uncapped_speed = self.settings.emulation.uncapped_speed;
+            if self
+                .send_emu_command_checked(EmuCommand::SetUncapped(
+                    uncapped_speed && self.recording.allows_uncapped_worker(),
+                ))
+                .is_ok()
+            {
+                self.timing.uncapped_speed = uncapped_speed;
             }
         }
     }

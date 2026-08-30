@@ -1,6 +1,8 @@
 use super::App;
-use crate::debug::{DebugDataRefs, DebugUiActions, MenuAction};
+use crate::debug::{DebugDataRefs, MenuAction};
 use crate::graphics;
+
+mod debug_actions;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn estimate_load_eta(
@@ -99,6 +101,8 @@ impl App {
             }
         });
         let nominal_frame_duration_ns = self.nominal_frame_duration_ns();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.refresh_tas_editor_live_status();
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
@@ -205,6 +209,10 @@ impl App {
             update_install_state,
         }) {
             Ok(result) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(request) = result.tas_editor_host_request {
+                    self.handle_tas_editor_host_request(request);
+                }
                 let mut settings_dirty = false;
                 for action in &result.actions {
                     match action {
@@ -231,8 +239,7 @@ impl App {
                         MenuAction::LoadRecentRom(path) => self.load_rom(path),
                         MenuAction::ToggleFullscreen => self.toggle_fullscreen(),
                         MenuAction::TogglePause => {
-                            self.speed.paused = !self.speed.paused;
-                            self.toast_manager.set_paused(self.speed.paused);
+                            self.toggle_user_paused();
                         }
                         MenuAction::SpeedChange(delta) => {
                             let mult =
@@ -248,81 +255,75 @@ impl App {
                             self.stop_audio_recording();
                         }
                         MenuAction::StartReplayRecording => self.start_replay_recording(),
-                        MenuAction::StopReplayRecording => self.stop_replay_recording(),
+                        MenuAction::StopReplayRecording => {
+                            if let Err(error) = self.stop_replay_recording() {
+                                self.toast_manager.error(error.to_string());
+                            }
+                        }
                         MenuAction::LoadReplay => self.load_and_play_replay(),
                         MenuAction::TakeScreenshot => self.take_screenshot(),
                         MenuAction::ApplyMediaEvent(event) => {
                             self.request_media_event(event.clone())
                         }
                         MenuAction::SetGameBoySerialDevice(device) => {
-                            if !game_boy_serial_device_change_allowed {
-                                self.toast_manager.error(
-                                    "Disconnect the link and stop replay activity before changing the serial device",
-                                );
-                            } else {
-                                self.game_boy_serial_device = *device;
-                                if let Some(thread) = &self.emu_thread {
-                                    thread.send(
-                                        crate::emu_thread::EmuCommand::SetGameBoySerialDevice(
-                                            *device,
-                                        ),
-                                    );
-                                }
-                            }
+                            self.set_game_boy_serial_device(*device);
                         }
                         #[cfg(not(target_arch = "wasm32"))]
                         MenuAction::ScanBardigunBarcodeFile => {
-                            if !game_boy_serial_device_change_allowed {
-                                self.toast_manager.error(
-                                    "Disconnect the link and stop replay activity before scanning a card",
-                                );
-                            } else {
-                                self.scan_bardigun_barcode_file_dialog();
-                            }
+                            self.scan_bardigun_barcode_file_dialog();
                         }
                         MenuAction::OpenBarcodeBoyScan => {
-                            if !game_boy_serial_device_change_allowed {
-                                self.toast_manager.error(
-                                    "Disconnect the link and stop replay activity before scanning a card",
-                                );
-                            } else {
-                                self.debug_windows.barcode_boy_scan_open = true;
-                            }
+                            self.open_barcode_boy_scan();
                         }
                         MenuAction::TriggerBarcodeBoyScan(digits) => {
-                            if !game_boy_serial_device_change_allowed {
-                                self.toast_manager.error(
-                                    "Disconnect the link and stop replay activity before scanning a card",
-                                );
-                            } else {
-                                self.trigger_barcode_boy_scan(digits.clone());
-                            }
+                            self.trigger_barcode_boy_scan(digits.clone());
                         }
                         MenuAction::HostTcpLink => {
                             #[cfg(not(target_arch = "wasm32"))]
-                            self.host_tcp_link();
+                            if let Err(error) = self.host_tcp_link(None) {
+                                self.toast_manager.error(error);
+                            }
                             #[cfg(target_arch = "wasm32")]
                             self.toast_manager.error("TCP link is native-only");
                         }
                         MenuAction::JoinTcpLink => {
                             #[cfg(not(target_arch = "wasm32"))]
-                            self.join_tcp_link();
+                            if let Err(error) = self.join_tcp_link(None) {
+                                self.toast_manager.error(error);
+                            }
                             #[cfg(target_arch = "wasm32")]
                             self.toast_manager.error("TCP link is native-only");
                         }
                         MenuAction::DisconnectLink => {
                             #[cfg(not(target_arch = "wasm32"))]
-                            self.disconnect_link();
+                            if let Err(error) = self.disconnect_link() {
+                                self.toast_manager.error(error);
+                            }
                             #[cfg(target_arch = "wasm32")]
                             self.toast_manager.info("No TCP link active");
                         }
                         MenuAction::ToggleWsRotation => self.toggle_ws_rotation(),
                         MenuAction::ToolbarSettingsChanged => settings_dirty = true,
                         MenuAction::SetLayerToggles(bg, win, sprites) => {
-                            self.pending_debug_actions.layer_toggles = Some((*bg, *win, *sprites));
+                            match self.preflight_emu_command_kind(
+                                crate::emu_thread::TasControlCommandKind::DebuggerMutation,
+                            ) {
+                                Ok(()) => {
+                                    self.pending_debug_actions.layer_toggles =
+                                        Some((*bg, *win, *sprites));
+                                }
+                                Err(error) => self.toast_manager.error(error.to_string()),
+                            }
                         }
                         MenuAction::SetGbaBgLayerToggles(layers) => {
-                            self.pending_debug_actions.gba_bg_layer_toggles = Some(*layers);
+                            match self.preflight_emu_command_kind(
+                                crate::emu_thread::TasControlCommandKind::DebuggerMutation,
+                            ) {
+                                Ok(()) => {
+                                    self.pending_debug_actions.gba_bg_layer_toggles = Some(*layers);
+                                }
+                                Err(error) => self.toast_manager.error(error.to_string()),
+                            }
                         }
                         MenuAction::OpenDebuggerWindow => {
                             self.settings.ui.debugger_window_open = true;
@@ -349,7 +350,8 @@ impl App {
                             self.settings.ui.debug_presentation = *presentation;
                             #[cfg(target_arch = "wasm32")]
                             {
-                                let desired = super::effective_debug_presentation(*presentation);
+                                let desired =
+                                    super::lifecycle::effective_debug_presentation(*presentation);
                                 self.settings.ui.debug_presentation = desired;
                                 self.activate_debug_presentation(desired);
                             }
@@ -438,13 +440,6 @@ impl App {
                 if settings_dirty {
                     self.settings.save();
                 }
-                crate::ui::apply_debug_actions(
-                    &result.debug_actions,
-                    &mut self.debug_requests.step,
-                    &mut self.debug_requests.next_frame,
-                    &mut self.debug_requests.continue_,
-                    &mut self.debug_requests.backstep,
-                );
                 self.merge_debug_actions(result.debug_actions);
                 if !self.show_settings_window {
                     self.clear_rebinding_state();
@@ -499,13 +494,6 @@ impl App {
             supports_execution_controls,
         }) {
             Ok(result) => {
-                crate::ui::apply_debug_actions(
-                    &result.debug_actions,
-                    &mut self.debug_requests.step,
-                    &mut self.debug_requests.next_frame,
-                    &mut self.debug_requests.continue_,
-                    &mut self.debug_requests.backstep,
-                );
                 self.merge_debug_actions(result.debug_actions);
                 true
             }
@@ -618,167 +606,6 @@ impl App {
         self.debug_windows.rebinding_gamepad_action = None;
         self.debug_windows.rebinding_speedup = false;
         self.debug_windows.rebinding_rewind = false;
-    }
-
-    fn merge_debug_actions(&mut self, actions: DebugUiActions) {
-        let supports_guest_calls = self.core_supports_guest_calls();
-        if supports_guest_calls
-            && let Some(request) = actions.guest_call
-            && let Some(thread) = &self.emu_thread
-        {
-            thread.send(crate::emu_thread::EmuCommand::ExecuteGuestCall(request));
-        }
-        if supports_guest_calls
-            && let Some(state) = actions.undo_guest_call
-            && let Some(thread) = &self.emu_thread
-        {
-            thread.send(crate::emu_thread::EmuCommand::UndoGuestCall(state));
-        }
-        let mut symbol_changed = false;
-        for name in &actions.remove_user_symbols {
-            match self.symbols.remove_user_symbol(name) {
-                Ok(Some(path)) => self
-                    .toast_manager
-                    .success(format!("Removed {name} from {}", path.display())),
-                Ok(None) => self.toast_manager.success(format!("Removed {name}")),
-                Err(error) => self
-                    .toast_manager
-                    .error(format!("Could not remove {name}: {error}")),
-            }
-            symbol_changed = true;
-        }
-        if let Some(symbol) = actions.user_symbol {
-            let name = symbol.name.clone();
-            match self.symbols.upsert_user_symbol(symbol) {
-                Ok(Some(path)) => self
-                    .toast_manager
-                    .success(format!("Saved {name} to {}", path.display())),
-                Ok(None) => self.toast_manager.success(format!("Added {name}")),
-                Err(error) => self
-                    .toast_manager
-                    .error(format!("Could not add {name}: {error}")),
-            }
-            symbol_changed = true;
-        }
-        if symbol_changed {
-            self.debug_windows.last_disasm_pc = None;
-            self.debug_windows.last_disasm_mapping = None;
-        }
-        if let Some(address) = actions.memory_target {
-            let memory = &mut self.debug_windows.memory;
-            memory.view_start = memory.address_space.clamp_start(address);
-            memory.jump_input = memory.address_space.format(memory.view_start);
-        }
-        if let Some(target) = actions.disasm_target {
-            self.navigate_disassembly(Some(target));
-        } else if actions.follow_disasm_pc {
-            self.navigate_disassembly(None);
-        } else if actions.disasm_back {
-            self.navigate_disassembly_history(true);
-        } else if actions.disasm_forward {
-            self.navigate_disassembly_history(false);
-        }
-        let pending = &mut self.pending_debug_actions;
-        if actions.add_breakpoint.is_some() {
-            pending.add_breakpoint = actions.add_breakpoint;
-        }
-        if actions.add_one_shot_breakpoint.is_some() {
-            pending.add_one_shot_breakpoint = actions.add_one_shot_breakpoint;
-        }
-        if actions.add_breakpoint_after.is_some() {
-            pending.add_breakpoint_after = actions.add_breakpoint_after;
-        }
-        pending
-            .event_breakpoint_changes
-            .extend(actions.event_breakpoint_changes);
-        if actions.add_watchpoint.is_some() {
-            pending.add_watchpoint = actions.add_watchpoint;
-        }
-        pending
-            .remove_watchpoints
-            .extend(actions.remove_watchpoints);
-        let bp_changed = !actions.remove_breakpoints.is_empty()
-            || !actions.toggle_breakpoints.is_empty()
-            || !actions.add_rom_breakpoints.is_empty()
-            || !actions.remove_rom_breakpoints.is_empty()
-            || !actions.toggle_rom_breakpoints.is_empty();
-        pending
-            .remove_breakpoints
-            .extend(actions.remove_breakpoints);
-        pending
-            .toggle_breakpoints
-            .extend(actions.toggle_breakpoints);
-        pending
-            .remove_rom_breakpoints
-            .extend(actions.remove_rom_breakpoints);
-        pending
-            .add_rom_breakpoints
-            .extend(actions.add_rom_breakpoints);
-        pending
-            .toggle_rom_breakpoints
-            .extend(actions.toggle_rom_breakpoints);
-        if bp_changed
-            || actions.add_breakpoint.is_some()
-            || actions.add_one_shot_breakpoint.is_some()
-            || actions.add_breakpoint_after.is_some()
-        {
-            self.debug_windows.last_disasm_pc = None;
-            self.debug_windows.last_disasm_mapping = None;
-        }
-        pending.memory_writes.extend(actions.memory_writes);
-        if actions.apu_channel_mutes.is_some() {
-            pending.apu_channel_mutes = actions.apu_channel_mutes;
-        }
-        if actions.layer_toggles.is_some() {
-            pending.layer_toggles = actions.layer_toggles;
-        }
-        if actions.gba_bg_layer_toggles.is_some() {
-            pending.gba_bg_layer_toggles = actions.gba_bg_layer_toggles;
-        }
-        if actions.trace_enabled.is_some() {
-            pending.trace_enabled = actions.trace_enabled;
-        }
-        if actions.trace_clear {
-            self.debug_windows.execution_coverage.clear();
-        }
-        pending.trace_clear |= actions.trace_clear;
-        if actions.trace_capacity.is_some() {
-            pending.trace_capacity = actions.trace_capacity;
-        }
-    }
-
-    fn navigate_disassembly(&mut self, target: Option<crate::debug::DisassemblyTarget>) {
-        if self.debug_windows.disasm_target == target {
-            return;
-        }
-        self.debug_windows
-            .disasm_back
-            .push(self.debug_windows.disasm_target);
-        self.debug_windows.disasm_forward.clear();
-        self.debug_windows.disasm_target = target;
-        self.debug_windows.last_disasm_pc = None;
-        self.debug_windows.last_disasm_mapping = None;
-    }
-
-    fn navigate_disassembly_history(&mut self, back: bool) {
-        let (from, to) = if back {
-            (
-                &mut self.debug_windows.disasm_back,
-                &mut self.debug_windows.disasm_forward,
-            )
-        } else {
-            (
-                &mut self.debug_windows.disasm_forward,
-                &mut self.debug_windows.disasm_back,
-            )
-        };
-        let Some(target) = from.pop() else {
-            return;
-        };
-        to.push(self.debug_windows.disasm_target);
-        self.debug_windows.disasm_target = target;
-        self.debug_windows.last_disasm_pc = None;
-        self.debug_windows.last_disasm_mapping = None;
     }
 }
 

@@ -9,7 +9,7 @@ use zeff_pce_core::hardware::{CdDisc, CdSourceError, CdTrack, CdTrackMode, CdTra
 
 use super::pce_cd::{
     CONTENT_ID_DOMAIN, CueSheet, LoadedPceCd, PCE_CD_DATA_BYTES_LIMIT, PceCdLoadError,
-    resolve_direct_file_reference,
+    cue_track_layout, resolve_direct_file_reference,
 };
 use super::pce_cd_overlay::{
     PatchOverlayBuilder, PatchOverlayStack, apply_ppf_stack, log_ppf_overlay, slice_source,
@@ -283,91 +283,17 @@ fn build_disc_with_raw_sources(
     if raw_sources.is_some_and(|sources| sources.len() != files.len()) {
         return Err(PceCdLoadError::MissingFile);
     }
-    let mut cursor = 0_u32;
+    let file_bytes = files.iter().map(|file| file.bytes).collect::<Vec<_>>();
+    let layout = cue_track_layout(sheet, &file_bytes)?;
     let mut normalized = Vec::with_capacity(sheet.tracks.len());
-    for (file_index, (cue_file, file)) in sheet.files.iter().zip(files).enumerate() {
-        let file_tracks = cue_file
-            .track_indices
-            .iter()
-            .map(|index| &sheet.tracks[*index])
-            .collect::<Vec<_>>();
-        let first_mode = file_tracks[0].mode;
-        if file_tracks
-            .iter()
-            .any(|track| sector_bytes(track.mode) != sector_bytes(first_mode))
-        {
-            return Err(PceCdLoadError::MixedSectorSizes);
-        }
-        let sector_bytes = sector_bytes(first_mode);
-        if !file.bytes.is_multiple_of(sector_bytes) {
-            return Err(PceCdLoadError::MisalignedBin {
-                bytes: file.bytes,
-                sector_bytes,
-            });
-        }
-        let total_sectors = u32::try_from(file.bytes / sector_bytes)
-            .map_err(|_| PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
-        let anchor = if file_index == 0 {
-            file_tracks[0]
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        } else {
-            file_tracks[0]
-                .index0
-                .or(file_tracks[0].index1)
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        };
-        if anchor >= total_sectors {
-            return Err(PceCdLoadError::TrackOutsideBin(file_tracks[0].number));
-        }
-        let base = cursor;
-        let mut virtual_offset = 0_u32;
-        for (track_offset, track) in file_tracks.iter().enumerate() {
-            debug_assert_eq!(track.file_index, file_index);
-            let raw_index1 = track
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(track.number))?;
-            if track.index0.is_some_and(|index0| index0 > raw_index1) {
-                return Err(PceCdLoadError::InvalidIndexOrder(track.number));
-            }
-            let end = file_tracks
-                .get(track_offset + 1)
-                .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
-                .unwrap_or(total_sectors);
-            if raw_index1 >= end || end > total_sectors {
-                return Err(PceCdLoadError::TrackOutsideBin(track.number));
-            }
-            let virtual_pregap = track.pregap.unwrap_or(0);
-            let index1 = raw_index1
-                .checked_sub(anchor)
-                .and_then(|index| base.checked_add(index))
-                .and_then(|index| index.checked_add(virtual_offset))
-                .and_then(|index| index.checked_add(virtual_pregap))
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
-            let index0 = if virtual_pregap != 0 {
-                Some(
-                    index1
-                        .checked_sub(virtual_pregap)
-                        .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-                )
-            } else {
-                track
-                    .index0
-                    .and_then(|index| index.checked_sub(anchor))
-                    .map(|index| {
-                        base.checked_add(index)
-                            .and_then(|index| index.checked_add(virtual_offset))
-                            .ok_or(PceCdLoadError::InvalidTrackOrder)
-                    })
-                    .transpose()?
-            };
-            let raw_stored_start = if virtual_pregap == 0 {
-                index0.and(track.index0).unwrap_or(raw_index1)
-            } else {
-                raw_index1
-            };
-            let start = raw_stored_start as usize * sector_bytes;
-            let bytes = end as usize * sector_bytes - start;
+    for file_layout in layout {
+        for track_layout in file_layout {
+            let track = track_layout.track;
+            let file_index = track.file_index;
+            let file = &files[file_index];
+            let start = track_layout.source_bytes.start;
+            let bytes = track_layout.source_bytes.len();
+            let sector_bytes = sector_bytes(track.mode);
             let source: Arc<dyn CdTrackSource> = if let Some(sources) = raw_sources {
                 slice_source(sources[file_index].clone(), start, bytes)
                     .ok_or(PceCdLoadError::TrackOutsideBin(track.number))?
@@ -381,27 +307,22 @@ fn build_disc_with_raw_sources(
                     file.reject_reparse,
                 )?
             };
-            let control = if track.mode == CdTrackMode::Audio {
-                0
-            } else {
-                4
-            };
-            let track = if virtual_pregap != 0 {
+            let track = if track_layout.virtual_pregap {
                 if raw_sources.is_some() {
                     CdTrack::from_index1_unverified_source(
                         track.number,
-                        control,
-                        index0,
-                        index1,
+                        track_layout.control(),
+                        track_layout.index0,
+                        track_layout.index1,
                         track.mode,
                         source,
                     )
                 } else {
                     CdTrack::from_index1_source(
                         track.number,
-                        control,
-                        index0,
-                        index1,
+                        track_layout.control(),
+                        track_layout.index0,
+                        track_layout.index1,
                         track.mode,
                         source,
                     )
@@ -409,36 +330,25 @@ fn build_disc_with_raw_sources(
             } else if raw_sources.is_some() {
                 CdTrack::from_stored_unverified_source(
                     track.number,
-                    control,
-                    index0,
-                    index1,
+                    track_layout.control(),
+                    track_layout.index0,
+                    track_layout.index1,
                     track.mode,
                     source,
                 )
             } else {
                 CdTrack::from_stored_source(
                     track.number,
-                    control,
-                    index0,
-                    index1,
+                    track_layout.control(),
+                    track_layout.index0,
+                    track_layout.index1,
                     track.mode,
                     source,
                 )
             }
             .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
             normalized.push(track);
-            virtual_offset = virtual_offset
-                .checked_add(virtual_pregap)
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
         }
-        cursor = cursor
-            .checked_add(
-                total_sectors
-                    .checked_sub(anchor)
-                    .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-            )
-            .and_then(|cursor| cursor.checked_add(virtual_offset))
-            .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
     }
     CdDisc::new(normalized).map_err(|error| PceCdLoadError::Disc(error.to_string()))
 }
@@ -774,11 +684,12 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("zeff-pce-cd-file-{}-identity", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let mut raw = vec![0; 3 * 2_352];
-        raw[16] = 0x11;
-        raw[2_352 + 16] = 0x22;
-        raw[2 * 2_352..2 * 2_352 + 2].copy_from_slice(&0x3456_i16.to_le_bytes());
-        let cue = b"FILE \"DISC.BIN\" BINARY\nTRACK 01 MODE1/2352\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nINDEX 01 00:00:02\n";
+        let mut raw = vec![0; 4 * 2_352];
+        raw[16] = 0xEE;
+        raw[2_352 + 16] = 0x11;
+        raw[2 * 2_352 + 16] = 0x22;
+        raw[3 * 2_352..3 * 2_352 + 2].copy_from_slice(&0x3456_i16.to_le_bytes());
+        let cue = b"FILE \"DISC.BIN\" BINARY\nTRACK 01 MODE1/2352\nINDEX 00 00:00:00\nINDEX 01 00:00:01\nTRACK 02 AUDIO\nINDEX 01 00:00:03\n";
         let cue_path = root.join("disc.cue");
         std::fs::write(&cue_path, cue).unwrap();
         std::fs::write(root.join("disc.bin"), &raw).unwrap();
@@ -824,6 +735,74 @@ mod tests {
         assert_eq!(file_backed.disc.read_user_sector(3).unwrap()[0], 0x21);
         assert!(file_backed.disc.read_audio_sample(5, 0).is_err());
         assert_eq!(file_backed.disc.read_audio_sample(6, 0).unwrap().0, 0x4567);
+    }
+
+    #[test]
+    fn owned_and_file_backed_builders_reject_the_same_invalid_layouts() {
+        let cases = [
+            (
+                "missing-index",
+                "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\n",
+                vec![("disc.bin", 2_048)],
+                PceCdLoadError::MissingIndex1(1),
+            ),
+            (
+                "mixed-sectors",
+                "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nINDEX 01 00:00:01\n",
+                vec![("disc.bin", 2 * 2_352)],
+                PceCdLoadError::MixedSectorSizes,
+            ),
+            (
+                "misaligned",
+                "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n",
+                vec![("disc.bin", 2_049)],
+                PceCdLoadError::MisalignedBin {
+                    bytes: 2_049,
+                    sector_bytes: 2_048,
+                },
+            ),
+            (
+                "outside",
+                "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:01\n",
+                vec![("disc.bin", 2_048)],
+                PceCdLoadError::TrackOutsideBin(1),
+            ),
+            (
+                "invalid-index-order",
+                "FILE \"first.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nFILE \"second.bin\" BINARY\nTRACK 02 MODE1/2048\nINDEX 00 00:00:02\nINDEX 01 00:00:01\n",
+                vec![("first.bin", 2_048), ("second.bin", 4 * 2_048)],
+                PceCdLoadError::InvalidIndexOrder(2),
+            ),
+        ];
+
+        for (name, cue, file_specs, expected) in cases {
+            let root = std::env::temp_dir().join(format!(
+                "zeff-pce-cd-file-{}-layout-{name}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&root).unwrap();
+            let cue_path = root.join("disc.cue");
+            std::fs::write(&cue_path, cue).unwrap();
+            let mut owned_files = Vec::with_capacity(file_specs.len());
+            for (filename, bytes) in file_specs {
+                let data = vec![0; bytes];
+                std::fs::write(root.join(filename), &data).unwrap();
+                owned_files.push(data);
+            }
+            let sheet = parse_cue_bytes(cue.as_bytes()).unwrap();
+            let owned_error = match build_disc(cue.as_bytes().to_vec(), &sheet, owned_files) {
+                Ok(_) => panic!("owned builder accepted invalid case {name}"),
+                Err(error) => error,
+            };
+            let file_backed_error =
+                match load_direct_cue_file_backed(&cue_path, cue.as_bytes(), &sheet) {
+                    Ok(_) => panic!("file-backed builder accepted invalid case {name}"),
+                    Err(error) => error,
+                };
+            assert_eq!(owned_error, expected, "owned case {name}");
+            assert_eq!(file_backed_error, expected, "file-backed case {name}");
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
 
     #[test]

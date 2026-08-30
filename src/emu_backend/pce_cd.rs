@@ -10,9 +10,7 @@ use sha2::{Digest, Sha256};
 use zeff_pce_core::hardware::{CdDisc, CdTrack, CdTrackMode};
 
 pub(crate) const PCE_CD_CUE_BYTES_LIMIT: usize = 1024 * 1024;
-// Typical Redump sets store one track per FILE. Those buffers move directly into CdTrack, keeping
-// retained payload near the source size. Multi-track FILEs can briefly retain a second span.
-// An 80-minute raw CD can exceed 800 MiB once every 2,352-byte sector is retained.
+// Multi-track files can transiently duplicate spans; 80-minute raw discs exceed 800 MiB.
 pub(crate) const PCE_CD_DATA_BYTES_LIMIT: usize = 900 * 1024 * 1024;
 const _: () = assert!(PCE_CD_DATA_BYTES_LIMIT >= 80 * 60 * 75 * 2_352);
 pub(crate) const PCE_CD_FILE_REFERENCE_LIMIT: usize = 99;
@@ -159,6 +157,26 @@ pub(super) struct CueTrack {
     pub(super) index0: Option<u32>,
     pub(super) index1: Option<u32>,
     pub(super) pregap: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CueTrackLayout {
+    pub(super) track: CueTrack,
+    pub(super) index0: Option<u32>,
+    pub(super) index1: u32,
+    pub(super) stored_start: u32,
+    pub(super) source_bytes: Range<usize>,
+    pub(super) virtual_pregap: bool,
+}
+
+impl CueTrackLayout {
+    pub(super) fn control(&self) -> u8 {
+        if self.track.mode == CdTrackMode::Audio {
+            0
+        } else {
+            4
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -532,6 +550,129 @@ pub(super) fn normalize_portable_path(value: &str) -> Result<String, ()> {
     Ok(components.join("/"))
 }
 
+pub(super) fn cue_track_layout(
+    sheet: &CueSheet,
+    file_bytes: &[usize],
+) -> Result<Vec<Vec<CueTrackLayout>>, PceCdLoadError> {
+    if file_bytes.len() != sheet.files.len() {
+        return Err(PceCdLoadError::MissingFile);
+    }
+
+    let mut cursor = 0_u32;
+    let mut layout = Vec::with_capacity(sheet.files.len());
+    for (file_index, (cue_file, &file_bytes)) in sheet.files.iter().zip(file_bytes).enumerate() {
+        let file_tracks = cue_file
+            .track_indices
+            .iter()
+            .map(|&index| &sheet.tracks[index])
+            .collect::<Vec<_>>();
+        let first_track = file_tracks[0];
+        let sector_len = sector_bytes(first_track.mode);
+        if file_tracks
+            .iter()
+            .any(|track| sector_bytes(track.mode) != sector_len)
+        {
+            return Err(PceCdLoadError::MixedSectorSizes);
+        }
+        if !file_bytes.is_multiple_of(sector_len) {
+            return Err(PceCdLoadError::MisalignedBin {
+                bytes: file_bytes,
+                sector_bytes: sector_len,
+            });
+        }
+        let total_sectors = u32::try_from(file_bytes / sector_len)
+            .map_err(|_| PceCdLoadError::TrackOutsideBin(first_track.number))?;
+        let anchor = if file_index == 0 {
+            first_track
+                .index1
+                .ok_or(PceCdLoadError::MissingIndex1(first_track.number))?
+        } else {
+            first_track
+                .index0
+                .or(first_track.index1)
+                .ok_or(PceCdLoadError::MissingIndex1(first_track.number))?
+        };
+        if anchor >= total_sectors {
+            return Err(PceCdLoadError::TrackOutsideBin(first_track.number));
+        }
+
+        let base = cursor;
+        let mut virtual_offset = 0_u32;
+        let mut file_layout = Vec::with_capacity(file_tracks.len());
+        for (track_offset, &&track) in file_tracks.iter().enumerate() {
+            debug_assert_eq!(track.file_index, file_index);
+            let raw_index1 = track
+                .index1
+                .ok_or(PceCdLoadError::MissingIndex1(track.number))?;
+            if track.index0.is_some_and(|index0| index0 > raw_index1) {
+                return Err(PceCdLoadError::InvalidIndexOrder(track.number));
+            }
+            let end = file_tracks
+                .get(track_offset + 1)
+                .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
+                .unwrap_or(total_sectors);
+            if raw_index1 >= end || end > total_sectors {
+                return Err(PceCdLoadError::TrackOutsideBin(track.number));
+            }
+            let virtual_pregap = track.pregap.unwrap_or(0);
+            let index1 = raw_index1
+                .checked_sub(anchor)
+                .and_then(|index| base.checked_add(index))
+                .and_then(|index| index.checked_add(virtual_offset))
+                .and_then(|index| index.checked_add(virtual_pregap))
+                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
+            let index0 = if virtual_pregap != 0 {
+                Some(
+                    index1
+                        .checked_sub(virtual_pregap)
+                        .ok_or(PceCdLoadError::InvalidTrackOrder)?,
+                )
+            } else {
+                track
+                    .index0
+                    .and_then(|index| index.checked_sub(anchor))
+                    .map(|index| {
+                        base.checked_add(index)
+                            .and_then(|index| index.checked_add(virtual_offset))
+                            .ok_or(PceCdLoadError::InvalidTrackOrder)
+                    })
+                    .transpose()?
+            };
+            let raw_stored_start = if virtual_pregap == 0 {
+                index0.and(track.index0).unwrap_or(raw_index1)
+            } else {
+                raw_index1
+            };
+            let source_bytes = raw_stored_start as usize * sector_len..end as usize * sector_len;
+            file_layout.push(CueTrackLayout {
+                track,
+                index0,
+                index1,
+                stored_start: if virtual_pregap != 0 {
+                    index1
+                } else {
+                    index0.unwrap_or(index1)
+                },
+                source_bytes,
+                virtual_pregap: virtual_pregap != 0,
+            });
+            virtual_offset = virtual_offset
+                .checked_add(virtual_pregap)
+                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
+        }
+        cursor = cursor
+            .checked_add(
+                total_sectors
+                    .checked_sub(anchor)
+                    .ok_or(PceCdLoadError::InvalidTrackOrder)?,
+            )
+            .and_then(|cursor| cursor.checked_add(virtual_offset))
+            .ok_or(PceCdLoadError::TrackOutsideBin(first_track.number))?;
+        layout.push(file_layout);
+    }
+    Ok(layout)
+}
+
 #[cfg(test)]
 pub(super) fn build_disc(
     cue_bytes: Vec<u8>,
@@ -582,140 +723,43 @@ pub(super) fn build_disc_with_mods(
             );
         }
     }
-    let mut cursor = 0_u32;
+    let file_bytes = files.iter().map(Vec::len).collect::<Vec<_>>();
+    let layout = cue_track_layout(sheet, &file_bytes)?;
     let mut normalized = Vec::with_capacity(sheet.tracks.len());
-
-    for (file_index, (cue_file, mut bytes)) in sheet.files.iter().zip(files).enumerate() {
-        let file_tracks = cue_file
-            .track_indices
-            .iter()
-            .map(|index| &sheet.tracks[*index])
-            .collect::<Vec<_>>();
-        let first_mode = file_tracks[0].mode;
-        if file_tracks
-            .iter()
-            .any(|track| sector_bytes(track.mode) != sector_bytes(first_mode))
-        {
-            return Err(PceCdLoadError::MixedSectorSizes);
-        }
-        let sector_bytes = sector_bytes(first_mode);
-        if !bytes.len().is_multiple_of(sector_bytes) {
-            return Err(PceCdLoadError::MisalignedBin {
-                bytes: bytes.len(),
-                sector_bytes,
-            });
-        }
-        let total_sectors = u32::try_from(bytes.len() / sector_bytes)
-            .map_err(|_| PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
-        let anchor = if file_index == 0 {
-            file_tracks[0]
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        } else {
-            file_tracks[0]
-                .index0
-                .or(file_tracks[0].index1)
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        };
-        if anchor >= total_sectors {
-            return Err(PceCdLoadError::TrackOutsideBin(file_tracks[0].number));
-        }
-        let base = cursor;
-        let mut virtual_offset = 0_u32;
-        for (track_offset, track) in file_tracks.iter().enumerate() {
-            debug_assert_eq!(track.file_index, file_index);
-            let raw_index1 = track
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(track.number))?;
-            if track.index0.is_some_and(|index0| index0 > raw_index1) {
-                return Err(PceCdLoadError::InvalidIndexOrder(track.number));
-            }
-            let end = file_tracks
-                .get(track_offset + 1)
-                .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
-                .unwrap_or(total_sectors);
-            if raw_index1 >= end || end > total_sectors {
-                return Err(PceCdLoadError::TrackOutsideBin(track.number));
-            }
-            let virtual_pregap = track.pregap.unwrap_or(0);
-            let index1 = raw_index1
-                .checked_sub(anchor)
-                .and_then(|index| base.checked_add(index))
-                .and_then(|index| index.checked_add(virtual_offset))
-                .and_then(|index| index.checked_add(virtual_pregap))
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
-            let index0 = if virtual_pregap != 0 {
-                Some(
-                    index1
-                        .checked_sub(virtual_pregap)
-                        .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-                )
-            } else {
-                track
-                    .index0
-                    .and_then(|index| index.checked_sub(anchor))
-                    .map(|index| {
-                        base.checked_add(index)
-                            .and_then(|index| index.checked_add(virtual_offset))
-                            .ok_or(PceCdLoadError::InvalidTrackOrder)
-                    })
-                    .transpose()?
-            };
-            let raw_stored_start = if virtual_pregap == 0 {
-                index0.and(track.index0).unwrap_or(raw_index1)
-            } else {
-                raw_index1
-            };
-            let start_byte = raw_stored_start as usize * sector_bytes;
-            let end_byte = end as usize * sector_bytes;
-            let track_bytes = if file_tracks.len() == 1 {
-                bytes.drain(..start_byte);
-                bytes.truncate(end_byte - start_byte);
+    for ((cue_file, mut bytes), file_layout) in sheet.files.iter().zip(files).zip(layout) {
+        for track_layout in file_layout {
+            let track = track_layout.track;
+            let source_start = track_layout.source_bytes.start;
+            let source_end = track_layout.source_bytes.end;
+            let track_bytes = if cue_file.track_indices.len() == 1 {
+                bytes.drain(..source_start);
+                bytes.truncate(source_end - source_start);
                 std::mem::take(&mut bytes)
             } else {
-                bytes[start_byte..end_byte].to_vec()
+                bytes[source_start..source_end].to_vec()
             };
-            let track = if virtual_pregap != 0 {
+            let track = if track_layout.virtual_pregap {
                 CdTrack::from_index1_data(
                     track.number,
-                    if track.mode == CdTrackMode::Audio {
-                        0
-                    } else {
-                        4
-                    },
-                    index0,
-                    index1,
+                    track_layout.control(),
+                    track_layout.index0,
+                    track_layout.index1,
                     track.mode,
                     track_bytes,
                 )
             } else {
                 CdTrack::from_stored_data(
                     track.number,
-                    if track.mode == CdTrackMode::Audio {
-                        0
-                    } else {
-                        4
-                    },
-                    index0,
-                    index1,
+                    track_layout.control(),
+                    track_layout.index0,
+                    track_layout.index1,
                     track.mode,
                     track_bytes,
                 )
             }
             .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
             normalized.push(track);
-            virtual_offset = virtual_offset
-                .checked_add(virtual_pregap)
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
         }
-        cursor = cursor
-            .checked_add(
-                total_sectors
-                    .checked_sub(anchor)
-                    .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-            )
-            .and_then(|cursor| cursor.checked_add(virtual_offset))
-            .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
     }
 
     let disc = CdDisc::new(normalized).map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
@@ -1026,111 +1070,26 @@ fn normalized_disc_identity(
     sheet: &CueSheet,
     files: &[Vec<u8>],
 ) -> Result<[u8; 32], PceCdLoadError> {
+    let file_bytes = files.iter().map(Vec::len).collect::<Vec<_>>();
+    let layout = cue_track_layout(sheet, &file_bytes)?;
     let mut hasher = Sha256::new();
     hasher.update(b"zeff-boy:pce-core-cd-disc:v1\0");
     hasher.update((sheet.tracks.len() as u32).to_le_bytes());
-    let mut cursor = 0_u32;
-
-    for (file_index, (cue_file, bytes)) in sheet.files.iter().zip(files).enumerate() {
-        let file_tracks = cue_file
-            .track_indices
-            .iter()
-            .map(|index| &sheet.tracks[*index])
-            .collect::<Vec<_>>();
-        let sector_len = sector_bytes(file_tracks[0].mode);
-        if file_tracks
-            .iter()
-            .any(|track| sector_bytes(track.mode) != sector_len)
-        {
-            return Err(PceCdLoadError::MixedSectorSizes);
-        }
-        if !bytes.len().is_multiple_of(sector_len) {
-            return Err(PceCdLoadError::MisalignedBin {
-                bytes: bytes.len(),
-                sector_bytes: sector_len,
-            });
-        }
-        let total_sectors = u32::try_from(bytes.len() / sector_len)
-            .map_err(|_| PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
-        let anchor = if file_index == 0 {
-            file_tracks[0]
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        } else {
-            file_tracks[0]
-                .index0
-                .or(file_tracks[0].index1)
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        };
-        if anchor >= total_sectors {
-            return Err(PceCdLoadError::TrackOutsideBin(file_tracks[0].number));
-        }
-
-        let mut virtual_offset = 0_u32;
-        for (track_offset, track) in file_tracks.iter().enumerate() {
-            let raw_index1 = track
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(track.number))?;
-            let end = file_tracks
-                .get(track_offset + 1)
-                .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
-                .unwrap_or(total_sectors);
-            let virtual_pregap = track.pregap.unwrap_or(0);
-            let index1 = raw_index1
-                .checked_sub(anchor)
-                .and_then(|index| cursor.checked_add(index))
-                .and_then(|index| index.checked_add(virtual_offset))
-                .and_then(|index| index.checked_add(virtual_pregap))
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
-            if track.index0.is_some_and(|index0| index0 > raw_index1) {
-                return Err(PceCdLoadError::InvalidIndexOrder(track.number));
-            }
-            let index0 = if virtual_pregap != 0 {
-                Some(
-                    index1
-                        .checked_sub(virtual_pregap)
-                        .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-                )
-            } else {
-                track
-                    .index0
-                    .and_then(|index| index.checked_sub(anchor))
-                    .map(|index| {
-                        cursor
-                            .checked_add(index)
-                            .and_then(|index| index.checked_add(virtual_offset))
-                            .ok_or(PceCdLoadError::InvalidTrackOrder)
-                    })
-                    .transpose()?
-            };
-            let stored_start = if virtual_pregap != 0 {
-                index1
-            } else {
-                index0.unwrap_or(index1)
-            };
-            let raw_start = track.index0.unwrap_or(raw_index1);
-            let start_byte = raw_start as usize * sector_len;
-            let end_byte = end as usize * sector_len;
-            if raw_index1 >= end || end > total_sectors || end_byte > bytes.len() {
-                return Err(PceCdLoadError::TrackOutsideBin(track.number));
-            }
-            let stored_data = &bytes[start_byte..end_byte];
-            let control = if track.mode == CdTrackMode::Audio {
-                0
-            } else {
-                4
-            };
-
+    for file_layout in layout {
+        for track_layout in file_layout {
+            let track = track_layout.track;
+            let control = track_layout.control();
+            let stored_data = &files[track.file_index][track_layout.source_bytes];
             hasher.update([track.number, control]);
-            match index0 {
+            match track_layout.index0 {
                 Some(index0) => {
                     hasher.update([1]);
                     hasher.update(index0.to_le_bytes());
                 }
                 None => hasher.update([0]),
             }
-            hasher.update(index1.to_le_bytes());
-            hasher.update(stored_start.to_le_bytes());
+            hasher.update(track_layout.index1.to_le_bytes());
+            hasher.update(track_layout.stored_start.to_le_bytes());
             hasher.update([match track.mode {
                 CdTrackMode::Audio => 0,
                 CdTrackMode::Mode1_2048 => 1,
@@ -1138,18 +1097,7 @@ fn normalized_disc_identity(
             }]);
             hasher.update((stored_data.len() as u64).to_le_bytes());
             hasher.update(stored_data);
-            virtual_offset = virtual_offset
-                .checked_add(virtual_pregap)
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
         }
-        cursor = cursor
-            .checked_add(
-                total_sectors
-                    .checked_sub(anchor)
-                    .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-            )
-            .and_then(|cursor| cursor.checked_add(virtual_offset))
-            .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
     }
     Ok(hasher.finalize().into())
 }
@@ -1500,10 +1448,21 @@ mod tests {
     }
 
     #[test]
-    fn borrowed_source_disc_identity_matches_the_built_disc() {
-        let cue = b"FILE \"one.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nFILE \"two.bin\" BINARY\nTRACK 02 AUDIO\nINDEX 00 00:00:00\nINDEX 01 00:00:01\n";
+    fn normalized_source_identity_uses_the_exact_built_track_layout() {
+        let cue = b"FILE \"one.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 00 00:00:00\nINDEX 01 00:00:01\nTRACK 02 MODE1/2048\nPREGAP 00:00:01\nINDEX 01 00:00:03\nFILE \"two.bin\" BINARY\nTRACK 03 AUDIO\nINDEX 00 00:00:00\nINDEX 01 00:00:01\n";
         let sheet = parse_cue_bytes(cue).unwrap();
-        let files = vec![vec![0x11; 2 * 2_048], vec![0x22; 3 * 2_352]];
+        let files = vec![vec![0x11; 5 * 2_048], vec![0x22; 3 * 2_352]];
+        let layout = cue_track_layout(&sheet, &[files[0].len(), files[1].len()]).unwrap();
+        assert_eq!(layout[0][0].index0, None);
+        assert_eq!(layout[0][0].index1, 0);
+        assert_eq!(layout[0][0].source_bytes, 2_048..3 * 2_048);
+        assert_eq!(layout[0][1].index0, Some(2));
+        assert_eq!(layout[0][1].index1, 3);
+        assert_eq!(layout[0][1].stored_start, 3);
+        assert_eq!(layout[0][1].source_bytes, 3 * 2_048..5 * 2_048);
+        assert_eq!(layout[1][0].index0, Some(5));
+        assert_eq!(layout[1][0].index1, 6);
+        assert_eq!(layout[1][0].source_bytes, 0..3 * 2_352);
         let source_hash = normalized_disc_identity(&sheet, &files).unwrap();
         let loaded = build_disc(cue.to_vec(), &sheet, files).unwrap();
         assert_eq!(source_hash, loaded.disc.content_hash());

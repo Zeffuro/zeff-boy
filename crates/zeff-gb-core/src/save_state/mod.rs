@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 
 mod bess;
 mod decode;
@@ -20,6 +20,8 @@ use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference
 pub const SAVE_STATE_VERSION: u32 = 1;
 pub const SAVE_STATE_FORMAT_VERSION: u32 = 13;
 pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
+pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-gb-determinism-v1";
+pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gb-native-state-v13";
 #[cfg(test)]
 pub(crate) const ZEFF_EXTENSION_BLOCK_LEN_FOR_TEST: u32 = bess::ZEFF_EXTENSION_BLOCK_LEN;
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -76,6 +78,67 @@ pub struct SaveStateRef<'a> {
     pub last_opcode_pc: u16,
     pub boot_rom_enabled: bool,
     pub frame_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentNativeTasStateProjection {
+    pub replay_state_bytes: Vec<u8>,
+    pub frame_count: u64,
+    pub lcd_framebuffer: Box<[u8]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentNativeTasStateInspection {
+    pub projection: CurrentNativeTasStateProjection,
+    pub hardware_mode_preference: HardwareModePreference,
+    pub hardware_mode: HardwareMode,
+    pub boot_rom_enabled: bool,
+    pub serial_device: crate::hardware::GameBoySerialDevice,
+}
+
+pub fn inspect_current_native_tas_state(
+    emulator: &crate::emulator::Emulator,
+    bytes: &[u8],
+) -> Result<CurrentNativeTasStateInspection> {
+    ensure!(
+        bytes.len() >= 12 && bytes[..8] == SAVE_STATE_MAGIC,
+        "TAS requires a native GB save state"
+    );
+    let format_version = u32::from_le_bytes(bytes[8..12].try_into().expect("length checked"));
+    ensure!(
+        format_version == SAVE_STATE_FORMAT_VERSION,
+        "TAS requires native GB save-state format {SAVE_STATE_FORMAT_VERSION}"
+    );
+    let state = decode_on_thread(bytes.to_vec())?;
+    validate_compatibility(&state, emulator.rom_hash())?;
+    let frame_count = state
+        .frame_count
+        .ok_or_else(|| anyhow::anyhow!("native GB TAS state is missing its frame count"))?;
+    let lcd_framebuffer = state
+        .lcd_framebuffer
+        .ok_or_else(|| anyhow::anyhow!("native GB TAS state is missing its LCD framebuffer"))?;
+    let mut replay_state_bytes = bytes.to_vec();
+    project_replay_state_bytes(&mut replay_state_bytes)?;
+    Ok(CurrentNativeTasStateInspection {
+        projection: CurrentNativeTasStateProjection {
+            replay_state_bytes,
+            frame_count,
+            lcd_framebuffer,
+        },
+        hardware_mode_preference: state.hardware_mode_preference,
+        hardware_mode: state.hardware_mode,
+        boot_rom_enabled: state.boot_rom_enabled,
+        serial_device: state.bus.game_boy_serial_device(),
+    })
+}
+
+pub fn validate_and_load_current_native_tas_state(
+    emulator: &mut crate::emulator::Emulator,
+    bytes: &[u8],
+) -> Result<CurrentNativeTasStateProjection> {
+    let inspection = inspect_current_native_tas_state(emulator, bytes)?;
+    emulator.load_state(bytes)?;
+    Ok(inspection.projection)
 }
 
 pub fn encode_hardware_mode(mode: HardwareMode) -> u8 {

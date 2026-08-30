@@ -18,22 +18,27 @@ mod contract_tests;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use native::EmuThread;
+pub(crate) use native::{EmuResponsePoll, EmuThread};
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm::EmuThread;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use types::TcpLinkMode;
 #[cfg(feature = "profile-cores")]
 pub(crate) use types::profile_frame_publication;
 pub(crate) use types::{
-    AudioConfig, AudioRecordingCapture, EmuCommand, EmuResponse, FrameInput, FrameResult,
-    GuestCallRequest, JoypadInput, MemorySearchRequest, PceMouseInput, RenderSettings,
+    AudioConfig, AudioRecordingCapture, EmuCommand, EmuCommandAuthority, EmuResponse, FrameInput,
+    FrameResult, GuestCallRequest, JoypadInput, MemorySearchRequest, PceMouseInput, RenderSettings,
     ReplayJoypadFrame, ReplayStartState, ReusableBuffers, SharedFramebuffer, SnapshotRequest,
-    SpeculationBlockers, WorkerRuntimeFault, ZapperInput,
+    SpeculationBlockers, TasControlCommandKind, WorkerRuntimeFault, ZapperInput,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use types::{
+    TasControlAcquireRejectedReason, TasControlCommitRejectedReason, TasControlLeaseWitness,
+    TasControlRollbackRejectedReason, TasExecutionProfile, TasExecutionRejectedReason,
+    TasExecutionRequest, TasFrameAdvanceRejectedReason, TasFrameAdvanceRequest, TasInputFrame,
+    TcpLinkMode,
 };
 
 pub(crate) const DEFAULT_REWIND_SECONDS: usize = 10;

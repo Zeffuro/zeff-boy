@@ -9,9 +9,14 @@ use super::types::{self, EmuCommand, EmuResponse, FrameResult, SharedFramebuffer
 use crate::emu_backend::{CoreCapabilities, EmuBackend};
 use zeff_emu_common::time::MachineTiming;
 
-// Keep in sync with the app's frame-step in-flight limit.
 const FRAME_CHANNEL_CAPACITY: usize = 2;
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
+
+pub(crate) enum EmuResponsePoll {
+    Response(EmuResponse),
+    Empty,
+    Disconnected,
+}
 
 pub(crate) struct EmuThread {
     cmd_tx: Sender<EmuCommand>,
@@ -97,8 +102,15 @@ impl EmuThread {
     }
 
     pub(crate) fn send(&self, cmd: EmuCommand) {
+        self.send_checked(cmd);
+    }
+
+    pub(crate) fn send_checked(&self, cmd: EmuCommand) -> bool {
         if self.cmd_tx.send(cmd).is_err() {
             log::warn!("Failed to send command to emu thread (channel closed)");
+            false
+        } else {
+            true
         }
     }
 
@@ -110,8 +122,16 @@ impl EmuThread {
         self.resp_rx.recv().ok()
     }
 
-    pub(crate) fn try_recv_response(&self) -> Option<EmuResponse> {
-        self.resp_rx.try_recv().ok()
+    pub(crate) fn recv_checked(&self) -> Result<EmuResponse, ()> {
+        self.resp_rx.recv().map_err(|_| ())
+    }
+
+    pub(crate) fn poll_response(&self) -> EmuResponsePoll {
+        match self.resp_rx.try_recv() {
+            Ok(response) => EmuResponsePoll::Response(response),
+            Err(chan::TryRecvError::Empty) => EmuResponsePoll::Empty,
+            Err(chan::TryRecvError::Disconnected) => EmuResponsePoll::Disconnected,
+        }
     }
 
     pub(crate) fn shutdown(&mut self) {
@@ -159,3 +179,6 @@ impl Drop for EmuThread {
         self.shutdown();
     }
 }
+
+#[cfg(test)]
+mod tests;

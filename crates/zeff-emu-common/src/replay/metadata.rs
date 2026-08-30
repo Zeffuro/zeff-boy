@@ -87,7 +87,7 @@ impl ReplayMetadata {
             entry.encode(&mut out);
         }
         let mut events = self.events.clone();
-        events.sort_by_key(ReplayEvent::sort_key);
+        events.sort_by(ReplayEvent::canonical_cmp);
         write_u32(&mut out, events.len() as u32);
         for event in &events {
             event.encode(&mut out, version);
@@ -204,7 +204,7 @@ impl ReplayMetadata {
         for _ in 0..event_count {
             events.push(ReplayEvent::decode(&mut cursor, version)?);
         }
-        events.sort_by_key(ReplayEvent::sort_key);
+        events.sort_by(ReplayEvent::canonical_cmp);
         let cheat_sha256 = read_optional_hash_if_present(&mut cursor)?;
         let final_state_sha256 = read_optional_hash_if_present(&mut cursor)?;
         let game_boy_link_start_state =

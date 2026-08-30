@@ -25,6 +25,9 @@ struct WireRequest {
     enabled: Option<bool>,
     frames: Option<usize>,
     path: Option<String>,
+    at_end: Option<bool>,
+    record: Option<bool>,
+    keep: Option<bool>,
     slot: Option<u8>,
     addr: Option<String>,
     space: Option<String>,
@@ -155,6 +158,26 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
         "disconnect_link" | "disconnectlink" | "link_disconnect" | "linkdisconnect" => {
             LiveCommand::DisconnectLink
         }
+        "tas_open" | "tasopen" | "tas_open_project" | "tasopenproject" => {
+            LiveCommand::TasOpenProject {
+                path: request
+                    .path
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "missing required field: path".to_string())?,
+            }
+        }
+        "tas_status" | "tasstatus" => LiveCommand::TasStatus,
+        "tas_link" | "taslink" => LiveCommand::TasLink {
+            at_end: request.at_end.unwrap_or(false),
+            record: request.record.unwrap_or(false),
+        },
+        "tas_record_frame" | "tasrecordframe" | "tas_record_one" | "tasrecordone" => {
+            LiveCommand::TasRecordFrame
+        }
+        "tas_disconnect" | "tasdisconnect" => LiveCommand::TasDisconnect {
+            keep: request.keep.unwrap_or(false),
+        },
         "memory" | "read_memory" | "readmemory" => LiveCommand::MemoryRead {
             space: request
                 .space

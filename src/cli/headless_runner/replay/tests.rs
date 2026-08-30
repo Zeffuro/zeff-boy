@@ -20,7 +20,7 @@ use super::endpoint::validate_game_boy_link_replay_result_for_test;
 use super::paired_live::ensure_replay_metadata_has_expected_gb_link_events;
 #[cfg(not(target_arch = "wasm32"))]
 use super::timeline::{PairedGameBoyReplayTimeline, paired_game_boy_replay_timeline};
-use crate::cli::headless_runner::test_support::test_directory;
+use crate::test_support::{build_nes_test_rom, test_directory};
 
 static TEST_FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =
     [0xFF; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE];
@@ -46,23 +46,6 @@ fn load_fds_test_backend(rom_path: &Path) -> anyhow::Result<EmuBackend> {
         },
     )?
     .backend)
-}
-
-fn build_nes_test_rom() -> Vec<u8> {
-    let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
-    rom[0..4].copy_from_slice(b"NES\x1A");
-    rom[4] = 1;
-    rom[5] = 1;
-    let prg = 16;
-    rom[prg] = 0xA9;
-    rom[prg + 1] = 0x42;
-    rom[prg + 2] = 0x85;
-    rom[prg + 3] = 0x00;
-    rom[prg + 4] = 0xEA;
-    rom[prg + 5] = 0xEA;
-    rom[prg + 0x3FFC] = 0x00;
-    rom[prg + 0x3FFD] = 0x80;
-    rom
 }
 
 fn load_nes_test_backend(rom_path: &Path, rom_data: Vec<u8>) -> anyhow::Result<EmuBackend> {

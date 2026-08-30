@@ -171,6 +171,8 @@ pub(crate) struct DebugWindowState {
     pub(crate) layer_enable_sprites: bool,
     pub(crate) tile_viewer_was_open: bool,
     pub(crate) tilemap_viewer_was_open: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) tas_editor: crate::debug::TasEditorWindowState,
 }
 
 impl DebugWindowState {
@@ -220,6 +222,8 @@ impl DebugWindowState {
             layer_enable_sprites: true,
             tile_viewer_was_open: false,
             tilemap_viewer_was_open: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            tas_editor: crate::debug::TasEditorWindowState::new(),
         }
     }
 }

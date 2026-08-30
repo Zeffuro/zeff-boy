@@ -275,6 +275,36 @@ pub(crate) enum TcpLinkMode {
     Join { connect_addr: String },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+mod tas;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TasControlCommandKind {
+    FrameExecution,
+    AudioOrTimingConfiguration,
+    StateOrRecovery,
+    Replay,
+    DebuggerMutation,
+    MediaOrPeripheral,
+    CheatConfiguration,
+    Reset,
+    Link,
+    Rewind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EmuCommandAuthority {
+    Gameplay(TasControlCommandKind),
+    AcquireTasControl,
+    ExecuteTasControl,
+    AdvanceTasControl,
+    RollbackTasControl,
+    CommitTasControl,
+    Shutdown,
+}
+
 pub(crate) enum EmuCommand {
     StepFrames(Box<FrameInput>),
     SetAudioRecordingCapture {
@@ -333,11 +363,95 @@ pub(crate) enum EmuCommand {
     #[cfg(not(target_arch = "wasm32"))]
     DisconnectLink,
     Rewind(usize),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    AcquireTasControl {
+        request_id: u64,
+        profile: TasExecutionProfile,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    ExecuteTasControl(Box<TasExecutionRequest>),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    AdvanceTasControl(Box<TasFrameAdvanceRequest>),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    RollbackTasControl {
+        lease_id: u64,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    CommitTasControl {
+        lease_id: u64,
+    },
     #[cfg(target_arch = "wasm32")]
     FlushBatterySram,
     #[cfg(target_arch = "wasm32")]
     RestoreStateBackup(PathBuf),
     Shutdown,
+}
+
+impl EmuCommand {
+    pub(crate) fn authority_classification(&self) -> EmuCommandAuthority {
+        match self {
+            Self::StepFrames(_) => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::FrameExecution)
+            }
+            Self::SetAudioRecordingCapture { .. }
+            | Self::SetSampleRate(_)
+            | Self::SetUncapped(_)
+            | Self::SetUncappedBatchSize(_) => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::AudioOrTimingConfiguration)
+            }
+            Self::SaveStateSlot(_)
+            | Self::LoadStateSlot { .. }
+            | Self::SaveStateToPath(_)
+            | Self::LoadStateFromPath { .. }
+            | Self::InspectRecovery { .. }
+            | Self::CaptureStateBytes
+            | Self::LoadStateBytes { .. } => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::StateOrRecovery)
+            }
+            #[cfg(target_arch = "wasm32")]
+            Self::FlushBatterySram | Self::RestoreStateBackup(_) => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::StateOrRecovery)
+            }
+            Self::CaptureReplayStart { .. } | Self::CaptureReplayCheckpoint { .. } => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::Replay)
+            }
+            Self::ExecuteGuestCall(_) | Self::UndoGuestCall(_) => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::DebuggerMutation)
+            }
+            Self::ApplyMediaEvent(_)
+            | Self::SetGameBoySerialDevice(_)
+            | Self::QueueBardigunBarcodeScan(_)
+            | Self::TriggerBarcodeBoyScan(_)
+            | Self::RestoreGameBoyLinkState(_) => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::MediaOrPeripheral)
+            }
+            Self::UpdateCheats(_) => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::CheatConfiguration)
+            }
+            Self::Reset => EmuCommandAuthority::Gameplay(TasControlCommandKind::Reset),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::StartTcpLink(_) | Self::DisconnectLink => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::Link)
+            }
+            Self::Rewind(_) => EmuCommandAuthority::Gameplay(TasControlCommandKind::Rewind),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::AcquireTasControl { .. } => EmuCommandAuthority::AcquireTasControl,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::ExecuteTasControl(_) => EmuCommandAuthority::ExecuteTasControl,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::AdvanceTasControl(_) => EmuCommandAuthority::AdvanceTasControl,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::RollbackTasControl { .. } => EmuCommandAuthority::RollbackTasControl,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::CommitTasControl { .. } => EmuCommandAuthority::CommitTasControl,
+            Self::Shutdown => EmuCommandAuthority::Shutdown,
+        }
+    }
 }
 
 pub(crate) enum EmuResponse {
@@ -417,6 +531,92 @@ pub(crate) enum EmuResponse {
         game_boy_cpu_cycles: Option<u64>,
         game_boy_link_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
     },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasControlAcquired {
+        request_id: u64,
+        lease_id: u64,
+        witness: Box<TasControlLeaseWitness>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasControlAcquireRejected {
+        request_id: u64,
+        reason: TasControlAcquireRejectedReason,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasExecutionCompleted {
+        profile: TasExecutionProfile,
+        lease_id: u64,
+        run_id: u64,
+        segment_id: u64,
+        segment_frame_count: u64,
+        executed_project_frames: u64,
+        frame_count: u64,
+        state_sha256: crate::tas_project::TasDigest,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasExecutionRejected {
+        profile: TasExecutionProfile,
+        requested_lease_id: u64,
+        run_id: u64,
+        reason: TasExecutionRejectedReason,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasFrameAdvanced {
+        profile: TasExecutionProfile,
+        lease_id: u64,
+        run_id: u64,
+        advance_id: u64,
+        segment_id: u64,
+        segment_frame_count: u64,
+        executed_project_frames: u64,
+        frame_count: u64,
+        state_sha256: crate::tas_project::TasDigest,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasFrameAdvanceRejected {
+        profile: TasExecutionProfile,
+        requested_lease_id: u64,
+        run_id: u64,
+        advance_id: u64,
+        segment_id: u64,
+        reason: TasFrameAdvanceRejectedReason,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasControlCommandRejected {
+        lease_id: u64,
+        command: TasControlCommandKind,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasControlRolledBack {
+        lease_id: u64,
+        restored_state_sha256: crate::tas_project::TasDigest,
+        frame_count: u64,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasControlRollbackRejected {
+        requested_lease_id: u64,
+        reason: TasControlRollbackRejectedReason,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasControlCommitted {
+        lease_id: u64,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasControlCommitRejected {
+        requested_lease_id: u64,
+        reason: TasControlCommitRejectedReason,
+    },
     SramFlushed(Option<String>),
     RecoveryMissing,
     RecoveryAvailable(crate::save_paths::recovery_state::RecoveryFreshness),
@@ -476,5 +676,27 @@ mod tests {
         assert_eq!(fault.take_pending_delivery().as_deref(), Some("first"));
         assert_eq!(fault.take_pending_delivery(), None);
         assert!(!fault.can_step());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn tas_frame_advance_is_a_dedicated_authority_transition() {
+        let command = EmuCommand::AdvanceTasControl(Box::new(TasFrameAdvanceRequest {
+            profile: TasExecutionProfile::DirectNesCartridge,
+            lease_id: 1,
+            run_id: 2,
+            advance_id: 3,
+            segment_id: 4,
+            expected_segment_frame_count: 5,
+            expected_executed_project_frames: 6,
+            expected_frame_count: 4,
+            expected_state_sha256: crate::tas_project::TasDigest([5; 32]),
+            input: TasInputFrame::default(),
+        }));
+
+        assert_eq!(
+            command.authority_classification(),
+            EmuCommandAuthority::AdvanceTasControl
+        );
     }
 }

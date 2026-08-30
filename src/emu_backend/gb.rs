@@ -14,6 +14,12 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
+mod tas_provenance;
+pub(crate) use tas_provenance::{
+    GbPersistentLoadOutcome, GbTasLoadProvenance, GbTasLoadProvenanceView, GbTasLoadSetup,
+};
+pub(crate) use tas_provenance::{GbTasLoadProvenanceSeed, persistent_load_outcome};
+
 const GB_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
         id: AudioChannelId(0),
@@ -123,6 +129,7 @@ pub(crate) struct GbBackend {
     pub(crate) emu: GbEmulator,
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
+    tas_load_provenance: Option<GbTasLoadProvenance>,
 }
 
 impl GbBackend {
@@ -133,6 +140,7 @@ impl GbBackend {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn new(emu: GbEmulator, rom_path: PathBuf) -> Self {
         let sram_recovery = crate::save_paths::battery_sram_session(
             &rom_path,
@@ -143,23 +151,7 @@ impl GbBackend {
             emu,
             paths: BackendPaths::new(rom_path),
             sram_recovery,
-        }
-    }
-
-    pub(crate) fn with_source_path(
-        emu: GbEmulator,
-        rom_path: PathBuf,
-        source_path: PathBuf,
-    ) -> Self {
-        let sram_recovery = crate::save_paths::battery_sram_session(
-            &rom_path,
-            crate::emu_backend::ActiveSystem::Gb.storage_subdir(),
-            emu.rom_hash(),
-        );
-        Self {
-            emu,
-            paths: BackendPaths::with_source_path(rom_path, source_path),
-            sram_recovery,
+            tas_load_provenance: None,
         }
     }
 

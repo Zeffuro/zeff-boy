@@ -37,6 +37,8 @@ mod sega8_tile_viewer;
 mod settings_window;
 mod source_viewer;
 mod symbol_browser;
+#[cfg(not(target_arch = "wasm32"))]
+mod tas_editor;
 mod tile_viewer;
 mod tilemap_viewer;
 mod tms9918_graphics;
@@ -66,6 +68,11 @@ pub(crate) use mods_window::draw_mods_content;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use printer_viewer::draw_printer_window;
 pub(crate) use printer_viewer::{PrinterViewerState, draw_printer_viewer_content};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas_editor::{
+    TasEditorFileRequest, TasEditorHostRequest, TasEditorLiveAction, TasEditorLiveStatus,
+    TasEditorPresentation, TasEditorWindowState, draw_tas_editor_content, draw_tas_editor_window,
+};
 pub(crate) use toast::ToastManager;
 pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, CallStackDisplay, ConsoleGraphicsData, CpuDebugSnapshot,

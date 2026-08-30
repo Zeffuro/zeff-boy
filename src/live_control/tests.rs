@@ -185,6 +185,31 @@ fn parses_link_control_commands() {
 }
 
 #[test]
+fn parses_tas_live_control_commands() {
+    let parsed = parse_wire_request(r#"{"command":"tas_open","path":"movie.ztas"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasOpenProject { ref path } if path == std::path::Path::new("movie.ztas")
+    ));
+    let parsed =
+        parse_wire_request(r#"{"command":"tas_link","at_end":true,"record":true}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasLink {
+            at_end: true,
+            record: true,
+        }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_record_frame"}"#).unwrap();
+    assert!(matches!(parsed.command, LiveCommand::TasRecordFrame));
+    let parsed = parse_wire_request(r#"{"command":"tas_disconnect","keep":true}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasDisconnect { keep: true }
+    ));
+}
+
+#[test]
 fn parses_save_state_slot_commands() {
     let parsed = parse_wire_request(r#"{"command":"load_state_slot","slot":0}"#).unwrap();
     assert!(matches!(

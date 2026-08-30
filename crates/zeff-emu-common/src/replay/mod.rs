@@ -7,7 +7,9 @@ mod reader;
 mod start_metadata;
 mod validation;
 mod writer;
-pub use event_stream::{decode_replay_event_stream, encode_replay_event_stream};
+pub use event_stream::{
+    decode_replay_event_stream, encode_canonical_replay_event_stream, encode_replay_event_stream,
+};
 pub use events::{
     ReplayEvent, ReplayGameBoyLinkAction, ReplayGameBoyLinkCoordinatorOwner,
     ReplayGameBoyLinkCoordinatorState, ReplayGameBoyLinkEvent, ReplayGameBoyLinkReply,

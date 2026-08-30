@@ -214,6 +214,48 @@ pub(crate) fn tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "zeff_tas_open",
+            "description": "Open a local .ztas project in the running Zeff Boy instance without a file dialog.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "zeff_tas_status",
+            "description": "Read TAS project, selected cursor, frame count, and live-link state.",
+            "inputSchema": empty_schema()
+        }),
+        json!({
+            "name": "zeff_tas_link",
+            "description": "Link the loaded game to the selected TAS cursor or the branch end. Recording is available only for compatible direct NES projects.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "at_end": { "type": "boolean", "default": false },
+                    "record": { "type": "boolean", "default": false }
+                }
+            }
+        }),
+        json!({
+            "name": "zeff_tas_disconnect",
+            "description": "Disconnect TAS live control, either restoring the pre-link game state or keeping the linked position.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "keep": { "type": "boolean", "default": false }
+                }
+            }
+        }),
+        json!({
+            "name": "zeff_tas_record_frame",
+            "description": "Record exactly one frame from the current live controller state into a linked direct NES TAS project.",
+            "inputSchema": empty_schema()
+        }),
+        json!({
             "name": "zeff_link",
             "description": "Host, join, or disconnect the local TCP link cable.",
             "inputSchema": {

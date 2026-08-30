@@ -6,8 +6,10 @@ use zeff_emu_common::replay::{
 };
 
 use super::identity::hash_branch;
+use super::input_pattern::{TasInputPattern, replace_branch_input_pattern};
 use super::model::{
-    TasBranch, TasBranchOrigin, TasDigest, TasInputFrame, TasInputSpan, TasProject,
+    TasAnnotation, TasBranch, TasBranchOrigin, TasDigest, TasInputFrame, TasInputSpan, TasMarker,
+    TasProject,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,22 +32,12 @@ pub enum TasBranchEditImpactKind {
     Modified { earliest_cursor: u64 },
 }
 
-/// Opaque editor used by [`TasProject::edit_transaction`].
-///
-/// Timeline length changes are deliberately excluded until marker, annotation, and event
-/// rebasing have one explicit policy.
 pub struct TasProjectEdit<'a> {
     project: &'a mut TasProject,
+    timeline_earliest_cursors: BTreeMap<String, u64>,
 }
 
 impl TasProject {
-    /// Applies a batch of project edits atomically in memory.
-    ///
-    /// Any persisted change increments `edit_generation` once. `rerecord_count` increments once
-    /// when the final movie of an existing branch changes, or when a new fork diverges from its
-    /// captured parent movie in the same transaction. Presentation edits, branch selection, true
-    /// no-ops, and a plain snapshot fork do not count as rerecords. A failed edit or validation
-    /// leaves the project byte-for-byte unchanged.
     pub fn edit_transaction<F>(&mut self, edit: F) -> Result<TasEditOutcome>
     where
         F: FnOnce(&mut TasProjectEdit<'_>) -> Result<()>,
@@ -56,13 +48,14 @@ impl TasProject {
         let before_ids = before_hashes.keys().cloned().collect::<BTreeSet<_>>();
 
         let mut candidate = self.clone();
-        {
+        let timeline_earliest_cursors = {
             let mut editor = TasProjectEdit {
                 project: &mut candidate,
+                timeline_earliest_cursors: BTreeMap::new(),
             };
             edit(&mut editor)?;
-        }
-        candidate.validate()?;
+            editor.timeline_earliest_cursors
+        };
 
         let changed = candidate != *self;
         let after_hashes = branch_hashes(&candidate, sync_identity)?;
@@ -90,6 +83,7 @@ impl TasProject {
                 branch.verification = None;
             }
         }
+        candidate.validate()?;
 
         if changed {
             candidate.edit_generation = candidate
@@ -120,8 +114,12 @@ impl TasProject {
                 let after = candidate
                     .branch(&branch_id)
                     .expect("existing branch was collected from the candidate project");
+                let earliest_cursor = earliest_branch_movie_difference(before, after).unwrap_or(0);
                 Some(TasBranchEditImpactKind::Modified {
-                    earliest_cursor: earliest_branch_movie_difference(before, after).unwrap_or(0),
+                    earliest_cursor: timeline_earliest_cursors
+                        .get(&branch_id)
+                        .copied()
+                        .map_or(earliest_cursor, |timeline| timeline.min(earliest_cursor)),
                 })
             } else {
                 None
@@ -143,8 +141,6 @@ impl TasProject {
 }
 
 impl TasProjectEdit<'_> {
-    /// Creates a self-contained branch snapshot. The parent link records provenance only; later
-    /// edits to either branch never alter the other branch or the stored origin hash.
     pub fn fork_branch(
         &mut self,
         source_branch_id: &str,
@@ -204,7 +200,165 @@ impl TasProjectEdit<'_> {
         Ok(())
     }
 
-    /// Replaces every controller/device input in a non-empty, fixed-length frame interval.
+    pub fn replace_markers(&mut self, markers: Vec<TasMarker>) {
+        self.project.markers = markers;
+    }
+
+    pub fn replace_annotations(&mut self, annotations: Vec<TasAnnotation>) {
+        self.project.annotations = annotations;
+    }
+
+    pub fn insert_camera_asset(&mut self, bytes: Vec<u8>) -> TasDigest {
+        let digest = TasDigest::from_bytes(&bytes);
+        self.project.assets.insert(digest, bytes);
+        digest
+    }
+
+    pub fn remove_camera_asset(&mut self, digest: TasDigest) -> bool {
+        self.project.assets.remove(&digest).is_some()
+    }
+
+    pub fn insert_frames(&mut self, branch_id: &str, cursor: u64, count: u64) -> Result<()> {
+        if count == 0 {
+            bail!("TAS frame insertion cannot be empty");
+        }
+        let branch_index = self.branch_index(branch_id)?;
+        let old_frame_count = self.project.branches[branch_index].frame_count;
+        if cursor > old_frame_count {
+            bail!("TAS frame insertion cursor is past branch end");
+        }
+        let new_frame_count = old_frame_count
+            .checked_add(count)
+            .ok_or_else(|| anyhow::anyhow!("TAS frame insertion overflows"))?;
+        if new_frame_count > super::model::MAX_PROJECT_FRAMES {
+            bail!(
+                "TAS frame insertion exceeds the {} frame limit",
+                super::model::MAX_PROJECT_FRAMES
+            );
+        }
+
+        {
+            let branch = &mut self.project.branches[branch_index];
+            branch.input_spans = insert_input_frames(&branch.input_spans, cursor, count)?;
+            for event in &mut branch.events {
+                if event.frame() >= cursor {
+                    let frame = event
+                        .frame()
+                        .checked_add(count)
+                        .ok_or_else(|| anyhow::anyhow!("TAS event frame insertion overflows"))?;
+                    set_event_frame(event, frame);
+                }
+            }
+            branch.frame_count = new_frame_count;
+        }
+
+        for marker in self
+            .project
+            .markers
+            .iter_mut()
+            .filter(|marker| marker.branch_id == branch_id && marker.cursor >= cursor)
+        {
+            marker.cursor = marker
+                .cursor
+                .checked_add(count)
+                .ok_or_else(|| anyhow::anyhow!("TAS marker cursor insertion overflows"))?;
+        }
+        for annotation in self
+            .project
+            .annotations
+            .iter_mut()
+            .filter(|annotation| annotation.branch_id == branch_id)
+        {
+            let end = annotation
+                .start
+                .checked_add(annotation.length)
+                .ok_or_else(|| anyhow::anyhow!("TAS annotation range overflows"))?;
+            if annotation.start >= cursor {
+                annotation.start = annotation
+                    .start
+                    .checked_add(count)
+                    .ok_or_else(|| anyhow::anyhow!("TAS annotation insertion overflows"))?;
+            } else if end > cursor {
+                annotation.length = annotation
+                    .length
+                    .checked_add(count)
+                    .ok_or_else(|| anyhow::anyhow!("TAS annotation insertion overflows"))?;
+            }
+        }
+        self.record_timeline_impact(branch_id, cursor);
+        Ok(())
+    }
+
+    pub fn delete_frames(&mut self, branch_id: &str, start: u64, count: u64) -> Result<()> {
+        if count == 0 {
+            bail!("TAS frame deletion cannot be empty");
+        }
+        let end = start
+            .checked_add(count)
+            .ok_or_else(|| anyhow::anyhow!("TAS frame deletion range overflows"))?;
+        let branch_index = self.branch_index(branch_id)?;
+        let old_frame_count = self.project.branches[branch_index].frame_count;
+        if end > old_frame_count {
+            bail!("TAS frame deletion extends past branch end");
+        }
+
+        {
+            let branch = &mut self.project.branches[branch_index];
+            branch.input_spans = delete_input_frames(&branch.input_spans, start, end, count)?;
+            let mut events = Vec::with_capacity(branch.events.len());
+            for mut event in branch.events.drain(..) {
+                let frame = event.frame();
+                if (start..end).contains(&frame) {
+                    continue;
+                }
+                if frame >= end {
+                    let rebased = frame
+                        .checked_sub(count)
+                        .ok_or_else(|| anyhow::anyhow!("TAS event frame deletion underflows"))?;
+                    set_event_frame(&mut event, rebased);
+                }
+                events.push(event);
+            }
+            branch.events = events;
+            branch.frame_count = old_frame_count
+                .checked_sub(count)
+                .ok_or_else(|| anyhow::anyhow!("TAS frame count deletion underflows"))?;
+        }
+
+        for marker in self
+            .project
+            .markers
+            .iter_mut()
+            .filter(|marker| marker.branch_id == branch_id)
+        {
+            marker.cursor = delete_cursor(marker.cursor, start, end, count)?;
+        }
+        let mut annotations = Vec::with_capacity(self.project.annotations.len());
+        for mut annotation in self.project.annotations.drain(..) {
+            if annotation.branch_id != branch_id {
+                annotations.push(annotation);
+                continue;
+            }
+            let annotation_end = annotation
+                .start
+                .checked_add(annotation.length)
+                .ok_or_else(|| anyhow::anyhow!("TAS annotation range overflows"))?;
+            let rebased_start = delete_cursor(annotation.start, start, end, count)?;
+            let rebased_end = delete_cursor(annotation_end, start, end, count)?;
+            if rebased_start == rebased_end {
+                continue;
+            }
+            annotation.start = rebased_start;
+            annotation.length = rebased_end
+                .checked_sub(rebased_start)
+                .ok_or_else(|| anyhow::anyhow!("TAS annotation deletion range underflows"))?;
+            annotations.push(annotation);
+        }
+        self.project.annotations = annotations;
+        self.record_timeline_impact(branch_id, start);
+        Ok(())
+    }
+
     pub fn set_input_range(
         &mut self,
         branch_id: &str,
@@ -212,54 +366,20 @@ impl TasProjectEdit<'_> {
         length: u64,
         input: TasInputFrame,
     ) -> Result<()> {
-        if length == 0 {
-            bail!("TAS input edit range cannot be empty");
-        }
-        let end = start
-            .checked_add(length)
-            .ok_or_else(|| anyhow::anyhow!("TAS input edit range overflows"))?;
-        let branch = self.branch_mut(branch_id)?;
-        if end > branch.frame_count {
-            bail!("TAS input edit range extends past branch end");
-        }
-
-        let mut spans = Vec::with_capacity(branch.input_spans.len() + 1);
-        for span in &branch.input_spans {
-            let span_end = span.start + span.length;
-            if span_end <= start || span.start >= end {
-                spans.push(*span);
-                continue;
-            }
-            if span.start < start {
-                spans.push(TasInputSpan {
-                    length: start - span.start,
-                    ..*span
-                });
-            }
-            if span_end > end {
-                spans.push(TasInputSpan {
-                    start: end,
-                    length: span_end - end,
-                    input: span.input,
-                });
-            }
-        }
-        if input != TasInputFrame::default() {
-            spans.push(TasInputSpan {
-                start,
-                length,
-                input,
-            });
-        }
-        normalize_spans(&mut spans);
-        if spans != branch.input_spans {
-            branch.input_spans = spans;
-        }
-        Ok(())
+        let pattern = TasInputPattern::constant(length, input)?;
+        self.replace_input_pattern(branch_id, start, &pattern)
     }
 
-    /// Replaces the complete event stream and normalizes it with the replay codec's canonical
-    /// ordering rules.
+    pub fn replace_input_pattern(
+        &mut self,
+        branch_id: &str,
+        start: u64,
+        pattern: &TasInputPattern,
+    ) -> Result<()> {
+        let branch = self.branch_mut(branch_id)?;
+        replace_branch_input_pattern(branch, start, pattern)
+    }
+
     pub fn replace_branch_events(
         &mut self,
         branch_id: &str,
@@ -279,6 +399,135 @@ impl TasProjectEdit<'_> {
             .iter_mut()
             .find(|branch| branch.id == branch_id)
             .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))
+    }
+
+    fn branch_index(&self, branch_id: &str) -> Result<usize> {
+        self.project
+            .branches
+            .iter()
+            .position(|branch| branch.id == branch_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))
+    }
+
+    fn record_timeline_impact(&mut self, branch_id: &str, cursor: u64) {
+        self.timeline_earliest_cursors
+            .entry(branch_id.to_owned())
+            .and_modify(|earliest| *earliest = (*earliest).min(cursor))
+            .or_insert(cursor);
+    }
+}
+
+fn insert_input_frames(
+    spans: &[TasInputSpan],
+    cursor: u64,
+    count: u64,
+) -> Result<Vec<TasInputSpan>> {
+    let mut rebased = Vec::with_capacity(spans.len().saturating_add(1));
+    for span in spans {
+        let span_end = span
+            .start
+            .checked_add(span.length)
+            .ok_or_else(|| anyhow::anyhow!("TAS input span insertion overflows"))?;
+        if span_end <= cursor {
+            rebased.push(*span);
+        } else if span.start >= cursor {
+            rebased.push(TasInputSpan {
+                start: span
+                    .start
+                    .checked_add(count)
+                    .ok_or_else(|| anyhow::anyhow!("TAS input span insertion overflows"))?,
+                ..*span
+            });
+        } else {
+            rebased.push(TasInputSpan {
+                length: cursor
+                    .checked_sub(span.start)
+                    .ok_or_else(|| anyhow::anyhow!("TAS input span insertion range underflows"))?,
+                ..*span
+            });
+            rebased.push(TasInputSpan {
+                start: cursor
+                    .checked_add(count)
+                    .ok_or_else(|| anyhow::anyhow!("TAS input span insertion overflows"))?,
+                length: span_end
+                    .checked_sub(cursor)
+                    .ok_or_else(|| anyhow::anyhow!("TAS input span insertion range underflows"))?,
+                input: span.input,
+            });
+        }
+    }
+    normalize_spans(&mut rebased);
+    Ok(rebased)
+}
+
+fn delete_input_frames(
+    spans: &[TasInputSpan],
+    start: u64,
+    end: u64,
+    count: u64,
+) -> Result<Vec<TasInputSpan>> {
+    let mut rebased = Vec::with_capacity(spans.len());
+    for span in spans {
+        let span_end = span
+            .start
+            .checked_add(span.length)
+            .ok_or_else(|| anyhow::anyhow!("TAS input span deletion overflows"))?;
+        if span_end <= start {
+            rebased.push(*span);
+        } else if span.start >= end {
+            rebased.push(TasInputSpan {
+                start: span
+                    .start
+                    .checked_sub(count)
+                    .ok_or_else(|| anyhow::anyhow!("TAS input span deletion underflows"))?,
+                ..*span
+            });
+        } else {
+            if span.start < start {
+                rebased.push(TasInputSpan {
+                    length: start.checked_sub(span.start).ok_or_else(|| {
+                        anyhow::anyhow!("TAS input span deletion range underflows")
+                    })?,
+                    ..*span
+                });
+            }
+            if span_end > end {
+                rebased.push(TasInputSpan {
+                    start: end
+                        .checked_sub(count)
+                        .ok_or_else(|| anyhow::anyhow!("TAS input span deletion underflows"))?,
+                    length: span_end.checked_sub(end).ok_or_else(|| {
+                        anyhow::anyhow!("TAS input span deletion range underflows")
+                    })?,
+                    input: span.input,
+                });
+            }
+        }
+    }
+    normalize_spans(&mut rebased);
+    Ok(rebased)
+}
+
+fn delete_cursor(cursor: u64, start: u64, end: u64, count: u64) -> Result<u64> {
+    if cursor <= start {
+        Ok(cursor)
+    } else if cursor < end {
+        Ok(start)
+    } else {
+        cursor
+            .checked_sub(count)
+            .ok_or_else(|| anyhow::anyhow!("TAS cursor deletion underflows"))
+    }
+}
+
+fn set_event_frame(event: &mut ReplayEvent, new_frame: u64) {
+    match event {
+        ReplayEvent::FdsDiskSide { frame, .. }
+        | ReplayEvent::Media { frame, .. }
+        | ReplayEvent::GameBoyLink { frame, .. }
+        | ReplayEvent::GameBoyLinkState { frame, .. }
+        | ReplayEvent::GameBoyLinkStateAtTick { frame, .. }
+        | ReplayEvent::WonderSwanLink { frame, .. } => *frame = new_frame,
     }
 }
 

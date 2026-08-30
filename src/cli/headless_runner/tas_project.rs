@@ -1,23 +1,11 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail, ensure};
-use zeff_emu_common::replay::ReplayFirmwareManifest;
+use anyhow::{Context, Result};
 
-use crate::emu_backend::{
-    ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
-};
-use crate::tas_project::verification::TasExecutionSession;
-use crate::tas_project::{
-    TasCameraInput, TasDeviceIdentity, TasDigest, TasExecutionWitness, TasExternalIdentity,
-    TasFirmwareIdentity, TasProject, TasProjectIdentity,
-};
+use crate::emu_backend::loader::DirectNesTasExecutionLoader;
+use crate::tas_project::{TasExecutionWitness, TasProject};
 
 use super::HeadlessOptions;
-
-const MAX_NES_CARTRIDGE_BYTES: u64 = 64 * 1024 * 1024;
-const NES_GAMEPAD_CONFIGURATION: &[u8] = b"zeff-tas-device-config-v1\0nes-standard-controller\0";
-const NES_CARTRIDGE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-cartridge\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0external-state=absent\0";
 
 pub(super) fn run_tas_project_headless(
     rom_source_path: &Path,
@@ -33,15 +21,13 @@ pub(super) fn run_tas_project_headless(
     let branch_id = opts
         .tas_branch_id
         .as_deref()
-        .unwrap_or(project.active_branch_id.as_str())
+        .unwrap_or(project.active_branch_id())
         .to_owned();
-    validate_nes_cartridge_project_scope(&project, &branch_id)?;
+    DirectNesTasExecutionLoader::validate_project_branch_scope(&project, &branch_id)?;
 
-    let plan = TasExecutionPlan {
-        source_path: rom_source_path.to_path_buf(),
-        firmware_search_dirs,
-    };
-    let start_state = project.start_state.clone();
+    let plan =
+        DirectNesTasExecutionLoader::new(rom_source_path.to_path_buf(), firmware_search_dirs);
+    let start_state = project.start_state().to_vec();
     let witness_session = plan.load_session(&start_state)?;
     let witness = TasExecutionWitness {
         identity: witness_session.identity().clone(),
@@ -62,7 +48,7 @@ pub(super) fn run_tas_project_headless(
         project
             .branch(&branch_id)
             .expect("verified branch still exists")
-            .frame_count,
+            .frame_count(),
         verification.checkpoints.len(),
         verification
             .final_state_sha256
@@ -82,245 +68,25 @@ pub(super) fn run_tas_project_headless(
     Ok(())
 }
 
-#[derive(Clone)]
-struct TasExecutionPlan {
-    source_path: PathBuf,
-    firmware_search_dirs: Vec<PathBuf>,
-}
-
-impl TasExecutionPlan {
-    fn load_session(&self, start_state: &[u8]) -> Result<TasExecutionSession> {
-        validate_current_nes_start_state(start_state)?;
-        ensure!(
-            self.source_path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("nes")),
-            "TAS verification currently supports direct .nes cartridge files only"
-        );
-        let (rom_path, preloaded_data, system) =
-            crate::app::detect_and_extract_rom(&self.source_path)?;
-        ensure!(
-            system == ActiveSystem::Nes && preloaded_data.is_none() && rom_path == self.source_path,
-            "TAS verification currently supports cartridge NES media only"
-        );
-        let source_bytes = read_nes_cartridge_bounded(&self.source_path)?;
-        let mut loaded = load_backend_from_rom_source(
-            system,
-            &self.source_path,
-            &rom_path,
-            Some(source_bytes.clone()),
-            BackendLoadConfig {
-                firmware_search_dirs: self.firmware_search_dirs.clone(),
-                sample_rate: None,
-                apply_mods: false,
-                initial_input: None,
-                nes_load_battery_sram: false,
-                ..BackendLoadConfig::default()
-            },
-        )?;
-        loaded
-            .backend
-            .load_state_from_bytes(start_state.to_vec())
-            .context("failed to restore TAS starting state for device-profile validation")?;
-        ensure!(
-            loaded.backend.nes_has_standard_controller_topology() == Some(true),
-            "TAS starting state does not restore the standard NES controller topology"
-        );
-        let identity = nes_cartridge_identity(&loaded.backend, &source_bytes, start_state)?;
-        Ok(TasExecutionSession::new(loaded.backend, identity))
-    }
-}
-
-fn nes_cartridge_identity(
-    backend: &EmuBackend,
-    source_bytes: &[u8],
-    start_state: &[u8],
-) -> Result<TasProjectIdentity> {
-    ensure!(
-        backend.system() == ActiveSystem::Nes,
-        "TAS execution profile requires a NES backend"
-    );
-    let metadata = backend.replay_metadata();
-    let system = metadata
-        .system
-        .context("NES backend omitted its system identity")?;
-    let core_family = metadata
-        .core_family
-        .context("NES backend omitted its core-family identity")?;
-    let effective_media_sha256 = TasDigest(
-        metadata
-            .rom_sha256
-            .context("NES backend omitted its effective media identity")?,
-    );
-    let source_media_sha256 = TasDigest::from_bytes(source_bytes);
-    ensure!(
-        source_media_sha256 == effective_media_sha256,
-        "cartridge NES loader changed media bytes without a declared patch chain"
-    );
-    ensure!(
-        metadata.cheat_sha256.is_none(),
-        "cartridge NES execution unexpectedly enabled cheats"
-    );
-    ensure!(
-        metadata.firmware.is_empty(),
-        "cartridge NES execution unexpectedly selected firmware"
-    );
-    Ok(TasProjectIdentity {
-        system,
-        core_family,
-        determinism_abi: zeff_nes_core::save_state::TAS_DETERMINISM_ABI_ID.to_owned(),
-        source_media_sha256,
-        effective_media_sha256,
-        patches: Vec::new(),
-        firmware: metadata
-            .firmware
-            .iter()
-            .map(tas_firmware_identity)
-            .collect(),
-        devices: ["p1", "p2"]
-            .into_iter()
-            .map(|port| TasDeviceIdentity {
-                port: port.to_owned(),
-                device: "nes-standard-controller".to_owned(),
-                configuration_sha256: TasDigest::from_bytes(NES_GAMEPAD_CONFIGURATION),
-            })
-            .collect(),
-        sync_config_sha256: TasDigest::from_bytes(NES_CARTRIDGE_SYNC_CONFIGURATION),
-        persistent_state: TasExternalIdentity::Absent,
-        rtc_state: TasExternalIdentity::Absent,
-        sensor_state: TasExternalIdentity::Absent,
-        cheats: TasExternalIdentity::Absent,
-        state_format_compatibility_id: zeff_nes_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID
-            .to_owned(),
-        start_state_sha256: TasDigest::from_bytes(start_state),
-    })
-}
-
-fn read_nes_cartridge_bounded(path: &Path) -> Result<Vec<u8>> {
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("failed to open TAS source media {}", path.display()))?;
-    ensure!(
-        file.metadata()?.len() <= MAX_NES_CARTRIDGE_BYTES,
-        "TAS source media exceeds the {MAX_NES_CARTRIDGE_BYTES}-byte cartridge limit"
-    );
-    let mut bytes = Vec::new();
-    file.by_ref()
-        .take(MAX_NES_CARTRIDGE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("failed to read TAS source media {}", path.display()))?;
-    ensure!(
-        bytes.len() as u64 <= MAX_NES_CARTRIDGE_BYTES,
-        "TAS source media exceeds the {MAX_NES_CARTRIDGE_BYTES}-byte cartridge limit"
-    );
-    Ok(bytes)
-}
-
-fn validate_current_nes_start_state(start_state: &[u8]) -> Result<()> {
-    ensure!(
-        start_state.len() >= 12
-            && start_state[..8] == zeff_nes_core::save_state::NES_SAVE_STATE_MAGIC,
-        "TAS starting state is not a native NES save state"
-    );
-    let version = u32::from_le_bytes(start_state[8..12].try_into().expect("length checked above"));
-    ensure!(
-        version == zeff_nes_core::save_state::NES_SAVE_STATE_FORMAT_VERSION,
-        "TAS verification requires native NES state format {}, got {version}",
-        zeff_nes_core::save_state::NES_SAVE_STATE_FORMAT_VERSION
-    );
-    let mut projected = start_state.to_vec();
-    zeff_nes_core::save_state::project_replay_state_bytes(&mut projected)
-        .context("TAS starting state failed canonical NES v11 validation")
-}
-
-fn tas_firmware_identity(firmware: &ReplayFirmwareManifest) -> TasFirmwareIdentity {
-    match firmware {
-        ReplayFirmwareManifest::External {
-            firmware_id,
-            variant,
-            sha256,
-        } => TasFirmwareIdentity::External {
-            firmware_id: firmware_id.clone(),
-            variant: variant.clone(),
-            sha256: TasDigest(*sha256),
-        },
-        ReplayFirmwareManifest::Hle {
-            firmware_id,
-            implementation,
-            compatibility_version,
-        } => TasFirmwareIdentity::Hle {
-            firmware_id: firmware_id.clone(),
-            implementation: implementation.clone(),
-            compatibility_version: *compatibility_version,
-        },
-        ReplayFirmwareManifest::BuiltinOpenSource {
-            firmware_id,
-            implementation,
-            compatibility_version,
-            sha256,
-        } => TasFirmwareIdentity::BuiltinOpenSource {
-            firmware_id: firmware_id.clone(),
-            implementation: implementation.clone(),
-            compatibility_version: *compatibility_version,
-            sha256: TasDigest(*sha256),
-        },
-        ReplayFirmwareManifest::Skipped {
-            firmware_id,
-            compatibility_version,
-        } => TasFirmwareIdentity::Skipped {
-            firmware_id: firmware_id.clone(),
-            compatibility_version: *compatibility_version,
-        },
-    }
-}
-
-fn validate_nes_cartridge_project_scope(project: &TasProject, branch_id: &str) -> Result<()> {
-    let branch = project
-        .branch(branch_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))?;
-    ensure!(
-        project.replay_start == Default::default(),
-        "cartridge NES TAS verification does not support replay start metadata"
-    );
-    ensure!(
-        branch.events.is_empty(),
-        "cartridge NES TAS verification does not support synchronized media or link events"
-    );
-    for span in &branch.input_spans {
-        let input = span.input;
-        if input.players[2..]
-            .iter()
-            .any(|player| player.buttons != 0 || player.dpad != 0)
-        {
-            bail!("cartridge NES TAS verification supports players 1 and 2 only");
-        }
-        if input.zapper.enabled
-            || input.zapper.trigger
-            || input.zapper.hit
-            || input.zapper.screen_pos.is_some()
-        {
-            bail!("cartridge NES TAS verification does not support Zapper input");
-        }
-        if input.tilt_x_bits != 0 || input.tilt_y_bits != 0 {
-            bail!("cartridge NES TAS verification does not support tilt input");
-        }
-        if input.camera != TasCameraInput::None {
-            bail!("cartridge NES TAS verification does not support camera input");
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use zeff_emu_common::replay::{ReplayPlayer, ReplayStartMetadata};
 
-    use crate::tas_project::{TasBranch, TasControllerInput, TasInputFrame, TasInputSpan};
+    use crate::emu_backend::loader::{
+        MAX_NES_CARTRIDGE_BYTES, direct_nes_tas_identity, read_nes_cartridge_bounded,
+    };
+    use crate::emu_backend::{
+        ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
+    };
+    use crate::tas_project::{
+        TasAnnotation, TasCameraInput, TasControllerInput, TasInitialBranch, TasInputFrame,
+        TasInputSpan, TasMarker,
+    };
 
     use super::*;
-    use crate::cli::headless_runner::test_support::test_directory;
+    use crate::test_support::test_directory;
 
     fn executable_nes_rom() -> Vec<u8> {
         let mut rom = vec![0; 16 + 0x4000 + 0x2000];
@@ -350,22 +116,24 @@ mod tests {
         )?
         .backend;
         let start_state = backend.encode_state_bytes()?;
-        let identity = nes_cartridge_identity(&backend, rom, &start_state)?;
-        let project = TasProject {
-            project_id: "cli-verification".to_owned(),
-            source_replay_sha256: None,
+        project_for_rom_with_start_state(rom, frames, &backend, start_state)
+    }
+
+    fn project_for_rom_with_start_state(
+        rom: &[u8],
+        frames: u64,
+        backend: &EmuBackend,
+        start_state: Vec<u8>,
+    ) -> Result<TasProject> {
+        let identity = direct_nes_tas_identity(backend, rom, &start_state)?;
+        TasProject::new(
+            "cli-verification",
             identity,
             start_state,
-            replay_start: ReplayStartMetadata::default(),
-            edit_generation: 0,
-            rerecord_count: 0,
-            active_branch_id: "main".to_owned(),
-            project_comment: String::new(),
-            branches: vec![TasBranch {
+            ReplayStartMetadata::default(),
+            TasInitialBranch {
                 id: "main".to_owned(),
                 name: "Main".to_owned(),
-                comment: String::new(),
-                parent: None,
                 frame_count: frames,
                 input_spans: vec![TasInputSpan {
                     start: 0,
@@ -385,14 +153,9 @@ mod tests {
                     },
                 }],
                 events: Vec::new(),
-                verification: None,
-            }],
-            markers: Vec::new(),
-            annotations: Vec::new(),
-            assets: BTreeMap::new(),
-        };
-        project.validate()?;
-        Ok(project)
+            },
+            BTreeMap::new(),
+        )
     }
 
     #[test]
@@ -417,9 +180,8 @@ mod tests {
 
         let saved = TasProject::load(&project_path)?;
         assert!(saved.verification_is_current("main")?);
-        let verification = saved.branches[0]
-            .verification
-            .as_ref()
+        let verification = saved.branches()[0]
+            .verification()
             .expect("verification should be persisted");
         assert_eq!(
             verification
@@ -466,6 +228,87 @@ mod tests {
     }
 
     #[test]
+    fn public_tas_mutation_api_accounts_movie_and_presentation_edits() -> Result<()> {
+        let directory = test_directory("tas-cli-edit-boundary")?;
+        let rom_path = directory.path().join("game.nes");
+        let rom = executable_nes_rom();
+        let mut project = project_for_rom(&rom_path, &rom, 1)?;
+
+        assert_eq!(project.edit_generation(), 0);
+        assert_eq!(project.rerecord_count(), 0);
+        project.edit_transaction(|edit| {
+            edit.set_project_comment("presentation-only");
+            edit.replace_markers(vec![TasMarker {
+                id: "public-marker".to_owned(),
+                branch_id: "main".to_owned(),
+                cursor: 1,
+                name: "End".to_owned(),
+            }]);
+            edit.replace_annotations(vec![TasAnnotation {
+                id: "public-annotation".to_owned(),
+                branch_id: "main".to_owned(),
+                start: 0,
+                length: 1,
+                kind: "note".to_owned(),
+                text: "Transaction-owned".to_owned(),
+            }]);
+            Ok(())
+        })?;
+        assert_eq!(project.project_comment(), "presentation-only");
+        assert_eq!(project.markers()[0].id, "public-marker");
+        assert_eq!(project.annotations()[0].id, "public-annotation");
+        assert_eq!(project.edit_generation(), 1);
+        assert_eq!(project.rerecord_count(), 0);
+
+        project.edit_transaction(|edit| {
+            edit.set_input_range("main", 0, 1, TasInputFrame::default())
+        })?;
+        assert_eq!(
+            project.branch("main").unwrap().input_at(0),
+            TasInputFrame::default()
+        );
+        assert_eq!(project.edit_generation(), 2);
+        assert_eq!(project.rerecord_count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn public_camera_asset_edits_commit_or_roll_back_with_their_movie() -> Result<()> {
+        let directory = test_directory("tas-cli-camera-edit-boundary")?;
+        let rom_path = directory.path().join("game.nes");
+        let rom = executable_nes_rom();
+        let mut project = project_for_rom(&rom_path, &rom, 1)?;
+        let mut input = project.branch("main").unwrap().input_at(0);
+        let mut digest = None;
+
+        project.edit_transaction(|edit| {
+            let asset = edit.insert_camera_asset(vec![1, 2, 3, 4]);
+            digest = Some(asset);
+            input.camera = TasCameraInput::Blob(asset);
+            edit.set_input_range("main", 0, 1, input)
+        })?;
+        let digest = digest.expect("transaction should return its camera digest");
+        assert_eq!(
+            project.assets().get(&digest).map(Vec::as_slice),
+            Some(&[1, 2, 3, 4][..])
+        );
+        assert_eq!(project.edit_generation(), 1);
+        assert_eq!(project.rerecord_count(), 1);
+
+        let before = project.clone();
+        assert!(
+            project
+                .edit_transaction(|edit| {
+                    assert!(edit.remove_camera_asset(digest));
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(project, before);
+        Ok(())
+    }
+
+    #[test]
     fn native_cli_rejects_legacy_or_nonstandard_controller_start_state_transactionally()
     -> Result<()> {
         let directory = test_directory("tas-cli-profile")?;
@@ -474,36 +317,32 @@ mod tests {
         std::fs::write(&rom_path, &rom)?;
 
         for name in ["legacy", "oversized", "zapper"] {
-            let mut project = project_for_rom(&rom_path, &rom, 1)?;
-            if name == "legacy" {
-                project.start_state[8..12].copy_from_slice(&10_u32.to_le_bytes());
+            let mut backend = load_backend_from_rom_source(
+                ActiveSystem::Nes,
+                &rom_path,
+                &rom_path,
+                Some(rom.clone()),
+                BackendLoadConfig::default(),
+            )?
+            .backend;
+            let start_state = if name == "legacy" {
+                let mut start_state = backend.encode_state_bytes()?;
+                start_state[8..12].copy_from_slice(&10_u32.to_le_bytes());
+                start_state
             } else if name == "oversized" {
-                project.start_state = Vec::new();
-                project
-                    .start_state
-                    .extend_from_slice(&zeff_nes_core::save_state::NES_SAVE_STATE_MAGIC);
-                project.start_state.extend_from_slice(
+                let mut start_state = Vec::new();
+                start_state.extend_from_slice(&zeff_nes_core::save_state::NES_SAVE_STATE_MAGIC);
+                start_state.extend_from_slice(
                     &zeff_nes_core::save_state::NES_SAVE_STATE_FORMAT_VERSION.to_le_bytes(),
                 );
-                project
-                    .start_state
-                    .extend_from_slice(&u32::MAX.to_le_bytes());
+                start_state.extend_from_slice(&u32::MAX.to_le_bytes());
+                start_state
             } else {
-                let mut backend = load_backend_from_rom_source(
-                    ActiveSystem::Nes,
-                    &rom_path,
-                    &rom_path,
-                    Some(rom.clone()),
-                    BackendLoadConfig::default(),
-                )
-                .expect("NES backend should load")
-                .backend;
                 backend.set_zapper_state(true, false, false, None);
-                project.start_state = backend.encode_state_bytes().expect("state should encode");
-            }
-            project.identity.start_state_sha256 = TasDigest::from_bytes(&project.start_state);
+                backend.encode_state_bytes().expect("state should encode")
+            };
+            let project = project_for_rom_with_start_state(&rom, 1, &backend, start_state)?;
             let project_path = directory.path().join(format!("{name}.ztas"));
-            project.validate()?;
             project.save_atomic(&project_path)?;
             let before = std::fs::read(&project_path)?;
 
@@ -611,28 +450,59 @@ mod tests {
 
         let mut cases = Vec::new();
         let mut project = base.clone();
-        project.branches[0].input_spans[0].input.players[2].buttons = 1;
+        let mut input = project.branch("main").unwrap().input_at(0);
+        input.players[2].buttons = 1;
+        project.edit_transaction(|edit| edit.set_input_range("main", 0, 1, input))?;
         cases.push(project);
         let mut project = base.clone();
-        project.branches[0].input_spans[0].input.zapper.enabled = true;
+        let mut input = project.branch("main").unwrap().input_at(0);
+        input.zapper.enabled = true;
+        project.edit_transaction(|edit| edit.set_input_range("main", 0, 1, input))?;
         cases.push(project);
         let mut project = base.clone();
-        project.branches[0].input_spans[0].input.tilt_x_bits = 1;
+        let mut input = project.branch("main").unwrap().input_at(0);
+        input.tilt_x_bits = 1;
+        project.edit_transaction(|edit| edit.set_input_range("main", 0, 1, input))?;
         cases.push(project);
         let mut project = base.clone();
-        project.branches[0].input_spans[0].input.camera = TasCameraInput::Blob(TasDigest([1; 32]));
+        let mut camera_input = project.branch("main").unwrap().input_at(0);
+        project.edit_transaction(|edit| {
+            camera_input.camera = TasCameraInput::Blob(edit.insert_camera_asset(vec![1]));
+            edit.set_input_range("main", 0, 1, camera_input)
+        })?;
         cases.push(project);
         let mut project = base.clone();
-        project.branches[0]
-            .events
-            .push(zeff_emu_common::replay::ReplayEvent::FdsDiskSide { frame: 0, side: 0 });
+        project.edit_transaction(|edit| {
+            edit.replace_branch_events(
+                "main",
+                vec![zeff_emu_common::replay::ReplayEvent::FdsDiskSide { frame: 0, side: 0 }],
+            )
+        })?;
         cases.push(project);
-        let mut project = base;
-        project.replay_start.wonder_swan_link_tick = Some(0);
+        let mut replay_start = base.replay_start().clone();
+        replay_start.wonder_swan_link_tick = Some(0);
+        let branch = base.branch("main").unwrap();
+        let project = TasProject::new(
+            base.project_id(),
+            base.identity().clone(),
+            base.start_state().to_vec(),
+            replay_start,
+            TasInitialBranch {
+                id: branch.id().to_owned(),
+                name: branch.name().to_owned(),
+                frame_count: branch.frame_count(),
+                input_spans: branch.input_spans().to_vec(),
+                events: branch.events().to_vec(),
+            },
+            base.assets().clone(),
+        )?;
         cases.push(project);
 
         for project in cases {
-            assert!(validate_nes_cartridge_project_scope(&project, "main").is_err());
+            assert!(
+                DirectNesTasExecutionLoader::validate_project_branch_scope(&project, "main")
+                    .is_err()
+            );
         }
         Ok(())
     }

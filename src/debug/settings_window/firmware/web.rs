@@ -40,7 +40,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         .clicked()
     {
         crate::platform::FileDialog::new()
-            .add_filter("Firmware", &["bin", "rom", "bios"])
+            .add_filter("Firmware", &["bin", "rom", "bios", "col"])
             .set_title("Import firmware")
             .pick_file_web(state.firmware_inventory.pending_file.clone());
     }
@@ -173,4 +173,15 @@ fn row_for_imported_entry(
         )),
         managed_key: Some(crate::platform::firmware_storage_key(&entry.bytes)),
     }
+}
+
+#[cfg(test)]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn wasm_coleco_firmware_inventory_exposes_required_bios() {
+    let rows = rows_for_inventory(&zeff_firmware::FirmwareInventory::new());
+    assert!(rows.iter().any(|row| {
+        row.firmware_id == "coleco.vision.bios"
+            && row.system == "ColecoVision"
+            && row.status == FirmwareInventoryStatusKind::NotFound
+    }));
 }

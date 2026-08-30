@@ -131,8 +131,10 @@ jobs:
             -E '(rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::)' src/ \
             --exclude-dir=platform --exclude-dir=input --exclude-dir=audio --exclude-dir=camera \
             | grep -v 'cli/' | grep -v 'libretro_common\.rs' | grep -v '// platform-ok'
-      - name: Enforce tooling ownership and CI tiers
-        run: cargo run -p zeff-romtest -- audit-tooling
+      - name: Enforce fast repository policies
+        run: |
+          cargo run -p zeff-romtest -- audit-tooling
+          cargo run -p zeff-romtest -- audit-source-size
 
   wasm:
     name: WASM build
@@ -366,6 +368,10 @@ jobs:
       - name: Test detached GBA App rendering
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_gba_browser_app_consumes_and_presents_detached_frame
+
+      - name: Test ColecoVision browser firmware and backend lifecycle
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_coleco_
 
   fuzz-check:
     name: Fuzz compile check

@@ -12,6 +12,7 @@ pub(super) const CURRENT_FIRMWARE_IDS: &[&str] = &[
     "nintendo.gb.boot.cgb",
     "nintendo.gba.bios",
     "nintendo.fds.bios",
+    "coleco.vision.bios",
     "sega.sms.boot",
     "sega.gg.boot",
 ];

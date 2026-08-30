@@ -10,12 +10,32 @@ use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 use super::{ActiveSystem, EmuBackend};
 mod pce_cd;
 mod systems;
+#[cfg(not(target_arch = "wasm32"))]
+mod tas;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use pce_cd::{PreparedNativeArchiveBackend, prepare_native_archive_backend};
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use pce_cd::{
     PreparedSevenZipBackend, prepare_pce_cd_7z_backend, prepare_seven_zip_backend,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas::{
+    DirectGbTasExecutionLoader, DirectNesTasExecutionLoader, classify_direct_tas_execution_profile,
+    select_private_tas_execution_attachment, select_private_tas_execution_loader,
+};
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub(crate) use tas::{
+    MAX_NES_CARTRIDGE_BYTES, direct_nes_tas_identity, read_nes_cartridge_bounded,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas::{
+    TasProjectRuntimeWitness, validate_current_nes_start_state, validate_tas_project_witness,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas::{
+    direct_gb_tas_sync_config_sha256, direct_nes_tas_sync_config_sha256,
+    validate_direct_gb_tas_runtime, validate_direct_gb_tas_state,
 };
 
 #[derive(Clone, Debug)]
@@ -24,6 +44,7 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) sample_rate: Option<u32>,
     pub(crate) apply_mods: bool,
     pub(crate) initial_input: Option<(u8, u8)>,
+    pub(crate) gb_load_battery_sram: bool,
     pub(crate) nes_load_battery_sram: bool,
     pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
     pub(crate) sega8_console_region: Option<Sega8Region>,
@@ -54,6 +75,7 @@ impl Default for BackendLoadConfig {
             sample_rate: None,
             apply_mods: false,
             initial_input: None,
+            gb_load_battery_sram: true,
             nes_load_battery_sram: true,
             sega8_video_standard: None,
             sega8_console_region: None,
@@ -94,6 +116,7 @@ pub(crate) fn load_backend_from_rom_source(
     if system == ActiveSystem::Pce && pce_cd::is_pce_cd_path(rom_path) {
         return pce_cd::load_pce_cd_backend(source_path, rom_path, preloaded_data, &config);
     }
+    let loaded_from_source_path = preloaded_data.is_none();
     let mut rom_data = match preloaded_data {
         Some(data) => data,
         None => std::fs::read(source_path).with_context(|| {
@@ -101,19 +124,66 @@ pub(crate) fn load_backend_from_rom_source(
         })?,
     };
 
-    let original_crc32 = if config.apply_mods {
+    let raw_source_media_sha256 = matches!(system, ActiveSystem::GameBoy | ActiveSystem::Nes)
+        .then(|| zeff_firmware::sha256_bytes(&rom_data));
+    let raw_source_media_len = rom_data.len();
+    let mod_load = if config.apply_mods {
         systems::apply_mods_if_any(system, &mut rom_data)
     } else {
-        crc32fast::hash(&rom_data)
+        systems::ModLoadOutcome {
+            original_crc32: crc32fast::hash(&rom_data),
+            any_enabled: false,
+            any_applied: false,
+        }
     };
+    let nes_provenance = (system == ActiveSystem::Nes).then(|| {
+        super::nes::NesTasLoadProvenanceSeed::new(
+            raw_source_media_sha256.expect("NES source hash must exist for NES"),
+            source_path,
+            rom_path,
+            super::nes::NesTasLoadSetup {
+                loaded_from_source_path,
+                any_mod_enabled: mod_load.any_enabled,
+                any_mod_applied: mod_load.any_applied,
+                initial_input: config.initial_input,
+                configured_sample_rate: config.sample_rate,
+            },
+        )
+    });
+    let gb_provenance = (system == ActiveSystem::GameBoy).then(|| {
+        super::gb::GbTasLoadProvenanceSeed::new(
+            raw_source_media_sha256.expect("GB source hash must exist for GB"),
+            raw_source_media_len,
+            source_path,
+            rom_path,
+            super::gb::GbTasLoadSetup {
+                loaded_from_source_path,
+                any_mod_enabled: mod_load.any_enabled,
+                any_mod_applied: mod_load.any_applied,
+                initial_input: config.initial_input,
+                configured_sample_rate: config.sample_rate,
+                requested_hardware_mode: config.gb_hardware_mode_preference,
+            },
+        )
+    });
 
     let default_firmware_manifests =
         super::firmware::default_firmware_manifests_for_active_system(system);
     let mut backend = match system {
-        ActiveSystem::GameBoy => {
-            systems::load_gb_backend(&rom_data, source_path, rom_path, &config)?
-        }
-        ActiveSystem::Nes => systems::load_nes_backend(&rom_data, source_path, rom_path, &config)?,
+        ActiveSystem::GameBoy => systems::load_gb_backend(
+            &rom_data,
+            source_path,
+            rom_path,
+            &config,
+            gb_provenance.expect("GB load provenance must exist for GB"),
+        )?,
+        ActiveSystem::Nes => systems::load_nes_backend(
+            &rom_data,
+            source_path,
+            rom_path,
+            &config,
+            nes_provenance.expect("NES load provenance must exist for NES"),
+        )?,
         ActiveSystem::Coleco => {
             systems::load_coleco_backend(&rom_data, source_path, rom_path, &config)?
         }
@@ -143,6 +213,6 @@ pub(crate) fn load_backend_from_rom_source(
     }
     Ok(LoadedBackend {
         backend,
-        original_crc32,
+        original_crc32: mod_load.original_crc32,
     })
 }

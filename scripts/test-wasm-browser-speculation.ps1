@@ -4,7 +4,8 @@ param(
         "wasm_gba_browser_indexeddb_transaction_matches_detached_control",
         "wasm_sms_browser_indexeddb_transaction_matches_detached_control",
         "wasm_sms_browser_app_consumes_and_presents_detached_frame",
-        "wasm_gba_browser_app_consumes_and_presents_detached_frame"
+        "wasm_gba_browser_app_consumes_and_presents_detached_frame",
+        "wasm_coleco_"
     )]
     [string]$TestFilter = "browser_indexeddb_transaction_matches_detached_control"
 )
@@ -93,9 +94,7 @@ try {
                 "user-data-dir=$profile"
                 "no-first-run"
                 "no-default-browser-check"
-                # Hosted runners do not expose a physical GPU. Keep this a real
-                # WebGPU surface/present proof by selecting Chromium's CPU Dawn
-                # adapter instead of falling back to WebGL or skipping graphics.
+                # Use Dawn's CPU adapter when hosted runners lack a GPU.
                 "enable-unsafe-webgpu"
                 "use-webgpu-adapter=swiftshader"
                 "use-gpu-in-tests"

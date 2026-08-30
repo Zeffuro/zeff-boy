@@ -1,6 +1,8 @@
 use anyhow::{Result, bail};
 use sha2::{Digest as _, Sha256};
-use zeff_emu_common::replay::{encode_replay_event_stream, encode_replay_start_metadata};
+use zeff_emu_common::replay::{
+    encode_canonical_replay_event_stream, encode_replay_event_stream, encode_replay_start_metadata,
+};
 
 use super::model::{TasDigest, TasInputSpan, TasProject, TasSeekCacheIdentity};
 
@@ -9,6 +11,10 @@ const CACHE_FORMAT_VERSION: u32 = 1;
 impl TasProject {
     pub fn sync_identity_sha256(&self) -> Result<TasDigest> {
         self.validate()?;
+        self.sync_identity_sha256_from_validated()
+    }
+
+    pub(super) fn sync_identity_sha256_from_validated(&self) -> Result<TasDigest> {
         let identity = serde_json::to_vec(&self.canonical_identity())?;
         let replay_start = encode_replay_start_metadata(&self.replay_start)?;
         let mut hash = Sha256::new();
@@ -25,12 +31,14 @@ impl TasProject {
         let branch = self
             .branch(branch_id)
             .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))?;
-        hash_branch(
-            self.sync_identity_sha256()?,
-            branch,
-            branch.frame_count,
-            true,
-        )
+        self.branch_movie_sha256_from_validated(branch)
+    }
+
+    pub(super) fn branch_movie_sha256_from_validated(
+        &self,
+        branch: &super::model::TasBranch,
+    ) -> Result<TasDigest> {
+        hash_complete_branch(self.sync_identity_sha256_from_validated()?, branch)
     }
 
     pub fn branch_prefix_sha256(&self, branch_id: &str, cursor: u64) -> Result<TasDigest> {
@@ -59,6 +67,20 @@ impl TasProject {
     }
 }
 
+fn hash_complete_branch(
+    sync_identity: TasDigest,
+    branch: &super::model::TasBranch,
+) -> Result<TasDigest> {
+    let input_bytes = serde_json::to_vec(&branch.input_spans)?;
+    let event_bytes = encode_canonical_replay_event_stream(&branch.events)?;
+    hash_branch_bytes(
+        sync_identity,
+        branch.frame_count,
+        &input_bytes,
+        &event_bytes,
+    )
+}
+
 pub(super) fn hash_branch(
     sync_identity: TasDigest,
     branch: &super::model::TasBranch,
@@ -81,6 +103,15 @@ pub(super) fn hash_branch(
     let input_bytes = serde_json::to_vec(&spans)?;
     let event_bytes = encode_replay_event_stream(&events)?;
 
+    hash_branch_bytes(sync_identity, cursor, &input_bytes, &event_bytes)
+}
+
+fn hash_branch_bytes(
+    sync_identity: TasDigest,
+    cursor: u64,
+    input_bytes: &[u8],
+    event_bytes: &[u8],
+) -> Result<TasDigest> {
     let mut hash = Sha256::new();
     hash.update(b"ZTAS-BRANCH-1\0");
     hash.update(sync_identity.0);

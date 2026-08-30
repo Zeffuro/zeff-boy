@@ -111,8 +111,7 @@ impl App {
                         }
                         GamepadAction::Pause => {
                             if pressed {
-                                self.speed.paused = !self.speed.paused;
-                                self.toast_manager.set_paused(self.speed.paused);
+                                self.toggle_user_paused();
                             }
                         }
                         GamepadAction::Turbo => {

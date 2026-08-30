@@ -129,31 +129,40 @@ pub enum TasExternalIdentity {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TasProject {
-    pub project_id: String,
-    pub source_replay_sha256: Option<TasDigest>,
-    pub identity: TasProjectIdentity,
-    pub start_state: Vec<u8>,
-    pub replay_start: ReplayStartMetadata,
-    pub edit_generation: u64,
-    pub rerecord_count: u64,
-    pub active_branch_id: String,
-    pub project_comment: String,
-    pub branches: Vec<TasBranch>,
-    pub markers: Vec<TasMarker>,
-    pub annotations: Vec<TasAnnotation>,
-    pub assets: BTreeMap<TasDigest, Vec<u8>>,
+    pub(super) project_id: String,
+    pub(super) source_replay_sha256: Option<TasDigest>,
+    pub(super) identity: TasProjectIdentity,
+    pub(super) start_state: Vec<u8>,
+    pub(super) replay_start: ReplayStartMetadata,
+    pub(super) edit_generation: u64,
+    pub(super) rerecord_count: u64,
+    pub(super) active_branch_id: String,
+    pub(super) project_comment: String,
+    pub(super) branches: Vec<TasBranch>,
+    pub(super) markers: Vec<TasMarker>,
+    pub(super) annotations: Vec<TasAnnotation>,
+    pub(super) assets: BTreeMap<TasDigest, Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TasBranch {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) comment: String,
+    pub(super) parent: Option<TasBranchOrigin>,
+    pub(super) frame_count: u64,
+    pub(super) input_spans: Vec<TasInputSpan>,
+    pub(super) events: Vec<ReplayEvent>,
+    pub(super) verification: Option<TasVerificationProvenance>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TasInitialBranch {
     pub id: String,
     pub name: String,
-    pub comment: String,
-    pub parent: Option<TasBranchOrigin>,
     pub frame_count: u64,
     pub input_spans: Vec<TasInputSpan>,
     pub events: Vec<ReplayEvent>,
-    pub verification: Option<TasVerificationProvenance>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,6 +267,95 @@ pub enum TasProjectLoadSource {
 }
 
 impl TasProject {
+    pub fn new(
+        project_id: impl Into<String>,
+        identity: TasProjectIdentity,
+        start_state: Vec<u8>,
+        replay_start: ReplayStartMetadata,
+        initial_branch: TasInitialBranch,
+        assets: BTreeMap<TasDigest, Vec<u8>>,
+    ) -> Result<Self> {
+        let active_branch_id = initial_branch.id.clone();
+        let project = Self {
+            project_id: project_id.into(),
+            source_replay_sha256: None,
+            identity,
+            start_state,
+            replay_start,
+            edit_generation: 0,
+            rerecord_count: 0,
+            active_branch_id,
+            project_comment: String::new(),
+            branches: vec![TasBranch {
+                id: initial_branch.id,
+                name: initial_branch.name,
+                comment: String::new(),
+                parent: None,
+                frame_count: initial_branch.frame_count,
+                input_spans: initial_branch.input_spans,
+                events: initial_branch.events,
+                verification: None,
+            }],
+            markers: Vec::new(),
+            annotations: Vec::new(),
+            assets,
+        };
+        project.validate()?;
+        Ok(project)
+    }
+
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    pub fn source_replay_sha256(&self) -> Option<TasDigest> {
+        self.source_replay_sha256
+    }
+
+    pub fn identity(&self) -> &TasProjectIdentity {
+        &self.identity
+    }
+
+    pub fn start_state(&self) -> &[u8] {
+        &self.start_state
+    }
+
+    pub fn replay_start(&self) -> &ReplayStartMetadata {
+        &self.replay_start
+    }
+
+    pub fn edit_generation(&self) -> u64 {
+        self.edit_generation
+    }
+
+    pub fn rerecord_count(&self) -> u64 {
+        self.rerecord_count
+    }
+
+    pub fn active_branch_id(&self) -> &str {
+        &self.active_branch_id
+    }
+
+    pub fn project_comment(&self) -> &str {
+        &self.project_comment
+    }
+
+    pub fn branches(&self) -> &[TasBranch] {
+        &self.branches
+    }
+
+    pub fn markers(&self) -> &[TasMarker] {
+        &self.markers
+    }
+
+    pub fn annotations(&self) -> &[TasAnnotation] {
+        &self.annotations
+    }
+
+    pub fn assets(&self) -> &BTreeMap<TasDigest, Vec<u8>> {
+        &self.assets
+    }
+
     pub fn validate(&self) -> Result<()> {
         validate_id(&self.project_id, "project ID")?;
         validate_identity(&self.identity)?;
@@ -443,6 +541,38 @@ impl TasProject {
 }
 
 impl TasBranch {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+
+    pub fn parent(&self) -> Option<&TasBranchOrigin> {
+        self.parent.as_ref()
+    }
+
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
+    }
+
+    pub fn input_spans(&self) -> &[TasInputSpan] {
+        &self.input_spans
+    }
+
+    pub fn events(&self) -> &[ReplayEvent] {
+        &self.events
+    }
+
+    pub fn verification(&self) -> Option<&TasVerificationProvenance> {
+        self.verification.as_ref()
+    }
+
     pub fn input_at(&self, frame: u64) -> TasInputFrame {
         let index = self
             .input_spans

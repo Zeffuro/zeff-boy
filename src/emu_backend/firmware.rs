@@ -51,13 +51,9 @@ pub(crate) fn resolve_coleco_bios_with_manifest(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn resolve_coleco_bios_with_manifest(
-    _inventory: Option<&zeff_firmware::FirmwareInventory>,
-    _firmware_roots: &[std::path::PathBuf],
-    _content_path: Option<&std::path::Path>,
-) -> anyhow::Result<ResolvedFirmwareBytes> {
-    anyhow::bail!("ColecoVision is currently available only in native builds")
-}
+mod coleco_browser;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use coleco_browser::resolve_coleco_bios_with_manifest;
 
 pub(crate) fn default_firmware_manifests_for_active_system(
     system: ActiveSystem,
@@ -709,7 +705,6 @@ fn scan_known_firmware_filenames(
     inventory
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn firmware_candidate_summary(candidates: &[zeff_firmware::FirmwareCandidate]) -> String {
     if candidates.is_empty() {
         return String::new();

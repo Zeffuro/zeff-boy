@@ -539,7 +539,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::cli::headless_runner::test_support::test_directory;
+    use crate::test_support::test_directory;
 
     const RESET_PC: u16 = 0xE000;
 

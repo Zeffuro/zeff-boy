@@ -27,6 +27,8 @@ impl App {
                 == Some(window_id)
             {
                 self.handle_settings_window_event(event);
+            } else if self.is_tas_editor_window(window_id) {
+                self.handle_tas_editor_window_event(event);
             } else if self
                 .gfx
                 .as_ref()
@@ -477,7 +479,7 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn tick_during_window_interaction(&mut self) {
+    pub(super) fn tick_during_window_interaction(&mut self) {
         self.apply_focus_state();
         if Instant::now().duration_since(self.timing.last_render_time) >= super::UI_RENDER_INTERVAL
         {
@@ -751,6 +753,7 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         if !focused {
             self.release_pce_mouse(false);
+            self.stop_realtime_tas_recording();
         }
         self.game_window_focused = focused;
         self.focus_state_dirty = true;
@@ -846,67 +849,54 @@ impl App {
         let printer_window_focused = self.printer_window_focused;
         #[cfg(target_arch = "wasm32")]
         let printer_window_focused = false;
-        let focused = any_app_window_focused(
+        #[cfg(not(target_arch = "wasm32"))]
+        let tas_editor_window_focused = self.debug_windows.tas_editor.host_window_focused();
+        #[cfg(target_arch = "wasm32")]
+        let tas_editor_window_focused = false;
+        let focused = any_app_window_focused([
             self.game_window_focused,
             debugger_window_focused,
             settings_window_focused,
             mods_window_focused,
             cheats_window_focused,
             printer_window_focused,
-        );
+            tas_editor_window_focused,
+        ]);
 
         self.window_focused = focused;
         if focused {
             self.timing.last_frame_time = Instant::now();
             self.suppress_unfocus_pause_until_focus = false;
 
-            if self.paused_by_unfocus {
-                self.paused_by_unfocus = false;
-                self.speed.paused = false;
-                self.toast_manager.set_paused(false);
-            }
+            self.pause_state.set_focus(false);
+            self.recompute_pause();
         } else {
             let link_keeps_running = self.link_keeps_running();
             if should_pause_on_unfocus(
                 self.suppress_unfocus_pause_until_focus,
                 self.settings.emulation.pause_on_unfocus,
                 link_keeps_running,
-                self.speed.paused,
             ) {
-                self.paused_by_unfocus = true;
-                self.speed.paused = true;
-                self.toast_manager.set_paused(true);
+                self.pause_state.set_focus(true);
+                self.recompute_pause();
             }
         }
     }
 }
 
-fn any_app_window_focused(
-    game_window_focused: bool,
-    debugger_window_focused: bool,
-    settings_window_focused: bool,
-    mods_window_focused: bool,
-    cheats_window_focused: bool,
-    printer_window_focused: bool,
-) -> bool {
-    game_window_focused
-        || debugger_window_focused
-        || settings_window_focused
-        || mods_window_focused
-        || cheats_window_focused
-        || printer_window_focused
+fn any_app_window_focused(window_focus: [bool; 7]) -> bool {
+    window_focus.into_iter().any(std::convert::identity)
 }
 
 fn should_pause_on_unfocus(
     suppress_unfocus_pause_until_focus: bool,
     pause_on_unfocus: bool,
     link_keeps_running: bool,
-    paused: bool,
 ) -> bool {
     if suppress_unfocus_pause_until_focus {
         return false;
     }
-    pause_on_unfocus && !link_keeps_running && !paused
+    pause_on_unfocus && !link_keeps_running
 }
 
 fn game_mouse_press_reaches_emulator(
@@ -947,43 +937,46 @@ mod tests {
 
     #[test]
     fn any_native_window_keeps_the_app_focused() {
-        assert!(any_app_window_focused(
-            true, false, false, false, false, false
-        ));
-        assert!(any_app_window_focused(
-            false, true, false, false, false, false
-        ));
-        assert!(any_app_window_focused(
-            false, false, true, false, false, false
-        ));
-        assert!(any_app_window_focused(
-            false, false, false, true, false, false
-        ));
-        assert!(any_app_window_focused(
-            false, false, false, false, true, false
-        ));
-        assert!(any_app_window_focused(
-            false, false, false, false, false, true
-        ));
-        assert!(!any_app_window_focused(
-            false, false, false, false, false, false
-        ));
+        assert!(any_app_window_focused([
+            true, false, false, false, false, false, false
+        ]));
+        assert!(any_app_window_focused([
+            false, true, false, false, false, false, false
+        ]));
+        assert!(any_app_window_focused([
+            false, false, true, false, false, false, false
+        ]));
+        assert!(any_app_window_focused([
+            false, false, false, true, false, false, false
+        ]));
+        assert!(any_app_window_focused([
+            false, false, false, false, true, false, false
+        ]));
+        assert!(any_app_window_focused([
+            false, false, false, false, false, true, false
+        ]));
+        assert!(any_app_window_focused([
+            false, false, false, false, false, false, true
+        ]));
+        assert!(!any_app_window_focused([
+            false, false, false, false, false, false, false
+        ]));
     }
 
     #[test]
     fn dialog_unfocus_suppression_blocks_until_focus_returns() {
         let suppress = true;
 
-        assert!(!should_pause_on_unfocus(suppress, true, false, false));
-        assert!(!should_pause_on_unfocus(suppress, true, false, false));
-        assert!(should_pause_on_unfocus(false, true, false, false));
+        assert!(!should_pause_on_unfocus(suppress, true, false));
+        assert!(!should_pause_on_unfocus(suppress, true, false));
+        assert!(should_pause_on_unfocus(false, true, false));
     }
 
     #[test]
-    fn unfocus_does_not_pause_while_link_keeps_running_or_already_paused() {
-        assert!(!should_pause_on_unfocus(false, true, true, false));
-        assert!(!should_pause_on_unfocus(false, true, false, true));
-        assert!(!should_pause_on_unfocus(false, false, false, false));
+    fn unfocus_pause_depends_only_on_setting_and_link_activity() {
+        assert!(!should_pause_on_unfocus(false, true, true));
+        assert!(should_pause_on_unfocus(false, true, false));
+        assert!(!should_pause_on_unfocus(false, false, false));
     }
 
     #[test]

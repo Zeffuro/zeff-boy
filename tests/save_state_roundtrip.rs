@@ -1,8 +1,9 @@
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
-fn build_gb_test_rom() -> Vec<u8> {
-    vec![0u8; 0x8000]
-}
+#[path = "../src/test_support.rs"]
+mod test_support;
+
+use test_support::build_gb_test_rom;
 
 fn build_nes_test_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];

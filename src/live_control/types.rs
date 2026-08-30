@@ -67,6 +67,18 @@ pub(crate) enum LiveCommand {
         addr: Option<String>,
     },
     DisconnectLink,
+    TasOpenProject {
+        path: PathBuf,
+    },
+    TasStatus,
+    TasLink {
+        at_end: bool,
+        record: bool,
+    },
+    TasRecordFrame,
+    TasDisconnect {
+        keep: bool,
+    },
     MemoryRead {
         space: LiveMemorySpace,
         start: u32,

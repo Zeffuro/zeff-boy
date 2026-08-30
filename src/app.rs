@@ -1,3 +1,16 @@
+use crate::{
+    audio::AudioOutput,
+    debug::{
+        DebugTab, DebugUiActions, DebugWindowState, FpsTracker, ToastManager, restore_dock_layout,
+    },
+    emu_backend::{ActiveSystem, EmuBackend},
+    emu_thread::EmuThread,
+    graphics::Graphics,
+    input::GamepadHandler,
+    platform::Instant,
+    settings::{DebugPresentation, LeftStickMode, Settings},
+    ui,
+};
 use anyhow::Result;
 use std::sync::Arc;
 use winit::{
@@ -8,27 +21,13 @@ use winit::{
 };
 use zeff_emu_common::address::Address;
 
-use crate::platform::Instant;
-
-use crate::{
-    audio::AudioOutput,
-    debug::{
-        DebugTab, DebugUiActions, DebugWindowState, FpsTracker, ToastManager, restore_dock_layout,
-    },
-    emu_backend::{ActiveSystem, EmuBackend},
-    emu_thread::{EmuResponse, EmuThread},
-    graphics::Graphics,
-    input::GamepadHandler,
-    settings::{DebugPresentation, LeftStickMode, Settings},
-    ui,
-};
-
 pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
 
 mod bindings;
 #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
 pub(crate) mod browser_speculation_test;
 mod camera_host;
+mod command_gate;
 mod display;
 mod frame_result;
 mod input;
@@ -36,12 +35,16 @@ mod keyboard;
 mod lifecycle;
 mod link;
 mod media;
+mod pause;
 #[cfg(not(target_arch = "wasm32"))]
 mod remote;
 mod render;
 mod serial_devices;
 mod shutdown;
 mod state_io;
+#[cfg(not(target_arch = "wasm32"))]
+mod tas_control;
+mod tas_editor;
 mod tick;
 mod tilt;
 mod types;
@@ -88,7 +91,8 @@ pub(crate) fn run(
         .clamp(1, crate::emu_thread::MAX_UNCAPPED_BATCH_SIZE);
     let vsync_mode = settings.video.vsync_mode;
     let initial_audio_output_sample_rate = settings.audio.output_sample_rate;
-    let initial_debug_presentation = effective_debug_presentation(settings.ui.debug_presentation);
+    let initial_debug_presentation =
+        lifecycle::effective_debug_presentation(settings.ui.debug_presentation);
     let initial_debug_dock = restore_dock_layout(
         initial_debug_presentation,
         settings.ui.dock_layout(initial_debug_presentation),
@@ -100,7 +104,6 @@ pub(crate) fn run(
         settings.ui.skipped_update_version.clone(),
     );
 
-    // Cache metadata before handing emulator to emu thread
     let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
     let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
@@ -121,6 +124,8 @@ pub(crate) fn run(
     #[allow(unused_mut)]
     let mut app = App {
         emu_thread: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        emu_worker_generation: 0,
         initial_backend: backend,
         audio: None,
         gamepad: GamepadHandler::new()
@@ -168,6 +173,7 @@ pub(crate) fn run(
             turbo_held: false,
             turbo_counter: 0,
         },
+        pause_state: pause::PauseState::new(),
         modifiers: ModifierKeys::default(),
         host_input: HostInputState::new(),
         cursor_pos: None,
@@ -273,6 +279,10 @@ pub(crate) fn run(
         live_button_releases: Vec::new(),
         #[cfg(not(target_arch = "wasm32"))]
         tcp_link_active: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        tas_control: tas_control::TasControlCoordinator::new(),
+        #[cfg(not(target_arch = "wasm32"))]
+        tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder::default(),
         window_focused: true,
         game_window_focused: true,
         #[cfg(not(target_arch = "wasm32"))]
@@ -317,7 +327,6 @@ pub(crate) fn run(
         undo_load_state: None,
         undo_save_state_path: None,
         recovery_state_available: false,
-        paused_by_unfocus: false,
         suppress_unfocus_pause_until_focus: false,
     };
 
@@ -358,6 +367,8 @@ pub(crate) fn run(
 struct App {
     initial_backend: Option<EmuBackend>,
     emu_thread: Option<EmuThread>,
+    #[cfg(not(target_arch = "wasm32"))]
+    emu_worker_generation: u64,
     audio: Option<AudioOutput>,
     gamepad: Option<GamepadHandler>,
     gfx: Option<Graphics>,
@@ -389,6 +400,7 @@ struct App {
     timing: TimingState,
     last_audio_output_sample_rate: u32,
     speed: SpeedState,
+    pause_state: pause::PauseState,
     modifiers: ModifierKeys,
     host_input: HostInputState,
     cursor_pos: Option<(f32, f32)>,
@@ -445,6 +457,10 @@ struct App {
     live_button_releases: Vec<crate::live_control::PendingButtonRelease>,
     #[cfg(not(target_arch = "wasm32"))]
     tcp_link_active: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    tas_control: tas_control::TasControlCoordinator,
+    #[cfg(not(target_arch = "wasm32"))]
+    tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder,
     window_focused: bool,
     game_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
@@ -486,22 +502,7 @@ struct App {
     undo_load_state: Option<Vec<u8>>,
     undo_save_state_path: Option<std::path::PathBuf>,
     recovery_state_available: bool,
-    paused_by_unfocus: bool,
     suppress_unfocus_pause_until_focus: bool,
-}
-
-fn effective_debug_presentation(presentation: DebugPresentation) -> DebugPresentation {
-    #[cfg(not(target_arch = "wasm32"))]
-    if crate::live_control::automation_mode_enabled() {
-        return DebugPresentation::Floating;
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    if presentation == DebugPresentation::GameAndDebugger {
-        return DebugPresentation::Floating;
-    }
-
-    presentation
 }
 
 impl App {
@@ -738,37 +739,6 @@ impl App {
         let target = self.compute_target_tilt(is_mbc7, keyboard, mouse, left_stick);
         self.update_smoothed_tilt(target, is_mbc7)
     }
-
-    fn recv_cold_response(&mut self) -> Option<EmuResponse> {
-        loop {
-            while let Some(result) = self.emu_thread.as_ref()?.try_recv_frame() {
-                self.process_frame_result(result);
-            }
-            let response = self.emu_thread.as_ref()?.recv()?;
-            if self.handle_link_response(&response) {
-                continue;
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            let response = match self.consume_replay_start_response(response) {
-                Some(response) => response,
-                None => continue,
-            };
-            #[cfg(not(target_arch = "wasm32"))]
-            let response = match self.consume_replay_finalization_response(response) {
-                Some(response) => response,
-                None => continue,
-            };
-            let response = match self.consume_media_response(response) {
-                Some(response) => response,
-                None => continue,
-            };
-            let response = match self.consume_serial_device_response(response) {
-                Some(response) => response,
-                None => continue,
-            };
-            return Some(response);
-        }
-    }
 }
 
 impl ApplicationHandler for App {
@@ -816,6 +786,7 @@ impl ApplicationHandler for App {
             self.sync_mods_window(event_loop);
             self.sync_cheats_window(event_loop);
             self.sync_printer_window(event_loop);
+            self.sync_tas_editor(event_loop);
         }
         self.apply_focus_state();
         self.schedule_next_frame(event_loop);

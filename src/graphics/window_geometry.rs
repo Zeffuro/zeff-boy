@@ -12,6 +12,8 @@ pub(crate) const CHEATS_MIN_SIZE: [u32; 2] = [480, 360];
 pub(crate) const CHEATS_DEFAULT_SIZE: [u32; 2] = [700, 640];
 pub(crate) const PRINTER_MIN_SIZE: [u32; 2] = [300, 320];
 pub(crate) const PRINTER_DEFAULT_SIZE: [u32; 2] = [520, 720];
+pub(crate) const TAS_EDITOR_MIN_SIZE: [u32; 2] = [620, 360];
+pub(crate) const TAS_EDITOR_DEFAULT_SIZE: [u32; 2] = [980, 640];
 
 pub(crate) fn restored_size(
     saved: [u32; 2],
