@@ -43,6 +43,7 @@ fn direct_clean_load_captures_neutral_provenance() {
     assert_eq!(view.load.raw_source_media_sha256, expected_sha256);
     assert_eq!(view.load.raw_source_media_len, rom.len());
     assert!(view.load.direct_gb_file);
+    assert!(!view.load.direct_gbc_file);
     assert!(!view.load.any_mod_enabled);
     assert!(!view.load.any_mod_applied);
     assert_eq!(view.load.persistent_load, GbPersistentLoadOutcome::Absent);
@@ -106,6 +107,73 @@ fn preloaded_and_archive_routes_are_not_direct_file_provenance() {
             .unwrap()
             .load
             .direct_gb_file
+    );
+}
+
+#[test]
+fn direct_gbc_source_is_distinct_from_direct_gb_source() {
+    let root = test_directory("gb-tas-provenance-direct-gbc").unwrap();
+    let rom_path = root.path().join("clean.gbc");
+    let mut rom = build_gb_test_rom();
+    rom[0x143] = 0xC0;
+    std::fs::write(&rom_path, rom).unwrap();
+    let backend = load_backend_from_rom_source(
+        ActiveSystem::GameBoy,
+        &rom_path,
+        &rom_path,
+        None,
+        BackendLoadConfig {
+            gb_hardware_mode_preference:
+                zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::ForceCgb,
+            gb_load_battery_sram: false,
+            ..BackendLoadConfig::default()
+        },
+    )
+    .unwrap()
+    .backend;
+    let load = backend.gb_tas_load_provenance().unwrap().load;
+
+    assert!(!load.direct_gb_file);
+    assert!(load.direct_gbc_file);
+}
+
+#[test]
+fn selected_zip_member_records_outer_source_and_member_profile() {
+    let root = test_directory("gb-tas-provenance-zip-member").unwrap();
+    let archive_path = root.path().join("games.zip");
+    let rom_path = archive_path.join("folder/game.gb");
+    let rom = build_gb_test_rom();
+    let archive_sha256 = [0xA7; 32];
+    let sync_config_sha256 = [0x5C; 32];
+    let backend = load_backend_from_rom_source(
+        ActiveSystem::GameBoy,
+        &archive_path,
+        &rom_path,
+        Some(rom.clone()),
+        BackendLoadConfig {
+            gb_hardware_mode_preference:
+                zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference::ForceDmg,
+            gb_tas_source_media: Some((archive_sha256, 12_345, sync_config_sha256)),
+            gb_load_battery_sram: false,
+            ..BackendLoadConfig::default()
+        },
+    )
+    .unwrap()
+    .backend;
+    let load = backend.gb_tas_load_provenance().unwrap().load;
+
+    assert!(load.direct_gb_file);
+    assert!(!load.direct_gbc_file);
+    assert_eq!(
+        load.raw_source_media_sha256,
+        zeff_firmware::sha256_bytes(&rom)
+    );
+    assert_eq!(load.tas_source_media_sha256, archive_sha256);
+    assert_eq!(load.tas_source_media_len, 12_345);
+    assert_eq!(load.tas_sync_config_sha256, sync_config_sha256);
+    assert_eq!(
+        backend.tas_source_media_identity().unwrap(),
+        crate::emu_backend::capabilities::TasSourceMediaIdentity::new(archive_sha256, 12_345)
     );
 }
 

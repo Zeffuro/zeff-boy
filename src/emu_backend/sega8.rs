@@ -134,6 +134,9 @@ pub(crate) struct Sega8Backend {
     pub(crate) emu: Sega8Emulator,
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
+    sms_tas_load_provenance: Option<tas_provenance::SmsTasLoadProvenance>,
+    game_gear_tas_load_provenance: Option<game_gear_tas_provenance::GameGearTasLoadProvenance>,
+    sg1000_tas_load_provenance: Option<sg1000_tas_provenance::Sg1000TasLoadProvenance>,
 }
 
 impl Sega8Backend {
@@ -142,6 +145,46 @@ impl Sega8Backend {
             .dump_battery_sram()
             .map(|bytes| vec![(crate::save_paths::SRAM_COMPONENT, bytes)])
             .unwrap_or_default()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn game_gear_tas_battery_bytes(&self) -> Option<Vec<u8>> {
+        use zeff_sega8_core::hardware::cartridge::GameGearStandardMapperRam;
+
+        let bytes = self.emu.dump_battery_sram()?;
+        (self.system() == ActiveSystem::GameGear
+            && self.emu.save_ram_kind() == SaveRamKind::known_battery_backed(8 * 1024)
+            && self
+                .game_gear_tas_load_provenance()
+                .and_then(|provenance| provenance.standard_mapper_ram_identity)
+                .is_some_and(|identity| {
+                    identity.ram() == GameGearStandardMapperRam::BatteryBacked8KiB
+                })
+            && bytes.len() == 8 * 1024)
+            .then_some(bytes)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn game_gear_tas_battery_baseline(
+        &self,
+    ) -> anyhow::Result<crate::save_paths::SaveTargetBaseline> {
+        crate::save_paths::battery_sram_baseline(self.paths.rom_path())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn publish_game_gear_tas_battery_if_unchanged(
+        &mut self,
+        expected: crate::save_paths::SaveTargetBaseline,
+    ) -> Option<(String, crate::save_paths::SavePublicationOutcome)> {
+        let bytes = self.game_gear_tas_battery_bytes()?;
+        Some(crate::save_paths::publish_battery_sram_if_unchanged(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            ActiveSystem::GameGear.storage_subdir(),
+            self.emu.rom_hash(),
+            expected,
+            &bytes,
+        ))
     }
 
     pub(crate) fn new(emu: Sega8Emulator, rom_path: PathBuf) -> Self {
@@ -155,6 +198,9 @@ impl Sega8Backend {
             emu,
             paths: BackendPaths::new(rom_path),
             sram_recovery,
+            sms_tas_load_provenance: None,
+            game_gear_tas_load_provenance: None,
+            sg1000_tas_load_provenance: None,
         }
     }
 
@@ -173,6 +219,9 @@ impl Sega8Backend {
             emu,
             paths: BackendPaths::with_source_path(rom_path, source_path),
             sram_recovery,
+            sms_tas_load_provenance: None,
+            game_gear_tas_load_provenance: None,
+            sg1000_tas_load_provenance: None,
         }
     }
 
@@ -536,4 +585,28 @@ mod tests {
         );
         assert!(pal < ntsc);
     }
+}
+mod game_gear_tas_provenance;
+mod game_gear_tas_runtime;
+mod sg1000_tas_provenance;
+pub(crate) mod tas_provenance;
+pub(crate) use game_gear_tas_provenance::{
+    GameGearTasLoadProvenance, GameGearTasLoadProvenanceSeed, GameGearTasLoadSetup,
+    GameGearTasPersistentLoadOutcome, game_gear_persistent_load_outcome,
+};
+pub(crate) use game_gear_tas_runtime::{
+    validate_direct_game_gear_tas_execution_runtime,
+    validate_direct_game_gear_tas_private_execution_runtime,
+    validate_direct_game_gear_tas_private_runtime, validate_direct_game_gear_tas_runtime,
+};
+pub(crate) use sg1000_tas_provenance::{
+    Sg1000TasControllerModel, Sg1000TasLoadProvenance, Sg1000TasLoadProvenanceSeed,
+    Sg1000TasLoadSetup, Sg1000TasPersistentLoadOutcome, sg1000_persistent_load_outcome,
+};
+pub(crate) use tas_provenance::{SmsTasLoadProvenanceSeed, SmsTasLoadSetup};
+
+pub(crate) enum Sega8TasLoadProvenanceSeed {
+    MasterSystem(SmsTasLoadProvenanceSeed),
+    GameGear(GameGearTasLoadProvenanceSeed),
+    Sg1000(Sg1000TasLoadProvenanceSeed),
 }

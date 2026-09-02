@@ -122,6 +122,17 @@ impl Bus {
         Ok(bus)
     }
 
+    pub(crate) fn write_sgb_native_continuation(&self, writer: &mut StateWriter) {
+        self.io.write_sgb_native_continuation(writer);
+    }
+
+    pub(crate) fn read_sgb_native_continuation(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<()> {
+        self.io.read_sgb_native_continuation(reader)
+    }
+
     pub(crate) fn restore_cartridge_rom_bytes(&mut self, rom: Vec<u8>, header: &RomHeader) {
         self.cartridge.restore_rom_bytes(rom);
         self.cgb_dmg_compat = matches!(

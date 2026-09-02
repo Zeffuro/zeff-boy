@@ -1,5 +1,7 @@
 mod debug_menu;
 mod file_menu;
+#[cfg(not(target_arch = "wasm32"))]
+mod tas_session;
 mod toolbar;
 mod tools_menu;
 mod view_menu;
@@ -17,6 +19,8 @@ use std::path::PathBuf;
 pub(crate) enum MenuAction {
     OpenFile,
     ResetGame,
+    #[cfg(not(target_arch = "wasm32"))]
+    ReloadGame,
     StopGame,
     OpenSettings,
     #[cfg(not(target_arch = "wasm32"))]
@@ -203,6 +207,41 @@ pub(crate) fn draw_menu_bar(
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let tas_session = tas_session::label(debug_windows.tas_editor.live_status())
+                        .map(|label| {
+                            let indicator_width = tas_session::measure(ui, &label)
+                                + ui.spacing().item_spacing.x
+                                + 6.0;
+                            (label, indicator_width)
+                        });
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let show_tas_session = tas_session.as_ref().is_some_and(|(_, width)| {
+                        tas_session::fits(
+                            ui.available_width(),
+                            *width,
+                            toolbar::essential_width(
+                                ui,
+                                settings,
+                                &toolbar::ToolbarState {
+                                    is_paused: mb.is_paused,
+                                    active_system: mb.active_system,
+                                    ws_display_rotated: mb.ws_display_rotated,
+                                    speed_mode_label: mb.speed_mode_label,
+                                    active_save_slot: mb.active_save_slot,
+                                    reserved_width: 0.0,
+                                },
+                            ),
+                        )
+                    });
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let tas_session_width = tas_session.as_ref().map_or(0.0, |(_, width)| {
+                        if show_tas_session {
+                            *width
+                        } else {
+                            tas_session::compact_width(ui)
+                        }
+                    });
                     toolbar::draw(
                         ui,
                         &mut actions,
@@ -213,8 +252,21 @@ pub(crate) fn draw_menu_bar(
                             ws_display_rotated: mb.ws_display_rotated,
                             speed_mode_label: mb.speed_mode_label,
                             active_save_slot: mb.active_save_slot,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            reserved_width: tas_session_width,
+                            #[cfg(target_arch = "wasm32")]
+                            reserved_width: 0.0,
                         },
                     );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some((label, _)) = tas_session.as_ref() {
+                        ui.separator();
+                        if show_tas_session {
+                            tas_session::draw(ui, debug_windows.tas_editor.live_status(), label);
+                        } else {
+                            tas_session::draw_compact(ui, debug_windows.tas_editor.live_status());
+                        }
+                    }
                 });
             });
         })

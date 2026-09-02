@@ -1,6 +1,6 @@
 use zeff_emu_common::replay::{
-    ReplayCheckpoint, ReplayEvent, ReplayFirmwareManifest, ReplayJoypadFrame, ReplayMetadata,
-    ReplayPlayer, ReplayRecorder, ReplayZapperFrame,
+    ReplayCheckpoint, ReplayColecoControllerFrame, ReplayEvent, ReplayFirmwareManifest,
+    ReplayJoypadFrame, ReplayMetadata, ReplayPlayer, ReplayRecorder, ReplayZapperFrame,
 };
 
 use super::super::*;
@@ -32,6 +32,7 @@ fn zrpl_import_export_roundtrips_every_input_channel_and_verification() {
         },
         host_tilt: (f32::from_bits(0x7FC0_1234), f32::from_bits(0x8000_0000)),
         camera_frame: Some(camera.clone()),
+        coleco: Default::default(),
     };
     let metadata = replay_metadata(Some([0x99; 32]));
     let mut recorder = ReplayRecorder::new_with_metadata(
@@ -225,6 +226,86 @@ fn zrpl_export_rejects_stale_verification_and_empty_camera_assets() {
             .is_err()
     );
     assert!(!empty_path.exists());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn zrpl_conversion_roundtrips_exact_coleco_controller_topology() {
+    let directory = zrpl_test_dir("coleco-controller-topology");
+    let source_path = directory.join("source.zrpl");
+    let output_path = directory.join("output.zrpl");
+    let start_state = vec![0x6C; 64];
+    let mut witness = replay_witness(&start_state, None);
+    witness.identity.system = "coleco".to_owned();
+    witness.identity.core_family = "ColecoVision".to_owned();
+    witness.identity.firmware.clear();
+    witness.identity.devices = (1..=2)
+        .map(|port| TasDeviceIdentity {
+            port: format!("p{port}"),
+            device: "coleco-standard-controller-keypad".to_owned(),
+            configuration_sha256: TasDigest([0xC0; 32]),
+        })
+        .collect();
+    let metadata = ReplayMetadata {
+        system: Some(witness.identity.system.clone()),
+        core_family: Some(witness.identity.core_family.clone()),
+        rom_sha256: Some(witness.identity.effective_media_sha256.0),
+        ..ReplayMetadata::default()
+    };
+    let input = ReplayJoypadFrame {
+        coleco: [
+            ReplayColecoControllerFrame {
+                down: true,
+                left_button: true,
+                keypad: 7,
+                ..ReplayColecoControllerFrame::default()
+            },
+            ReplayColecoControllerFrame {
+                right: true,
+                right_button: true,
+                keypad: 12,
+                ..ReplayColecoControllerFrame::default()
+            },
+        ],
+        ..ReplayJoypadFrame::default()
+    };
+    let mut recorder =
+        ReplayRecorder::new_with_metadata(source_path.clone(), start_state, metadata);
+    recorder.enable_coleco_input_format();
+    recorder.record_joypad_frame(input.clone());
+    recorder.finish().unwrap();
+
+    let project = TasProject::import_zrpl(&source_path, witness.clone()).unwrap();
+    assert_eq!(
+        project.branches[0].input_spans[0].input.coleco[0].keypad,
+        TasColecoKeypadKey::Six
+    );
+    assert_eq!(
+        project.branches[0].input_spans[0].input.coleco[1].keypad,
+        TasColecoKeypadKey::Pound
+    );
+    project
+        .export_zrpl_without_execution_for_test("main", &output_path)
+        .unwrap();
+    let mut player = ReplayPlayer::load(&output_path).unwrap();
+    assert_eq!(
+        u32::from_le_bytes(
+            std::fs::read(&output_path).unwrap()[4..8]
+                .try_into()
+                .unwrap()
+        ),
+        3
+    );
+    assert_eq!(player.next_joypad_frame(), Some(input));
+
+    let mut wrong_topology = witness;
+    wrong_topology.identity.devices.pop();
+    let error = TasProject::import_zrpl(&source_path, wrong_topology).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("requires two standard controller/keypad devices")
+    );
     std::fs::remove_dir_all(directory).unwrap();
 }
 

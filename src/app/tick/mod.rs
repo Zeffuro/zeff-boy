@@ -125,6 +125,8 @@ impl App {
         self.begin_queued_tas_control_acquire();
         #[cfg(not(target_arch = "wasm32"))]
         self.pump_realtime_tas_recording();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pump_linked_tas_playback();
         let supports_rewind = self.core_supports_rewind();
         let rewind_available = supports_rewind && !self.recording.is_replay_active();
         if !rewind_available {

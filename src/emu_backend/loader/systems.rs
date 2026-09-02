@@ -88,7 +88,11 @@ pub(super) fn load_gb_backend(
         emu.set_sample_rate(sample_rate);
     }
     let persistent_load = if config.gb_load_battery_sram {
-        let result = super::super::gb::try_load_battery_sram(&mut emu, rom_path);
+        let result = super::super::gb::try_load_battery_sram_at_time(
+            &mut emu,
+            rom_path,
+            config.gb_rtc_time_override,
+        );
         let outcome = super::super::gb::persistent_load_outcome(&result);
         log_sram_result(result);
         outcome
@@ -138,11 +142,12 @@ pub(super) fn load_nes_backend(
         let mut emu =
             zeff_nes_core::emulator::Emulator::new_fds(rom_data, bios.bytes, sample_rate)?;
         let persistent_load = load_nes_persistent_data(&mut emu, rom_path, config);
+        let battery_backed = emu.save_ram_kind().is_battery_backed();
         let mut backend = wrap_nes_backend(
             emu,
             source_path,
             rom_path,
-            provenance.finish(persistent_load),
+            provenance.finish(persistent_load, battery_backed),
         );
         backend.set_firmware_manifests(vec![bios.manifest]);
         return Ok(backend);
@@ -154,11 +159,12 @@ pub(super) fn load_nes_backend(
         .unwrap_or(zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE);
     let mut emu = zeff_nes_core::emulator::Emulator::new(rom_data, sample_rate)?;
     let persistent_load = load_nes_persistent_data(&mut emu, rom_path, config);
+    let battery_backed = emu.save_ram_kind().is_battery_backed();
     Ok(wrap_nes_backend(
         emu,
         source_path,
         rom_path,
-        provenance.finish(persistent_load),
+        provenance.finish(persistent_load, battery_backed),
     ))
 }
 
@@ -181,6 +187,7 @@ pub(super) fn load_coleco_backend(
     source_path: &Path,
     rom_path: &Path,
     config: &BackendLoadConfig,
+    provenance: super::super::coleco::ColecoTasLoadProvenanceSeed,
 ) -> anyhow::Result<EmuBackend> {
     let bios = resolve_coleco_bios(config, rom_path)?;
     let sample_rate = config
@@ -188,7 +195,8 @@ pub(super) fn load_coleco_backend(
         .unwrap_or(zeff_coleco_core::constants::DEFAULT_SAMPLE_RATE);
     let emu = zeff_coleco_core::Emulator::new(rom_data, &bios.bytes, sample_rate)?;
     let rom_hash = super::super::ColecoBackend::rom_hash_for_bytes(rom_data);
-    let mut backend = wrap_coleco_backend(emu, source_path, rom_path, rom_hash);
+    let mut backend = wrap_coleco_backend(emu, source_path, rom_path, rom_hash)
+        .with_coleco_tas_load_provenance(provenance);
     backend.set_firmware_manifests(vec![bios.manifest]);
     Ok(backend)
 }
@@ -222,6 +230,7 @@ pub(super) fn load_pce_backend(
     source_path: &Path,
     rom_path: &Path,
     config: &BackendLoadConfig,
+    provenance: super::super::pce::PceTasLoadProvenanceSeed,
 ) -> anyhow::Result<EmuBackend> {
     anyhow::ensure!(
         config.pce_arcade_card_mode != PceArcadeCardMode::Enabled,
@@ -236,6 +245,7 @@ pub(super) fn load_pce_backend(
             rom_path.to_path_buf(),
             config.pce_console_wiring,
             config.pce_hucard_board,
+            config.pce_cartridge_hardware,
         )?
     } else {
         super::super::PceBackend::with_source_path_and_overrides(
@@ -244,14 +254,24 @@ pub(super) fn load_pce_backend(
             source_path.to_path_buf(),
             config.pce_console_wiring,
             config.pce_hucard_board,
+            config.pce_cartridge_hardware,
         )?
     };
     if let Some(sample_rate) = config.sample_rate {
         backend.set_sample_rate(sample_rate);
     }
-    if config.pce_load_battery_bram {
-        log_sram_result(backend.try_load_memory_base128());
-    }
+    backend.set_pce_mouse_state(config.pce_controller_mode, 0, 0, 0);
+    backend.set_pce_memory_base_mode(config.pce_memory_base_mode);
+    let persistent_load = if config.pce_load_battery_bram {
+        let result = backend.try_load_memory_base128();
+        let outcome = super::super::pce::pce_persistent_load_outcome(&result);
+        log_sram_result(result);
+        outcome
+    } else {
+        super::super::pce::PceTasPersistentLoadOutcome::Skipped
+    };
+    let provenance = provenance.finish(&backend, persistent_load);
+    backend = backend.with_tas_load_provenance(provenance);
     Ok(EmuBackend::from_pce(backend))
 }
 
@@ -290,6 +310,7 @@ pub(super) fn load_gba_backend(
     source_path: &Path,
     rom_path: &Path,
     config: &BackendLoadConfig,
+    tas_provenance: super::super::gba::GbaTasLoadProvenanceSeed,
 ) -> anyhow::Result<EmuBackend> {
     let sample_rate = config
         .sample_rate
@@ -309,11 +330,29 @@ pub(super) fn load_gba_backend(
         }
         None => zeff_gba_core::emulator::Emulator::new(rom_data, sample_rate)?,
     };
-    log_sram_result(super::super::gba::try_load_battery_sram(&mut emu, rom_path));
-    if emu.has_rtc() {
+    let persistent_load = if config.gba_load_battery_sram {
+        let result = super::super::gba::try_load_battery_sram(&mut emu, rom_path);
+        let outcome = super::super::gba::persistent_load_outcome(&result);
+        log_sram_result(result);
+        outcome
+    } else {
+        super::super::gba::GbaTasPersistentLoadOutcome::Skipped
+    };
+    let rtc_seeded_from_host = config.gba_seed_rtc_from_host && emu.has_rtc();
+    if rtc_seeded_from_host {
         emu.set_rtc_date_time(crate::platform::local_gba_rtc_date_time());
     }
-    let mut backend = wrap_gba_backend(emu, source_path, rom_path);
+    let provenance = tas_provenance.finish(
+        persistent_load,
+        emu.apu_debug_snapshot().sample_rate,
+        rtc_seeded_from_host,
+    );
+    let mut backend = EmuBackend::from_gba_with_tas_load_provenance(
+        emu,
+        rom_path.to_path_buf(),
+        source_path.to_path_buf(),
+        provenance,
+    );
     if let Some(bios) = external_bios {
         backend.set_firmware_manifests(vec![bios.manifest]);
     }
@@ -325,13 +364,28 @@ pub(super) fn load_ws_backend(
     source_path: &Path,
     rom_path: &Path,
     config: &BackendLoadConfig,
+    tas_provenance: super::super::ws::WsTasLoadProvenanceSeed,
 ) -> anyhow::Result<EmuBackend> {
     let sample_rate = config
         .sample_rate
         .unwrap_or(zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE);
     let mut emu = zeff_ws_core::emulator::Emulator::new(rom_data, sample_rate)?;
-    log_sram_result(super::super::ws::try_load_battery_sram(&mut emu, rom_path));
-    Ok(wrap_ws_backend(emu, source_path, rom_path))
+    let persistent_load = if config.ws_load_battery_sram {
+        let result = super::super::ws::try_load_battery_sram(&mut emu, rom_path);
+        let outcome = super::super::ws::persistent_load_outcome(&result);
+        log_sram_result(result);
+        outcome
+    } else if emu.save_ram_kind() == zeff_emu_common::save_ram::SaveRamKind::None {
+        super::super::ws::WsTasPersistentLoadOutcome::Absent
+    } else {
+        super::super::ws::WsTasPersistentLoadOutcome::Skipped
+    };
+    let provenance = tas_provenance.finish(persistent_load);
+    let backend = wrap_ws_backend(emu, source_path, rom_path);
+    Ok(match backend {
+        EmuBackend::Ws(ws) => EmuBackend::Ws(Box::new((*ws).with_tas_load_provenance(provenance))),
+        _ => unreachable!("WonderSwan wrapper returned another backend"),
+    })
 }
 
 pub(super) fn load_sega8_backend(
@@ -340,6 +394,7 @@ pub(super) fn load_sega8_backend(
     source_path: &Path,
     rom_path: &Path,
     config: &BackendLoadConfig,
+    tas_provenance: Option<super::super::sega8::Sega8TasLoadProvenanceSeed>,
 ) -> anyhow::Result<EmuBackend> {
     let sample_rate = config
         .sample_rate
@@ -353,12 +408,15 @@ pub(super) fn load_sega8_backend(
     let console_region_fallback =
         super::super::sega8::console_region_from_paths(source_path, rom_path);
     let mapper_kind = super::super::sega8::mapper_kind_from_paths(source_path, rom_path);
-    let load_config = Sega8LoadConfig::new(sample_rate)
+    let mut load_config = Sega8LoadConfig::new(sample_rate)
         .with_system_hint(hint)
         .with_mapper_kind(mapper_kind)
         .with_video_standard(video_standard)
         .with_console_region(config.sega8_console_region)
         .with_console_region_fallback(console_region_fallback);
+    if let Some(identity) = config.game_gear_standard_mapper_ram_identity {
+        load_config = load_config.with_game_gear_standard_mapper_ram_identity(identity);
+    }
     let external_boot_rom = if config.sega8_use_external_boot_rom
         && matches!(system, ActiveSystem::MasterSystem | ActiveSystem::GameGear)
     {
@@ -382,10 +440,34 @@ pub(super) fn load_sega8_backend(
         )?,
         None => zeff_sega8_core::emulator::Emulator::new_with_config(rom_data, load_config)?,
     };
-    log_sram_result(super::super::sega8::try_load_battery_sram(
-        &mut emu, rom_path,
-    ));
+    let persistent_load = if config.sega8_load_battery_sram {
+        super::super::sega8::try_load_battery_sram(&mut emu, rom_path)
+    } else {
+        Ok(None)
+    };
+    let game_gear_persistent_load = if config.sega8_load_battery_sram
+        || emu.save_ram_kind() == zeff_emu_common::save_ram::SaveRamKind::None
+    {
+        super::super::sega8::game_gear_persistent_load_outcome(&persistent_load)
+    } else {
+        super::super::sega8::GameGearTasPersistentLoadOutcome::Skipped
+    };
+    let sg1000_persistent_load =
+        super::super::sega8::sg1000_persistent_load_outcome(&persistent_load);
+    log_sram_result(persistent_load);
     let mut backend = wrap_sega8_backend(emu, source_path, rom_path);
+    if let Some(provenance) = tas_provenance {
+        backend = match provenance {
+            super::super::sega8::Sega8TasLoadProvenanceSeed::MasterSystem(provenance) => {
+                backend.with_sms_tas_load_provenance(provenance.finish())
+            }
+            super::super::sega8::Sega8TasLoadProvenanceSeed::GameGear(provenance) => backend
+                .with_game_gear_tas_load_provenance(provenance.finish(game_gear_persistent_load)),
+            super::super::sega8::Sega8TasLoadProvenanceSeed::Sg1000(provenance) => {
+                backend.with_sg1000_tas_load_provenance(provenance.finish(sg1000_persistent_load))
+            }
+        };
+    }
     if let Some(boot_rom) = external_boot_rom {
         backend.set_firmware_manifests(vec![boot_rom.manifest]);
     }
@@ -436,20 +518,6 @@ fn wrap_coleco_backend(
             rom_hash,
         )
     }
-}
-
-fn wrap_gba_backend(
-    emu: zeff_gba_core::emulator::Emulator,
-    source_path: &Path,
-    rom_path: &Path,
-) -> EmuBackend {
-    wrap_backend_paths(
-        emu,
-        source_path,
-        rom_path,
-        EmuBackend::from_gba,
-        EmuBackend::from_gba_with_source,
-    )
 }
 
 fn wrap_ws_backend(

@@ -280,9 +280,50 @@ pub(crate) fn automatic_controller_mode(content_hash: [u8; 32]) -> PceController
 }
 
 pub(crate) fn automatic_memory_base_enabled(content_hash: Option<[u8; 32]>) -> bool {
-    content_hash
+    let catalogued = content_hash
         .and_then(canonical_title_metadata)
-        .is_some_and(|profile| profile.memory_base_128)
+        .is_some_and(|profile| profile.memory_base_128);
+    #[cfg(test)]
+    let catalogued = catalogued
+        || content_hash.is_some_and(|hash| {
+            TEST_MEMORY_BASE_CATALOG
+                .lock()
+                .expect("test Memory Base catalogue lock poisoned")
+                .contains(&hash)
+        });
+    catalogued
+}
+
+#[cfg(test)]
+static TEST_MEMORY_BASE_CATALOG: std::sync::Mutex<Vec<[u8; 32]>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) struct TestMemoryBaseCatalogGuard([u8; 32]);
+
+#[cfg(test)]
+pub(crate) fn register_test_memory_base_catalog_hash(
+    normalized_disc_sha256: [u8; 32],
+) -> TestMemoryBaseCatalogGuard {
+    TEST_MEMORY_BASE_CATALOG
+        .lock()
+        .expect("test Memory Base catalogue lock poisoned")
+        .push(normalized_disc_sha256);
+    TestMemoryBaseCatalogGuard(normalized_disc_sha256)
+}
+
+#[cfg(test)]
+impl Drop for TestMemoryBaseCatalogGuard {
+    fn drop(&mut self) {
+        let mut catalog = TEST_MEMORY_BASE_CATALOG
+            .lock()
+            .expect("test Memory Base catalogue lock poisoned");
+        let index = catalog
+            .iter()
+            .position(|hash| *hash == self.0)
+            .expect("test Memory Base catalogue entry was removed");
+        catalog.swap_remove(index);
+    }
 }
 
 pub(crate) fn automatic_arcade_card_enabled(content_hash: Option<[u8; 32]>) -> bool {

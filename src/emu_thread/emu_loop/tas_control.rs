@@ -11,12 +11,16 @@ use crate::tas_project::{MAX_EDITOR_SEEK_EXECUTION_FRAMES, TasDigest};
 use super::EmuLoop;
 
 mod advance;
-mod execution;
+mod checkpoint;
+pub(super) mod execution;
 mod retirement;
-mod witness;
+mod state_cache;
+pub(in crate::emu_thread) mod witness;
 
 use advance::TasFrameAdvanceResult;
+use checkpoint::{restore_backend_checkpoint, verify_tas_execution_candidate};
 use execution::TasExecutionResult;
+use state_cache::WorkerTasStateCache;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BackendAuthority {
@@ -24,10 +28,12 @@ enum BackendAuthority {
     Leased {
         lease_id: u64,
         profile: TasExecutionProfile,
-        checkpoint: TasControlCheckpoint,
+        state_format_compatibility_id: &'static str,
+        checkpoint: Box<TasControlCheckpoint>,
         attempted_run_id: Option<u64>,
         execution_failed: bool,
-        candidate: Option<TasExecutionResult>,
+        candidate: Option<Box<TasExecutionResult>>,
+        intermediate_cache_proofs: Vec<crate::emu_thread::TasExecutionCacheProof>,
     },
 }
 
@@ -49,6 +55,7 @@ pub(super) struct TasControl {
     authority: BackendAuthority,
     next_lease_id: u64,
     replay_activity_unwitnessed: bool,
+    state_cache: WorkerTasStateCache,
 }
 
 pub(super) struct TasControlContext {
@@ -76,10 +83,37 @@ impl EmuLoop {
         };
         let cheats_present = !self.last_cheats.is_empty();
         let dispatch = match command {
+            EmuCommand::InspectTasReadiness {
+                request_id,
+                profile,
+            } => {
+                let mut observation =
+                    witness::observe_loaded_profile(&self.backend, cheats_present, profile);
+                if let Some(identity) = self.tas_repair.identity
+                    && identity.profile == profile
+                    && witness::build_tas_witness_for_persistence(
+                        &self.backend,
+                        cheats_present,
+                        profile,
+                        identity.persistence,
+                    )
+                    .is_ok()
+                {
+                    observation.project_owned_persistence = Some(identity.persistence);
+                }
+                ControlFlow::Break(EmuResponse::TasReadinessObserved {
+                    request_id,
+                    observation: Box::new(observation),
+                })
+            }
             EmuCommand::RollbackTasControl { lease_id } => {
                 let backend = &mut self.backend;
+                let persistence = self.tas_repair.identity.map_or(
+                    crate::emu_thread::TasPersistenceContract::Absent,
+                    |identity| identity.persistence,
+                );
                 let response = self.tas_control.rollback(lease_id, |checkpoint| {
-                    restore_backend_checkpoint(backend, checkpoint)
+                    restore_backend_checkpoint(backend, checkpoint, persistence)
                 });
                 if matches!(response, EmuResponse::TasControlRolledBack { .. }) {
                     self.finalize_tas_loaded_observables("(TAS rollback)");
@@ -88,12 +122,28 @@ impl EmuLoop {
             }
             EmuCommand::ExecuteTasControl(request) => {
                 let request = *request;
+                let cached_state = self.tas_control.cached_state(&request);
                 let backend = &mut self.backend;
                 let runtime_fault = &mut self.runtime_fault;
+                let persistence = self.tas_repair.identity.map_or(
+                    crate::emu_thread::TasPersistenceContract::Absent,
+                    |identity| identity.persistence,
+                );
                 let response = self.tas_control.execute(request.clone(), || {
-                    execution::execute_tas(backend, runtime_fault, request)
+                    execution::execute_tas(
+                        backend,
+                        runtime_fault,
+                        request,
+                        cached_state,
+                        persistence,
+                    )
                 });
                 if matches!(response, EmuResponse::TasExecutionCompleted { .. }) {
+                    if self.tas_control.candidate_is_cacheable()
+                        && let Ok(state_bytes) = self.backend.encode_state_bytes()
+                    {
+                        self.tas_control.cache_candidate(state_bytes);
+                    }
                     self.finalize_tas_loaded_observables("(TAS execution)");
                 }
                 ControlFlow::Break(response)
@@ -102,26 +152,57 @@ impl EmuLoop {
                 let request = *request;
                 let backend = &mut self.backend;
                 let runtime_fault = &mut self.runtime_fault;
-                let response = self.tas_control.advance(request, |candidate, input| {
-                    advance::advance_tas_frame(backend, runtime_fault, candidate, input)
-                });
+                let persistence = self.tas_repair.identity.map_or(
+                    crate::emu_thread::TasPersistenceContract::Absent,
+                    |identity| identity.persistence,
+                );
+                let response = self
+                    .tas_control
+                    .advance(request, |candidate, input, snapshot| {
+                        advance::advance_tas_frame(
+                            backend,
+                            runtime_fault,
+                            candidate,
+                            input,
+                            snapshot,
+                            persistence,
+                        )
+                    });
                 if matches!(response, EmuResponse::TasFrameAdvanced { .. }) {
+                    if self.tas_control.candidate_is_cacheable()
+                        && let Ok(state_bytes) = self.backend.encode_state_bytes()
+                    {
+                        self.tas_control.cache_candidate(state_bytes);
+                    }
                     self.finalize_tas_loaded_observables("(TAS frame advance)");
                 }
                 ControlFlow::Break(response)
             }
             EmuCommand::CommitTasControl { lease_id } => {
                 let backend = &self.backend;
+                let persistence = self.tas_repair.identity.map_or(
+                    crate::emu_thread::TasPersistenceContract::Absent,
+                    |identity| identity.persistence,
+                );
                 ControlFlow::Break(self.tas_control.commit(lease_id, |candidate| {
-                    verify_tas_execution_candidate(backend, candidate)
+                    verify_tas_execution_candidate(backend, candidate, persistence)
                 }))
             }
-            command => {
-                let backend = &self.backend;
-                self.tas_control.dispatch(command, context, |profile| {
-                    witness::build_tas_witness(backend, cheats_present, profile)
-                })
-            }
+            command => self.tas_control.dispatch(command, context, |profile| {
+                if profile == TasExecutionProfile::DirectGbaCartridge {
+                    self.backend.drain_audio_samples_into(&mut Vec::new());
+                }
+                if let Some(identity) = self.tas_repair.identity {
+                    witness::build_tas_witness_for_persistence(
+                        &self.backend,
+                        cheats_present,
+                        profile,
+                        identity.persistence,
+                    )
+                } else {
+                    witness::build_tas_witness(&self.backend, cheats_present, profile)
+                }
+            }),
         };
         match dispatch {
             ControlFlow::Continue(command) => ControlFlow::Continue(command),
@@ -136,6 +217,7 @@ impl TasControl {
             authority: BackendAuthority::Gameplay,
             next_lease_id: 1,
             replay_activity_unwitnessed: false,
+            state_cache: WorkerTasStateCache::new(),
         }
     }
 
@@ -163,6 +245,9 @@ impl TasControl {
             }
             EmuCommand::AdvanceTasControl(_) => {
                 unreachable!("TAS frame advance escaped worker dispatch")
+            }
+            EmuCommand::InspectTasReadiness { .. } => {
+                unreachable!("TAS readiness inspection escaped worker dispatch")
             }
             EmuCommand::Shutdown => ControlFlow::Continue(EmuCommand::Shutdown),
             command => match self.authority {
@@ -244,13 +329,16 @@ impl TasControl {
             state_sha256: checkpoint_sha256,
             frame_count: witness.frame_count,
         };
+        let state_format_compatibility_id = witness.state_format_compatibility_id;
         self.authority = BackendAuthority::Leased {
             lease_id,
             profile,
-            checkpoint,
+            state_format_compatibility_id,
+            checkpoint: Box::new(checkpoint),
             attempted_run_id: None,
             execution_failed: false,
             candidate: None,
+            intermediate_cache_proofs: Vec::new(),
         };
         EmuResponse::TasControlAcquired {
             request_id,
@@ -266,48 +354,55 @@ impl TasControl {
         let lease_id = request.lease_id;
         let run_id = request.run_id;
         let profile = request.profile;
-        let (attempted_run_id, execution_failed, candidate) = match &mut self.authority {
-            BackendAuthority::Gameplay => {
-                return EmuResponse::TasExecutionRejected {
-                    profile,
-                    requested_lease_id: lease_id,
-                    run_id,
-                    reason: TasExecutionRejectedReason::NoActiveLease,
-                };
-            }
-            BackendAuthority::Leased {
-                lease_id: active_lease_id,
-                ..
-            } if *active_lease_id != lease_id => {
-                return EmuResponse::TasExecutionRejected {
-                    profile,
-                    requested_lease_id: lease_id,
-                    run_id,
-                    reason: TasExecutionRejectedReason::WrongLease {
-                        active_lease_id: *active_lease_id,
-                    },
-                };
-            }
-            BackendAuthority::Leased {
-                profile: active_profile,
-                ..
-            } if *active_profile != profile => {
-                return EmuResponse::TasExecutionRejected {
-                    profile,
-                    requested_lease_id: lease_id,
-                    run_id,
-                    reason: TasExecutionRejectedReason::WrongExecutionProfile {
-                        active_profile: *active_profile,
-                    },
-                };
-            }
-            BackendAuthority::Leased {
-                attempted_run_id,
-                execution_failed,
-                candidate,
-                ..
-            } => (attempted_run_id, execution_failed, candidate),
-        };
+        let (attempted_run_id, execution_failed, candidate, intermediate_cache_proofs) =
+            match &mut self.authority {
+                BackendAuthority::Gameplay => {
+                    return EmuResponse::TasExecutionRejected {
+                        profile,
+                        requested_lease_id: lease_id,
+                        run_id,
+                        reason: TasExecutionRejectedReason::NoActiveLease,
+                    };
+                }
+                BackendAuthority::Leased {
+                    lease_id: active_lease_id,
+                    ..
+                } if *active_lease_id != lease_id => {
+                    return EmuResponse::TasExecutionRejected {
+                        profile,
+                        requested_lease_id: lease_id,
+                        run_id,
+                        reason: TasExecutionRejectedReason::WrongLease {
+                            active_lease_id: *active_lease_id,
+                        },
+                    };
+                }
+                BackendAuthority::Leased {
+                    profile: active_profile,
+                    ..
+                } if *active_profile != profile => {
+                    return EmuResponse::TasExecutionRejected {
+                        profile,
+                        requested_lease_id: lease_id,
+                        run_id,
+                        reason: TasExecutionRejectedReason::WrongExecutionProfile {
+                            active_profile: *active_profile,
+                        },
+                    };
+                }
+                BackendAuthority::Leased {
+                    attempted_run_id,
+                    execution_failed,
+                    candidate,
+                    intermediate_cache_proofs,
+                    ..
+                } => (
+                    attempted_run_id,
+                    execution_failed,
+                    candidate,
+                    intermediate_cache_proofs,
+                ),
+            };
         if run_id == 0 {
             return EmuResponse::TasExecutionRejected {
                 profile,
@@ -341,9 +436,10 @@ impl TasControl {
         }
         *attempted_run_id = Some(run_id);
         *candidate = None;
+        *intermediate_cache_proofs = request.intermediate_cache_proofs.clone();
         match execute() {
             Ok(result) => {
-                *candidate = Some(result);
+                *candidate = Some(Box::new(result));
                 EmuResponse::TasExecutionCompleted {
                     profile,
                     lease_id,
@@ -372,6 +468,7 @@ impl TasControl {
         F: FnOnce(
             TasExecutionResult,
             TasInputFrame,
+            Option<crate::emu_thread::TasFrameAdvanceSnapshot>,
         ) -> Result<TasFrameAdvanceResult, TasFrameAdvanceRejectedReason>,
     {
         let candidate = match &mut self.authority {
@@ -488,9 +585,9 @@ impl TasControl {
         let Some(executed_project_frames) = candidate.executed_project_frames.checked_add(1) else {
             return reject_advance(&request, TasFrameAdvanceRejectedReason::FrameLimitExceeded);
         };
-        match advance(*candidate, request.input) {
+        match advance(**candidate, request.input, request.snapshot) {
             Ok(result) => {
-                *candidate = TasExecutionResult {
+                **candidate = TasExecutionResult {
                     profile: request.profile,
                     frame_count: result.frame_count,
                     state_sha256: result.state_sha256,
@@ -498,6 +595,7 @@ impl TasControl {
                     segment_id: request.segment_id,
                     segment_frame_count,
                     last_advance_id: request.advance_id,
+                    cache_proof: candidate.cache_proof,
                 };
                 EmuResponse::TasFrameAdvanced {
                     profile: request.profile,
@@ -509,9 +607,19 @@ impl TasControl {
                     executed_project_frames,
                     frame_count: result.frame_count,
                     state_sha256: result.state_sha256,
+                    rumble: result.rumble,
+                    audio_samples: result.audio_samples,
+                    ui_data: result.ui_data,
                 }
             }
-            Err(reason) => reject_advance(&request, reason),
+            Err(reason) => EmuResponse::TasFrameAdvanceRejected {
+                profile: request.profile,
+                requested_lease_id: request.lease_id,
+                run_id: request.run_id,
+                advance_id: request.advance_id,
+                segment_id: request.segment_id,
+                reason,
+            },
         }
     }
 
@@ -583,7 +691,7 @@ impl TasControl {
                 lease_id: active_lease_id,
                 candidate: Some(candidate),
                 ..
-            } if *active_lease_id == lease_id => *candidate,
+            } if *active_lease_id == lease_id => **candidate,
             BackendAuthority::Leased {
                 lease_id: active_lease_id,
                 candidate: None,
@@ -622,7 +730,7 @@ impl TasControl {
         EmuResponse::TasControlCommitted { lease_id }
     }
 
-    fn acquire_blocker(
+    pub(in crate::emu_thread::emu_loop) fn acquire_blocker(
         &self,
         context: &TasControlContext,
     ) -> Option<TasControlAcquireRejectedReason> {
@@ -651,19 +759,6 @@ impl TasControl {
         }
         None
     }
-
-    #[cfg(test)]
-    pub(super) fn set_next_lease_id(&mut self, lease_id: u64) {
-        self.next_lease_id = lease_id;
-    }
-
-    #[cfg(test)]
-    pub(super) fn corrupt_checkpoint_for_test(&mut self) {
-        let BackendAuthority::Leased { checkpoint, .. } = &mut self.authority else {
-            panic!("test requires an active TAS lease");
-        };
-        checkpoint.state_bytes = vec![0xFF];
-    }
 }
 
 fn reject_advance(
@@ -678,52 +773,6 @@ fn reject_advance(
         segment_id: request.segment_id,
         reason,
     }
-}
-
-fn restore_backend_checkpoint(
-    backend: &mut crate::emu_backend::EmuBackend,
-    checkpoint: &TasControlCheckpoint,
-) -> Result<TasRestoredCheckpoint, TasControlRollbackRejectedReason> {
-    match checkpoint.profile {
-        TasExecutionProfile::DirectNesCartridge => backend
-            .load_state_from_bytes(checkpoint.state_bytes.clone())
-            .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?,
-        TasExecutionProfile::DirectGbRomOnlyDmg => {
-            execution::restore_direct_gb_state(backend, &checkpoint.state_bytes)
-                .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?;
-        }
-    }
-    let state_bytes = backend
-        .encode_state_bytes()
-        .map_err(|_| TasControlRollbackRejectedReason::StateVerificationUnavailable)?;
-    Ok(TasRestoredCheckpoint {
-        state_sha256: TasDigest::from_bytes(&state_bytes),
-        frame_count: backend.frame_count(),
-    })
-}
-
-fn verify_tas_execution_candidate(
-    backend: &crate::emu_backend::EmuBackend,
-    candidate: TasExecutionResult,
-) -> Result<(), TasControlCommitRejectedReason> {
-    if candidate.profile == TasExecutionProfile::DirectGbRomOnlyDmg {
-        crate::emu_backend::loader::validate_direct_gb_tas_runtime(backend, false)
-            .map_err(|_| TasControlCommitRejectedReason::StateVerificationUnavailable)?;
-    }
-    let state_bytes = backend
-        .encode_state_bytes()
-        .map_err(|_| TasControlCommitRejectedReason::StateVerificationUnavailable)?;
-    if TasDigest::from_bytes(&state_bytes) != candidate.state_sha256 {
-        return Err(TasControlCommitRejectedReason::CandidateStateDigestMismatch);
-    }
-    if backend.frame_count() != candidate.frame_count {
-        return Err(TasControlCommitRejectedReason::CandidateFrameCountMismatch);
-    }
-    if candidate.profile == TasExecutionProfile::DirectGbRomOnlyDmg {
-        crate::emu_backend::loader::validate_direct_gb_tas_state(&state_bytes)
-            .map_err(|_| TasControlCommitRejectedReason::StateVerificationUnavailable)?;
-    }
-    Ok(())
 }
 
 fn observes_replay_activity(command: &EmuCommand) -> bool {

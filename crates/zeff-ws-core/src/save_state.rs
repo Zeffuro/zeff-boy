@@ -2,16 +2,34 @@ use anyhow::{Context, bail};
 
 use crate::emulator::Emulator;
 use crate::hardware::apu::ApuSaveState;
-use crate::hardware::bus::{UartSaveState, WonderSwanTxEvent};
+use crate::hardware::bus::{RtcSaveState, UartSaveState, WonderSwanTxEvent};
 use crate::hardware::cpu::CpuState;
+use crate::hardware::keypad::KeypadSaveState;
 
-const MAGIC: &[u8; 8] = b"ZEFFWS1\0";
-const VERSION: u8 = 12;
+mod tas_state;
+
+pub use tas_state::{
+    CurrentNativeWonderSwanTasDeferredBankState, CurrentNativeWonderSwanTasKeypadState,
+    CurrentNativeWonderSwanTasRtcState, CurrentNativeWonderSwanTasStateInspection,
+    CurrentNativeWonderSwanTasStateProjection, CurrentNativeWonderSwanTasUartState,
+    WonderSwanTasStartup, inspect_current_native_wonder_swan_tas_state,
+    validate_and_load_current_native_wonder_swan_tas_state,
+};
+
+pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZEFFWS1\0";
+pub const SAVE_STATE_FORMAT_VERSION: u8 = 14;
+pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-ws-determinism-v2";
+pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-ws-native-state-v14";
+pub const TAS_RTC_POLICY_ID: &str = "deterministic-cycle-clock";
+pub const TAS_RTC_EPOCH_BCD: [u8; 7] = crate::hardware::bus::DETERMINISTIC_RTC_EPOCH;
+
+#[cfg(test)]
+const V14_EXTENSION_LEN: usize = 23;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::new();
-    w.bytes(MAGIC);
-    w.u8(VERSION);
+    w.bytes(&SAVE_STATE_MAGIC);
+    w.u8(SAVE_STATE_FORMAT_VERSION);
     w.bytes(&emu.rom_hash);
     w.u64(emu.frame_count);
     w.u32(crate::emulator::DEFAULT_SAMPLE_RATE);
@@ -110,6 +128,28 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
         w.u8(0);
     }
     w.vec(emu.framebuffer())?;
+    let keypad = emu.bus.keypad.save_state();
+    w.u8(keypad.select);
+    w.u8(keypad.x_buttons);
+    w.u8(keypad.y_buttons);
+    w.u8(keypad.ab_start);
+    let rtc = emu.bus.rtc_save_state();
+    w.u8(rtc.command);
+    w.bytes(&rtc.payload);
+    w.u8(rtc.payload_index);
+    w.u8(rtc.payload_len);
+    w.u8(rtc.ready_delay_reads);
+    w.u8(u8::from(rtc.invalid_command));
+    w.u32(rtc.subsecond_cycles);
+    if let Some((value, remaining)) = emu.bus.deferred_linear_bank_save_values() {
+        w.u8(1);
+        w.u8(value);
+        w.u8(remaining);
+    } else {
+        w.u8(0);
+        w.u8(0);
+        w.u8(0);
+    }
     Ok(w.finish())
 }
 
@@ -119,9 +159,9 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     let runtime_channel_mutes = emu.bus.apu.channel_mutes();
 
     let mut r = StateReader::new(data);
-    r.expect_bytes(MAGIC)?;
+    r.expect_bytes(&SAVE_STATE_MAGIC)?;
     let version = r.u8()?;
-    if !(2..=VERSION).contains(&version) {
+    if !(2..=SAVE_STATE_FORMAT_VERSION).contains(&version) {
         bail!("unsupported WonderSwan save-state version: {version}");
     }
     let mut rom_hash = [0u8; 32];
@@ -319,6 +359,34 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     if version >= 12 {
         r.vec_into(emu.bus.ppu.framebuffer_mut())?;
     }
+    if version >= 13 {
+        emu.bus.keypad.load_state(KeypadSaveState {
+            select: r.u8()?,
+            x_buttons: r.u8()?,
+            y_buttons: r.u8()?,
+            ab_start: r.u8()?,
+        })?;
+        let command = r.u8()?;
+        let mut payload = [0; 7];
+        r.read_exact(&mut payload)?;
+        emu.bus.load_rtc_save_state(RtcSaveState {
+            command,
+            payload,
+            payload_index: r.u8()?,
+            payload_len: r.u8()?,
+            ready_delay_reads: r.u8()?,
+            invalid_command: r.boolean()?,
+            subsecond_cycles: if version >= 14 { r.u32()? } else { 0 },
+        })?;
+        let pending = r.boolean()?;
+        let value = r.u8()?;
+        let remaining = r.u8()?;
+        if !pending && (value != 0 || remaining != 0) {
+            bail!("invalid empty WonderSwan deferred ROM bank state");
+        }
+        emu.bus
+            .load_deferred_linear_bank_save_values(pending.then_some((value, remaining)))?;
+    }
     r.finish()?;
     Ok(())
 }
@@ -455,6 +523,14 @@ impl<'a> StateReader<'a> {
         Ok(self.read_slice(1)?[0])
     }
 
+    fn boolean(&mut self) -> anyhow::Result<bool> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            value => bail!("invalid WonderSwan save-state boolean: {value}"),
+        }
+    }
+
     fn u16(&mut self) -> anyhow::Result<u16> {
         let mut bytes = [0; 2];
         self.read_exact(&mut bytes)?;
@@ -585,6 +661,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_v13_load_defaults_rtc_subsecond_phase() {
+        let rom = rom_with_reset_code(&[0xF4]);
+        let mut source = Emulator::from_rom_data(&rom).unwrap();
+        let mut rtc = source.bus.rtc_save_state();
+        rtc.subsecond_cycles = 123_456;
+        source.bus.load_rtc_save_state(rtc).unwrap();
+        let mut legacy = source.encode_state().unwrap();
+        legacy[8] = 13;
+        legacy.drain(legacy.len() - 7..legacy.len() - 3);
+
+        let mut restored = Emulator::from_rom_data(&rom).unwrap();
+        restored.load_state(&legacy).unwrap();
+
+        assert_eq!(restored.bus.rtc_save_state().subsecond_cycles, 0);
+    }
+
+    #[test]
     fn restored_historical_pixels_survive_partial_frame_completion() {
         let rom = rom_with_reset_code(&[0xEB, 0xFE]);
         let mut control = Emulator::from_rom_data(&rom).unwrap();
@@ -617,6 +710,7 @@ mod tests {
         saved.bus.ppu.framebuffer_mut().fill(0x3C);
         let mut legacy = saved.encode_state().unwrap();
         legacy[8] = 11;
+        legacy.truncate(legacy.len() - V14_EXTENSION_LEN);
         legacy.truncate(legacy.len() - 4 - FRAMEBUFFER_LEN);
 
         let mut restored = Emulator::from_rom_data(&rom).unwrap();
@@ -634,7 +728,7 @@ mod tests {
         let mut source = Emulator::from_rom_data(&rom).unwrap();
         source.bus.ppu.framebuffer_mut().fill(0x3C);
         let state = source.encode_state().unwrap();
-        let framebuffer_offset = state.len() - 4 - FRAMEBUFFER_LEN;
+        let framebuffer_offset = state.len() - V14_EXTENSION_LEN - 4 - FRAMEBUFFER_LEN;
 
         let mut target = Emulator::from_rom_data(&rom).unwrap();
         target.bus.ppu.framebuffer_mut().fill(0xA7);

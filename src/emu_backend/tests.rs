@@ -31,6 +31,7 @@ mod pce;
 mod runahead_conformance;
 mod state;
 mod system;
+mod tas_probe;
 
 use fixtures::*;
 

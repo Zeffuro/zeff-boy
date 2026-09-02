@@ -63,9 +63,7 @@ fn backend_feature_contract_covers_every_supported_core() {
     assert_backend_feature_contract(
         load_test_backend_with_shared_loader(ActiveSystem::Sg1000, "test.sg", build_sms_test_rom()),
         ActiveSystem::Sg1000,
-        SaveRamKind::mapper_ram_unknown(
-            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
-        ),
+        SaveRamKind::none(),
         zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );
@@ -128,9 +126,7 @@ fn app_ui_snapshot_reports_core_features_for_every_supported_core() {
     );
     assert_app_snapshot_core_features(
         load_test_backend_with_shared_loader(ActiveSystem::Sg1000, "test.sg", build_sms_test_rom()),
-        SaveRamKind::mapper_ram_unknown(
-            zeff_sega8_core::hardware::constants::SMS_CARTRIDGE_RAM_SIZE,
-        ),
+        SaveRamKind::none(),
         zeff_sega8_core::hardware::constants::SG_WORK_RAM_SIZE,
         zeff_sega8_core::hardware::constants::SMS_VRAM_SIZE,
     );

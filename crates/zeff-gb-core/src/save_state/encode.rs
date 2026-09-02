@@ -1,7 +1,8 @@
 use anyhow::Result;
 
 use super::{
-    SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SaveStateRef, StateWriter, StateWriterGbExt,
+    SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SGB_NATIVE_CONTINUATION_MAGIC,
+    SGB_NATIVE_CONTINUATION_PAYLOAD_LEN, SaveStateRef, StateWriter, StateWriterGbExt,
 };
 use crate::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -27,6 +28,11 @@ fn encode_state_bytes_with_version(
     writer.write_u16(state.last_opcode_pc);
     state.bus.write_state(&mut writer);
     writer.write_bool(state.boot_rom_enabled);
+    if format_version >= 14 {
+        writer.write_bytes(&SGB_NATIVE_CONTINUATION_MAGIC);
+        writer.write_u32(SGB_NATIVE_CONTINUATION_PAYLOAD_LEN as u32);
+        state.bus.write_sgb_native_continuation(&mut writer);
+    }
 
     super::bess::append_bess_with_optional_zeff_extension(
         &mut writer,
@@ -42,6 +48,11 @@ fn encode_state_bytes_with_version(
 #[cfg(test)]
 pub(super) fn encode_legacy_v12_state_bytes(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
     encode_state_bytes_with_version(state, 12)
+}
+
+#[cfg(test)]
+pub(super) fn encode_legacy_v13_state_bytes(state: &SaveStateRef<'_>) -> Result<Vec<u8>> {
+    encode_state_bytes_with_version(state, 13)
 }
 
 pub(super) fn encode_mode_preference(pref: HardwareModePreference) -> u8 {

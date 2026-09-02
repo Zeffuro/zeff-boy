@@ -9,14 +9,14 @@ use crate::media::{MediaEvent, MediaObjectId, MediaSlotId};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
+mod coleco;
 
 fn unique_path(prefix: &str) -> std::path::PathBuf {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
     let dir = std::env::temp_dir().join("zeff_replay_test");
     let _ = std::fs::create_dir_all(&dir);
-    dir.join(format!("{prefix}_{pid}_{n}.zrpl"))
+    dir.join(format!("{prefix}_{}_{n}.zrpl", std::process::id()))
 }
 
 fn roundtrip(state: Vec<u8>, frames: &[(u8, u8)]) {

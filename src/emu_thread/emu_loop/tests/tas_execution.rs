@@ -8,7 +8,15 @@ use crate::emu_thread::{
 use crate::tas_project::TasDigest;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
+mod coleco;
+mod fds;
+mod game_gear;
+mod gba;
+mod gbc;
 mod nes;
+mod pce;
+mod sms;
+mod ws;
 
 fn acquire(
     emu_loop: &mut super::super::EmuLoop,
@@ -59,7 +67,7 @@ fn direct_nes_commands_reject_a_direct_gb_lease_without_mutation() {
     let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(backend);
     assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
         request_id: 71,
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
     }));
     let lease_id = match responses.recv().unwrap() {
         EmuResponse::TasControlAcquired {
@@ -67,7 +75,7 @@ fn direct_nes_commands_reject_a_direct_gb_lease_without_mutation() {
             lease_id,
             witness,
         } => {
-            assert_eq!(witness.profile, TasExecutionProfile::DirectGbRomOnlyDmg);
+            assert_eq!(witness.profile, TasExecutionProfile::DirectGbCartridgeDmg);
             lease_id
         }
         _ => panic!("unexpected acquisition response"),
@@ -85,7 +93,7 @@ fn direct_nes_commands_reject_a_direct_gb_lease_without_mutation() {
             requested_lease_id,
             run_id: 1,
             reason: Rejected::WrongExecutionProfile {
-                active_profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+                active_profile: TasExecutionProfile::DirectGbCartridgeDmg,
             },
             ..
         } if requested_lease_id == lease_id
@@ -106,7 +114,7 @@ fn direct_nes_commands_reject_a_direct_gb_lease_without_mutation() {
             run_id: 1,
             advance_id: 1,
             reason: AdvanceRejected::WrongExecutionProfile {
-                active_profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+                active_profile: TasExecutionProfile::DirectGbCartridgeDmg,
             },
             ..
         } if requested_lease_id == lease_id
@@ -120,7 +128,7 @@ fn direct_gb_acquisition_rejects_an_oversized_direct_source_file() {
     let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(backend);
     assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
         request_id: 72,
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
     }));
     assert!(matches!(
         responses.recv().unwrap(),
@@ -138,10 +146,19 @@ fn gb_request(
     start_state_bytes: Vec<u8>,
     input_prefix: Vec<TasInputFrame>,
 ) -> EmuCommand {
+    let target_cursor = input_prefix.len() as u64;
+    let branch_prefix_sha256 = synthetic_input_prefix_sha256(&input_prefix);
     EmuCommand::ExecuteTasControl(Box::new(TasExecutionRequest {
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
         lease_id,
         run_id,
+        intermediate_cache_proofs: Vec::new(),
+        cache_proof: crate::emu_thread::TasExecutionCacheProof {
+            sync_identity_sha256: TasDigest([0x91; 32]),
+            branch_prefix_sha256,
+            target_cursor,
+        },
+        predecessor_window: None,
         start_state_bytes,
         input_prefix,
     }))
@@ -172,7 +189,7 @@ fn direct_gb_execution_matches_an_independent_backend_and_commit_preserves_it() 
     let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(direct_gb_backend(false));
     assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
         request_id: 73,
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
     }));
     let (lease_id, start_state) = match responses.recv().unwrap() {
         EmuResponse::TasControlAcquired {
@@ -204,13 +221,121 @@ fn direct_gb_execution_matches_an_independent_backend_and_commit_preserves_it() 
 }
 
 #[test]
+fn direct_gb_silent_positioning_audio_does_not_leak_into_the_next_live_frame() {
+    let mut expected = direct_gb_backend(false);
+    let start_state = expected.encode_state_bytes().unwrap();
+    let prefix = vec![TasInputFrame::default(); 8];
+    let live_input = TasInputFrame {
+        p1_buttons: 1,
+        ..TasInputFrame::default()
+    };
+    for input in &prefix {
+        expected.apply_replay_input(&zeff_emu_common::replay::ReplayJoypadFrame {
+            buttons: input.p1_buttons,
+            dpad: input.p1_dpad,
+            ..Default::default()
+        });
+        expected.step_frame();
+    }
+    let mut silent_positioning_audio = Vec::new();
+    expected.drain_audio_samples_into(&mut silent_positioning_audio);
+    assert!(!silent_positioning_audio.is_empty());
+    expected.apply_replay_input(&zeff_emu_common::replay::ReplayJoypadFrame {
+        buttons: live_input.p1_buttons,
+        dpad: live_input.p1_dpad,
+        ..Default::default()
+    });
+    expected.step_frame();
+    let mut expected_live_audio = Vec::new();
+    expected.drain_audio_samples_into(&mut expected_live_audio);
+
+    let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(direct_gb_backend(false));
+    assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
+        request_id: 81,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
+    }));
+    let lease_id = match responses.recv().unwrap() {
+        EmuResponse::TasControlAcquired {
+            request_id: 81,
+            lease_id,
+            ..
+        } => lease_id,
+        _ => panic!("unexpected acquisition response"),
+    };
+    assert!(emu_loop.handle_command(gb_request(lease_id, 1, start_state, prefix)));
+    let (frame_count, state_sha256) = completed_proof(responses.recv().unwrap(), lease_id, 1);
+    assert!(
+        emu_loop.handle_command(EmuCommand::AdvanceTasControl(Box::new(
+            TasFrameAdvanceRequest {
+                profile: TasExecutionProfile::DirectGbCartridgeDmg,
+                lease_id,
+                run_id: 1,
+                advance_id: 1,
+                segment_id: 1,
+                expected_segment_frame_count: 8,
+                expected_executed_project_frames: 8,
+                expected_frame_count: frame_count,
+                expected_state_sha256: state_sha256,
+                input: live_input,
+                snapshot: None,
+            },
+        )))
+    );
+    let actual_live_audio = match responses.recv().unwrap() {
+        EmuResponse::TasFrameAdvanced {
+            profile: TasExecutionProfile::DirectGbCartridgeDmg,
+            audio_samples,
+            ..
+        } => audio_samples,
+        _ => panic!("unexpected frame-advance response"),
+    };
+
+    assert_eq!(actual_live_audio, expected_live_audio);
+}
+
+#[test]
+fn direct_gb_zero_boundary_restores_start_state_and_completes() {
+    let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(direct_gb_backend(false));
+    assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
+        request_id: 80,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
+    }));
+    let (lease_id, start_state) = match responses.recv().unwrap() {
+        EmuResponse::TasControlAcquired {
+            request_id: 80,
+            lease_id,
+            witness,
+        } => (lease_id, witness.current_state_bytes),
+        _ => panic!("unexpected acquisition response"),
+    };
+    emu_loop.backend.step_frame();
+    assert_ne!(emu_loop.backend.encode_state_bytes().unwrap(), start_state);
+
+    assert!(emu_loop.handle_command(gb_request(lease_id, 1, start_state.clone(), Vec::new(),)));
+    assert!(matches!(
+        responses.recv().unwrap(),
+        EmuResponse::TasExecutionCompleted {
+            profile: TasExecutionProfile::DirectGbCartridgeDmg,
+            lease_id: actual_lease_id,
+            run_id: 1,
+            segment_id: 1,
+            segment_frame_count: 0,
+            executed_project_frames: 0,
+            frame_count: 0,
+            state_sha256,
+        } if actual_lease_id == lease_id && state_sha256 == TasDigest::from_bytes(&start_state)
+    ));
+    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), start_state);
+}
+
+#[test]
 fn direct_gb_execution_rejects_non_joypad_input_without_mutation() {
     let backend = direct_gb_backend(false);
     let before = backend.encode_state_bytes().unwrap();
     let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(backend);
     assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
         request_id: 74,
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
     }));
     let (lease_id, start_state) = match responses.recv().unwrap() {
         EmuResponse::TasControlAcquired {
@@ -244,7 +369,7 @@ fn direct_gb_execution_rejects_high_input_bits_without_mutation() {
     let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(backend);
     assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
         request_id: 75,
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
     }));
     let (lease_id, start_state) = match responses.recv().unwrap() {
         EmuResponse::TasControlAcquired {
@@ -278,7 +403,7 @@ fn direct_gb_execution_rollback_restores_the_checkpoint() {
     let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(backend);
     assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
         request_id: 76,
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
     }));
     let (lease_id, start_state) = match responses.recv().unwrap() {
         EmuResponse::TasControlAcquired {
@@ -310,7 +435,7 @@ fn direct_gb_execution_rollback_restores_the_checkpoint() {
 }
 
 #[test]
-fn direct_gb_rejects_incompatible_v13_start_state_without_mutation() {
+fn direct_gb_rejects_incompatible_current_start_state_without_mutation() {
     let rom = crate::test_support::build_gb_test_rom();
     let mut printer =
         zeff_gb_core::emulator::Emulator::from_rom_data(&rom, HardwareModePreference::ForceDmg)
@@ -330,7 +455,7 @@ fn direct_gb_rejects_incompatible_v13_start_state_without_mutation() {
         let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(backend);
         assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
             request_id,
-            profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+            profile: TasExecutionProfile::DirectGbCartridgeDmg,
         }));
         let lease_id = match responses.recv().unwrap() {
             EmuResponse::TasControlAcquired { lease_id, .. } => lease_id,
@@ -345,7 +470,7 @@ fn direct_gb_rejects_incompatible_v13_start_state_without_mutation() {
         assert!(matches!(
             responses.recv().unwrap(),
             EmuResponse::TasExecutionRejected {
-                profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+                profile: TasExecutionProfile::DirectGbCartridgeDmg,
                 reason: Rejected::InvalidStartState,
                 ..
             }
@@ -383,7 +508,7 @@ fn stage_direct_gb_segment_two(keep: bool) {
     let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(direct_gb_backend(false));
     assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
         request_id: 79,
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
     }));
     let (lease_id, start_state) = match responses.recv().unwrap() {
         EmuResponse::TasControlAcquired {
@@ -394,7 +519,7 @@ fn stage_direct_gb_segment_two(keep: bool) {
     assert!(emu_loop.handle_command(gb_request(lease_id, 1, start_state, inputs[..600].to_vec(),)));
     let (frame_count, state_sha256) = match responses.recv().unwrap() {
         EmuResponse::TasExecutionCompleted {
-            profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+            profile: TasExecutionProfile::DirectGbCartridgeDmg,
             lease_id: actual_lease_id,
             run_id: 1,
             segment_id: 1,
@@ -408,7 +533,7 @@ fn stage_direct_gb_segment_two(keep: bool) {
     assert!(
         emu_loop.handle_command(EmuCommand::AdvanceTasControl(Box::new(
             TasFrameAdvanceRequest {
-                profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+                profile: TasExecutionProfile::DirectGbCartridgeDmg,
                 lease_id,
                 run_id: 1,
                 advance_id: 1,
@@ -418,13 +543,14 @@ fn stage_direct_gb_segment_two(keep: bool) {
                 expected_frame_count: frame_count,
                 expected_state_sha256: state_sha256,
                 input: inputs[600],
+                snapshot: None,
             },
         )))
     );
     assert!(matches!(
         responses.recv().unwrap(),
         EmuResponse::TasFrameAdvanced {
-            profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+            profile: TasExecutionProfile::DirectGbCartridgeDmg,
             lease_id: actual_lease_id,
             run_id: 1,
             advance_id: 1,
@@ -477,13 +603,37 @@ fn request(
     start_state_bytes: Vec<u8>,
     input_prefix: Vec<TasInputFrame>,
 ) -> EmuCommand {
+    let target_cursor = input_prefix.len() as u64;
+    let branch_prefix_sha256 = synthetic_input_prefix_sha256(&input_prefix);
     EmuCommand::ExecuteTasControl(Box::new(TasExecutionRequest {
         profile: crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
         lease_id,
         run_id,
+        intermediate_cache_proofs: Vec::new(),
+        cache_proof: crate::emu_thread::TasExecutionCacheProof {
+            sync_identity_sha256: TasDigest([0x92; 32]),
+            branch_prefix_sha256,
+            target_cursor,
+        },
+        predecessor_window: None,
         start_state_bytes,
         input_prefix,
     }))
+}
+
+fn synthetic_input_prefix_sha256(input_prefix: &[TasInputFrame]) -> TasDigest {
+    let bytes = input_prefix
+        .iter()
+        .flat_map(|input| {
+            [
+                input.p1_buttons,
+                input.p1_dpad,
+                input.p2_buttons,
+                input.p2_dpad,
+            ]
+        })
+        .collect::<Vec<_>>();
+    TasDigest::from_bytes(&bytes)
 }
 
 fn advance_request(
@@ -527,6 +677,7 @@ fn advance_request_in_segment(
         expected_frame_count,
         expected_state_sha256,
         input,
+        snapshot: None,
     }))
 }
 

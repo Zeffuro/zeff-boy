@@ -10,9 +10,11 @@ use super::constants::{
 mod backup;
 mod rtc;
 
+#[cfg(test)]
+pub(crate) use backup::BACKUP_EXECUTION_STATE_SIZE;
 use backup::{EepromState, FlashState, detect_backup_kind};
-pub use rtc::RtcDateTime;
 use rtc::RtcGpio;
+pub use rtc::{RtcDateTime, RtcState};
 const HEADER_END: usize = 0xC0;
 const TITLE_START: usize = 0xA0;
 const TITLE_END: usize = 0xAC;
@@ -141,6 +143,10 @@ impl Cartridge {
         self.rtc.as_ref().map(RtcGpio::date_time)
     }
 
+    pub(crate) fn rtc_state(&self) -> Option<RtcState> {
+        self.rtc.as_ref().map(RtcGpio::state)
+    }
+
     pub fn set_rtc_date_time(&mut self, date_time: RtcDateTime) -> bool {
         let Some(rtc) = &mut self.rtc else {
             return false;
@@ -153,10 +159,41 @@ impl Cartridge {
         self.has_battery().then(|| self.backup.clone())
     }
 
+    pub(crate) fn dump_rtc_persistence_state(&self) -> Option<Vec<u8>> {
+        self.rtc.as_ref().map(rtc::persistence::encode_state)
+    }
+
+    pub(crate) fn dump_complete_rtc_persistence(&self) -> Option<Vec<u8>> {
+        let rtc = self.rtc.as_ref()?;
+        let mut bytes = self.backup.clone();
+        bytes.extend_from_slice(&rtc::persistence::encode_extension(rtc));
+        Some(bytes)
+    }
+
+    pub(crate) fn load_complete_rtc_persistence(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        let backup_len = self.backup.len();
+        let extension = bytes
+            .get(backup_len..)
+            .ok_or_else(|| anyhow::anyhow!("truncated GBA RTC persistence"))?;
+        let rtc = rtc::persistence::decode_extension(extension)?;
+        anyhow::ensure!(self.rtc.is_some(), "GBA cartridge has no RTC");
+        self.backup.copy_from_slice(&bytes[..backup_len]);
+        self.rtc = Some(rtc);
+        Ok(())
+    }
+
     pub fn load_battery_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         if !self.has_battery() {
             return Ok(());
         }
+        let bytes = if self.rtc.is_some()
+            && bytes.len() == self.backup.len() + rtc::persistence::EXTENSION_LEN
+            && bytes[self.backup.len()..].starts_with(&rtc::persistence::MAGIC)
+        {
+            &bytes[..self.backup.len()]
+        } else {
+            bytes
+        };
         if bytes.len() != self.backup.len() {
             bail!(
                 "GBA save size mismatch: got {} bytes, expected {}",

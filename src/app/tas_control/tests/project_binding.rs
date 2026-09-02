@@ -1,8 +1,14 @@
 use super::*;
-use crate::emu_backend::loader::{DirectGbTasExecutionLoader, DirectNesTasExecutionLoader};
-use crate::tas_project::{
-    TasAutosaveConfig, TasAutosaveStore, TasEditorSession, TasSeekStateCache,
+use crate::emu_backend::loader::{
+    DirectColecoTasExecutionLoader, DirectGbTasExecutionLoader, DirectNesTasExecutionLoader,
 };
+use crate::tas_project::{
+    TasAutosaveConfig, TasAutosaveStore, TasColecoControllerInput, TasColecoKeypadKey,
+    TasEditorSession, TasInputFrame, TasSeekStateCache,
+};
+
+static TEST_COLECO_BIOS: [u8; zeff_coleco_core::constants::BIOS_SIZE] =
+    [0; zeff_coleco_core::constants::BIOS_SIZE];
 
 fn acquired_with(
     coordinator: &mut TasControlCoordinator,
@@ -23,7 +29,7 @@ fn every_snapshot_field_participates_in_pending_acquire_correlation() {
     let baseline = snapshot(0, "main", 3);
     let variants = [
         TasEditorControlSnapshot {
-            profile: crate::emu_thread::TasExecutionProfile::DirectGbRomOnlyDmg,
+            profile: crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg,
             ..baseline.clone()
         },
         TasEditorControlSnapshot {
@@ -40,6 +46,10 @@ fn every_snapshot_field_participates_in_pending_acquire_correlation() {
         },
         TasEditorControlSnapshot {
             branch_id: "other".to_owned(),
+            ..baseline.clone()
+        },
+        TasEditorControlSnapshot {
+            branch_frame_count: 4,
             ..baseline.clone()
         },
         TasEditorControlSnapshot {
@@ -125,16 +135,69 @@ fn invalid_acquired_project_drops_payload_and_rolls_back_from_witness_proof() {
 }
 
 #[test]
-fn executing_editor_selection_or_content_change_rolls_back_without_checkpoint_bytes() {
-    let same_generation_divergence = TasEditorControlSnapshot {
+fn linked_selection_and_equivalent_prefix_changes_keep_the_lease() {
+    let mut coordinator = TasControlCoordinator::new();
+    let request_id = acquire(&mut coordinator);
+    consume(&mut coordinator, acquired(request_id, 41));
+    assert!(
+        coordinator
+            .reconcile_project(Some(&snapshot(0, "main", 1)))
+            .is_none()
+    );
+
+    let equivalent_branch = TasEditorControlSnapshot {
         project_content_sha256: crate::tas_project::TasDigest([0x71; 32]),
-        ..snapshot(0, "main", 0)
+        ..snapshot(8, "route-b", 0)
     };
-    for changed in [
-        snapshot(0, "other", 0),
-        snapshot(8, "main", 0),
-        same_generation_divergence,
-    ] {
+    assert!(
+        coordinator
+            .reconcile_project(Some(&equivalent_branch))
+            .is_none()
+    );
+    assert!(matches!(
+        coordinator.state,
+        TasControlState::ExecutionPending {
+            project: TasEditorControlSnapshot {
+                edit_generation: 8,
+                ref branch_id,
+                ..
+            },
+            ..
+        } if branch_id == "route-b"
+    ));
+
+    let longer_suffix = TasEditorControlSnapshot {
+        edit_generation: 9,
+        project_content_sha256: crate::tas_project::TasDigest([0x74; 32]),
+        branch_frame_count: 2,
+        ..equivalent_branch
+    };
+    assert!(
+        coordinator
+            .reconcile_project(Some(&longer_suffix))
+            .is_none()
+    );
+    assert!(matches!(
+        coordinator.state,
+        TasControlState::ExecutionPending {
+            project: TasEditorControlSnapshot {
+                edit_generation: 9,
+                branch_frame_count: 2,
+                ..
+            },
+            ..
+        }
+    ));
+
+    let wrong_sync = TasEditorControlSnapshot {
+        sync_identity_sha256: crate::tas_project::TasDigest([0x72; 32]),
+        ..snapshot(8, "main", 0)
+    };
+    let wrong_prefix = TasEditorControlSnapshot {
+        branch_prefix_sha256: crate::tas_project::TasDigest([0x73; 32]),
+        ..snapshot(8, "main", 0)
+    };
+    for changed in [snapshot(0, "other", 1), wrong_sync, wrong_prefix] {
         let mut coordinator = TasControlCoordinator::new();
         let request_id = acquire(&mut coordinator);
         consume(&mut coordinator, acquired(request_id, 41));
@@ -175,7 +238,7 @@ fn direct_gb_project_binding_accepts_exact_witness_and_rejects_mismatch() {
     let identity = session.project().identity();
     let state = session.project().start_state().to_vec();
     let witness = TasControlLeaseWitness {
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
         frame_count: 0,
         source_media_sha256: identity.source_media_sha256,
         effective_media_sha256: identity.effective_media_sha256,
@@ -190,7 +253,7 @@ fn direct_gb_project_binding_accepts_exact_witness_and_rejects_mismatch() {
     let mut mismatched = witness.clone();
     mismatched.sync_config_sha256 = crate::tas_project::TasDigest([0x7E; 32]);
     assert!(TasEditorControlSnapshot::validate_acquired(&session, &mismatched).is_err());
-    assert_eq!(snapshot.profile, TasExecutionProfile::DirectGbRomOnlyDmg);
+    assert_eq!(snapshot.profile, TasExecutionProfile::DirectGbCartridgeDmg);
 }
 
 #[test]
@@ -207,6 +270,9 @@ fn direct_nes_end_cursor_binds_the_complete_movie_for_append_recording() {
     let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache")).unwrap();
     let mut session = TasEditorSession::new(project, manual_path, autosaves, seek_cache).unwrap();
     let frame_count = session.selected_branch().frame_count();
+    let start_snapshot = TasEditorControlSnapshot::capture(&session).unwrap();
+    assert_eq!(start_snapshot.cursor, 0);
+    assert_eq!(start_snapshot.execution_prefix_len, 0);
     session.set_cursor(frame_count).unwrap();
     let identity = session.project().identity();
     let state = session.project().start_state().to_vec();
@@ -227,4 +293,90 @@ fn direct_nes_end_cursor_binds_the_complete_movie_for_append_recording() {
     assert_eq!(binding.input_prefix.len() as u64, frame_count);
     assert_eq!(binding.snapshot.cursor, frame_count);
     assert_eq!(binding.snapshot.execution_prefix_len, frame_count);
+}
+
+#[test]
+fn linked_boundary_capture_does_not_move_the_editor_selection() {
+    let directory = crate::test_support::test_directory("tas-control-linked-boundary").unwrap();
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, crate::test_support::build_nes_test_rom()).unwrap();
+    let mut project = DirectNesTasExecutionLoader::new(source_path, Vec::new())
+        .create_project()
+        .unwrap();
+    project
+        .edit_transaction(|edit| edit.insert_frames("main", 0, 5))
+        .unwrap();
+    let manual_path = directory.path().join("movie.ztas");
+    let autosaves =
+        TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default()).unwrap();
+    let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache")).unwrap();
+    let mut session = TasEditorSession::new(project, manual_path, autosaves, seek_cache).unwrap();
+    session.set_cursor(5).unwrap();
+
+    let linked = TasEditorControlSnapshot::capture_at(&session, 2).unwrap();
+
+    assert_eq!(session.cursor(), 5);
+    assert_eq!(linked.cursor, 2);
+    assert_eq!(linked.execution_prefix_len, 2);
+    assert_eq!(
+        linked.branch_prefix_sha256,
+        session.project().branch_prefix_sha256("main", 2).unwrap()
+    );
+}
+
+#[test]
+fn linked_binding_materializes_both_semantic_coleco_controllers() {
+    let directory = crate::test_support::test_directory("tas-control-linked-coleco").unwrap();
+    let source_path = directory.path().join("game.col");
+    let mut source = vec![0; 8 * 1024];
+    source[..2].copy_from_slice(&[0xAA, 0x55]);
+    std::fs::write(&source_path, source).unwrap();
+    let loader = DirectColecoTasExecutionLoader::new_with_bios_override(
+        source_path,
+        Vec::new(),
+        &TEST_COLECO_BIOS,
+    );
+    let mut project = loader.create_project().unwrap();
+    let controllers = [
+        TasColecoControllerInput {
+            up: true,
+            keypad: TasColecoKeypadKey::Star,
+            ..TasColecoControllerInput::default()
+        },
+        TasColecoControllerInput {
+            right_button: true,
+            keypad: TasColecoKeypadKey::Nine,
+            ..TasColecoControllerInput::default()
+        },
+    ];
+    project
+        .edit_transaction(|edit| {
+            edit.set_input_range(
+                "main",
+                0,
+                1,
+                TasInputFrame {
+                    coleco: controllers,
+                    ..TasInputFrame::default()
+                },
+            )
+        })
+        .unwrap();
+    let manual_path = directory.path().join("movie.ztas");
+    let autosaves =
+        TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default()).unwrap();
+    let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache")).unwrap();
+    let session = TasEditorSession::new(project, manual_path, autosaves, seek_cache).unwrap();
+    let profile = crate::emu_thread::TasExecutionProfile::DirectColecoCartridge;
+    let binding = TasEditorControlSnapshot::prepare_linked_seek_at(
+        &session,
+        1,
+        profile,
+        session.project().sync_identity_sha256().unwrap(),
+        &[],
+    )
+    .unwrap();
+
+    assert_eq!(binding.snapshot.profile, profile);
+    assert_eq!(binding.input_prefix[0].coleco, controllers);
 }

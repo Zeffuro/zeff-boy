@@ -30,6 +30,12 @@ fn sample_format_rank_prefers_float_then_signed_then_unsigned() {
     assert!(sample_format_rank(SampleFormat::U16) < sample_format_rank(SampleFormat::U8));
 }
 
+#[test]
+fn preferred_emulator_rate_is_independent_of_device_rate() {
+    assert_eq!(emulator_source_sample_rate(Some(48_000), 96_000), 48_000);
+    assert_eq!(emulator_source_sample_rate(None, 96_000), 96_000);
+}
+
 fn push_samples(producer: &mut rtrb::Producer<QueuedAudioSample>, samples: &[f32]) {
     push_samples_for_generation(producer, samples, 0);
 }
@@ -159,7 +165,7 @@ fn fill_stereo_maps_lr_pairs() {
     push_samples(&mut producer, &[0.1, 0.2, 0.3, 0.4]);
     let (mut playback, _) = playback_state(0);
 
-    let mut data = vec![0.0f32; 4]; // 2 frames * 2 channels
+    let mut data = vec![0.0f32; 4];
     fill_output_f32(&mut data, 2, &mut consumer, &mut playback);
     assert_eq!(data, vec![0.1, 0.2, 0.3, 0.4]);
 }

@@ -1,109 +1,201 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result, bail, ensure};
-use zeff_emu_common::replay::{ReplayFirmwareManifest, ReplayStartMetadata};
+use zeff_emu_common::replay::ReplayFirmwareManifest;
+#[cfg(test)]
+use zeff_emu_common::replay::ReplayStartMetadata;
 
 use super::{BackendLoadConfig, load_backend_from_rom_source};
 use crate::emu_backend::{ActiveSystem, EmuBackend};
-use crate::tas_project::verification::TasExecutionSession;
+use crate::tas_project::verification::{TasExecutionSession, TasVerifiedReplayExportPhase};
 use crate::tas_project::{
     TasCameraInput, TasDeviceIdentity, TasDigest, TasEditorExecutionAttachment,
     TasEditorExecutionEngine, TasEditorExecutionProvider, TasEditorExecutionUnavailableReason,
-    TasExternalIdentity, TasFirmwareIdentity, TasInitialBranch, TasProject, TasProjectIdentity,
+    TasEditorSession, TasExecutionWitness, TasExternalIdentity, TasFirmwareIdentity,
+    TasInitialBranch, TasProject, TasProjectIdentity, TasZrplImportWitness,
 };
 
+mod direct_coleco;
+mod direct_coleco_loader;
+mod direct_fds;
+mod direct_fds_loader;
+mod direct_game_gear;
+mod direct_game_gear_loader;
 mod direct_gb;
+mod direct_gb_loader;
+mod direct_gba_loader;
+mod direct_gbc;
+mod direct_nes_loader;
+mod direct_pce;
+mod direct_pce_cd;
+mod direct_pce_cd_loader;
+mod direct_pce_loader;
+mod direct_sg1000;
+mod direct_sg1000_loader;
+mod direct_sms;
+mod direct_sms_loader;
+mod direct_ws;
+mod direct_ws_loader;
+mod gb_rtc;
 mod live_binding;
+mod media;
+mod project_profile;
+mod selection;
+pub(crate) use direct_coleco::{
+    direct_coleco_tas_identity, direct_coleco_tas_sync_config_sha256,
+    validate_direct_coleco_tas_branch_scope, validate_direct_coleco_tas_execution_runtime,
+    validate_direct_coleco_tas_project_identity, validate_direct_coleco_tas_project_witness,
+    validate_direct_coleco_tas_runtime, validate_direct_coleco_tas_state,
+    zip_coleco_tas_sync_config_sha256,
+};
+pub(crate) use direct_coleco_loader::DirectColecoTasExecutionLoader;
+#[allow(unused_imports)]
+pub(crate) use direct_fds::{
+    MAX_FDS_IMAGE_BYTES, direct_fds_tas_sync_config_sha256, validate_fds_tas_branch_scope,
+    validate_fds_tas_execution_runtime, validate_fds_tas_private_runtime,
+    validate_fds_tas_project_identity, validate_fds_tas_project_witness,
+    zip_fds_tas_sync_config_sha256,
+};
+pub(crate) use direct_fds_loader::DirectFdsTasExecutionLoader;
+pub(crate) use direct_game_gear::{
+    DirectGameGearTasBoardChoice, direct_game_gear_tas_sync_config_sha256,
+    restore_direct_game_gear_tas_private_execution_state,
+    validate_direct_game_gear_tas_execution_runtime,
+    validate_direct_game_gear_tas_private_execution_runtime,
+    validate_direct_game_gear_tas_private_runtime, validate_direct_game_gear_tas_private_state,
+    validate_direct_game_gear_tas_project_identity, validate_direct_game_gear_tas_project_witness,
+    validate_direct_game_gear_tas_runtime, validate_direct_game_gear_tas_state,
+    zip_game_gear_tas_sync_config_sha256,
+};
+pub(crate) use direct_game_gear_loader::{
+    DirectGameGearTasExecutionLoader, MAX_DIRECT_GAME_GEAR_ROM_BYTES,
+};
+#[cfg(test)]
+pub(crate) use direct_game_gear_loader::{
+    TestGameGearBoardCatalogGuard, register_test_game_gear_board_catalog_entry,
+};
 pub(crate) use direct_gb::{
-    DirectGbTasExecutionLoader, DirectGbTasRuntimeWitness, direct_gb_tas_sync_config_sha256,
-    validate_direct_gb_tas_project_identity, validate_direct_gb_tas_project_witness,
-    validate_direct_gb_tas_runtime, validate_direct_gb_tas_state,
+    DirectGbTasRuntimeWitness, direct_gb_tas_sync_config_sha256,
+    is_supported_direct_gb_tas_cartridge, validate_direct_gb_tas_project_identity,
+    validate_direct_gb_tas_project_witness, validate_direct_gb_tas_runtime,
+    validate_direct_gb_tas_runtime_with_project_rtc,
+    validate_direct_gb_tas_runtime_with_project_sram, validate_direct_gb_tas_state,
+    zip_gb_battery_tas_sync_config_sha256, zip_gb_tas_sync_config_sha256,
+};
+pub(crate) use direct_gb_loader::DirectGbTasExecutionLoader;
+pub(crate) use direct_gba_loader::DirectGbaTasExecutionLoader;
+pub(crate) use direct_gbc::{
+    DirectGbcTasExecutionLoader, direct_gbc_tas_sync_config_sha256,
+    validate_direct_gbc_state_for_backend, validate_direct_gbc_state_for_backend_with_project_rtc,
+    validate_direct_gbc_state_for_backend_with_project_sram,
+    validate_direct_gbc_tas_project_identity, validate_direct_gbc_tas_project_witness,
+    validate_direct_gbc_tas_runtime, validate_direct_gbc_tas_runtime_with_project_rtc,
+    validate_direct_gbc_tas_runtime_with_project_sram, zip_gbc_battery_tas_sync_config_sha256,
+    zip_gbc_tas_sync_config_sha256,
+};
+pub(crate) use direct_nes_loader::DirectNesTasExecutionLoader;
+pub(crate) use direct_pce::{
+    direct_pce_tas_host_persistence_absent, direct_pce_tas_project_profile,
+    direct_pce_tas_sync_config_sha256_for_profile,
+    validate_direct_pce_six_button_tas_execution_runtime,
+    validate_direct_pce_six_button_tas_runtime, validate_direct_pce_tas_execution_runtime,
+    validate_direct_pce_tas_project_identity, validate_direct_pce_tas_project_witness,
+    validate_direct_pce_tas_runtime, validate_direct_pce_tas_state,
+    zip_pce_tas_sync_config_sha256_for_profile,
+};
+pub(crate) use direct_pce_cd::{
+    validate_direct_pce_cd_tas_execution_runtime, validate_direct_pce_cd_tas_project_identity,
+    validate_direct_pce_cd_tas_project_witness, validate_direct_pce_cd_tas_runtime,
+    validate_direct_pce_cd_tas_state,
+};
+pub(crate) use direct_pce_cd_loader::DirectPceCdTasExecutionLoader;
+pub(crate) use direct_pce_loader::{
+    DirectPceTasExecutionLoader, MAX_DIRECT_PCE_HUCARD_BYTES, classify_direct_pce_tas_hardware,
+};
+pub(crate) use direct_sg1000::{
+    direct_sg1000_tas_sync_config_sha256, validate_direct_sg1000_tas_execution_runtime,
+    validate_direct_sg1000_tas_project_identity, validate_direct_sg1000_tas_project_witness,
+    validate_direct_sg1000_tas_runtime, validate_direct_sg1000_tas_state,
+    zip_sg1000_tas_sync_config_sha256,
+};
+pub(crate) use direct_sg1000_loader::{
+    DirectSg1000TasExecutionLoader, MAX_DIRECT_SG1000_ROM_BYTES,
+};
+#[allow(unused_imports)]
+pub(crate) use direct_sms::{
+    direct_sms_tas_sync_config_sha256, validate_direct_sms_tas_execution_runtime,
+    validate_direct_sms_tas_project_identity, validate_direct_sms_tas_project_witness,
+    validate_direct_sms_tas_runtime, validate_direct_sms_tas_state, zip_sms_tas_sync_config_sha256,
+};
+#[allow(unused_imports)]
+pub(crate) use direct_sms_loader::{DirectSmsTasExecutionLoader, MAX_DIRECT_SMS_ROM_BYTES};
+#[allow(unused_imports)]
+pub(crate) use direct_ws::{
+    direct_ws_battery_tas_sync_config_sha256, direct_ws_rtc_tas_sync_config_sha256,
+    direct_ws_tas_orientation, direct_ws_tas_sync_config_sha256,
+    validate_direct_ws_tas_branch_scope, validate_direct_ws_tas_execution_runtime,
+    validate_direct_ws_tas_linked_runtime, validate_direct_ws_tas_private_execution_runtime,
+    validate_direct_ws_tas_private_runtime, validate_direct_ws_tas_private_state,
+    validate_direct_ws_tas_project_identity, validate_direct_ws_tas_project_witness,
+    validate_direct_ws_tas_runtime, validate_direct_ws_tas_state,
+    zip_ws_rtc_tas_sync_config_sha256, zip_ws_tas_sync_config_sha256,
+};
+pub(crate) use direct_ws_loader::{DirectWsTasExecutionLoader, MAX_DIRECT_WS_ROM_BYTES};
+pub(crate) use gb_rtc::{
+    GbRtcPersistenceWitness, gb_rtc_complete_persistence_bytes, gb_rtc_persistence_witness,
 };
 pub(crate) use live_binding::{
     DirectNesTasRuntimeWitness, validate_direct_nes_tas_project_witness,
 };
+pub(crate) use project_profile::{
+    TasProjectRuntimeWitness, classify_direct_tas_execution_profile, validate_tas_project_witness,
+};
+pub(crate) use selection::{
+    has_extension, select_private_tas_execution_attachment, select_private_tas_execution_loader,
+    select_private_tas_execution_loader_for_project,
+    select_private_tas_execution_loader_with_rom_path,
+};
 
 pub(crate) const MAX_NES_CARTRIDGE_BYTES: u64 = 64 * 1024 * 1024;
 const NES_GAMEPAD_CONFIGURATION: &[u8] = b"zeff-tas-device-config-v1\0nes-standard-controller\0";
+const NES_ZAPPER_CONFIGURATION: &[u8] =
+    b"zeff-tas-device-config-v1\0nes-standard-or-zapper-controller\0";
 const NES_CARTRIDGE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-cartridge\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0external-state=absent\0";
+const NES_BATTERY_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-cartridge\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0persistent-state=project-owned-sram\0rtc=absent\0sensors=absent\0";
+const NES_ZIP_MEMBER_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-zip-member\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0external-state=absent\0member=";
+const NES_ZIP_BATTERY_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-zip-member\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0persistent-state=project-owned-sram\0rtc=absent\0sensors=absent\0member=";
+pub(crate) const MAX_NES_ZIP_BYTES: u64 = 128 * 1024 * 1024;
 
 pub(crate) fn direct_nes_tas_sync_config_sha256() -> TasDigest {
     TasDigest::from_bytes(NES_CARTRIDGE_SYNC_CONFIGURATION)
 }
 
-pub(crate) fn classify_direct_tas_execution_profile(
-    project: &TasProject,
-) -> Result<crate::emu_thread::TasExecutionProfile> {
-    project.validate()?;
-    match project.identity().system.as_str() {
-        system if system == ActiveSystem::Nes.code() => {
-            validate_direct_nes_tas_project_identity(project)?;
-            Ok(crate::emu_thread::TasExecutionProfile::DirectNesCartridge)
-        }
-        system if system == ActiveSystem::GameBoy.code() => {
-            validate_direct_gb_tas_project_identity(project)?;
-            Ok(crate::emu_thread::TasExecutionProfile::DirectGbRomOnlyDmg)
-        }
-        _ => bail!("the TAS project does not identify a live execution profile"),
-    }
+pub(crate) fn direct_nes_battery_tas_sync_config_sha256() -> TasDigest {
+    TasDigest::from_bytes(NES_BATTERY_SYNC_CONFIGURATION)
 }
 
-pub(crate) struct TasProjectRuntimeWitness<'a> {
-    pub(crate) profile: crate::emu_thread::TasExecutionProfile,
-    pub(crate) source_media_sha256: TasDigest,
-    pub(crate) effective_media_sha256: TasDigest,
-    pub(crate) current_state_bytes: &'a [u8],
-    pub(crate) current_state_sha256: TasDigest,
-    pub(crate) determinism_abi: &'a str,
-    pub(crate) state_format_compatibility_id: &'a str,
-    pub(crate) sync_config_sha256: TasDigest,
+pub(crate) fn zip_nes_tas_sync_config_sha256(member_name: &str) -> TasDigest {
+    zip_nes_tas_sync_config_sha256_for_profile(member_name, false)
 }
 
-pub(crate) fn validate_tas_project_witness(
-    project: &TasProject,
-    branch_id: &str,
-    witness: TasProjectRuntimeWitness<'_>,
-) -> Result<()> {
-    ensure!(
-        classify_direct_tas_execution_profile(project)? == witness.profile,
-        "worker execution profile does not match the TAS project"
-    );
-    match witness.profile {
-        crate::emu_thread::TasExecutionProfile::DirectNesCartridge => {
-            validate_direct_nes_tas_project_witness(
-                project,
-                branch_id,
-                DirectNesTasRuntimeWitness {
-                    source_media_sha256: witness.source_media_sha256,
-                    effective_media_sha256: witness.effective_media_sha256,
-                    current_state_bytes: witness.current_state_bytes,
-                    current_state_sha256: witness.current_state_sha256,
-                    determinism_abi: witness.determinism_abi,
-                    state_format_compatibility_id: witness.state_format_compatibility_id,
-                    sync_config_sha256: witness.sync_config_sha256,
-                },
-            )
-        }
-        crate::emu_thread::TasExecutionProfile::DirectGbRomOnlyDmg => {
-            validate_direct_gb_tas_project_witness(
-                project,
-                branch_id,
-                DirectGbTasRuntimeWitness {
-                    source_media_sha256: witness.source_media_sha256,
-                    effective_media_sha256: witness.effective_media_sha256,
-                    current_state_bytes: witness.current_state_bytes,
-                    current_state_sha256: witness.current_state_sha256,
-                    determinism_abi: witness.determinism_abi,
-                    state_format_compatibility_id: witness.state_format_compatibility_id,
-                    sync_config_sha256: witness.sync_config_sha256,
-                },
-            )
-        }
-    }
+pub(crate) fn zip_nes_battery_tas_sync_config_sha256(member_name: &str) -> TasDigest {
+    zip_nes_tas_sync_config_sha256_for_profile(member_name, true)
+}
+
+fn zip_nes_tas_sync_config_sha256_for_profile(member_name: &str, battery: bool) -> TasDigest {
+    let configuration = if battery {
+        NES_ZIP_BATTERY_SYNC_CONFIGURATION
+    } else {
+        NES_ZIP_MEMBER_SYNC_CONFIGURATION
+    };
+    let mut bytes = Vec::with_capacity(configuration.len() + member_name.len());
+    bytes.extend_from_slice(configuration);
+    bytes.extend_from_slice(member_name.as_bytes());
+    TasDigest::from_bytes(&bytes)
 }
 
 fn direct_nes_tas_devices() -> Vec<TasDeviceIdentity> {
@@ -117,161 +209,236 @@ fn direct_nes_tas_devices() -> Vec<TasDeviceIdentity> {
         .collect()
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct DirectNesTasExecutionLoader {
-    source_path: PathBuf,
-    firmware_search_dirs: Vec<PathBuf>,
+fn direct_nes_zapper_tas_devices() -> Vec<TasDeviceIdentity> {
+    vec![
+        TasDeviceIdentity {
+            port: "p1".to_owned(),
+            device: "nes-standard-controller".to_owned(),
+            configuration_sha256: TasDigest::from_bytes(NES_GAMEPAD_CONFIGURATION),
+        },
+        TasDeviceIdentity {
+            port: "p2".to_owned(),
+            device: "nes-standard-or-zapper-controller".to_owned(),
+            configuration_sha256: TasDigest::from_bytes(NES_ZAPPER_CONFIGURATION),
+        },
+    ]
 }
 
-impl DirectNesTasExecutionLoader {
-    pub(crate) fn new(source_path: PathBuf, firmware_search_dirs: Vec<PathBuf>) -> Self {
-        Self {
-            source_path,
-            firmware_search_dirs,
-        }
-    }
-
-    pub(crate) fn validate_project_branch_scope(
-        project: &TasProject,
-        branch_id: &str,
-    ) -> Result<()> {
-        validate_direct_nes_tas_branch_scope(project, branch_id)
-    }
-
-    pub(crate) fn load_session(&self, start_state: &[u8]) -> Result<TasExecutionSession> {
-        validate_current_nes_start_state(start_state)?;
-        let (mut backend, source_bytes) = self.load_fresh_backend()?;
-        backend
-            .load_state_from_bytes(start_state.to_vec())
-            .context("failed to restore TAS starting state for device-profile validation")?;
-        ensure!(
-            backend.nes_has_standard_controller_topology() == Some(true),
-            "TAS starting state does not restore the standard NES controller topology"
-        );
-        let identity = direct_nes_tas_identity(&backend, &source_bytes, start_state)?;
-        Ok(TasExecutionSession::new(backend, identity))
-    }
-
-    pub(crate) fn create_project(&self) -> Result<TasProject> {
-        let (backend, source_bytes) = self.load_fresh_backend()?;
-        let start_state = backend.encode_state_bytes()?;
-        validate_current_nes_start_state(&start_state)?;
-        let identity = direct_nes_tas_identity(&backend, &source_bytes, &start_state)?;
-        let project_id = format!("nes-{}", identity.source_media_sha256.to_hex());
-        TasProject::new(
-            project_id,
-            identity,
-            start_state,
-            ReplayStartMetadata::default(),
-            TasInitialBranch {
-                id: "main".to_owned(),
-                name: "Main".to_owned(),
-                frame_count: 1,
-                input_spans: Vec::new(),
-                events: Vec::new(),
-            },
-            BTreeMap::new(),
-        )
-    }
-
-    pub(crate) fn create_project_file(&self, path: &Path) -> Result<TasProject> {
-        ensure!(
-            TasProject::is_project_path(path),
-            "TAS projects must use the .ztas extension"
-        );
-        let project = self.create_project()?;
-        publish_new_project(path, &project)?;
-        Ok(project)
-    }
-
-    pub(crate) fn replace_project_file(&self, path: &Path) -> Result<TasProject> {
-        ensure!(
-            TasProject::is_project_path(path),
-            "TAS projects must use the .ztas extension"
-        );
-        ensure!(path.exists(), "TAS project destination does not exist");
-        let project = self.create_project()?;
-        project.save_atomic(path).with_context(|| {
-            format!(
-                "failed to atomically replace TAS project {}",
-                path.display()
-            )
-        })?;
-        Ok(project)
-    }
-
-    pub(crate) fn load_editor_engine(
-        &self,
-        project: &TasProject,
-    ) -> Result<TasEditorExecutionEngine> {
-        for branch in project.branches() {
-            validate_direct_nes_tas_branch_scope(project, branch.id()).with_context(|| {
-                format!(
-                    "TAS branch {:?} is outside the direct NES editor execution profile",
-                    branch.id()
-                )
-            })?;
-        }
-        let session = self.load_session(project.start_state())?;
-        TasEditorExecutionEngine::attach(project, session, validate_direct_nes_tas_branch_scope)
-    }
-
-    fn load_fresh_backend(&self) -> Result<(EmuBackend, Vec<u8>)> {
-        ensure!(
-            self.source_path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("nes")),
-            "TAS execution currently supports direct .nes cartridge files only"
-        );
-        let source_bytes = read_nes_cartridge_bounded(&self.source_path)?;
-        let backend = load_backend_from_rom_source(
-            ActiveSystem::Nes,
-            &self.source_path,
-            &self.source_path,
-            Some(source_bytes.clone()),
-            BackendLoadConfig {
-                firmware_search_dirs: self.firmware_search_dirs.clone(),
-                sample_rate: None,
-                apply_mods: false,
-                initial_input: None,
-                nes_load_battery_sram: false,
-                ..BackendLoadConfig::default()
-            },
-        )?
-        .backend;
-        ensure!(
-            backend.nes_has_standard_controller_topology() == Some(true),
-            "TAS creation requires the standard NES controller topology"
-        );
-        Ok((backend, source_bytes))
-    }
-}
-
-impl TasEditorExecutionProvider for DirectNesTasExecutionLoader {
-    fn load_editor_engine(&self, project: &TasProject) -> Result<TasEditorExecutionEngine> {
-        DirectNesTasExecutionLoader::load_editor_engine(self, project)
+fn direct_nes_devices_for_backend(backend: &EmuBackend) -> Result<Vec<TasDeviceIdentity>> {
+    if backend.nes_has_standard_controller_topology() == Some(true) {
+        Ok(direct_nes_tas_devices())
+    } else if backend.nes_has_standard_or_zapper_controller_topology() == Some(true) {
+        Ok(direct_nes_zapper_tas_devices())
+    } else {
+        bail!("TAS starting state restores an unsupported NES controller topology")
     }
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum PrivateTasExecutionLoader {
     DirectNes(DirectNesTasExecutionLoader),
+    DirectFds(DirectFdsTasExecutionLoader),
     DirectGb(DirectGbTasExecutionLoader),
+    DirectGbc(DirectGbcTasExecutionLoader),
+    DirectColeco(DirectColecoTasExecutionLoader),
+    DirectSms(DirectSmsTasExecutionLoader),
+    DirectGameGear(DirectGameGearTasExecutionLoader),
+    DirectGba(DirectGbaTasExecutionLoader),
+    DirectSg1000(DirectSg1000TasExecutionLoader),
+    DirectWs(DirectWsTasExecutionLoader),
+    DirectPce(DirectPceTasExecutionLoader),
+    DirectPceCd(DirectPceCdTasExecutionLoader),
 }
 
 impl PrivateTasExecutionLoader {
+    pub(crate) fn load_repair_backend(&self, project: &TasProject) -> Result<EmuBackend> {
+        self.load_editor_engine(project)
+            .map(TasEditorExecutionEngine::into_backend)
+    }
+
+    pub(crate) fn validate_project_branch_scope(
+        &self,
+        project: &TasProject,
+        branch_id: &str,
+    ) -> Result<()> {
+        match self {
+            Self::DirectNes(_) => {
+                DirectNesTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectFds(_) => {
+                DirectFdsTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectGb(_) => {
+                DirectGbTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectGbc(_) => {
+                DirectGbcTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectColeco(_) => {
+                DirectColecoTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectSms(_) => {
+                DirectSmsTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectGameGear(_) => {
+                DirectGameGearTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectGba(_) => {
+                DirectGbaTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectSg1000(_) => {
+                DirectSg1000TasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectWs(_) => {
+                DirectWsTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectPce(_) => {
+                DirectPceTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+            Self::DirectPceCd(_) => {
+                DirectPceCdTasExecutionLoader::validate_project_branch_scope(project, branch_id)
+            }
+        }
+    }
+
     pub(crate) fn create_project_file(&self, path: &Path) -> Result<TasProject> {
         match self {
             Self::DirectNes(loader) => loader.create_project_file(path),
+            Self::DirectFds(loader) => loader.create_project_file(path),
             Self::DirectGb(loader) => loader.create_project_file(path),
+            Self::DirectGbc(loader) => loader.create_project_file(path),
+            Self::DirectColeco(loader) => loader.create_project_file(path),
+            Self::DirectSms(loader) => loader.create_project_file(path),
+            Self::DirectGameGear(loader) => loader.create_project_file(path),
+            Self::DirectGba(loader) => loader.create_project_file(path),
+            Self::DirectSg1000(loader) => loader.create_project_file(path),
+            Self::DirectWs(loader) => loader.create_project_file(path),
+            Self::DirectPce(loader) => loader.create_project_file(path),
+            Self::DirectPceCd(loader) => loader.create_project_file(path),
         }
     }
 
     pub(crate) fn replace_project_file(&self, path: &Path) -> Result<TasProject> {
         match self {
             Self::DirectNes(loader) => loader.replace_project_file(path),
+            Self::DirectFds(loader) => loader.replace_project_file(path),
             Self::DirectGb(loader) => loader.replace_project_file(path),
+            Self::DirectGbc(loader) => loader.replace_project_file(path),
+            Self::DirectColeco(loader) => loader.replace_project_file(path),
+            Self::DirectSms(loader) => loader.replace_project_file(path),
+            Self::DirectGameGear(loader) => loader.replace_project_file(path),
+            Self::DirectGba(loader) => loader.replace_project_file(path),
+            Self::DirectSg1000(loader) => loader.replace_project_file(path),
+            Self::DirectWs(loader) => loader.replace_project_file(path),
+            Self::DirectPce(loader) => loader.replace_project_file(path),
+            Self::DirectPceCd(loader) => loader.replace_project_file(path),
+        }
+    }
+
+    pub(crate) fn import_replay_file(
+        &self,
+        replay_path: &Path,
+        project_path: &Path,
+        replace_existing: bool,
+    ) -> Result<TasProject> {
+        ensure!(
+            TasProject::is_project_path(project_path),
+            "TAS projects must use the .ztas extension"
+        );
+        let project = TasProject::import_zrpl_with_witness(replay_path, |start_state| {
+            let (prefix, session) = match self {
+                Self::DirectNes(loader) => ("nes", loader.load_session(start_state)?),
+                Self::DirectFds(_) => bail!("FDS replay import requires project-owned disk media"),
+                Self::DirectGb(loader) => ("gb", loader.load_session(start_state)?),
+                Self::DirectGbc(loader) => ("gbc", loader.load_session(start_state)?),
+                Self::DirectColeco(loader) => ("coleco", loader.load_session(start_state)?),
+                Self::DirectSms(loader) => ("sms", loader.load_session(start_state)?),
+                Self::DirectGameGear(loader) => ("game-gear", loader.load_session(start_state)?),
+                Self::DirectGba(loader) => ("gba", loader.load_session(start_state)?),
+                Self::DirectSg1000(loader) => ("sg1000", loader.load_session(start_state)?),
+                Self::DirectWs(loader) => ("ws", loader.load_session(start_state)?),
+                Self::DirectPce(loader) => ("pce", loader.load_session(start_state)?),
+                Self::DirectPceCd(loader) => ("pce-cd", loader.load_session(start_state)?),
+            };
+            let identity = session.identity().clone();
+            Ok(TasZrplImportWitness {
+                project_id: format!("{prefix}-{}", identity.source_media_sha256.to_hex()),
+                identity,
+            })
+        })?;
+        for branch in project.branches() {
+            self.validate_project_branch_scope(&project, branch.id())?;
+        }
+        if replace_existing {
+            ensure!(
+                project_path.exists(),
+                "TAS project destination does not exist"
+            );
+            project.save_atomic(project_path).with_context(|| {
+                format!(
+                    "failed to atomically replace TAS project {}",
+                    project_path.display()
+                )
+            })?;
+        } else {
+            publish_new_project(project_path, &project)?;
+        }
+        Ok(project)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn verify_and_export_editor_session(
+        &self,
+        session: &mut TasEditorSession,
+        replay_path: &Path,
+    ) -> Result<PathBuf> {
+        let start_state = session.project().start_state().to_vec();
+        let witness_session = self.load_session(&start_state)?;
+        let witness = TasExecutionWitness {
+            identity: witness_session.identity().clone(),
+        };
+        session.verify_save_and_export_active_branch(replay_path, &witness, || {
+            self.load_session(&start_state)
+        })
+    }
+
+    pub(crate) fn verify_and_export_editor_session_cancellable(
+        &self,
+        session: &mut TasEditorSession,
+        replay_path: &Path,
+        cancellation: &AtomicBool,
+        progress: &mut impl FnMut(TasVerifiedReplayExportPhase),
+    ) -> Result<PathBuf> {
+        progress(TasVerifiedReplayExportPhase::Preparing);
+        let start_state = session.project().start_state().to_vec();
+        let witness_session = self.load_session(&start_state)?;
+        let witness = TasExecutionWitness {
+            identity: witness_session.identity().clone(),
+        };
+        session.verify_save_and_export_active_branch_cancellable(
+            replay_path,
+            &witness,
+            cancellation,
+            progress,
+            || self.load_session(&start_state),
+        )
+    }
+
+    pub(crate) fn load_session(&self, start_state: &[u8]) -> Result<TasExecutionSession> {
+        match self {
+            Self::DirectNes(loader) => loader.load_session(start_state),
+            Self::DirectFds(loader) => loader.load_session(start_state),
+            Self::DirectGb(loader) => loader.load_session(start_state),
+            Self::DirectGbc(loader) => loader.load_session(start_state),
+            Self::DirectColeco(loader) => loader.load_session(start_state),
+            Self::DirectSms(loader) => loader.load_session(start_state),
+            Self::DirectGameGear(loader) => loader.load_session(start_state),
+            Self::DirectGba(loader) => loader.load_session(start_state),
+            Self::DirectSg1000(loader) => loader.load_session(start_state),
+            Self::DirectWs(loader) => loader.load_session(start_state),
+            Self::DirectPce(loader) => loader.load_session(start_state),
+            Self::DirectPceCd(loader) => loader.load_session(start_state),
         }
     }
 }
@@ -280,62 +447,19 @@ impl TasEditorExecutionProvider for PrivateTasExecutionLoader {
     fn load_editor_engine(&self, project: &TasProject) -> Result<TasEditorExecutionEngine> {
         match self {
             Self::DirectNes(loader) => loader.load_editor_engine(project),
+            Self::DirectFds(loader) => loader.load_editor_engine(project),
             Self::DirectGb(loader) => loader.load_editor_engine(project),
+            Self::DirectGbc(loader) => loader.load_editor_engine(project),
+            Self::DirectColeco(loader) => loader.load_editor_engine(project),
+            Self::DirectSms(loader) => loader.load_editor_engine(project),
+            Self::DirectGameGear(loader) => loader.load_editor_engine(project),
+            Self::DirectGba(loader) => loader.load_editor_engine(project),
+            Self::DirectSg1000(loader) => loader.load_editor_engine(project),
+            Self::DirectWs(loader) => loader.load_editor_engine(project),
+            Self::DirectPce(loader) => loader.load_editor_engine(project),
+            Self::DirectPceCd(loader) => loader.load_editor_engine(project),
         }
     }
-}
-
-pub(crate) fn select_private_tas_execution_loader(
-    source_path: PathBuf,
-    system: ActiveSystem,
-    firmware_search_dirs: Vec<PathBuf>,
-) -> Result<PrivateTasExecutionLoader> {
-    match system {
-        ActiveSystem::Nes if has_extension(&source_path, "nes") => {
-            Ok(PrivateTasExecutionLoader::DirectNes(
-                DirectNesTasExecutionLoader::new(source_path, firmware_search_dirs),
-            ))
-        }
-        ActiveSystem::GameBoy if has_extension(&source_path, "gb") => {
-            Ok(PrivateTasExecutionLoader::DirectGb(
-                DirectGbTasExecutionLoader::new(source_path, firmware_search_dirs),
-            ))
-        }
-        ActiveSystem::Nes => bail!("NES TAS execution currently requires a direct .nes cartridge"),
-        ActiveSystem::GameBoy => {
-            bail!("Game Boy TAS execution currently requires a direct .gb cartridge")
-        }
-        _ => bail!("{system} does not have a TAS execution profile"),
-    }
-}
-
-pub(crate) fn select_private_tas_execution_attachment(
-    source_path: Option<PathBuf>,
-    system: Option<ActiveSystem>,
-    firmware_search_dirs: Vec<PathBuf>,
-) -> TasEditorExecutionAttachment {
-    let (Some(source_path), Some(system)) = (source_path, system) else {
-        return TasEditorExecutionAttachment::Unavailable(
-            TasEditorExecutionUnavailableReason::NoRunningEmulator,
-        );
-    };
-    match select_private_tas_execution_loader(source_path, system, firmware_search_dirs) {
-        Ok(loader) => TasEditorExecutionAttachment::Available(Box::new(loader)),
-        Err(error) if matches!(system, ActiveSystem::Nes | ActiveSystem::GameBoy) => {
-            TasEditorExecutionAttachment::Unavailable(
-                TasEditorExecutionUnavailableReason::UnsupportedMedia(error.to_string()),
-            )
-        }
-        Err(_) => TasEditorExecutionAttachment::Unavailable(
-            TasEditorExecutionUnavailableReason::UnsupportedSystem(system.to_string()),
-        ),
-    }
-}
-
-fn has_extension(path: &Path, extension: &str) -> bool {
-    path.extension()
-        .and_then(|candidate| candidate.to_str())
-        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
 }
 
 pub(super) fn publish_new_project(path: &Path, project: &TasProject) -> Result<()> {
@@ -367,6 +491,55 @@ pub(crate) fn direct_nes_tas_identity(
     source_bytes: &[u8],
     start_state: &[u8],
 ) -> Result<TasProjectIdentity> {
+    let source_media_sha256 = TasDigest::from_bytes(source_bytes);
+    let persistent_state = nes_persistent_identity(backend)?;
+    let sync_config_sha256 = match persistent_state {
+        TasExternalIdentity::Absent => direct_nes_tas_sync_config_sha256(),
+        TasExternalIdentity::ExternalSha256(_) => direct_nes_battery_tas_sync_config_sha256(),
+    };
+    let identity = nes_tas_identity(
+        backend,
+        source_media_sha256,
+        sync_config_sha256,
+        persistent_state,
+        start_state,
+    )?;
+    ensure!(
+        identity.source_media_sha256 == identity.effective_media_sha256,
+        "cartridge NES loader changed media bytes without a declared patch chain"
+    );
+    Ok(identity)
+}
+
+pub(crate) fn zip_nes_tas_identity(
+    backend: &EmuBackend,
+    archive_sha256: [u8; 32],
+    member_name: &str,
+    start_state: &[u8],
+) -> Result<TasProjectIdentity> {
+    let persistent_state = nes_persistent_identity(backend)?;
+    let sync_config_sha256 = match persistent_state {
+        TasExternalIdentity::Absent => zip_nes_tas_sync_config_sha256(member_name),
+        TasExternalIdentity::ExternalSha256(_) => {
+            zip_nes_battery_tas_sync_config_sha256(member_name)
+        }
+    };
+    nes_tas_identity(
+        backend,
+        TasDigest(archive_sha256),
+        sync_config_sha256,
+        persistent_state,
+        start_state,
+    )
+}
+
+fn nes_tas_identity(
+    backend: &EmuBackend,
+    source_media_sha256: TasDigest,
+    sync_config_sha256: TasDigest,
+    persistent_state: TasExternalIdentity,
+    start_state: &[u8],
+) -> Result<TasProjectIdentity> {
     ensure!(
         backend.system() == ActiveSystem::Nes,
         "TAS execution profile requires a NES backend"
@@ -389,11 +562,6 @@ pub(crate) fn direct_nes_tas_identity(
             .rom_sha256
             .context("NES backend omitted its effective media identity")?,
     );
-    let source_media_sha256 = TasDigest::from_bytes(source_bytes);
-    ensure!(
-        source_media_sha256 == effective_media_sha256,
-        "cartridge NES loader changed media bytes without a declared patch chain"
-    );
     ensure!(
         metadata.cheat_sha256.is_none(),
         "cartridge NES execution unexpectedly enabled cheats"
@@ -414,15 +582,30 @@ pub(crate) fn direct_nes_tas_identity(
             .iter()
             .map(tas_firmware_identity)
             .collect(),
-        devices: direct_nes_tas_devices(),
-        sync_config_sha256: direct_nes_tas_sync_config_sha256(),
-        persistent_state: TasExternalIdentity::Absent,
+        devices: direct_nes_devices_for_backend(backend)?,
+        sync_config_sha256,
+        persistent_state,
         rtc_state: TasExternalIdentity::Absent,
         sensor_state: TasExternalIdentity::Absent,
         cheats: TasExternalIdentity::Absent,
         state_format_compatibility_id: zeff_nes_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID
             .to_owned(),
         start_state_sha256: TasDigest::from_bytes(start_state),
+    })
+}
+
+fn nes_persistent_identity(backend: &EmuBackend) -> Result<TasExternalIdentity> {
+    let nes = backend
+        .nes()
+        .context("TAS execution profile requires a NES backend")?;
+    let battery = nes.emu.dump_battery_sram();
+    ensure!(
+        battery.is_some() == backend.save_ram_kind().is_battery_backed(),
+        "NES battery state disagrees with the cartridge save profile"
+    );
+    Ok(match battery {
+        Some(bytes) => TasExternalIdentity::ExternalSha256(TasDigest::from_bytes(&bytes)),
+        None => TasExternalIdentity::Absent,
     })
 }
 
@@ -475,20 +658,30 @@ pub(crate) fn validate_direct_nes_tas_project_identity(project: &TasProject) -> 
                 == zeff_nes_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID,
         "TAS project uses an incompatible NES determinism or state format"
     );
+    let direct_media = identity.source_media_sha256 == identity.effective_media_sha256
+        && match identity.persistent_state {
+            TasExternalIdentity::Absent => {
+                identity.sync_config_sha256 == direct_nes_tas_sync_config_sha256()
+            }
+            TasExternalIdentity::ExternalSha256(_) => {
+                identity.sync_config_sha256 == direct_nes_battery_tas_sync_config_sha256()
+            }
+        };
+    let zip_media = identity.source_media_sha256 != identity.effective_media_sha256
+        && identity.sync_config_sha256 != direct_nes_tas_sync_config_sha256()
+        && identity.sync_config_sha256 != direct_nes_battery_tas_sync_config_sha256();
     ensure!(
-        identity.source_media_sha256 == identity.effective_media_sha256
-            && identity.patches.is_empty(),
-        "TAS project media is outside the direct unmodified NES profile"
+        (direct_media || zip_media) && identity.patches.is_empty(),
+        "TAS project media is outside the unmodified NES profile"
     );
+    let devices_supported = identity.devices == direct_nes_tas_devices()
+        || identity.devices == direct_nes_zapper_tas_devices();
     ensure!(
-        identity.firmware.is_empty()
-            && identity.devices == direct_nes_tas_devices()
-            && identity.sync_config_sha256 == direct_nes_tas_sync_config_sha256(),
+        identity.firmware.is_empty() && devices_supported,
         "TAS project firmware, devices, or sync configuration is incompatible"
     );
     ensure!(
-        identity.persistent_state == TasExternalIdentity::Absent
-            && identity.rtc_state == TasExternalIdentity::Absent
+        identity.rtc_state == TasExternalIdentity::Absent
             && identity.sensor_state == TasExternalIdentity::Absent
             && identity.cheats == TasExternalIdentity::Absent,
         "TAS project declares unsupported external state"
@@ -508,6 +701,7 @@ fn validate_direct_nes_tas_branch_scope(project: &TasProject, branch_id: &str) -
         branch.events().is_empty(),
         "cartridge NES TAS execution does not support synchronized media or link events"
     );
+    let supports_zapper = project.identity().devices == direct_nes_zapper_tas_devices();
     for span in branch.input_spans() {
         let input = span.input;
         if input.players[2..]
@@ -516,12 +710,13 @@ fn validate_direct_nes_tas_branch_scope(project: &TasProject, branch_id: &str) -
         {
             bail!("cartridge NES TAS execution supports players 1 and 2 only");
         }
-        if input.zapper.enabled
-            || input.zapper.trigger
-            || input.zapper.hit
-            || input.zapper.screen_pos.is_some()
+        if !supports_zapper
+            && (input.zapper.enabled
+                || input.zapper.trigger
+                || input.zapper.hit
+                || input.zapper.screen_pos.is_some())
         {
-            bail!("cartridge NES TAS execution does not support Zapper input");
+            bail!("this cartridge NES TAS project does not declare Zapper input support");
         }
         if input.tilt_x_bits != 0 || input.tilt_y_bits != 0 {
             bail!("cartridge NES TAS execution does not support tilt input");
@@ -576,139 +771,7 @@ pub(super) fn tas_firmware_identity(firmware: &ReplayFirmwareManifest) -> TasFir
 
 #[cfg(test)]
 mod creation_tests;
-
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use zeff_emu_common::replay::ReplayStartMetadata;
-
-    use super::*;
-    use crate::tas_project::{
-        TasAutosaveConfig, TasAutosaveStore, TasControllerInput, TasEditorSession,
-        TasInitialBranch, TasInputFrame, TasSeekStateCache,
-    };
-
-    #[test]
-    fn private_attachment_selection_reports_current_capability_reasons() {
-        assert!(matches!(
-            select_private_tas_execution_attachment(None, None, Vec::new()),
-            TasEditorExecutionAttachment::Unavailable(
-                TasEditorExecutionUnavailableReason::NoRunningEmulator
-            )
-        ));
-        assert!(matches!(
-            select_private_tas_execution_attachment(
-                Some(PathBuf::from("game.gb")),
-                Some(ActiveSystem::GameBoy),
-                Vec::new(),
-            ),
-            TasEditorExecutionAttachment::Available(_)
-        ));
-        assert!(matches!(
-            select_private_tas_execution_attachment(
-                Some(PathBuf::from("game.zip")),
-                Some(ActiveSystem::Nes),
-                Vec::new(),
-            ),
-            TasEditorExecutionAttachment::Unavailable(
-                TasEditorExecutionUnavailableReason::UnsupportedMedia(_)
-            )
-        ));
-        assert!(matches!(
-            select_private_tas_execution_attachment(
-                Some(PathBuf::from("game.zip")),
-                Some(ActiveSystem::GameBoy),
-                Vec::new(),
-            ),
-            TasEditorExecutionAttachment::Unavailable(
-                TasEditorExecutionUnavailableReason::UnsupportedMedia(_)
-            )
-        ));
-        assert!(matches!(
-            select_private_tas_execution_attachment(
-                Some(PathBuf::from("game.nes")),
-                Some(ActiveSystem::Nes),
-                Vec::new(),
-            ),
-            TasEditorExecutionAttachment::Available(_)
-        ));
-    }
-
-    #[test]
-    fn attached_direct_nes_profile_is_rechecked_after_a_later_edit() -> Result<()> {
-        let directory = crate::test_support::test_directory("tas-loader-persistent-scope")?;
-        let rom_path = directory.path().join("game.nes");
-        let rom = crate::test_support::build_nes_test_rom();
-        std::fs::write(&rom_path, &rom)?;
-
-        let backend = load_backend_from_rom_source(
-            ActiveSystem::Nes,
-            &rom_path,
-            &rom_path,
-            Some(rom.clone()),
-            BackendLoadConfig {
-                sample_rate: None,
-                apply_mods: false,
-                initial_input: None,
-                nes_load_battery_sram: false,
-                ..BackendLoadConfig::default()
-            },
-        )?
-        .backend;
-        let start_state = backend.encode_state_bytes()?;
-        let identity = direct_nes_tas_identity(&backend, &rom, &start_state)?;
-        let project = TasProject::new(
-            "persistent-direct-nes-scope",
-            identity,
-            start_state,
-            ReplayStartMetadata::default(),
-            TasInitialBranch {
-                id: "main".to_owned(),
-                name: "Main".to_owned(),
-                frame_count: 1,
-                input_spans: Vec::new(),
-                events: Vec::new(),
-            },
-            BTreeMap::new(),
-        )?;
-        let loader = DirectNesTasExecutionLoader::new(rom_path, Vec::new());
-        let mut engine = loader.load_editor_engine(&project)?;
-        let manual_path = directory.path().join("movie.ztas");
-        let autosaves =
-            TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default())?;
-        let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache"))?;
-        let mut editor = TasEditorSession::new(project, manual_path, autosaves, seek_cache)?;
-
-        editor.edit_transaction(|edit| {
-            edit.set_input_range(
-                "main",
-                0,
-                1,
-                TasInputFrame {
-                    players: [
-                        TasControllerInput::default(),
-                        TasControllerInput::default(),
-                        TasControllerInput {
-                            buttons: 1,
-                            dpad: 0,
-                        },
-                        TasControllerInput::default(),
-                        TasControllerInput::default(),
-                    ],
-                    ..TasInputFrame::default()
-                },
-            )
-        })?;
-
-        let error = engine.seek(&mut editor, 1).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("attached editor execution profile")
-        );
-        assert_eq!(editor.cursor(), 0);
-        assert!(editor.load_seek_state()?.is_none());
-        Ok(())
-    }
-}
+mod direct_coleco_loader_tests;
+#[cfg(test)]
+mod selection_tests;

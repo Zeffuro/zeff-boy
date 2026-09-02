@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 
+use zeff_emu_common::media::{MediaEvent, MediaObjectId, MediaSlotId};
 use zeff_emu_common::replay::{ReplayEvent, ReplayStartMetadata};
 
-use super::event_editor::{TasEventAction, TasEventMutation, can_author_fds_events};
+use super::event_editor::{
+    FdsMediaMutation, TasEventAction, TasEventMutation, can_author_fds_events, is_editable_event,
+};
 use super::*;
 use crate::tas_project::{
     TasDeviceIdentity, TasDigest, TasExternalIdentity, TasFirmwareIdentity, TasInitialBranch,
@@ -89,9 +92,13 @@ fn action(state: &TasEditorWindowState, mutation: TasEventMutation) -> TasEditor
     ))
 }
 
+fn project_media_id() -> MediaObjectId {
+    MediaObjectId::new(format!("sha256:{}", TasDigest([1; 32]).to_hex()))
+}
+
 #[test]
-fn fds_add_update_remove_are_canonical_and_accept_the_terminal_boundary() {
-    let (_root, mut state) = fds_state(3, vec![ReplayEvent::FdsDiskSide { frame: 2, side: 2 }]);
+fn fds_add_update_remove_are_canonical() {
+    let (_root, mut state) = fds_state(4, vec![ReplayEvent::FdsDiskSide { frame: 2, side: 2 }]);
     let initial_rerecords = state.session.as_ref().unwrap().project().rerecord_count();
 
     let add_terminal = action(
@@ -169,6 +176,166 @@ fn fds_add_update_remove_are_canonical_and_accept_the_terminal_boundary() {
         state.session.as_ref().unwrap().last_autosaved_generation(),
         Some(generation)
     );
+}
+
+#[test]
+fn exact_fds_media_events_bind_project_drive_sequence_and_media() {
+    let (_root, mut state) = fds_state(8, Vec::new());
+    for mutation in [
+        TasEventMutation::AddMedia {
+            branch_id: "main".to_owned(),
+            frame: 0,
+            mutation: FdsMediaMutation::SetWriteProtected {
+                write_protected: true,
+            },
+        },
+        TasEventMutation::AddMedia {
+            branch_id: "main".to_owned(),
+            frame: 2,
+            mutation: FdsMediaMutation::Eject,
+        },
+        TasEventMutation::AddMedia {
+            branch_id: "main".to_owned(),
+            frame: 4,
+            mutation: FdsMediaMutation::Insert {
+                side: 3,
+                write_protected: false,
+            },
+        },
+    ] {
+        let event_action = action(&state, mutation);
+        state.reduce(event_action).unwrap();
+    }
+
+    let media_id = project_media_id();
+    assert_eq!(
+        state.session.as_ref().unwrap().selected_branch().events(),
+        &[
+            ReplayEvent::Media {
+                frame: 0,
+                sequence: 0,
+                event: MediaEvent::SetWriteProtected {
+                    slot: MediaSlotId::from("fds.drive0"),
+                    write_protected: true,
+                },
+            },
+            ReplayEvent::Media {
+                frame: 2,
+                sequence: 0,
+                event: MediaEvent::Eject {
+                    slot: MediaSlotId::from("fds.drive0"),
+                },
+            },
+            ReplayEvent::Media {
+                frame: 4,
+                sequence: 0,
+                event: MediaEvent::Insert {
+                    slot: MediaSlotId::from("fds.drive0"),
+                    media_id,
+                    side: Some(3),
+                    write_protected: false,
+                },
+            },
+        ]
+    );
+
+    let expected = state.session.as_ref().unwrap().selected_branch().events()[0].clone();
+    let update = action(
+        &state,
+        TasEventMutation::UpdateMedia {
+            branch_id: "main".to_owned(),
+            canonical_index: 0,
+            expected_event: expected.clone(),
+            frame: 0,
+            mutation: FdsMediaMutation::SetWriteProtected {
+                write_protected: false,
+            },
+        },
+    );
+    state.reduce(update).unwrap();
+    assert!(matches!(
+        &state.session.as_ref().unwrap().selected_branch().events()[0],
+        ReplayEvent::Media {
+            event: MediaEvent::SetWriteProtected {
+                write_protected: false,
+                ..
+            },
+            ..
+        }
+    ));
+
+    let remove = action(
+        &state,
+        TasEventMutation::Remove {
+            branch_id: "main".to_owned(),
+            canonical_index: 0,
+            expected_event: state.session.as_ref().unwrap().selected_branch().events()[0].clone(),
+        },
+    );
+    state.reduce(remove).unwrap();
+}
+
+#[test]
+fn exact_fds_media_mutations_reject_invalid_timeline_and_other_media() {
+    let other_media = ReplayEvent::Media {
+        frame: 0,
+        sequence: 1,
+        event: MediaEvent::Eject {
+            slot: MediaSlotId::from("other.drive"),
+        },
+    };
+    assert!(!is_editable_event(&other_media, &project_media_id()));
+
+    let (_root, mut state) = fds_state(
+        3,
+        vec![ReplayEvent::Media {
+            frame: 0,
+            sequence: 0,
+            event: MediaEvent::SetWriteProtected {
+                slot: MediaSlotId::from("fds.drive0"),
+                write_protected: false,
+            },
+        }],
+    );
+    let before = state.session.as_ref().unwrap().project().encode().unwrap();
+    for mutation in [
+        TasEventMutation::AddMedia {
+            branch_id: "main".to_owned(),
+            frame: 0,
+            mutation: FdsMediaMutation::Eject,
+        },
+        TasEventMutation::AddMedia {
+            branch_id: "main".to_owned(),
+            frame: 3,
+            mutation: FdsMediaMutation::Eject,
+        },
+        TasEventMutation::AddMedia {
+            branch_id: "main".to_owned(),
+            frame: 1,
+            mutation: FdsMediaMutation::Insert {
+                side: 0,
+                write_protected: false,
+            },
+        },
+    ] {
+        let event_action = action(&state, mutation);
+        assert!(state.reduce(event_action).is_err());
+        assert_eq!(
+            state.session.as_ref().unwrap().project().encode().unwrap(),
+            before
+        );
+    }
+
+    let (_root, mut state) = fds_state(2, vec![other_media.clone()]);
+    let remove = action(
+        &state,
+        TasEventMutation::Remove {
+            branch_id: "main".to_owned(),
+            canonical_index: 0,
+            expected_event: other_media,
+        },
+    );
+    assert!(state.reduce(remove).is_err());
 }
 
 #[test]
@@ -258,7 +425,7 @@ fn add_requires_exact_external_fds_firmware_but_existing_events_remain_repairabl
     assert!(!can_author_fds_events(&skipped));
 
     let unsupported_existing = project_with_firmware(
-        1,
+        2,
         vec![ReplayEvent::FdsDiskSide { frame: 1, side: 7 }],
         Vec::new(),
     );
@@ -359,7 +526,7 @@ fn successful_event_edit_immediately_detaches_an_incompatible_private_engine() {
             branch_id: "main".to_owned(),
             canonical_index: 0,
             expected_event: expected,
-            frame: 2,
+            frame: 1,
             side: 1,
         },
     );
@@ -370,6 +537,6 @@ fn successful_event_edit_immediately_detaches_an_incompatible_private_engine() {
     assert!(message.contains("private execution detached"));
     assert_eq!(
         state.session.as_ref().unwrap().selected_branch().events(),
-        &[ReplayEvent::FdsDiskSide { frame: 2, side: 1 }]
+        &[ReplayEvent::FdsDiskSide { frame: 1, side: 1 }]
     );
 }

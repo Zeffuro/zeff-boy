@@ -297,6 +297,8 @@ pub(crate) enum TasControlCommandKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EmuCommandAuthority {
     Gameplay(TasControlCommandKind),
+    ObserveTasReadiness,
+    TasRepair,
     AcquireTasControl,
     ExecuteTasControl,
     AdvanceTasControl,
@@ -363,6 +365,39 @@ pub(crate) enum EmuCommand {
     #[cfg(not(target_arch = "wasm32"))]
     DisconnectLink,
     Rewind(usize),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    SuspendTasRepair {
+        identity: TasRepairIdentity,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    ResumeTasRepair {
+        identity: TasRepairIdentity,
+        expected_proof: Box<TasRepairSuspensionProof>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    DiscardTasRepair {
+        identity: TasRepairIdentity,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    CommitRepairedTasWorker {
+        identity: TasRepairIdentity,
+        save_recovery_on_shutdown: bool,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    DiscardRepairedTasWorker {
+        identity: TasRepairIdentity,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    InspectTasReadiness {
+        request_id: u64,
+        profile: TasExecutionProfile,
+    },
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
     AcquireTasControl {
@@ -439,6 +474,14 @@ impl EmuCommand {
                 EmuCommandAuthority::Gameplay(TasControlCommandKind::Link)
             }
             Self::Rewind(_) => EmuCommandAuthority::Gameplay(TasControlCommandKind::Rewind),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::SuspendTasRepair { .. }
+            | Self::ResumeTasRepair { .. }
+            | Self::DiscardTasRepair { .. }
+            | Self::CommitRepairedTasWorker { .. }
+            | Self::DiscardRepairedTasWorker { .. } => EmuCommandAuthority::TasRepair,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::InspectTasReadiness { .. } => EmuCommandAuthority::ObserveTasReadiness,
             #[cfg(not(target_arch = "wasm32"))]
             Self::AcquireTasControl { .. } => EmuCommandAuthority::AcquireTasControl,
             #[cfg(not(target_arch = "wasm32"))]
@@ -526,10 +569,55 @@ pub(crate) enum EmuResponse {
     #[cfg(not(target_arch = "wasm32"))]
     LinkFailed(String),
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasRepairSuspended {
+        proof: Box<TasRepairSuspensionProof>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasRepairSuspendRejected {
+        identity: TasRepairIdentity,
+        reason: TasRepairSuspendRejectedReason,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasRepairOriginalResumed {
+        proof: Box<TasRepairSuspensionProof>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasRepairOriginalDiscarded {
+        identity: TasRepairIdentity,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasRepairRepairedWorkerCommitted {
+        identity: Box<TasRepairIdentity>,
+        publication: TasPersistencePublicationOutcome,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasRepairRepairedWorkerDiscarded {
+        identity: TasRepairIdentity,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasRepairActionRejected {
+        identity: TasRepairIdentity,
+        action: TasRepairAction,
+        reason: TasRepairActionRejectedReason,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
     LinkDisconnected {
         frame_count: u64,
         game_boy_cpu_cycles: Option<u64>,
         game_boy_link_state: Option<zeff_emu_common::replay::ReplayGameBoyLinkState>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    TasReadinessObserved {
+        request_id: u64,
+        observation: Box<TasLoadedProfileObservation>,
     },
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
@@ -576,6 +664,9 @@ pub(crate) enum EmuResponse {
         executed_project_frames: u64,
         frame_count: u64,
         state_sha256: crate::tas_project::TasDigest,
+        rumble: bool,
+        audio_samples: Vec<f32>,
+        ui_data: Option<Box<ui::UiFrameData>>,
     },
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
@@ -692,6 +783,7 @@ mod tests {
             expected_frame_count: 4,
             expected_state_sha256: crate::tas_project::TasDigest([5; 32]),
             input: TasInputFrame::default(),
+            snapshot: None,
         }));
 
         assert_eq!(

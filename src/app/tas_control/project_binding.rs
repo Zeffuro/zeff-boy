@@ -1,9 +1,13 @@
 use anyhow::{Result, ensure};
 
 use crate::emu_backend::loader::{
-    TasProjectRuntimeWitness, classify_direct_tas_execution_profile, validate_tas_project_witness,
+    TasProjectRuntimeWitness, classify_direct_tas_execution_profile, validate_fds_tas_branch_scope,
+    validate_tas_project_witness,
 };
-use crate::emu_thread::{TasControlLeaseWitness, TasExecutionProfile, TasInputFrame};
+use crate::emu_thread::{
+    TasControlLeaseWitness, TasExecutionCacheProof, TasExecutionPredecessorWindow,
+    TasExecutionProfile, TasFdsMediaEvent, TasInputFrame, tas_intermediate_cache_cursors,
+};
 use crate::tas_project::{MAX_EDITOR_SEEK_EXECUTION_FRAMES, TasDigest, TasEditorSession};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,6 +17,7 @@ pub(super) struct TasEditorControlSnapshot {
     pub(super) project_content_sha256: TasDigest,
     pub(super) sync_identity_sha256: TasDigest,
     pub(super) branch_id: String,
+    pub(super) branch_frame_count: u64,
     pub(super) cursor: u64,
     pub(super) execution_prefix_len: u64,
     pub(super) branch_prefix_sha256: TasDigest,
@@ -35,26 +40,36 @@ impl TasControlHeldProof {
 
 pub(super) struct TasAcquiredProjectBinding {
     pub(super) snapshot: TasEditorControlSnapshot,
+    pub(super) intermediate_cache_proofs: Vec<TasExecutionCacheProof>,
+    pub(super) predecessor_window: Option<TasExecutionPredecessorWindow>,
     pub(super) start_state_bytes: Vec<u8>,
     pub(super) input_prefix: Vec<TasInputFrame>,
     pub(super) total_input_frames: u64,
 }
 
 impl TasEditorControlSnapshot {
+    pub(super) fn cache_proof(&self) -> TasExecutionCacheProof {
+        TasExecutionCacheProof {
+            sync_identity_sha256: self.sync_identity_sha256,
+            branch_prefix_sha256: self.branch_prefix_sha256,
+            target_cursor: self.execution_prefix_len,
+        }
+    }
+
     pub(super) fn capture(session: &TasEditorSession) -> Result<Self> {
+        Self::capture_at(session, session.cursor())
+    }
+
+    pub(super) fn capture_at(session: &TasEditorSession, cursor: u64) -> Result<Self> {
         let project = session.project();
         let profile = classify_direct_tas_execution_profile(project)?;
         let branch_id = session.selected_branch_id().to_owned();
-        let cursor = session.cursor();
         let frame_count = session.selected_branch().frame_count();
         ensure!(
             cursor <= frame_count,
             "selected TAS cursor is past the branch end"
         );
-        let execution_prefix_len = cursor
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("selected TAS input prefix overflows"))?
-            .min(frame_count);
+        let execution_prefix_len = cursor;
         Ok(Self {
             profile,
             edit_generation: project.edit_generation(),
@@ -62,6 +77,7 @@ impl TasEditorControlSnapshot {
             sync_identity_sha256: project.sync_identity_sha256()?,
             branch_prefix_sha256: project.branch_prefix_sha256(&branch_id, execution_prefix_len)?,
             branch_id,
+            branch_frame_count: frame_count,
             cursor,
             execution_prefix_len,
         })
@@ -90,44 +106,100 @@ impl TasEditorControlSnapshot {
                 sync_config_sha256: witness.sync_config_sha256,
             },
         )?;
-        Self::materialize(session, snapshot)
+        Self::materialize(session, snapshot, &[])
     }
 
     pub(super) fn prepare_linked_seek(
         session: &TasEditorSession,
         profile: TasExecutionProfile,
         sync_identity_sha256: TasDigest,
+        cache_candidate_cursors: &[u64],
     ) -> Result<TasAcquiredProjectBinding> {
-        let snapshot = Self::capture(session)?;
+        Self::prepare_linked_seek_at(
+            session,
+            session.cursor(),
+            profile,
+            sync_identity_sha256,
+            cache_candidate_cursors,
+        )
+    }
+
+    pub(super) fn prepare_linked_seek_at(
+        session: &TasEditorSession,
+        cursor: u64,
+        profile: TasExecutionProfile,
+        sync_identity_sha256: TasDigest,
+        cache_candidate_cursors: &[u64],
+    ) -> Result<TasAcquiredProjectBinding> {
+        let snapshot = Self::capture_at(session, cursor)?;
         ensure!(
             snapshot.profile == profile && snapshot.sync_identity_sha256 == sync_identity_sha256,
             "the TAS project identity changed while linked"
         );
-        Self::materialize(session, snapshot)
+        Self::materialize(session, snapshot, cache_candidate_cursors)
     }
 
     fn materialize(
         session: &TasEditorSession,
         snapshot: TasEditorControlSnapshot,
+        cache_candidate_cursors: &[u64],
     ) -> Result<TasAcquiredProjectBinding> {
+        if snapshot.profile == TasExecutionProfile::DirectFdsDisk {
+            validate_fds_tas_branch_scope(session.project(), &snapshot.branch_id)?;
+        }
         let branch = session.selected_branch();
         let prefix_len = snapshot.execution_prefix_len;
         let initial_input_frames = prefix_len.min(MAX_EDITOR_SEEK_EXECUTION_FRAMES);
         let input_prefix = (0..initial_input_frames)
+            .map(|cursor| materialize_profile_input(branch, cursor, snapshot.profile))
+            .collect::<Result<Vec<_>>>()?;
+        let predecessor_window = cache_candidate_cursors
+            .iter()
+            .copied()
+            .filter(|cursor| *cursor > 0 && *cursor < prefix_len)
+            .max()
+            .map(|source_cursor| {
+                let input_end_cursor = source_cursor
+                    .saturating_add(MAX_EDITOR_SEEK_EXECUTION_FRAMES)
+                    .min(prefix_len);
+                let input_frames = (source_cursor..input_end_cursor)
+                    .map(|cursor| materialize_profile_input(branch, cursor, snapshot.profile))
+                    .collect::<Result<Vec<_>>>()?;
+                let source_proofs = [prefix_len, source_cursor]
+                    .into_iter()
+                    .map(|cursor| {
+                        Ok(TasExecutionCacheProof {
+                            sync_identity_sha256: snapshot.sync_identity_sha256,
+                            branch_prefix_sha256: session
+                                .project()
+                                .branch_prefix_sha256(&snapshot.branch_id, cursor)?,
+                            target_cursor: cursor,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok::<_, anyhow::Error>(TasExecutionPredecessorWindow {
+                    source_proofs,
+                    input_start_cursor: source_cursor,
+                    input_frames,
+                })
+            })
+            .transpose()?;
+        let intermediate_cache_proofs = tas_intermediate_cache_cursors(prefix_len)
+            .into_iter()
             .map(|cursor| {
-                let input = branch.input_at(cursor);
-                let input = TasInputFrame {
-                    p1_buttons: input.players[0].buttons,
-                    p1_dpad: input.players[0].dpad,
-                    p2_buttons: input.players[1].buttons,
-                    p2_dpad: input.players[1].dpad,
-                };
-                validate_profile_input(snapshot.profile, input)?;
-                Ok(input)
+                Ok(TasExecutionCacheProof {
+                    sync_identity_sha256: snapshot.sync_identity_sha256,
+                    branch_prefix_sha256: session
+                        .project()
+                        .branch_prefix_sha256(&snapshot.branch_id, cursor)?,
+                    target_cursor: cursor,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(TasAcquiredProjectBinding {
             snapshot,
+            intermediate_cache_proofs,
+            predecessor_window,
             start_state_bytes: session.project().start_state().to_vec(),
             input_prefix,
             total_input_frames: prefix_len,
@@ -147,15 +219,23 @@ impl TasEditorControlSnapshot {
             cursor < snapshot.execution_prefix_len,
             "staged TAS execution cursor is past the selected input"
         );
-        let input = session.selected_branch().input_at(cursor);
-        let input = TasInputFrame {
-            p1_buttons: input.players[0].buttons,
-            p1_dpad: input.players[0].dpad,
-            p2_buttons: input.players[1].buttons,
-            p2_dpad: input.players[1].dpad,
-        };
-        validate_profile_input(snapshot.profile, input)?;
-        Ok(input)
+        materialize_profile_input(session.selected_branch(), cursor, snapshot.profile)
+    }
+
+    pub(super) fn input_at_linked(
+        session: &TasEditorSession,
+        snapshot: &TasEditorControlSnapshot,
+        cursor: u64,
+    ) -> Result<TasInputFrame> {
+        ensure!(
+            Self::capture_at(session, cursor)? == *snapshot,
+            "the TAS project changed during linked playback"
+        );
+        ensure!(
+            cursor < snapshot.branch_frame_count,
+            "linked TAS playback cannot consume the end boundary"
+        );
+        materialize_profile_input(session.selected_branch(), cursor, snapshot.profile)
     }
 
     pub(super) fn matches_session_guard(&self, session: &TasEditorSession) -> bool {
@@ -163,16 +243,192 @@ impl TasEditorControlSnapshot {
             && session.selected_branch_id() == self.branch_id
             && session.cursor() == self.cursor
     }
+
+    pub(super) fn matches_linked_project(&self, current: Option<&Self>) -> bool {
+        current.is_some_and(|current| {
+            self.profile == current.profile
+                && self.edit_generation == current.edit_generation
+                && self.project_content_sha256 == current.project_content_sha256
+                && self.sync_identity_sha256 == current.sync_identity_sha256
+                && self.branch_id == current.branch_id
+                && self.branch_frame_count == current.branch_frame_count
+        })
+    }
+
+    pub(super) fn can_rebind_at_same_execution(&self, current: Option<&Self>) -> bool {
+        current.is_some_and(|current| {
+            self.profile == current.profile
+                && self.sync_identity_sha256 == current.sync_identity_sha256
+                && self.execution_prefix_len == current.execution_prefix_len
+                && self.branch_prefix_sha256 == current.branch_prefix_sha256
+        })
+    }
+}
+
+fn materialize_profile_input(
+    branch: &crate::tas_project::TasBranch,
+    cursor: u64,
+    profile: TasExecutionProfile,
+) -> Result<TasInputFrame> {
+    let input = branch.input_at(cursor);
+    let input = TasInputFrame {
+        p1_buttons: input.players[0].buttons,
+        p1_dpad: input.players[0].dpad,
+        p2_buttons: input.players[1].buttons,
+        p2_dpad: input.players[1].dpad,
+        coleco: input.coleco,
+        zapper: zeff_emu_common::replay::ReplayZapperFrame {
+            enabled: input.zapper.enabled,
+            trigger: input.zapper.trigger,
+            hit: input.zapper.hit,
+            screen_pos: input.zapper.screen_pos.map(|[x, y]| (x, y)),
+        },
+        fds_disk_side: (profile == TasExecutionProfile::DirectFdsDisk)
+            .then(|| {
+                branch.events().iter().find_map(|event| match event {
+                    zeff_emu_common::replay::ReplayEvent::FdsDiskSide { frame, side }
+                        if *frame == cursor =>
+                    {
+                        Some(*side)
+                    }
+                    _ => None,
+                })
+            })
+            .flatten(),
+        fds_write_protected: (profile == TasExecutionProfile::DirectFdsDisk)
+            .then(|| {
+                branch.events().iter().find_map(|event| match event {
+                    zeff_emu_common::replay::ReplayEvent::Media {
+                        frame,
+                        event:
+                            zeff_emu_common::media::MediaEvent::SetWriteProtected {
+                                write_protected,
+                                ..
+                            },
+                        ..
+                    } if *frame == cursor => Some(*write_protected),
+                    _ => None,
+                })
+            })
+            .flatten(),
+        fds_media_event: (profile == TasExecutionProfile::DirectFdsDisk)
+            .then(|| {
+                branch.events().iter().find_map(|event| match event {
+                    zeff_emu_common::replay::ReplayEvent::Media {
+                        frame,
+                        event: zeff_emu_common::media::MediaEvent::Eject { .. },
+                        ..
+                    } if *frame == cursor => Some(TasFdsMediaEvent::Eject),
+                    zeff_emu_common::replay::ReplayEvent::Media {
+                        frame,
+                        event:
+                            zeff_emu_common::media::MediaEvent::Insert {
+                                side: Some(side),
+                                write_protected,
+                                ..
+                            },
+                        ..
+                    } if *frame == cursor => Some(TasFdsMediaEvent::Insert {
+                        side: *side,
+                        write_protected: *write_protected,
+                    }),
+                    _ => None,
+                })
+            })
+            .flatten(),
+    };
+    validate_profile_input(profile, input)?;
+    Ok(input)
 }
 
 fn validate_profile_input(profile: TasExecutionProfile, input: TasInputFrame) -> Result<()> {
-    if profile == TasExecutionProfile::DirectGbRomOnlyDmg
-        && (input.p1_buttons & !0x0F != 0
-            || input.p1_dpad & !0x0F != 0
-            || input.p2_buttons != 0
-            || input.p2_dpad != 0)
+    if profile != TasExecutionProfile::DirectFdsDisk
+        && (input.fds_disk_side.is_some()
+            || input.fds_write_protected.is_some()
+            || input.fds_media_event.is_some())
     {
-        anyhow::bail!("the selected TAS input is outside the direct Game Boy profile");
+        anyhow::bail!("the selected TAS input contains an FDS drive event");
+    }
+    match profile {
+        TasExecutionProfile::DirectNesCartridge | TasExecutionProfile::DirectFdsDisk
+            if input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2] =>
+        {
+            anyhow::bail!("the selected TAS input is outside the direct NES profile");
+        }
+        TasExecutionProfile::DirectGbCartridgeDmg | TasExecutionProfile::DirectGbCartridgeCgb
+            if input.p1_buttons & !0x0F != 0
+                || input.p1_dpad & !0x0F != 0
+                || input.p2_buttons != 0
+                || input.p2_dpad != 0
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper.enabled
+                || input.zapper.trigger
+                || input.zapper.hit
+                || input.zapper.screen_pos.is_some() =>
+        {
+            anyhow::bail!("the selected TAS input is outside the direct Game Boy profile");
+        }
+        TasExecutionProfile::DirectColecoCartridge
+            if input.p1_buttons != 0
+                || input.p1_dpad != 0
+                || input.p2_buttons != 0
+                || input.p2_dpad != 0
+                || input.zapper != Default::default() =>
+        {
+            anyhow::bail!("the selected TAS input is outside the direct ColecoVision profile");
+        }
+        TasExecutionProfile::DirectSmsCartridge | TasExecutionProfile::DirectSg1000Cartridge
+            if input.p1_buttons & !0x03 != 0
+                || input.p1_dpad & !0x0F != 0
+                || input.p2_buttons & !0x03 != 0
+                || input.p2_dpad & !0x0F != 0
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default() =>
+        {
+            anyhow::bail!("the selected TAS input is outside the direct Sega 8-bit profile");
+        }
+        TasExecutionProfile::DirectGameGearCartridge
+            if input.p1_buttons & !0x0B != 0
+                || input.p1_dpad & !0x0F != 0
+                || input.p2_buttons != 0
+                || input.p2_dpad != 0
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default() =>
+        {
+            anyhow::bail!("the selected TAS input is outside the direct Game Gear profile");
+        }
+        TasExecutionProfile::DirectGbaCartridge
+            if input.p1_buttons & !0x3F != 0
+                || input.p1_dpad & !0x0F != 0
+                || input.p2_buttons != 0
+                || input.p2_dpad != 0
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default() =>
+        {
+            anyhow::bail!("the selected TAS input is outside the direct GBA profile");
+        }
+        TasExecutionProfile::DirectPceHuCard
+            if input.p1_buttons & !0x0F != 0
+                || input.p1_dpad & !0x0F != 0
+                || input.p2_buttons != 0
+                || input.p2_dpad != 0
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default() =>
+        {
+            anyhow::bail!("the selected TAS input is outside the direct PC Engine profile");
+        }
+        TasExecutionProfile::DirectPceSixButtonHuCard
+            if input.p1_dpad & !0x0F != 0
+                || input.p2_buttons != 0
+                || input.p2_dpad != 0
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default() =>
+        {
+            anyhow::bail!(
+                "the selected TAS input is outside the direct PC Engine six-button profile"
+            );
+        }
+        _ => {}
     }
     Ok(())
 }

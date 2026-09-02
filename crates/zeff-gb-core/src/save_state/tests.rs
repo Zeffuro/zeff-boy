@@ -1,4 +1,4 @@
-use super::encode::encode_legacy_v12_state_bytes;
+use super::encode::{encode_legacy_v12_state_bytes, encode_legacy_v13_state_bytes};
 use super::{
     SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION, SaveStateRef,
     TAS_DETERMINISM_ABI_ID, TAS_STATE_FORMAT_COMPATIBILITY_ID, decode_state, encode_state_bytes,
@@ -29,12 +29,26 @@ fn dmg_emulator(rom: &[u8]) -> Emulator {
 }
 
 #[test]
-fn current_native_tas_contract_tracks_v13() {
+fn current_native_tas_contract_tracks_format_version() {
     assert_eq!(
         TAS_STATE_FORMAT_COMPATIBILITY_ID,
         format!("zeff-gb-native-state-v{SAVE_STATE_FORMAT_VERSION}")
     );
     assert!(!TAS_DETERMINISM_ABI_ID.is_empty());
+}
+
+#[test]
+fn legacy_v13_native_state_remains_loadable() {
+    let rom = vec![0; 0x8000];
+    let mut source = dmg_emulator(&rom);
+    source.step_frame();
+    let legacy = encode_legacy_v13_state_bytes(&source.as_save_state_ref()).unwrap();
+    let mut restored = dmg_emulator(&rom);
+
+    restored.load_state(&legacy).unwrap();
+
+    assert_eq!(restored.frame_count(), source.frame_count());
+    assert_eq!(restored.framebuffer(), source.framebuffer());
 }
 
 #[test]
@@ -280,6 +294,52 @@ fn replay_projection_is_byte_identical_to_legacy_v12_encoding() {
     let restored = decode_state(&projected).unwrap();
     assert_eq!(restored.frame_count, None);
     assert_eq!(restored.lcd_framebuffer, None);
+}
+
+#[test]
+fn sgb_continuation_projection_is_byte_identical_to_legacy_v12_encoding() {
+    let mut rom = vec![0u8; 0x8000];
+    rom[0x146] = 0x03;
+    rom[0x14B] = 0x33;
+    let header = RomHeader::from_rom(&rom).expect("test ROM header should parse");
+    let mut bus = Bus::new(rom, &header, HardwareMode::SGB1).expect("test bus should initialize");
+    let mut first = [0; 16];
+    first[0] = (0x04 << 3) | 3;
+    let _ = bus.write_byte(0xFF00, 0x00);
+    for bit_index in 0..128 {
+        let bit = first[bit_index / 8] >> (bit_index % 8) & 1;
+        let _ = bus.write_byte(0xFF00, if bit == 0 { 0x20 } else { 0x10 });
+    }
+    let second = [0xA5; 16];
+    let _ = bus.write_byte(0xFF00, 0x00);
+    for bit_index in 0..37 {
+        let bit = second[bit_index / 8] >> (bit_index % 8) & 1;
+        let _ = bus.write_byte(0xFF00, if bit == 0 { 0x20 } else { 0x10 });
+    }
+    let cpu = Cpu::new();
+    let state = SaveStateRef {
+        version: SAVE_STATE_VERSION,
+        rom_hash: [0x5B; 32],
+        cpu: &cpu,
+        bus: &bus,
+        hardware_mode_preference: HardwareModePreference::ForceSgb,
+        hardware_mode: HardwareMode::SGB1,
+        cycle_count: 91,
+        last_opcode: 0,
+        last_opcode_pc: 0x100,
+        boot_rom_enabled: false,
+        frame_count: 2,
+    };
+
+    let mut projected = encode_state_bytes(&state).unwrap();
+    super::project_replay_state_bytes(&mut projected).unwrap();
+    let legacy = encode_legacy_v12_state_bytes(&state).unwrap();
+
+    assert_bytes_equal(
+        "legacy v12 SGB continuation projection",
+        &projected,
+        &legacy,
+    );
 }
 
 #[test]

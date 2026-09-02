@@ -85,7 +85,9 @@ pub(super) fn execution_rejection_message(reason: TasExecutionRejectedReason) ->
             "The live run lost its emulator authority"
         }
         TasExecutionRejectedReason::InvalidRunId => "The live run identifier is invalid",
-        TasExecutionRejectedReason::EmptyInputPrefix => "The selected TAS row has no input to run",
+        TasExecutionRejectedReason::InvalidCacheProof => {
+            "The selected TAS boundary no longer has a valid execution proof"
+        }
         TasExecutionRejectedReason::FrameLimitExceeded => {
             "The selected TAS row exceeds the live-run frame limit"
         }

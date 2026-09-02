@@ -185,11 +185,14 @@ fn project_navigation_requires_an_explicit_dirty_choice() -> Result<()> {
 #[test]
 fn editing_a_timeline_cell_selects_the_same_input_row() {
     let mut actions = Vec::new();
-    timeline::queue_digital_toggle(&mut actions, 0, 5, 0, DigitalField::Buttons, 1);
+    timeline::queue_digital_toggle(&mut actions, 5, 0, DigitalField::Buttons, 1);
     assert_eq!(
         actions,
         [
-            TasEditorAction::SelectCursor(5),
+            TasEditorAction::SelectTimelineFrame {
+                frame: 5,
+                extend_selection: false,
+            },
             TasEditorAction::ToggleDigital {
                 cursor: 5,
                 player: 0,
@@ -200,16 +203,128 @@ fn editing_a_timeline_cell_selects_the_same_input_row() {
     );
 
     actions.clear();
-    timeline::queue_digital_toggle(&mut actions, 5, 5, 0, DigitalField::Buttons, 1);
+    timeline::queue_digital_toggle(&mut actions, 5, 0, DigitalField::Buttons, 1);
     assert_eq!(
         actions,
-        [TasEditorAction::ToggleDigital {
-            cursor: 5,
-            player: 0,
-            field: DigitalField::Buttons,
-            mask: 1,
-        }]
+        [
+            TasEditorAction::SelectTimelineFrame {
+                frame: 5,
+                extend_selection: false,
+            },
+            TasEditorAction::ToggleDigital {
+                cursor: 5,
+                player: 0,
+                field: DigitalField::Buttons,
+                mask: 1,
+            },
+        ]
     );
+}
+
+#[test]
+fn keyboard_navigation_moves_selection_without_moving_the_linked_game() -> Result<()> {
+    use super::action::TasTimelineNavigation;
+
+    let (_root, mut state) = tests::state_with_project(6);
+    state.set_live_status(TasEditorLiveStatus::Linked {
+        cursor: 4,
+        recording_available: true,
+    });
+    state.reduce(TasEditorAction::SelectTimelineFrame {
+        frame: 2,
+        extend_selection: false,
+    })?;
+    state.reduce(TasEditorAction::NavigateTimelineSelection {
+        navigation: TasTimelineNavigation::Next,
+        extend_selection: true,
+    })?;
+    assert_eq!(state.session.as_ref().unwrap().cursor(), 3);
+    assert_eq!(
+        state
+            .timeline_selection
+            .selected_range(state.session.as_ref().unwrap()),
+        Some((2, 4))
+    );
+    assert_eq!(state.live_status.execution_boundary(), Some(4));
+
+    state.reduce(TasEditorAction::NavigateTimelineSelection {
+        navigation: TasTimelineNavigation::Start,
+        extend_selection: true,
+    })?;
+    assert_eq!(
+        state
+            .timeline_selection
+            .selected_range(state.session.as_ref().unwrap()),
+        Some((0, 3))
+    );
+
+    state.reduce(TasEditorAction::NavigateTimelineSelection {
+        navigation: TasTimelineNavigation::End,
+        extend_selection: true,
+    })?;
+    assert_eq!(
+        state
+            .timeline_selection
+            .selected_range(state.session.as_ref().unwrap()),
+        Some((2, 6))
+    );
+
+    state.reduce(TasEditorAction::NavigateTimelineSelection {
+        navigation: TasTimelineNavigation::End,
+        extend_selection: false,
+    })?;
+    assert_eq!(state.session.as_ref().unwrap().cursor(), 6);
+    assert_eq!(
+        state
+            .timeline_selection
+            .selected_range(state.session.as_ref().unwrap()),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn range_selection_and_go_to_selection_keep_edits_and_live_actions_separate() -> Result<()> {
+    let (_root, mut state) = tests::state_with_project(6);
+    let before = state.session.as_ref().unwrap().project().encode()?;
+    let undo_count = state.session.as_ref().unwrap().undo_count();
+
+    state.reduce(TasEditorAction::SelectTimelineRange {
+        anchor: 4,
+        active: 1,
+    })?;
+    assert_eq!(state.session.as_ref().unwrap().cursor(), 1);
+    assert_eq!(
+        state
+            .timeline_selection
+            .selected_range(state.session.as_ref().unwrap()),
+        Some((1, 5))
+    );
+    assert_eq!(state.session.as_ref().unwrap().project().encode()?, before);
+    assert_eq!(state.session.as_ref().unwrap().undo_count(), undo_count);
+
+    state.reduce(TasEditorAction::RequestLiveGoToSelection)?;
+    assert_eq!(state.take_pending_host_request(), None);
+
+    state.set_live_status(TasEditorLiveStatus::Linked {
+        cursor: 3,
+        recording_available: true,
+    });
+    state.reduce(TasEditorAction::RequestLiveGoToSelection)?;
+    assert_eq!(
+        state.take_pending_host_request(),
+        Some(TasEditorHostRequest::Live(
+            TasEditorLiveAction::GoToSelection
+        ))
+    );
+
+    state.set_live_status(TasEditorLiveStatus::Linked {
+        cursor: 1,
+        recording_available: true,
+    });
+    state.reduce(TasEditorAction::RequestLiveGoToSelection)?;
+    assert_eq!(state.take_pending_host_request(), None);
+    Ok(())
 }
 
 #[test]

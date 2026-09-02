@@ -17,6 +17,18 @@ pub struct ReplayJoypadFrame {
     pub zapper: ReplayZapperFrame,
     pub host_tilt: (f32, f32),
     pub camera_frame: Option<Vec<u8>>,
+    pub coleco: [ReplayColecoControllerFrame; 2],
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReplayColecoControllerFrame {
+    pub up: bool,
+    pub right: bool,
+    pub down: bool,
+    pub left: bool,
+    pub left_button: bool,
+    pub right_button: bool,
+    pub keypad: u8,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,6 +55,7 @@ impl PartialEq for ReplayJoypadFrame {
             && self.host_tilt.0.to_bits() == other.host_tilt.0.to_bits()
             && self.host_tilt.1.to_bits() == other.host_tilt.1.to_bits()
             && self.camera_frame == other.camera_frame
+            && self.coleco == other.coleco
     }
 }
 
@@ -64,6 +77,7 @@ impl ReplayJoypadFrame {
             zapper: ReplayZapperFrame::default(),
             host_tilt: (0.0, 0.0),
             camera_frame: None,
+            coleco: [ReplayColecoControllerFrame::default(); 2],
         }
     }
 
@@ -80,6 +94,57 @@ impl ReplayJoypadFrame {
             || self.zapper.trigger
             || self.zapper.hit
             || self.zapper.screen_pos.is_some()
+    }
+
+    pub fn uses_coleco_input(&self) -> bool {
+        self.coleco != [ReplayColecoControllerFrame::default(); 2]
+    }
+
+    pub fn uses_non_coleco_input(&self) -> bool {
+        self.buttons != 0
+            || self.dpad != 0
+            || self.buttons_p2 != 0
+            || self.dpad_p2 != 0
+            || self.buttons_p3 != 0
+            || self.dpad_p3 != 0
+            || self.buttons_p4 != 0
+            || self.dpad_p4 != 0
+            || self.buttons_p5 != 0
+            || self.dpad_p5 != 0
+            || self.uses_zapper_input()
+            || self.uses_host_tilt_input()
+            || self.uses_host_camera_input()
+    }
+}
+
+impl ReplayColecoControllerFrame {
+    pub fn from_packed(value: u16) -> Result<Self> {
+        if value & !0x03FF != 0 {
+            bail!("invalid replay Coleco controller bits: {value:#05X}");
+        }
+        let keypad = (value >> 6) as u8;
+        if keypad > 12 {
+            bail!("invalid replay Coleco keypad key: {keypad}");
+        }
+        Ok(Self {
+            up: value & 0x01 != 0,
+            right: value & 0x02 != 0,
+            down: value & 0x04 != 0,
+            left: value & 0x08 != 0,
+            left_button: value & 0x10 != 0,
+            right_button: value & 0x20 != 0,
+            keypad,
+        })
+    }
+
+    pub fn packed(self) -> u16 {
+        u16::from(self.up)
+            | (u16::from(self.right) << 1)
+            | (u16::from(self.down) << 2)
+            | (u16::from(self.left) << 3)
+            | (u16::from(self.left_button) << 4)
+            | (u16::from(self.right_button) << 5)
+            | (u16::from(self.keypad) << 6)
     }
 }
 

@@ -56,6 +56,11 @@ pub(super) fn draw(
         actions.push(MenuAction::ResetGame);
         ui.close();
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    if ui.button("Reload Game").clicked() {
+        actions.push(MenuAction::ReloadGame);
+        ui.close();
+    }
     if ui.button("Settings").clicked() {
         actions.push(MenuAction::OpenSettings);
         ui.close();

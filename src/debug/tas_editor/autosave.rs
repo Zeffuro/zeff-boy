@@ -5,6 +5,9 @@ use crate::tas_project::TasEditorAutosaveTick;
 
 impl TasEditorWindowState {
     pub(crate) fn tick_periodic_autosave(&mut self) {
+        if self.verified_export_busy {
+            return;
+        }
         self.tick_periodic_autosave_at(self.autosave_clock.elapsed());
     }
 

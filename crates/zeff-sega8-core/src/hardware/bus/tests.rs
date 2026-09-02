@@ -19,6 +19,8 @@ const CODEMASTERS_TEST_HEADER_CHECKSUM: usize = 0x06;
 const CODEMASTERS_TEST_HEADER_COMPLEMENT: usize = 0x08;
 const CODEMASTERS_TEST_HEADER_ZERO_PADDING_START: usize = 0x0A;
 
+mod game_gear_mapper_ram;
+
 fn banked_rom(bank_count: usize) -> Vec<u8> {
     let mut rom = vec![0; bank_count * ROM_BANK_SIZE];
     for bank in 0..bank_count {

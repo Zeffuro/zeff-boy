@@ -4,11 +4,24 @@ use crate::emu_thread::{
     TasControlLeaseWitness, TasControlRollbackRejectedReason, TasExecutionProfile,
 };
 
+mod coleco_recording_roundtrip;
 mod execution;
+mod fds_recording_roundtrip;
+mod game_gear_recording_roundtrip;
+mod gba_recording_roundtrip;
+mod gbc_recording_roundtrip;
+mod harness;
 mod live_recording;
 mod pause_ownership;
+mod pce_recording_roundtrip;
+mod playback;
+mod playback_roundtrip;
 mod project_binding;
+mod repair_roundtrip;
+mod sg1000_recording_roundtrip;
+mod sms_recording_roundtrip;
 mod unavailability;
+mod ws_recording_roundtrip;
 
 const WORKER_GENERATION: u64 = 4;
 
@@ -32,8 +45,9 @@ fn snapshot(edit_generation: u64, branch_id: &str, cursor: u64) -> TasEditorCont
         project_content_sha256: crate::tas_project::TasDigest([0x21; 32]),
         sync_identity_sha256: crate::tas_project::TasDigest([0x22; 32]),
         branch_id: branch_id.to_owned(),
+        branch_frame_count: cursor.max(1),
         cursor,
-        execution_prefix_len: cursor.saturating_add(1),
+        execution_prefix_len: cursor,
         branch_prefix_sha256: crate::tas_project::TasDigest([0x23; 32]),
     }
 }
@@ -41,6 +55,8 @@ fn snapshot(edit_generation: u64, branch_id: &str, cursor: u64) -> TasEditorCont
 fn binding(value: TasEditorControlSnapshot) -> Option<TasAcquiredProjectBinding> {
     Some(TasAcquiredProjectBinding {
         snapshot: value,
+        intermediate_cache_proofs: Vec::new(),
+        predecessor_window: None,
         start_state_bytes: vec![0xAA],
         input_prefix: vec![crate::emu_thread::TasInputFrame::default()],
         total_input_frames: 1,
@@ -73,6 +89,8 @@ fn consume(coordinator: &mut TasControlCoordinator, response: EmuResponse) -> Re
     let acquired_project = matches!(&response, EmuResponse::TasControlAcquired { .. }).then(|| {
         TasAcquiredProjectBinding {
             snapshot: snapshot(0, "main", 0),
+            intermediate_cache_proofs: Vec::new(),
+            predecessor_window: None,
             start_state_bytes: vec![0xAA],
             input_prefix: vec![crate::emu_thread::TasInputFrame::default()],
             total_input_frames: 1,
@@ -141,19 +159,24 @@ fn cancelling_recording_acquire_clears_realtime_start_request() {
 }
 
 #[test]
-fn recording_acquire_refuses_game_boy_without_changing_authority() {
+fn recording_acquire_queues_game_boy_without_changing_authority() {
     let mut coordinator = TasControlCoordinator::new();
     let project = TasEditorControlSnapshot {
-        profile: TasExecutionProfile::DirectGbRomOnlyDmg,
+        profile: TasExecutionProfile::DirectGbCartridgeDmg,
         ..snapshot(0, "main", 0)
     };
 
-    assert!(
-        coordinator
-            .queue_acquire(WORKER_GENERATION, project, TasControlStartMode::Record)
-            .is_err()
-    );
-    assert_eq!(coordinator.state, TasControlState::Detached);
+    coordinator
+        .queue_acquire(WORKER_GENERATION, project, TasControlStartMode::Record)
+        .unwrap();
+    let EmuCommand::AcquireTasControl { profile, .. } = coordinator
+        .begin_queued_acquire()
+        .unwrap()
+        .expect("the queued Game Boy recording acquisition should start")
+    else {
+        unreachable!();
+    };
+    assert_eq!(profile, TasExecutionProfile::DirectGbCartridgeDmg);
     assert!(!coordinator.take_realtime_recording_start_request());
 }
 
@@ -204,6 +227,7 @@ fn acquire_success_starts_exact_lease_bound_run_without_checkpoint_bytes() {
             proof: TasControlHeldProof::from_witness(&witness(73)),
             project: snapshot(0, "main", 0),
             total_input_frames: 1,
+            predecessor_source_cursors: Vec::new(),
         }
     );
     assert!(!coordinator.gameplay_commands_allowed());

@@ -6,6 +6,13 @@ use super::{
 };
 use crate::tas_project::TasInputFrame;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TasLiveRecordingMode {
+    #[default]
+    ReplaceExistingInput,
+    InsertNewFrames,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TasLiveFrameSourceWitness {
     project: TasEditorProjectWitness,
@@ -25,7 +32,7 @@ pub(super) struct TasLiveFrameHistoryGroup {
 pub struct TasPreparedLiveFrame {
     source: TasLiveFrameSourceWitness,
     input: TasInputFrame,
-    target_cursor: u64,
+    next_cursor: u64,
     candidate_project: TasProject,
     candidate_project_sha256: TasDigest,
     outcome: TasEditOutcome,
@@ -46,7 +53,7 @@ impl TasPreparedLiveFrame {
     }
 
     pub fn next_cursor(&self) -> u64 {
-        self.target_cursor
+        self.next_cursor
     }
 }
 
@@ -83,21 +90,30 @@ impl TasEditorSession {
     }
 
     pub fn prepare_live_frame(&self, input: TasInputFrame) -> Result<TasPreparedLiveFrame> {
+        self.prepare_live_frame_with_mode(input, TasLiveRecordingMode::default())
+    }
+
+    pub fn prepare_live_frame_with_mode(
+        &self,
+        input: TasInputFrame,
+        mode: TasLiveRecordingMode,
+    ) -> Result<TasPreparedLiveFrame> {
         let source = self.live_frame_source_witness();
-        let next_cursor = source
-            .cursor
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("TAS live-frame cursor overflows"))?;
         let frame_count = self.selected_branch().frame_count();
         if source.cursor > frame_count {
             bail!("TAS live-frame target is past selected branch end");
         }
-        let target_cursor = next_cursor.min(frame_count);
+        let target_cursor = source.cursor;
+        let next_cursor = target_cursor
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("TAS live-frame cursor overflows"))?;
 
         let mut candidate_project = self.project.clone();
         let branch_id = source.selected_branch_id.clone();
         let outcome = candidate_project.edit_transaction(|edit| {
-            edit.insert_frames(&branch_id, target_cursor, 1)?;
+            if target_cursor == frame_count || mode == TasLiveRecordingMode::InsertNewFrames {
+                edit.insert_frames(&branch_id, target_cursor, 1)?;
+            }
             edit.set_input_range(&branch_id, target_cursor, 1, input)
         })?;
         let history_before = if outcome.changed && self.live_frame_history_group.is_none() {
@@ -110,7 +126,7 @@ impl TasEditorSession {
         Ok(TasPreparedLiveFrame {
             source,
             input,
-            target_cursor,
+            next_cursor,
             candidate_project,
             candidate_project_sha256,
             outcome,
@@ -125,6 +141,7 @@ impl TasEditorSession {
         if prepared.source != self.live_frame_source_witness() {
             bail!("prepared TAS live frame is stale");
         }
+        let next_cursor = prepared.next_cursor();
         if prepared.outcome.changed {
             self.project = prepared.candidate_project;
             self.project_sha256 = prepared.candidate_project_sha256;
@@ -139,7 +156,7 @@ impl TasEditorSession {
             self.history.redo.clear();
             self.note_history_mutation();
         }
-        self.cursor = prepared.target_cursor;
+        self.cursor = next_cursor;
         Ok(prepared.outcome)
     }
 
@@ -191,7 +208,7 @@ mod tests {
             .prepare_live_frame(TasInputFrame::default())
             .unwrap();
         assert_eq!(prepared.cursor(), 12);
-        assert_eq!(prepared.next_cursor(), 12);
+        assert_eq!(prepared.next_cursor(), 13);
         assert_eq!(session.project().encode().unwrap(), before_bytes);
         assert_eq!(session.cursor(), 12);
         assert_eq!(session.undo_count(), 0);
@@ -199,7 +216,7 @@ mod tests {
         let outcome = session.commit_prepared_live_frame(prepared).unwrap();
         assert!(outcome.changed);
         assert_eq!(session.selected_branch().frame_count(), 13);
-        assert_eq!(session.cursor(), 12);
+        assert_eq!(session.cursor(), 13);
         assert_eq!(session.project().edit_generation(), before_generation + 1);
         assert_eq!(session.project().rerecord_count(), before_rerecords + 1);
         assert_eq!(session.undo_count(), 1);
@@ -207,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn equal_input_inserts_a_row_and_shifts_the_existing_future() {
+    fn explicit_insert_mode_shifts_the_existing_future() {
         let root = crate::test_support::test_directory("tas-prepared-live-frame-noop").unwrap();
         let mut session = session(root.path());
         let input = TasInputFrame {
@@ -233,7 +250,9 @@ mod tests {
         let before_rerecords = session.project().rerecord_count();
         let before_undo = session.undo_count();
 
-        let prepared = session.prepare_live_frame(input).unwrap();
+        let prepared = session
+            .prepare_live_frame_with_mode(input, TasLiveRecordingMode::InsertNewFrames)
+            .unwrap();
         let outcome = session.commit_prepared_live_frame(prepared).unwrap();
 
         assert!(outcome.changed);
@@ -242,15 +261,86 @@ mod tests {
             session.selected_branch().frame_count(),
             before_frame_count + 1
         );
-        assert_eq!(session.selected_branch().input_at(1), input);
+        assert_eq!(session.selected_branch().input_at(0), input);
+        assert_eq!(
+            session.selected_branch().input_at(1),
+            TasInputFrame::default()
+        );
         assert_eq!(session.selected_branch().input_at(2), input);
         assert_eq!(session.selected_branch().input_at(3), future);
+        assert_eq!(session.project().markers()[0].cursor, 11);
+        assert_eq!(session.project().annotations()[0].start, 4);
+        assert_eq!(session.selected_branch().events()[0].frame(), 7);
         assert_eq!(session.project().edit_generation(), before_generation + 1);
         assert_eq!(session.project().rerecord_count(), before_rerecords + 1);
         assert_eq!(session.cursor(), 1);
         assert_eq!(session.undo_count(), before_undo + 1);
         assert_eq!(session.redo_count(), 0);
         assert!(session.is_dirty());
+    }
+
+    #[test]
+    fn default_replace_mode_preserves_existing_timeline_positions() {
+        let root = crate::test_support::test_directory("tas-prepared-live-frame-replace").unwrap();
+        let mut session = session(root.path());
+        let replacement = TasInputFrame {
+            tilt_x_bits: 7,
+            ..TasInputFrame::default()
+        };
+        session.set_cursor(0).unwrap();
+        let before_bytes = session.project().encode().unwrap();
+        let before_frame_count = session.selected_branch().frame_count();
+        let before_markers = session.project().markers().to_vec();
+        let before_annotations = session.project().annotations().to_vec();
+        let before_events = session.selected_branch().events().to_vec();
+        let before_future = session.selected_branch().input_at(2);
+        let before_generation = session.project().edit_generation();
+        let before_rerecords = session.project().rerecord_count();
+
+        let prepared = session.prepare_live_frame(replacement).unwrap();
+        let outcome = session.commit_prepared_live_frame(prepared).unwrap();
+
+        assert!(outcome.changed);
+        assert_eq!(
+            outcome.branch_impacts[0].kind,
+            crate::tas_project::TasBranchEditImpactKind::Modified { earliest_cursor: 0 }
+        );
+        assert_eq!(session.selected_branch().frame_count(), before_frame_count);
+        assert_eq!(session.selected_branch().input_at(0), replacement);
+        assert_eq!(session.selected_branch().input_at(2), before_future);
+        assert_eq!(session.project().markers(), before_markers);
+        assert_eq!(session.project().annotations(), before_annotations);
+        assert_eq!(session.selected_branch().events(), before_events);
+        assert_eq!(session.project().edit_generation(), before_generation + 1);
+        assert_eq!(session.project().rerecord_count(), before_rerecords + 1);
+        assert_eq!(session.cursor(), 1);
+        assert_eq!(session.undo_count(), 1);
+        assert!(session.undo().unwrap());
+        assert_eq!(session.project().encode().unwrap(), before_bytes);
+        assert_eq!(session.cursor(), 0);
+    }
+
+    #[test]
+    fn equal_replacement_advances_without_project_or_history_mutation() {
+        let root =
+            crate::test_support::test_directory("tas-prepared-live-frame-equal-replace").unwrap();
+        let mut session = session(root.path());
+        session.set_cursor(0).unwrap();
+        let input = session.selected_branch().input_at(0);
+        let before_bytes = session.project().encode().unwrap();
+        let before_generation = session.project().edit_generation();
+        let before_rerecords = session.project().rerecord_count();
+
+        let prepared = session.prepare_live_frame(input).unwrap();
+        let outcome = session.commit_prepared_live_frame(prepared).unwrap();
+
+        assert!(!outcome.changed);
+        assert_eq!(session.project().encode().unwrap(), before_bytes);
+        assert_eq!(session.project().edit_generation(), before_generation);
+        assert_eq!(session.project().rerecord_count(), before_rerecords);
+        assert_eq!(session.cursor(), 1);
+        assert_eq!(session.undo_count(), 0);
+        assert_eq!(session.redo_count(), 0);
     }
 
     #[test]
@@ -366,7 +456,9 @@ mod tests {
 
         let input = session.selected_branch().input_at(1);
         session.begin_live_recording_history_group().unwrap();
-        let prepared = session.prepare_live_frame(input).unwrap();
+        let prepared = session
+            .prepare_live_frame_with_mode(input, TasLiveRecordingMode::InsertNewFrames)
+            .unwrap();
         assert!(
             session
                 .commit_prepared_live_frame(prepared)

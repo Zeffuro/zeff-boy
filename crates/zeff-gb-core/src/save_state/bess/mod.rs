@@ -22,7 +22,6 @@ pub(super) const BLOCK_MBC: [u8; 4] = *b"MBC ";
 pub(super) const BLOCK_RTC: [u8; 4] = *b"RTC ";
 // Zeff-boy-private BESS extension. BESS requires readers to ignore unsupported
 // four-character blocks, so portable BESS import must never depend on this
-// block. Only the recognized Zeff native v13 format requires and interprets it.
 pub(super) const BLOCK_ZEFF_PRIVATE_EXTENSION: [u8; 4] = *b"ZBEX";
 pub(super) const BLOCK_END: [u8; 4] = *b"END ";
 
@@ -69,7 +68,7 @@ pub(super) fn required_zeff_extension(
     locate_zeff_extension(bytes, minimum_first_block_offset)?
         .map(|located| located.extension)
         .ok_or_else(|| {
-            anyhow!("native v13 save state is missing required Zeff-private `ZBEX` BESS extension")
+            anyhow!("native save state is missing required Zeff-private `ZBEX` BESS extension")
         })
 }
 
@@ -85,16 +84,133 @@ pub fn project_replay_state_bytes(bytes: &mut Vec<u8>) -> Result<()> {
     if format_version <= 12 {
         return Ok(());
     }
-    if format_version != 13 {
+    if !matches!(format_version, 13 | 14) {
         bail!("unsupported native save-state format {format_version} for replay projection");
     }
 
     let located = locate_zeff_extension(bytes, NATIVE_LAST_OPCODE_END)?.ok_or_else(|| {
-        anyhow!("native v13 save state is missing required Zeff-private `ZBEX` BESS extension")
+        anyhow!("native save state is missing required Zeff-private `ZBEX` BESS extension")
     })?;
+    let first_block_offset = bess_first_block_offset(bytes)?;
+    let continuation_range = if format_version >= 14 {
+        let native_payload_end = bess_mbc_ram_offset(bytes, first_block_offset)?;
+        Some(sgb_native_continuation_range(bytes, native_payload_end)?)
+    } else {
+        None
+    };
     bytes.drain(located.block_range);
+    if let Some(continuation_range) = continuation_range {
+        let continuation_start = continuation_range.start;
+        bytes.drain(continuation_range);
+        adjust_bess_offsets_after_removal(
+            bytes,
+            first_block_offset,
+            continuation_start,
+            super::SGB_NATIVE_CONTINUATION_BLOCK_LEN,
+        )?;
+    }
     bytes[8..12].copy_from_slice(&12u32.to_le_bytes());
     Ok(())
+}
+
+fn bess_first_block_offset(bytes: &[u8]) -> Result<usize> {
+    if !has_bess_footer(bytes) {
+        bail!("native save state is missing BESS footer");
+    }
+    let footer_start = bytes.len() - 8;
+    Ok(read_u32_le(&bytes[footer_start..footer_start + 4]) as usize)
+}
+
+fn bess_mbc_ram_offset(bytes: &[u8], first_block_offset: usize) -> Result<usize> {
+    let footer_start = bytes.len() - 8;
+    let mut pos = first_block_offset;
+    while pos < footer_start {
+        let header_end = pos
+            .checked_add(8)
+            .ok_or_else(|| anyhow!("BESS block header offset overflow"))?;
+        if header_end > footer_start {
+            bail!("BESS block header truncated");
+        }
+        let len = read_u32_le(&bytes[pos + 4..header_end]) as usize;
+        let data_end = header_end
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("BESS block data offset overflow"))?;
+        if data_end > footer_start {
+            bail!("BESS block data truncated");
+        }
+        if bytes[pos..pos + 4] == BLOCK_CORE {
+            if len != CORE_BLOCK_LEN as usize {
+                bail!("invalid BESS CORE block length");
+            }
+            return Ok(read_u32_le(&bytes[header_end + 0xAC..header_end + 0xB0]) as usize);
+        }
+        pos = data_end;
+    }
+    bail!("native save state is missing BESS CORE block")
+}
+
+fn sgb_native_continuation_range(bytes: &[u8], native_payload_end: usize) -> Result<Range<usize>> {
+    let start = native_payload_end
+        .checked_sub(super::SGB_NATIVE_CONTINUATION_BLOCK_LEN)
+        .ok_or_else(|| anyhow!("SGB native continuation offset underflow"))?;
+    let header_end = start + 8;
+    if &bytes[start..start + 4] != super::SGB_NATIVE_CONTINUATION_MAGIC.as_slice() {
+        bail!("invalid SGB native continuation header");
+    }
+    let payload_len = read_u32_le(&bytes[start + 4..header_end]) as usize;
+    if payload_len != super::SGB_NATIVE_CONTINUATION_PAYLOAD_LEN {
+        bail!("invalid SGB native continuation length {payload_len}");
+    }
+    Ok(start..native_payload_end)
+}
+
+fn adjust_bess_offsets_after_removal(
+    bytes: &mut [u8],
+    original_first_block_offset: usize,
+    removed_start: usize,
+    removed_len: usize,
+) -> Result<()> {
+    let footer_start = bytes.len() - 8;
+    let first_block_offset = original_first_block_offset
+        .checked_sub(removed_len)
+        .ok_or_else(|| anyhow!("BESS first-block offset underflow"))?;
+    bytes[footer_start..footer_start + 4]
+        .copy_from_slice(&(first_block_offset as u32).to_le_bytes());
+
+    let mut pos = first_block_offset;
+    while pos < footer_start {
+        let header_end = pos
+            .checked_add(8)
+            .ok_or_else(|| anyhow!("BESS block header offset overflow"))?;
+        if header_end > footer_start {
+            bail!("BESS block header truncated");
+        }
+        let len = read_u32_le(&bytes[pos + 4..header_end]) as usize;
+        let data_end = header_end
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("BESS block data offset overflow"))?;
+        if data_end > footer_start {
+            bail!("BESS block data truncated");
+        }
+        if bytes[pos..pos + 4] == BLOCK_CORE {
+            if len != CORE_BLOCK_LEN as usize {
+                bail!("invalid BESS CORE block length");
+            }
+            for offset in [0x9C, 0xA4, 0xAC, 0xB4, 0xBC, 0xC4, 0xCC] {
+                let range = header_end + offset..header_end + offset + 4;
+                let value = read_u32_le(&bytes[range.clone()]) as usize;
+                if value >= removed_start && value != 0 {
+                    let adjusted = value
+                        .checked_sub(removed_len)
+                        .ok_or_else(|| anyhow!("BESS memory offset underflow"))?;
+                    bytes[range].copy_from_slice(&(adjusted as u32).to_le_bytes());
+                }
+            }
+            return Ok(());
+        }
+        pos = data_end;
+    }
+    bail!("native save state is missing BESS CORE block")
 }
 
 fn locate_zeff_extension(
@@ -102,7 +218,7 @@ fn locate_zeff_extension(
     minimum_first_block_offset: usize,
 ) -> Result<Option<LocatedZeffExtension>> {
     if !has_bess_footer(bytes) {
-        bail!("native v13 save state is missing BESS footer");
+        bail!("native save state is missing BESS footer");
     }
 
     let footer_start = bytes.len() - 8;
@@ -142,7 +258,7 @@ fn locate_zeff_extension(
             if let Some(extension) = &located
                 && extension.block_range.end != pos
             {
-                bail!("native v13 Zeff-private `ZBEX` BESS extension must immediately precede END");
+                bail!("native Zeff-private `ZBEX` BESS extension must immediately precede END");
             }
             return Ok(located);
         }

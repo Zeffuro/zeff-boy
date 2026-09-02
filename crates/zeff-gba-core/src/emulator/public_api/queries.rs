@@ -89,6 +89,10 @@ impl Emulator {
         self.rom_hash
     }
 
+    pub fn has_external_bios(&self) -> bool {
+        self.bus.has_external_bios()
+    }
+
     pub fn rom_offset_for_cpu_address(&self, address: u32) -> Option<usize> {
         let offset = match address {
             0x0800_0000..=0x09FF_FFFF => address - 0x0800_0000,

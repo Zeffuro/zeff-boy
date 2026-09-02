@@ -149,8 +149,24 @@ fn validate_replay_metadata(metadata: &ReplayMetadata, backend: &EmuBackend) -> 
 }
 
 fn validate_replay_input_devices(player: &ReplayPlayer, backend: &EmuBackend) -> Result<()> {
+    if player.version() == 3 && backend.system() != ActiveSystem::Coleco {
+        anyhow::bail!("ZRPL v3 controller input records require a ColecoVision game");
+    }
+    if backend.system() == ActiveSystem::Coleco && player.version() != 3 {
+        anyhow::bail!("ColecoVision replay requires ZRPL v3 controller input records");
+    }
     if player.uses_zapper_input() && backend.system() != ActiveSystem::Nes {
         anyhow::bail!("replay contains NES Zapper input but current ROM is not a NES game");
+    }
+    if player.uses_coleco_input() && backend.system() != ActiveSystem::Coleco {
+        anyhow::bail!(
+            "replay contains ColecoVision controller input but current ROM is not a ColecoVision game"
+        );
+    }
+    if backend.system() == ActiveSystem::Coleco && player.uses_non_coleco_input() {
+        anyhow::bail!(
+            "ColecoVision replay contains input outside the standard controller/keypad topology"
+        );
     }
     if player.uses_game_boy_link() && backend.system() != ActiveSystem::GameBoy {
         anyhow::bail!("replay contains Game Boy link events but current ROM is not a GB/GBC game");

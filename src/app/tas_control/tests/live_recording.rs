@@ -7,6 +7,12 @@ use crate::tas_project::{
     TasSeekStateCache,
 };
 
+mod cleanup;
+mod failure;
+mod game_gear;
+mod sg1000;
+mod ws;
+
 fn live_session(root: &Path) -> TasEditorSession {
     let manual_path = root.join("movie.ztas");
     let autosaves =
@@ -20,7 +26,9 @@ fn live_session(root: &Path) -> TasEditorSession {
     project
         .edit_transaction(|edit| edit.insert_frames("main", 1, 2))
         .unwrap();
-    TasEditorSession::new(project, manual_path, autosaves, seek_cache).unwrap()
+    let mut session = TasEditorSession::new(project, manual_path, autosaves, seek_cache).unwrap();
+    session.set_cursor(1).unwrap();
+    session
 }
 
 fn replay_ready_602() -> (
@@ -35,7 +43,7 @@ fn replay_ready_602() -> (
     session
         .edit_transaction(|edit| edit.insert_frames("main", 3, 599))
         .unwrap();
-    session.set_cursor(601).unwrap();
+    session.set_cursor(602).unwrap();
     let project = TasEditorControlSnapshot::capture(&session).unwrap();
     let mut coordinator = TasControlCoordinator::new();
     let EmuCommand::AcquireTasControl { request_id, .. } = coordinator
@@ -49,6 +57,8 @@ fn replay_ready_602() -> (
         acquired(request_id, 91),
         Some(TasAcquiredProjectBinding {
             snapshot: project.clone(),
+            intermediate_cache_proofs: Vec::new(),
+            predecessor_window: None,
             start_state_bytes: vec![0xAA],
             input_prefix: vec![crate::emu_thread::TasInputFrame::default(); 600],
             total_input_frames: 602,
@@ -224,6 +234,15 @@ fn awaiting_decision(coordinator: &mut TasControlCoordinator, lease_id: u64) -> 
 }
 
 fn matching_advance(lease_id: u64, run_id: u64, advance_id: u64) -> EmuResponse {
+    matching_advance_with_audio(lease_id, run_id, advance_id, Vec::new())
+}
+
+fn matching_advance_with_audio(
+    lease_id: u64,
+    run_id: u64,
+    advance_id: u64,
+    audio_samples: Vec<f32>,
+) -> EmuResponse {
     EmuResponse::TasFrameAdvanced {
         profile: TasExecutionProfile::DirectNesCartridge,
         lease_id,
@@ -234,7 +253,37 @@ fn matching_advance(lease_id: u64, run_id: u64, advance_id: u64) -> EmuResponse 
         executed_project_frames: advance_id + 1,
         frame_count: 20,
         state_sha256: crate::tas_project::TasDigest([0x42; 32]),
+        rumble: false,
+        audio_samples,
+        ui_data: None,
     }
+}
+
+#[test]
+fn stale_selected_boundary_is_rejected_before_the_worker_advances() {
+    let root = crate::test_support::test_directory("tas-live-record-stale-selection").unwrap();
+    let mut session = live_session(root.path());
+    session.set_cursor(0).unwrap();
+    let mut coordinator = TasControlCoordinator::new();
+    awaiting_decision(&mut coordinator, 90);
+
+    assert!(
+        coordinator
+            .begin_live_frame_advance(
+                session
+                    .prepare_live_frame(TasInputFrame::default())
+                    .unwrap()
+            )
+            .is_err()
+    );
+    assert!(matches!(
+        coordinator.state,
+        TasControlState::AwaitingDecision {
+            candidate_executed_project_frames: 1,
+            ..
+        }
+    ));
+    assert!(!coordinator.live_frame_in_flight());
 }
 
 #[test]
@@ -275,24 +324,244 @@ fn realtime_recording_starts_only_while_awaiting_a_decision_and_reports_its_stat
 }
 
 #[test]
-fn direct_gb_awaiting_decision_cannot_start_host_input_recording() {
+fn direct_gb_awaiting_decision_can_start_host_input_recording() {
     let mut coordinator = TasControlCoordinator::new();
     awaiting_decision(&mut coordinator, 77);
     let TasControlState::AwaitingDecision { project, .. } = &mut coordinator.state else {
         panic!("expected awaiting decision");
     };
-    project.profile = crate::emu_thread::TasExecutionProfile::DirectGbRomOnlyDmg;
+    project.profile = crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg;
 
-    assert!(!coordinator.can_record_live_input());
-    assert!(coordinator.start_realtime_recording().is_err());
-    assert!(!coordinator.realtime_recording_active());
+    assert!(coordinator.can_record_live_input());
+    coordinator.start_realtime_recording().unwrap();
+    assert!(coordinator.realtime_recording_active());
+    assert_eq!(
+        coordinator.live_status(),
+        crate::debug::TasEditorLiveStatus::Recording
+    );
+
+    coordinator.stop_realtime_recording();
     assert_eq!(
         coordinator.live_status(),
         crate::debug::TasEditorLiveStatus::Linked {
             cursor: 1,
-            recording_available: false,
+            recording_available: true,
         }
     );
+}
+
+#[test]
+fn direct_coleco_awaiting_decision_can_start_host_input_recording() {
+    let mut coordinator = TasControlCoordinator::new();
+    awaiting_decision(&mut coordinator, 78);
+    let TasControlState::AwaitingDecision { project, .. } = &mut coordinator.state else {
+        panic!("expected awaiting decision");
+    };
+    project.profile = crate::emu_thread::TasExecutionProfile::DirectColecoCartridge;
+
+    assert!(coordinator.can_record_live_input());
+    coordinator.start_realtime_recording().unwrap();
+    assert!(coordinator.realtime_recording_active());
+    coordinator.stop_realtime_recording();
+}
+
+#[test]
+fn direct_coleco_live_recording_forwards_only_semantic_controller_input() {
+    use crate::tas_project::{TasColecoControllerInput, TasColecoKeypadKey};
+
+    let root = crate::test_support::test_directory("tas-live-record-coleco").unwrap();
+    let session = live_session(root.path());
+    let mut coordinator = TasControlCoordinator::new();
+    let run_id = awaiting_decision(&mut coordinator, 79);
+    let TasControlState::AwaitingDecision { project, .. } = &mut coordinator.state else {
+        panic!("expected awaiting decision");
+    };
+    project.profile = TasExecutionProfile::DirectColecoCartridge;
+
+    let invalid = session
+        .prepare_live_frame(TasInputFrame {
+            players: std::array::from_fn(|_| crate::tas_project::TasControllerInput {
+                buttons: 1,
+                dpad: 0,
+            }),
+            ..TasInputFrame::default()
+        })
+        .unwrap();
+    assert!(coordinator.begin_live_frame_advance(invalid).is_err());
+
+    let controllers = [
+        TasColecoControllerInput {
+            up: true,
+            down: true,
+            left_button: true,
+            keypad: TasColecoKeypadKey::Star,
+            ..Default::default()
+        },
+        TasColecoControllerInput {
+            right: true,
+            right_button: true,
+            keypad: TasColecoKeypadKey::Nine,
+            ..Default::default()
+        },
+    ];
+    let prepared = session
+        .prepare_live_frame(TasInputFrame {
+            coleco: controllers,
+            ..TasInputFrame::default()
+        })
+        .unwrap();
+    let command = coordinator.begin_live_frame_advance(prepared).unwrap();
+    assert!(matches!(
+        command.into_parts_for_worker(WORKER_GENERATION),
+        Some((WORKER_GENERATION, EmuCommand::AdvanceTasControl(request)))
+            if request.profile == TasExecutionProfile::DirectColecoCartridge
+                && request.lease_id == 79
+                && request.run_id == run_id
+                && request.input.coleco == controllers
+                && request.input.p1_buttons == 0
+                && request.input.p1_dpad == 0
+                && request.input.p2_buttons == 0
+                && request.input.p2_dpad == 0
+                && request.input.zapper == Default::default()
+    ));
+}
+
+#[test]
+fn direct_sms_live_recording_forwards_only_two_standard_pads() {
+    let root = crate::test_support::test_directory("tas-live-record-sms").unwrap();
+    let session = live_session(root.path());
+    let mut coordinator = TasControlCoordinator::new();
+    let run_id = awaiting_decision(&mut coordinator, 80);
+    let TasControlState::AwaitingDecision { project, .. } = &mut coordinator.state else {
+        panic!("expected awaiting decision");
+    };
+    project.profile = TasExecutionProfile::DirectSmsCartridge;
+
+    let invalid = session
+        .prepare_live_frame(TasInputFrame {
+            players: [
+                crate::tas_project::TasControllerInput {
+                    buttons: 0x04,
+                    dpad: 0,
+                },
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput {
+                    buttons: 1,
+                    dpad: 0,
+                },
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput::default(),
+            ],
+            ..TasInputFrame::default()
+        })
+        .unwrap();
+    assert!(coordinator.begin_live_frame_advance(invalid).is_err());
+
+    let prepared = session
+        .prepare_live_frame(TasInputFrame {
+            players: [
+                crate::tas_project::TasControllerInput {
+                    buttons: 0x01,
+                    dpad: 0x04,
+                },
+                crate::tas_project::TasControllerInput {
+                    buttons: 0x02,
+                    dpad: 0x08,
+                },
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput::default(),
+            ],
+            ..TasInputFrame::default()
+        })
+        .unwrap();
+    let command = coordinator.begin_live_frame_advance(prepared).unwrap();
+    assert!(matches!(
+        command.into_parts_for_worker(WORKER_GENERATION),
+        Some((WORKER_GENERATION, EmuCommand::AdvanceTasControl(request)))
+            if request.profile == TasExecutionProfile::DirectSmsCartridge
+                && request.lease_id == 80
+                && request.run_id == run_id
+                && request.input.p1_buttons == 0x01
+                && request.input.p1_dpad == 0x04
+                && request.input.p2_buttons == 0x02
+                && request.input.p2_dpad == 0x08
+                && request.input.coleco == [crate::tas_project::TasColecoControllerInput::default(); 2]
+                && request.input.zapper == Default::default()
+    ));
+}
+
+#[test]
+fn direct_gb_live_recording_forwards_p1_and_rejects_other_devices() {
+    let root = crate::test_support::test_directory("tas-live-record-gb-p1").unwrap();
+    let session = live_session(root.path());
+    let mut coordinator = TasControlCoordinator::new();
+    let run_id = awaiting_decision(&mut coordinator, 78);
+    let TasControlState::AwaitingDecision { project, .. } = &mut coordinator.state else {
+        panic!("expected awaiting decision");
+    };
+    project.profile = TasExecutionProfile::DirectGbCartridgeDmg;
+
+    let invalid = session
+        .prepare_live_frame(TasInputFrame {
+            players: [
+                crate::tas_project::TasControllerInput {
+                    buttons: 0x03,
+                    dpad: 0x0C,
+                },
+                crate::tas_project::TasControllerInput {
+                    buttons: 0xAA,
+                    dpad: 0x55,
+                },
+                crate::tas_project::TasControllerInput {
+                    buttons: 1,
+                    dpad: 2,
+                },
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput::default(),
+            ],
+            zapper: crate::tas_project::TasZapperInput {
+                enabled: true,
+                trigger: true,
+                hit: true,
+                screen_pos: Some([12, 34]),
+            },
+            ..TasInputFrame::default()
+        })
+        .unwrap();
+    assert!(coordinator.begin_live_frame_advance(invalid).is_err());
+
+    let prepared = session
+        .prepare_live_frame(TasInputFrame {
+            players: [
+                crate::tas_project::TasControllerInput {
+                    buttons: 0x03,
+                    dpad: 0x0C,
+                },
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput::default(),
+                crate::tas_project::TasControllerInput::default(),
+            ],
+            ..TasInputFrame::default()
+        })
+        .unwrap();
+
+    let command = coordinator.begin_live_frame_advance(prepared).unwrap();
+    assert!(matches!(
+        command.into_parts_for_worker(WORKER_GENERATION),
+        Some((
+            WORKER_GENERATION,
+            EmuCommand::AdvanceTasControl(request)
+        )) if request.profile == TasExecutionProfile::DirectGbCartridgeDmg
+            && request.lease_id == 78
+            && request.run_id == run_id
+            && request.input.p1_buttons == 0x03
+            && request.input.p1_dpad == 0x0C
+            && request.input.p2_buttons == 0
+            && request.input.p2_dpad == 0
+            && request.input.zapper == Default::default()
+    ));
 }
 
 #[test]
@@ -322,7 +591,7 @@ fn realtime_recording_has_no_total_prefix_limit() {
     };
     project.cursor = crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES - 1;
     *candidate_segment_frame_count = crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES;
-    *candidate_executed_project_frames = crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES;
+    *candidate_executed_project_frames = 1;
 
     coordinator.start_realtime_recording().unwrap();
     assert!(coordinator.realtime_recording_active());
@@ -349,7 +618,7 @@ fn realtime_recording_survives_a_matched_frame_commit_and_can_chain() {
         crate::debug::TasEditorLiveStatus::Recording
     );
 
-    let ResponseDisposition::CommitLiveFrame { prepared } = coordinator.consume_response(
+    let ResponseDisposition::CommitLiveFrame { prepared, .. } = coordinator.consume_response(
         WORKER_GENERATION,
         matching_advance(80, run_id, 1),
         None,
@@ -401,7 +670,7 @@ fn realtime_recording_crosses_the_segment_boundary_and_keeps_running() {
         panic!("expected awaiting decision");
     };
     *candidate_segment_frame_count = crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES;
-    *candidate_executed_project_frames = crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES;
+    *candidate_executed_project_frames = 1;
     coordinator.start_realtime_recording().unwrap();
     let command = coordinator
         .begin_live_frame_advance(
@@ -418,11 +687,10 @@ fn realtime_recording_crosses_the_segment_boundary_and_keeps_running() {
         )) if request.segment_id == 2
             && request.expected_segment_frame_count
                 == crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES
-            && request.expected_executed_project_frames
-                == crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES
+            && request.expected_executed_project_frames == 1
     ));
 
-    let ResponseDisposition::CommitLiveFrame { prepared } = coordinator.consume_response(
+    let ResponseDisposition::CommitLiveFrame { prepared, .. } = coordinator.consume_response(
         WORKER_GENERATION,
         EmuResponse::TasFrameAdvanced {
             profile: TasExecutionProfile::DirectNesCartridge,
@@ -431,9 +699,12 @@ fn realtime_recording_crosses_the_segment_boundary_and_keeps_running() {
             advance_id: 1,
             segment_id: 2,
             segment_frame_count: 1,
-            executed_project_frames: crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES + 1,
+            executed_project_frames: 2,
             frame_count: crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES,
             state_sha256: crate::tas_project::TasDigest([0x47; 32]),
+            rumble: false,
+            audio_samples: Vec::new(),
+            ui_data: None,
         },
         None,
         Some(&snapshot(0, "main", 0)),
@@ -452,8 +723,7 @@ fn realtime_recording_crosses_the_segment_boundary_and_keeps_running() {
             candidate_executed_project_frames,
             candidate_frame_count: crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES,
             ..
-        } if candidate_executed_project_frames
-            == crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES + 1
+        } if candidate_executed_project_frames == 2
     ));
 }
 
@@ -476,7 +746,7 @@ fn stopping_realtime_recording_during_an_advance_allows_that_frame_to_commit() {
     coordinator.stop_realtime_recording();
     assert!(!coordinator.realtime_recording_active());
 
-    let ResponseDisposition::CommitLiveFrame { prepared } = coordinator.consume_response(
+    let ResponseDisposition::CommitLiveFrame { prepared, .. } = coordinator.consume_response(
         WORKER_GENERATION,
         matching_advance(81, run_id, 1),
         None,
@@ -505,9 +775,13 @@ fn realtime_recording_clears_for_commit_project_divergence_terminalization_and_r
     let mut coordinator = TasControlCoordinator::new();
     awaiting_decision(&mut coordinator, 83);
     coordinator.start_realtime_recording().unwrap();
+    let changed_prefix = TasEditorControlSnapshot {
+        branch_prefix_sha256: crate::tas_project::TasDigest([0x7B; 32]),
+        ..snapshot(1, "main", 0)
+    };
     assert!(
         coordinator
-            .reconcile_project(Some(&snapshot(1, "main", 0)))
+            .reconcile_project(Some(&changed_prefix))
             .is_some()
     );
     assert!(!coordinator.realtime_recording_active());
@@ -571,14 +845,21 @@ fn matched_live_record_commits_only_after_the_exact_worker_response() {
     assert_eq!(session.project().encode().unwrap(), before);
 
     let current = snapshot(0, "main", 0);
-    let ResponseDisposition::CommitLiveFrame { prepared } = coordinator.consume_response(
+    let expected_audio = vec![0.25, -0.25, 0.5, -0.5];
+    let ResponseDisposition::CommitLiveFrame {
+        prepared,
+        audio_samples,
+        ..
+    } = coordinator.consume_response(
         WORKER_GENERATION,
-        matching_advance(71, run_id, 1),
+        matching_advance_with_audio(71, run_id, 1, expected_audio.clone()),
         None,
         Some(&current),
-    ) else {
+    )
+    else {
         panic!("matching response should release the prepared editor candidate");
     };
+    assert_eq!(audio_samples, expected_audio);
     assert_eq!(session.project().encode().unwrap(), before);
     session.commit_prepared_live_frame(*prepared).unwrap();
     let response = coordinator.finish_live_frame_commit(Ok(snapshot(1, "main", 1)));
@@ -605,288 +886,4 @@ fn matched_live_record_commits_only_after_the_exact_worker_response() {
         } if actual_run_id == run_id
             && candidate_state_sha256 == crate::tas_project::TasDigest([0x42; 32])
     ));
-}
-
-#[test]
-fn wrong_live_record_tokens_terminalize_without_editor_mutation() {
-    let root = crate::test_support::test_directory("tas-live-record-wrong-token").unwrap();
-    let session = live_session(root.path());
-    let before = session.project().encode().unwrap();
-    let mut coordinator = TasControlCoordinator::new();
-    let run_id = awaiting_decision(&mut coordinator, 72);
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-
-    let current = snapshot(0, "main", 0);
-    let response = coordinator.consume_response(
-        WORKER_GENERATION,
-        matching_advance(72, run_id, 2),
-        None,
-        Some(&current),
-    );
-
-    assert!(matches!(
-        response,
-        ResponseDisposition::Consumed { follow_up: None }
-    ));
-    assert!(matches!(
-        coordinator.state,
-        TasControlState::Terminal {
-            reason: TasControlTerminalReason::FrameAdvanceResponseMismatch,
-            ..
-        }
-    ));
-    assert_eq!(session.project().encode().unwrap(), before);
-}
-
-#[test]
-fn only_one_live_record_can_be_in_flight() {
-    let root = crate::test_support::test_directory("tas-live-record-exclusive").unwrap();
-    let session = live_session(root.path());
-    let mut coordinator = TasControlCoordinator::new();
-    awaiting_decision(&mut coordinator, 73);
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-
-    assert!(
-        coordinator
-            .begin_live_frame_advance(
-                session
-                    .prepare_live_frame(TasInputFrame::default())
-                    .unwrap()
-            )
-            .is_err()
-    );
-    assert!(matches!(
-        coordinator.state,
-        TasControlState::FrameAdvancePending {
-            lease_id: 73,
-            advance_id: 1,
-            ..
-        }
-    ));
-}
-
-#[test]
-fn cancellation_drops_the_prepared_live_record_without_mutating_the_editor() {
-    let root = crate::test_support::test_directory("tas-live-record-cancel").unwrap();
-    let session = live_session(root.path());
-    let before = session.project().encode().unwrap();
-    let mut coordinator = TasControlCoordinator::new();
-    awaiting_decision(&mut coordinator, 74);
-    coordinator.start_realtime_recording().unwrap();
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-
-    let rollback = coordinator.cancel().unwrap();
-
-    assert!(!coordinator.realtime_recording_active());
-    assert!(matches!(
-        rollback.into_parts_for_worker(WORKER_GENERATION),
-        Some((
-            WORKER_GENERATION,
-            EmuCommand::RollbackTasControl { lease_id: 74 }
-        ))
-    ));
-    assert_eq!(session.project().encode().unwrap(), before);
-    assert_eq!(session.cursor(), 0);
-}
-
-#[test]
-fn late_advanced_response_after_cancellation_is_stale_until_the_rollback_detaches() {
-    let root = crate::test_support::test_directory("tas-live-record-late-after-cancel").unwrap();
-    let session = live_session(root.path());
-    let before = session.project().encode().unwrap();
-    let mut coordinator = TasControlCoordinator::new();
-    let run_id = awaiting_decision(&mut coordinator, 76);
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-    coordinator.cancel().unwrap();
-    let current = snapshot(0, "main", 0);
-
-    let response = coordinator.consume_response(
-        WORKER_GENERATION,
-        matching_advance(76, run_id, 1),
-        None,
-        Some(&current),
-    );
-
-    assert!(matches!(
-        response,
-        ResponseDisposition::Consumed { follow_up: None }
-    ));
-    assert!(matches!(
-        coordinator.state,
-        TasControlState::RollbackPending { lease_id: 76, .. }
-    ));
-    assert_eq!(session.project().encode().unwrap(), before);
-    consume(&mut coordinator, rolled_back(76, 73));
-    assert_eq!(coordinator.state, TasControlState::Detached);
-}
-
-#[test]
-fn non_authority_live_record_rejection_rolls_back_without_editor_mutation() {
-    let root = crate::test_support::test_directory("tas-live-record-rejected").unwrap();
-    let session = live_session(root.path());
-    let before = session.project().encode().unwrap();
-    let mut coordinator = TasControlCoordinator::new();
-    let run_id = awaiting_decision(&mut coordinator, 77);
-    coordinator.start_realtime_recording().unwrap();
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-
-    let response = coordinator.consume_response(
-        WORKER_GENERATION,
-        EmuResponse::TasFrameAdvanceRejected {
-            profile: TasExecutionProfile::DirectNesCartridge,
-            requested_lease_id: 77,
-            run_id,
-            advance_id: 1,
-            segment_id: 1,
-            reason: crate::emu_thread::TasFrameAdvanceRejectedReason::FrameProgressFailed,
-        },
-        None,
-        Some(&snapshot(0, "main", 0)),
-    );
-
-    bound_rollback(response, WORKER_GENERATION, 77);
-    assert!(!coordinator.realtime_recording_active());
-    assert_eq!(session.project().encode().unwrap(), before);
-    assert_eq!(session.cursor(), 0);
-}
-
-#[test]
-fn each_new_live_run_starts_frame_advance_ids_at_one() {
-    let root = crate::test_support::test_directory("tas-live-record-fresh-id").unwrap();
-    let mut session = live_session(root.path());
-    let mut coordinator = TasControlCoordinator::new();
-    let first_run_id = awaiting_decision(&mut coordinator, 78);
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-    let ResponseDisposition::CommitLiveFrame { prepared } = coordinator.consume_response(
-        WORKER_GENERATION,
-        matching_advance(78, first_run_id, 1),
-        None,
-        Some(&snapshot(0, "main", 0)),
-    ) else {
-        panic!("first advance should request an editor commit");
-    };
-    session.commit_prepared_live_frame(*prepared).unwrap();
-    coordinator.finish_live_frame_commit(Ok(snapshot(1, "main", 1)));
-    coordinator.commit(Some(&snapshot(1, "main", 1))).unwrap();
-    consume(
-        &mut coordinator,
-        EmuResponse::TasControlCommitted { lease_id: 78 },
-    );
-    assert_eq!(coordinator.state, TasControlState::Detached);
-
-    let fresh_session = live_session(root.path());
-    let second_run_id = awaiting_decision(&mut coordinator, 79);
-    let command = coordinator
-        .begin_live_frame_advance(
-            fresh_session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-
-    assert!(matches!(
-        command.into_parts_for_worker(WORKER_GENERATION),
-        Some((
-            WORKER_GENERATION,
-            EmuCommand::AdvanceTasControl(request)
-        )) if request.lease_id == 79 && request.run_id == second_run_id && request.advance_id == 1
-    ));
-}
-
-#[test]
-fn editor_commit_failure_rolls_back_without_refreshing_or_mutating_the_editor() {
-    let root = crate::test_support::test_directory("tas-live-record-editor-failure").unwrap();
-    let session = live_session(root.path());
-    let before = session.project().encode().unwrap();
-    let mut coordinator = TasControlCoordinator::new();
-    let run_id = awaiting_decision(&mut coordinator, 75);
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-    let current = snapshot(0, "main", 0);
-    let ResponseDisposition::CommitLiveFrame { prepared: _ } = coordinator.consume_response(
-        WORKER_GENERATION,
-        matching_advance(75, run_id, 1),
-        None,
-        Some(&current),
-    ) else {
-        panic!("matching response should request the editor commit");
-    };
-
-    let response = coordinator.finish_live_frame_commit(Err(anyhow::anyhow!("stale editor")));
-
-    bound_rollback(response, WORKER_GENERATION, 75);
-    assert!(matches!(
-        coordinator.state,
-        TasControlState::RollbackPending { lease_id: 75, .. }
-    ));
-    assert!(!coordinator.take_framebuffer_refresh());
-    assert_eq!(session.project().encode().unwrap(), before);
-    assert_eq!(session.cursor(), 0);
-}
-
-#[test]
-fn command_loss_releases_pending_frame_for_history_group_cleanup() {
-    let root = crate::test_support::test_directory("tas-live-record-command-loss").unwrap();
-    let mut session = live_session(root.path());
-    session.begin_live_recording_history_group().unwrap();
-    let mut coordinator = TasControlCoordinator::new();
-    awaiting_decision(&mut coordinator, 88);
-    coordinator.start_realtime_recording().unwrap();
-    coordinator
-        .begin_live_frame_advance(
-            session
-                .prepare_live_frame(TasInputFrame::default())
-                .unwrap(),
-        )
-        .unwrap();
-
-    assert!(coordinator.terminalize_worker(
-        WORKER_GENERATION,
-        TasControlTerminalReason::CommandChannelClosed,
-    ));
-
-    assert!(!coordinator.realtime_recording_active());
-    assert!(!coordinator.live_frame_in_flight());
-    assert!(!session.end_live_recording_history_group().unwrap());
 }

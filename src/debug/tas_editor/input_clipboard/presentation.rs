@@ -5,65 +5,44 @@ use super::{
     TasInputClipboardState, TasInputClipboardTileAction,
 };
 use crate::{
-    debug::tas_editor::{TasEditorAction, branch_diff_editor::raw_input_summary},
-    tas_project::{TasEditorSession, TasInputPattern},
+    debug::tas_editor::{
+        TasEditorAction, branch_diff_editor::raw_input_summary,
+        timeline_selection::TasInputSelection,
+    },
+    tas_project::{MAX_PROJECT_FRAMES, TasEditorSession, TasInputPattern},
 };
 
 const PATTERN_ROW_HEIGHT: f32 = 22.0;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct TasInputSelection {
-    pub(super) branch_id: String,
-    pub(super) start: u64,
-    pub(super) end: u64,
-}
-
-impl TasInputSelection {
-    pub(super) fn new(branch_id: String, cursor: u64) -> Self {
-        Self {
-            branch_id,
-            start: cursor,
-            end: cursor,
-        }
-    }
-
-    pub(super) fn length(&self) -> Option<u64> {
-        self.end.checked_sub(self.start)
-    }
-}
 
 pub(super) fn draw_input_clipboard(
     ui: &mut egui::Ui,
     session: &TasEditorSession,
     state: &mut TasInputClipboardState,
+    selection: Option<&TasInputSelection>,
     actions: &mut Vec<TasEditorAction>,
-) -> Option<(u64, u64)> {
-    state.sync_selection(session);
+) {
     let frame_count = session.selected_branch().frame_count();
     ui.collapsing("Input pattern", |ui| {
-        draw_selection_controls(ui, session, state, frame_count);
-        let selection = state.selection().clone();
-        let selection_is_ordered = selection.start <= selection.end;
-        let selection_length = selection.length();
-        if !selection_is_ordered {
-            ui.colored_label(
-                ui.visuals().error_fg_color,
-                "Start is after End; no selection action will run.",
-            );
-        } else if selection_length == Some(0) {
-            ui.small("Selection is empty.");
-        } else {
+        let selection = selection.cloned();
+        if let Some(selection) = selection.as_ref() {
             ui.small(format!(
                 "Selected frames {}..{}",
                 selection.start, selection.end
             ));
+        } else {
+            ui.small("Select frames in the timeline to copy or tile them.");
         }
-        let can_copy = selection_is_ordered && selection_length.is_some_and(|length| length != 0);
+        let can_copy = selection.is_some();
         if ui
             .add_enabled(can_copy, egui::Button::new("Copy selection"))
             .clicked()
         {
-            match copy_selection_action(session, &selection) {
+            match copy_selection_action(
+                session,
+                selection
+                    .as_ref()
+                    .expect("copy requires a timeline selection"),
+            ) {
                 Ok(action) => actions.push(TasEditorAction::InputClipboard(action)),
                 Err(error) => {
                     ui.colored_label(ui.visuals().error_fg_color, error.to_string());
@@ -94,6 +73,9 @@ pub(super) fn draw_input_clipboard(
                 let cursor_fits = cursor
                     .checked_add(entry.pattern.length())
                     .is_some_and(|end| end <= frame_count);
+                let insertion_fits = cursor
+                    .checked_add(entry.pattern.length())
+                    .is_some_and(|end| end <= MAX_PROJECT_FRAMES);
                 ui.small(if cursor_fits {
                     format!("Pattern fits at selected cursor {cursor}.")
                 } else {
@@ -113,8 +95,25 @@ pub(super) fn draw_input_clipboard(
                         }),
                     ));
                 }
-                let tile_fits =
-                    selection_is_ordered && selection_length.is_some_and(|length| length != 0);
+                if ui
+                    .add_enabled(
+                        insertion_fits,
+                        egui::Button::new("Insert copied frames at selected cursor"),
+                    )
+                    .on_hover_text("Insert frames without replacing existing movie input")
+                    .clicked()
+                {
+                    actions.push(TasEditorAction::InputClipboard(
+                        TasInputClipboardAction::InsertAtCursor(TasInputClipboardPasteAction {
+                            expected_project_sha256: session.project_content_sha256(),
+                            target_branch_id: session.selected_branch_id().to_owned(),
+                            target_movie_sha256,
+                            cursor,
+                            clipboard_generation: state.generation,
+                        }),
+                    ));
+                }
+                let tile_fits = selection.is_some();
                 if ui
                     .add_enabled(tile_fits, egui::Button::new("Tile across selection"))
                     .clicked()
@@ -124,7 +123,9 @@ pub(super) fn draw_input_clipboard(
                             expected_project_sha256: session.project_content_sha256(),
                             target_branch_id: session.selected_branch_id().to_owned(),
                             target_movie_sha256,
-                            selection,
+                            selection: selection
+                                .clone()
+                                .expect("tiling requires a timeline selection"),
                             clipboard_generation: state.generation,
                         }),
                     ));
@@ -138,44 +139,13 @@ pub(super) fn draw_input_clipboard(
             }
         }
     });
-    let selection = state.selection();
-    (selection.start <= selection.end)
-        .then_some((selection.start, selection.end))
-        .filter(|(start, end)| start != end)
-}
-
-fn draw_selection_controls(
-    ui: &mut egui::Ui,
-    session: &TasEditorSession,
-    state: &mut TasInputClipboardState,
-    frame_count: u64,
-) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Start");
-        ui.add(
-            egui::DragValue::new(&mut state.selection.as_mut().unwrap().start)
-                .range(0..=frame_count),
-        );
-        if ui.small_button("Start = cursor").clicked() {
-            state.selection.as_mut().unwrap().start = session.cursor();
-        }
-        ui.label("End (exclusive)");
-        ui.add(
-            egui::DragValue::new(&mut state.selection.as_mut().unwrap().end).range(0..=frame_count),
-        );
-        if ui.small_button("End = cursor").clicked() {
-            state.selection.as_mut().unwrap().end = session.cursor();
-        }
-    });
 }
 
 fn copy_selection_action(
     session: &TasEditorSession,
     selection: &TasInputSelection,
 ) -> Result<TasInputClipboardAction> {
-    let length = selection
-        .length()
-        .ok_or_else(|| anyhow::anyhow!("input selection start is after its exclusive end"))?;
+    let length = selection.length();
     if length == 0 {
         bail!("input selection is empty");
     }

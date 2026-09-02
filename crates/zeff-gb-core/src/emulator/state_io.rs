@@ -32,7 +32,7 @@ impl Emulator {
     }
 
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
-        if !self.has_battery() {
+        if !self.is_battery_backed() {
             return None;
         }
 
@@ -44,7 +44,52 @@ impl Emulator {
         Some(sram)
     }
 
+    pub fn dump_battery_sram_at_time(&self, unix_seconds: u64) -> Option<Vec<u8>> {
+        if !self.is_battery_backed() {
+            return None;
+        }
+
+        let sram = self.bus.cartridge.dump_sram_at_time(unix_seconds);
+        (!sram.is_empty()).then_some(sram)
+    }
+
+    pub fn dump_battery_sram_with_rtc_subsecond_at_time(
+        &self,
+        unix_seconds: u64,
+    ) -> Option<Vec<u8>> {
+        if !self.is_battery_backed() {
+            return None;
+        }
+
+        let sram = self
+            .bus
+            .cartridge
+            .dump_sram_with_rtc_subsecond_at_time(unix_seconds);
+        (!sram.is_empty()).then_some(sram)
+    }
+
+    pub fn dump_battery_sram_with_rtc_subsecond(&self) -> Option<Vec<u8>> {
+        if !self.is_battery_backed() {
+            return None;
+        }
+
+        let sram = self.bus.cartridge.dump_sram_with_rtc_subsecond();
+        (!sram.is_empty()).then_some(sram)
+    }
+
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> AnyResult<()> {
+        self.load_battery_sram_inner(bytes, None)
+    }
+
+    pub fn load_battery_sram_at_time(&mut self, bytes: &[u8], unix_seconds: u64) -> AnyResult<()> {
+        self.load_battery_sram_inner(bytes, Some(unix_seconds))
+    }
+
+    fn load_battery_sram_inner(
+        &mut self,
+        bytes: &[u8],
+        unix_seconds: Option<u64>,
+    ) -> AnyResult<()> {
         let expected_len = self.bus.cartridge.sram_len();
         let has_mbc3_rtc = self.header.cartridge_type.is_mbc3_with_rtc();
         if expected_len == 0 && !has_mbc3_rtc {
@@ -52,7 +97,11 @@ impl Emulator {
         }
 
         if has_mbc3_rtc {
-            self.bus.cartridge.load_sram(bytes);
+            if let Some(unix_seconds) = unix_seconds {
+                self.bus.cartridge.load_sram_at_time(bytes, unix_seconds);
+            } else {
+                self.bus.cartridge.load_sram(bytes);
+            }
             return Ok(());
         }
 
@@ -62,6 +111,10 @@ impl Emulator {
         self.bus.cartridge.load_sram(&adjusted);
 
         Ok(())
+    }
+
+    pub fn mbc3_rtc_state(&self) -> Option<crate::hardware::cartridge::Mbc3RtcState> {
+        self.bus.cartridge.mbc3_rtc_state()
     }
 
     pub fn as_save_state_ref(&self) -> SaveStateRef<'_> {
@@ -314,8 +367,29 @@ mod tests {
         end_start - block_len..end_start
     }
 
+    fn begin_sgb_packet(emulator: &mut Emulator) {
+        let _ = emulator.bus.write_byte(0xFF00, 0x00);
+    }
+
+    fn write_sgb_packet_bits(
+        emulator: &mut Emulator,
+        packet: &[u8; 16],
+        bits: std::ops::Range<usize>,
+    ) {
+        for bit_index in bits {
+            let bit = packet[bit_index / 8] >> (bit_index % 8) & 1;
+            let value = if bit == 0 { 0x20 } else { 0x10 };
+            let _ = emulator.bus.write_byte(0xFF00, value);
+        }
+    }
+
+    fn write_sgb_packet(emulator: &mut Emulator, packet: &[u8; 16]) {
+        begin_sgb_packet(emulator);
+        write_sgb_packet_bits(emulator, packet, 0..128);
+    }
+
     #[test]
-    fn native_v13_restores_authoritative_frame_count_and_inner_lcd() {
+    fn current_native_restores_authoritative_frame_count_and_inner_lcd() {
         let mut source = emulator(false);
         source.frame_count = 0x0102_0304_0506_0708;
         source
@@ -354,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn native_v13_preserves_sgb_presented_composite_and_inner_lcd_continuation() {
+    fn current_native_preserves_sgb_presented_composite_and_inner_lcd_continuation() {
         let mut source = emulator(true);
         source.set_sgb_border_enabled(true);
         source.step_frame();
@@ -384,7 +458,83 @@ mod tests {
     }
 
     #[test]
-    fn native_v13_keeps_stopped_dmg_public_blank_separate_from_inner_lcd() {
+    fn current_native_preserves_sgb_multi_packet_continuation() {
+        let mut source = emulator(true);
+        let mut first = [0; 16];
+        first[0] = (0x04 << 3) | 3;
+        first[1] = 1;
+        first[2..8].copy_from_slice(&[0x07, 1, 1, 3, 3, 0]);
+        let second = [0xA5; 16];
+        let third = [0x5A; 16];
+
+        write_sgb_packet(&mut source, &first);
+        begin_sgb_packet(&mut source);
+        write_sgb_packet_bits(&mut source, &second, 0..37);
+        let state = source.encode_state_bytes().unwrap();
+
+        let mut restored = emulator(true);
+        restored.load_state(&state).unwrap();
+        write_sgb_packet_bits(&mut source, &second, 37..128);
+        write_sgb_packet_bits(&mut restored, &second, 37..128);
+        write_sgb_packet(&mut source, &third);
+        write_sgb_packet(&mut restored, &third);
+
+        assert_bytes_equal(
+            "SGB multi-packet continuation state",
+            &restored.encode_state_bytes().unwrap(),
+            &source.encode_state_bytes().unwrap(),
+        );
+        source.step_frame();
+        restored.step_frame();
+        assert_bytes_equal(
+            "SGB multi-packet continuation framebuffer",
+            restored.framebuffer(),
+            source.framebuffer(),
+        );
+    }
+
+    #[test]
+    fn malformed_sgb_native_continuation_is_atomic() {
+        let mut source = emulator(true);
+        let mut first = [0; 16];
+        first[0] = (0x04 << 3) | 3;
+        write_sgb_packet(&mut source, &first);
+        let mut malformed = source.encode_state_bytes().unwrap();
+        let extension_start = malformed
+            .windows(4)
+            .position(|window| window == crate::save_state::SGB_NATIVE_CONTINUATION_MAGIC_FOR_TEST)
+            .unwrap();
+        malformed[extension_start + 8] = 0x7F;
+
+        let mut target = emulator(true);
+        let mut control = emulator(true);
+        target.step_frame();
+        control.step_frame();
+        let before = target.encode_state_bytes().unwrap();
+        let before_framebuffer = target.framebuffer().to_vec();
+
+        assert!(target.load_state(&malformed).is_err());
+        assert_bytes_equal(
+            "malformed SGB continuation state",
+            &target.encode_state_bytes().unwrap(),
+            &before,
+        );
+        assert_bytes_equal(
+            "malformed SGB continuation framebuffer",
+            target.framebuffer(),
+            &before_framebuffer,
+        );
+        target.step_frame();
+        control.step_frame();
+        assert_bytes_equal(
+            "malformed SGB continuation trajectory",
+            &target.encode_state_bytes().unwrap(),
+            &control.encode_state_bytes().unwrap(),
+        );
+    }
+
+    #[test]
+    fn current_native_keeps_stopped_dmg_public_blank_separate_from_inner_lcd() {
         let mut source = emulator(false);
         source
             .bus
@@ -412,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_probe_uses_exact_v13_count_and_legacy_v12_derived_count() {
+    fn replay_probe_uses_exact_current_count_and_legacy_v12_derived_count() {
         let mut source = emulator(false);
         source.frame_count = 77;
         let current = source.encode_state_bytes().unwrap();
@@ -433,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_native_v13_is_atomic_and_never_falls_back_to_embedded_bess() {
+    fn malformed_current_native_is_atomic_and_never_falls_back_to_embedded_bess() {
         let source = emulator(false);
         let state = source.encode_state_bytes().unwrap();
         let extension = zeff_extension_range(&state);
@@ -521,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn wrong_rom_native_v13_failure_preserves_the_next_frame_trajectory() {
+    fn wrong_rom_current_native_failure_preserves_the_next_frame_trajectory() {
         let state = emulator(false).encode_state_bytes().unwrap();
         let mut other_rom = test_rom(false);
         other_rom[0x200] = 1;

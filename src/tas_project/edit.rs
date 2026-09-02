@@ -182,6 +182,47 @@ impl TasProjectEdit<'_> {
         Ok(())
     }
 
+    pub fn delete_branch_subtree(&mut self, branch_id: &str) -> Result<usize> {
+        let branch = self
+            .project
+            .branch(branch_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))?;
+        if branch.parent.is_none() {
+            bail!("the root TAS branch cannot be deleted");
+        }
+
+        let mut deleted = BTreeSet::from([branch_id.to_owned()]);
+        loop {
+            let before = deleted.len();
+            for branch in &self.project.branches {
+                if branch
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| deleted.contains(&parent.branch_id))
+                {
+                    deleted.insert(branch.id.clone());
+                }
+            }
+            if deleted.len() == before {
+                break;
+            }
+        }
+        if deleted.contains(&self.project.active_branch_id) {
+            bail!("the active TAS branch or one of its ancestors cannot be deleted");
+        }
+
+        self.project
+            .branches
+            .retain(|branch| !deleted.contains(&branch.id));
+        self.project
+            .markers
+            .retain(|marker| !deleted.contains(&marker.branch_id));
+        self.project
+            .annotations
+            .retain(|annotation| !deleted.contains(&annotation.branch_id));
+        Ok(deleted.len())
+    }
+
     pub fn set_project_comment(&mut self, comment: impl Into<String>) {
         self.project.project_comment = comment.into();
     }

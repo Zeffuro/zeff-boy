@@ -28,10 +28,22 @@ pub(super) fn load_pce_cd_backend(
     if preloaded_data.is_some() {
         return Err(super::super::pce_cd::PceCdLoadError::PackagedCdSetUnsupported.into());
     }
+    let direct_iso = source_path == cue_path && path_extension_is(cue_path, "iso");
+    let direct_ppf = config.pce_cd_tas_ppf_stack.as_ref();
+    if direct_ppf.is_some() && !(source_path == cue_path && path_extension_is(cue_path, "cue")) {
+        return Err(super::super::pce_cd::PceCdLoadError::Disc(
+            "PC Engine CD TAS PPF overlays require a direct CUE".to_owned(),
+        )
+        .into());
+    }
     let (cue_path, loaded_disc) = if source_path == cue_path && path_extension_is(cue_path, "cue") {
         (
             cue_path.to_path_buf(),
-            super::super::pce_cd::load_direct_cue_with_mods(cue_path, config.apply_mods)?,
+            if let Some(stack) = direct_ppf {
+                stack.load(cue_path)?
+            } else {
+                super::super::pce_cd::load_direct_cue_with_mods(cue_path, config.apply_mods)?
+            },
         )
     } else if source_path == cue_path && path_extension_is(cue_path, "chd") {
         (
@@ -83,7 +95,53 @@ pub(super) fn load_pce_cd_backend(
     let system_card_profile = pce_system_card_profile(&system_card, console_wiring)?;
     check_minimum_system_card(loaded_disc.source_disc_sha256, system_card_profile)?;
     let system_card_board = pce_system_card_board(system_card_profile);
-    let mut backend = super::super::PceBackend::new_cdrom2(
+    let source_disc_sha256 = loaded_disc.source_disc_sha256;
+    let effective_disc_sha256 = loaded_disc.disc.content_hash();
+    let (raw_source_media_sha256, raw_source_media_len) = if let Some(stack) = direct_ppf {
+        stack.source_media_identity()
+    } else if direct_iso {
+        super::super::pce_cd_file::direct_file_sha256(source_path)?
+    } else {
+        (
+            loaded_disc.raw_source_media_sha256,
+            loaded_disc.raw_source_media_len,
+        )
+    };
+    let provenance = super::super::pce::PceTasLoadProvenanceSeed::new_cd(
+        super::super::pce::PceTasCdLoadMedia {
+            raw_source_media_sha256,
+            raw_source_media_len,
+            source_disc_sha256,
+            effective_disc_sha256,
+            direct: source_path == cue_path
+                && (path_extension_is(&cue_path, "cue") || path_extension_is(&cue_path, "chd"))
+                || direct_iso
+                || direct_ppf.is_some(),
+            chd: source_path == cue_path && path_extension_is(&cue_path, "chd"),
+            iso: direct_iso,
+            ppf: direct_ppf.is_some(),
+        },
+        super::super::pce::PceTasLoadSetup {
+            loaded_from_source_path: source_path == cue_path,
+            any_mod_enabled: config.apply_mods,
+            any_mod_applied: effective_disc_sha256 != source_disc_sha256,
+            initial_input: config.initial_input,
+            configured_sample_rate: config.sample_rate,
+            selected_wiring: config.pce_console_wiring,
+            selected_board: Some(system_card_board),
+            selected_hardware: Some(zeff_pce_core::hardware::PceCartridgeHardware::Base),
+            selected_controller_mode: config.pce_controller_mode,
+            selected_memory_base_mode: config.pce_memory_base_mode,
+            selected_arcade_card_mode: config.pce_arcade_card_mode,
+            tas_source_media: config.pce_cd_tas_source_media,
+        },
+    );
+    let constructor = if config.pce_load_battery_bram {
+        super::super::PceBackend::new_cdrom2
+    } else {
+        super::super::PceBackend::new_cdrom2_without_host_persistence
+    };
+    let mut backend = constructor(
         system_card.bytes,
         loaded_disc.disc,
         super::super::pce::PceCdBackendConfig {
@@ -100,11 +158,20 @@ pub(super) fn load_pce_cd_backend(
     if let Some(sample_rate) = config.sample_rate {
         backend.set_sample_rate(sample_rate);
     }
+    backend.update_controller_mode(config.pce_controller_mode);
+    backend.update_memory_base_mode(config.pce_memory_base_mode);
     if config.pce_load_battery_bram {
         load_pce_cd_bram(&mut backend);
         super::systems::log_sram_result(backend.try_load_memory_base128());
     }
     backend.set_firmware_manifests(vec![system_card.manifest]);
+    let persistent_load = if config.pce_load_battery_bram {
+        super::super::pce::PceTasPersistentLoadOutcome::Unknown
+    } else {
+        super::super::pce::PceTasPersistentLoadOutcome::Skipped
+    };
+    let provenance = provenance.finish(&backend, persistent_load);
+    backend = backend.with_tas_load_provenance(provenance);
     if let Some((buttons, dpad)) = config.initial_input {
         backend.set_input(buttons, dpad);
     }
@@ -167,7 +234,12 @@ fn finish_prepared_pce_cd_backend(
     let system_card_board = pce_system_card_board(system_card_profile);
     check_package_cancel(cancel)?;
     progress.set_phase(super::super::pce_cd_archive::PceCdPackageLoadPhase::Building);
-    let mut backend = super::super::PceBackend::new_cdrom2(
+    let constructor = if config.pce_load_battery_bram {
+        super::super::PceBackend::new_cdrom2
+    } else {
+        super::super::PceBackend::new_cdrom2_without_host_persistence
+    };
+    let mut backend = constructor(
         system_card.bytes,
         loaded_disc.disc,
         super::super::pce::PceCdBackendConfig {
@@ -384,6 +456,19 @@ fn pce_system_card_profile(
     firmware: &super::super::firmware::ResolvedFirmwareBytes,
     console_wiring: PceConsoleWiring,
 ) -> Result<zeff_firmware::PceSystemCardFirmware, super::super::pce_cd::PceCdLoadError> {
+    #[cfg(test)]
+    if firmware.sha256
+        == [
+            0x8A, 0x39, 0xD2, 0xAB, 0xD3, 0x99, 0x9A, 0xB7, 0x3C, 0x34, 0xDB, 0x24, 0x76, 0x84,
+            0x9C, 0xDD, 0xF3, 0x03, 0xCE, 0x38, 0x9B, 0x35, 0x82, 0x68, 0x50, 0xF9, 0xA7, 0x00,
+            0x58, 0x9B, 0x4A, 0x90,
+        ]
+    {
+        return Ok(zeff_firmware::classify_pce_system_card_sha256(
+            zeff_firmware::PCE_SYSTEM_CARD_ADPCM_FIXTURE_SHA256,
+        )
+        .unwrap());
+    }
     let profile = zeff_firmware::classify_pce_system_card_sha256(firmware.sha256).ok_or(
         super::super::pce_cd::PceCdLoadError::UnrecognizedSystemCardFirmware(firmware.sha256),
     )?;

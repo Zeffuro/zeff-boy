@@ -7,18 +7,37 @@ use super::lifecycle::{ResponseDisposition, WorkerBoundCommand};
 use super::project_binding::TasEditorControlSnapshot;
 use super::{TasControlCoordinator, TasControlState};
 
+pub(in crate::app) const fn profile_supports_live_input_recording(
+    profile: crate::emu_thread::TasExecutionProfile,
+) -> bool {
+    matches!(
+        profile,
+        crate::emu_thread::TasExecutionProfile::DirectNesCartridge
+            | crate::emu_thread::TasExecutionProfile::DirectFdsDisk
+            | crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg
+            | crate::emu_thread::TasExecutionProfile::DirectGbCartridgeCgb
+            | crate::emu_thread::TasExecutionProfile::DirectColecoCartridge
+            | crate::emu_thread::TasExecutionProfile::DirectSmsCartridge
+            | crate::emu_thread::TasExecutionProfile::DirectGameGearCartridge
+            | crate::emu_thread::TasExecutionProfile::DirectGbaCartridge
+            | crate::emu_thread::TasExecutionProfile::DirectSg1000Cartridge
+            | crate::emu_thread::TasExecutionProfile::DirectWsCartridge
+            | crate::emu_thread::TasExecutionProfile::DirectPceHuCard
+            | crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard
+            | crate::emu_thread::TasExecutionProfile::DirectPceCd
+    )
+}
+
 impl TasControlCoordinator {
     pub(in crate::app) fn can_record_live_input(&self) -> bool {
-        matches!(
-            self.state,
-            TasControlState::AwaitingDecision {
-                project: TasEditorControlSnapshot {
-                    profile: crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
+        !self.playback_active
+            && matches!(
+                self.state,
+                TasControlState::AwaitingDecision {
+                    project: TasEditorControlSnapshot { profile, .. },
                     ..
-                },
-                ..
-            }
-        )
+                } if super::profile_supports_live_input_recording(profile)
+            )
     }
 
     pub(in crate::app) fn live_frame_in_flight(&self) -> bool {
@@ -34,7 +53,10 @@ impl TasControlCoordinator {
         let TasControlState::AwaitingDecision { project, .. } = &self.state else {
             bail!("no completed TAS execution is awaiting a realtime recording frame");
         };
-        if project.profile != crate::emu_thread::TasExecutionProfile::DirectNesCartridge {
+        if self.playback_active {
+            bail!("pause TAS movie playback before recording");
+        }
+        if !super::profile_supports_live_input_recording(project.profile) {
             bail!("live host-input recording is unavailable for this TAS profile");
         }
         self.start_mode = super::TasControlStartMode::Preview;
@@ -82,8 +104,11 @@ impl TasControlCoordinator {
         else {
             bail!("no completed TAS execution is awaiting a live input frame");
         };
-        if project.profile != crate::emu_thread::TasExecutionProfile::DirectNesCartridge {
+        if !super::profile_supports_live_input_recording(project.profile) {
             bail!("live host-input recording is unavailable for this TAS profile");
+        }
+        if prepared.cursor() != *candidate_executed_project_frames {
+            bail!("the selected TAS boundary does not match the linked game position");
         }
         let advance_id = *next_advance_id;
         let next_advance_id = advance_id
@@ -118,7 +143,7 @@ impl TasControlCoordinator {
         let expected_executed_project_frames = candidate_executed_project_frames
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("TAS live-frame project position overflows"))?;
-        let input = direct_nes_input_from_prepared(&prepared);
+        let input = input_from_prepared(profile, &prepared)?;
         self.pending_live_frame = Some(prepared);
         self.state = TasControlState::FrameAdvancePending {
             worker_generation,
@@ -145,6 +170,7 @@ impl TasControlCoordinator {
                 expected_frame_count: candidate_frame_count,
                 expected_state_sha256: candidate_state_sha256,
                 input,
+                snapshot: None,
             },
         ))
     }
@@ -216,12 +242,178 @@ impl TasControlCoordinator {
     }
 }
 
-fn direct_nes_input_from_prepared(prepared: &TasPreparedLiveFrame) -> TasInputFrame {
+fn input_from_prepared(
+    profile: crate::emu_thread::TasExecutionProfile,
+    prepared: &TasPreparedLiveFrame,
+) -> Result<TasInputFrame> {
     let input = prepared.input();
-    TasInputFrame {
+    let p1 = TasInputFrame {
         p1_buttons: input.players[0].buttons,
         p1_dpad: input.players[0].dpad,
-        p2_buttons: input.players[1].buttons,
-        p2_dpad: input.players[1].dpad,
+        ..TasInputFrame::default()
+    };
+    match profile {
+        crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg
+        | crate::emu_thread::TasExecutionProfile::DirectGbCartridgeCgb => {
+            if p1.p1_buttons & !0x0F != 0
+                || p1.p1_dpad & !0x0F != 0
+                || input.players[1..]
+                    .iter()
+                    .any(|player| player.buttons != 0 || player.dpad != 0)
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+            {
+                bail!("live input is outside the direct Game Boy profile");
+            }
+            Ok(p1)
+        }
+        crate::emu_thread::TasExecutionProfile::DirectGameGearCartridge => {
+            if p1.p1_buttons & !0x0B != 0
+                || p1.p1_dpad & !0x0F != 0
+                || input.players[1..]
+                    .iter()
+                    .any(|player| player.buttons != 0 || player.dpad != 0)
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+            {
+                bail!("live input is outside the direct Game Gear profile");
+            }
+            Ok(p1)
+        }
+        crate::emu_thread::TasExecutionProfile::DirectGbaCartridge => {
+            if p1.p1_buttons & !0x3F != 0
+                || p1.p1_dpad & !0x0F != 0
+                || input.players[1..]
+                    .iter()
+                    .any(|player| player.buttons != 0 || player.dpad != 0)
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+                || input.tilt_x_bits != 0
+                || input.tilt_y_bits != 0
+                || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
+            {
+                bail!("live input is outside the direct GBA profile");
+            }
+            Ok(p1)
+        }
+        crate::emu_thread::TasExecutionProfile::DirectNesCartridge
+        | crate::emu_thread::TasExecutionProfile::DirectFdsDisk => {
+            if input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || (profile == crate::emu_thread::TasExecutionProfile::DirectFdsDisk
+                    && input.zapper != Default::default())
+            {
+                bail!("live input is outside the direct NES profile");
+            }
+            Ok(TasInputFrame {
+                p1_buttons: p1.p1_buttons,
+                p1_dpad: p1.p1_dpad,
+                p2_buttons: input.players[1].buttons,
+                p2_dpad: input.players[1].dpad,
+                coleco: [crate::tas_project::TasColecoControllerInput::default(); 2],
+                zapper: zeff_emu_common::replay::ReplayZapperFrame {
+                    enabled: input.zapper.enabled,
+                    trigger: input.zapper.trigger,
+                    hit: input.zapper.hit,
+                    screen_pos: input.zapper.screen_pos.map(|[x, y]| (x, y)),
+                },
+                fds_disk_side: None,
+                fds_write_protected: None,
+                fds_media_event: None,
+            })
+        }
+        crate::emu_thread::TasExecutionProfile::DirectColecoCartridge => {
+            if input
+                .players
+                .iter()
+                .any(|player| *player != Default::default())
+                || input.zapper != Default::default()
+                || input.tilt_x_bits != 0
+                || input.tilt_y_bits != 0
+                || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
+            {
+                bail!("live input is outside the direct ColecoVision profile");
+            }
+            Ok(TasInputFrame {
+                coleco: input.coleco,
+                ..TasInputFrame::default()
+            })
+        }
+        crate::emu_thread::TasExecutionProfile::DirectSmsCartridge
+        | crate::emu_thread::TasExecutionProfile::DirectSg1000Cartridge => {
+            if input.players[0].buttons & !0x03 != 0
+                || input.players[0].dpad & !0x0F != 0
+                || input.players[1].buttons & !0x03 != 0
+                || input.players[1].dpad & !0x0F != 0
+                || input.players[2..]
+                    .iter()
+                    .any(|player| *player != Default::default())
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+                || input.tilt_x_bits != 0
+                || input.tilt_y_bits != 0
+                || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
+            {
+                bail!("live input is outside the direct Sega 8-bit TAS profile");
+            }
+            Ok(TasInputFrame {
+                p1_buttons: input.players[0].buttons,
+                p1_dpad: input.players[0].dpad,
+                p2_buttons: input.players[1].buttons,
+                p2_dpad: input.players[1].dpad,
+                ..TasInputFrame::default()
+            })
+        }
+        crate::emu_thread::TasExecutionProfile::DirectWsCartridge => {
+            if input.players[0].buttons & !0xFB != 0
+                || input.players[0].dpad & !0x0F != 0
+                || input.players[1..]
+                    .iter()
+                    .any(|player| *player != Default::default())
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+                || input.tilt_x_bits != 0
+                || input.tilt_y_bits != 0
+                || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
+            {
+                bail!("live input is outside the direct WonderSwan TAS profile");
+            }
+            Ok(TasInputFrame {
+                p1_buttons: input.players[0].buttons,
+                p1_dpad: input.players[0].dpad,
+                ..TasInputFrame::default()
+            })
+        }
+        crate::emu_thread::TasExecutionProfile::DirectPceHuCard
+        | crate::emu_thread::TasExecutionProfile::DirectPceCd => {
+            if input.players[0].buttons & !0x0F != 0
+                || input.players[0].dpad & !0x0F != 0
+                || input.players[1..]
+                    .iter()
+                    .any(|player| *player != Default::default())
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+                || input.tilt_x_bits != 0
+                || input.tilt_y_bits != 0
+                || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
+            {
+                bail!("live input is outside the direct PC Engine TAS profile");
+            }
+            Ok(p1)
+        }
+        crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard => {
+            if input.players[0].dpad & !0x0F != 0
+                || input.players[1..]
+                    .iter()
+                    .any(|player| *player != Default::default())
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+                || input.tilt_x_bits != 0
+                || input.tilt_y_bits != 0
+                || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
+            {
+                bail!("live input is outside the direct PC Engine six-button TAS profile");
+            }
+            Ok(p1)
+        }
     }
 }

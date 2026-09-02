@@ -565,7 +565,10 @@ fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
     assert_eq!(summary.frames, 1);
     let raw_final_state = expected_backend.encode_state_bytes()?;
     let replay_hash_state = expected_backend.encode_replay_hash_state_bytes()?;
-    assert_eq!(u32::from_le_bytes(raw_final_state[8..12].try_into()?), 13);
+    assert_eq!(
+        u32::from_le_bytes(raw_final_state[8..12].try_into()?),
+        zeff_gb_core::save_state::SAVE_STATE_FORMAT_VERSION
+    );
     assert_eq!(u32::from_le_bytes(replay_hash_state[8..12].try_into()?), 12);
     assert_eq!(summary.final_state_hash, sha256_hex(&replay_hash_state));
 

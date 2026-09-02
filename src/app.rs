@@ -282,7 +282,13 @@ pub(crate) fn run(
         #[cfg(not(target_arch = "wasm32"))]
         tas_control: tas_control::TasControlCoordinator::new(),
         #[cfg(not(target_arch = "wasm32"))]
+        tas_repair: tas_control::repair::TasRepairManager::new(),
+        #[cfg(not(target_arch = "wasm32"))]
         tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        tas_playback_scheduler: tas_control::realtime::TasPlaybackScheduler::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        tas_verified_replay_export: None,
         window_focused: true,
         game_window_focused: true,
         #[cfg(not(target_arch = "wasm32"))]
@@ -460,7 +466,13 @@ struct App {
     #[cfg(not(target_arch = "wasm32"))]
     tas_control: tas_control::TasControlCoordinator,
     #[cfg(not(target_arch = "wasm32"))]
+    tas_repair: tas_control::repair::TasRepairManager,
+    #[cfg(not(target_arch = "wasm32"))]
     tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder,
+    #[cfg(not(target_arch = "wasm32"))]
+    tas_playback_scheduler: tas_control::realtime::TasPlaybackScheduler,
+    #[cfg(not(target_arch = "wasm32"))]
+    tas_verified_replay_export: Option<tas_editor::VerifiedReplayExportCoordinator>,
     window_focused: bool,
     game_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]

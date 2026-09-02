@@ -4,6 +4,21 @@ use crate::emu_thread::{EmuResponse, FrameResult};
 use crate::platform::Instant;
 
 impl App {
+    pub(in crate::app) fn queue_emulator_audio(&mut self, samples: &[f32], playback_speed: usize) {
+        if let Some(audio) = &mut self.audio {
+            audio.queue_samples(
+                samples,
+                &crate::audio::AudioQueueConfig {
+                    master_volume: self.settings.audio.volume,
+                    playback_speed,
+                    mute_during_fast_forward: self.settings.audio.mute_during_fast_forward,
+                    low_pass_enabled: self.settings.audio.low_pass_enabled,
+                    low_pass_cutoff_hz: self.settings.audio.low_pass_cutoff_hz,
+                },
+            );
+        }
+    }
+
     pub(super) fn drain_emu_responses(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         self.reconcile_tas_control_project_binding();
@@ -31,7 +46,7 @@ impl App {
         loop {
             #[cfg(not(target_arch = "wasm32"))]
             let resp = match self.emu_thread.as_ref().map(|t| t.poll_response()) {
-                Some(crate::emu_thread::EmuResponsePoll::Response(response)) => response,
+                Some(crate::emu_thread::EmuResponsePoll::Response(response)) => *response,
                 Some(crate::emu_thread::EmuResponsePoll::Empty) | None => break,
                 Some(crate::emu_thread::EmuResponsePoll::Disconnected) => {
                     self.terminalize_tas_control_response_loss();
@@ -281,18 +296,7 @@ impl App {
             gamepad.set_rumble(result.rumble);
         }
 
-        if let Some(audio) = &mut self.audio {
-            audio.queue_samples(
-                &result.audio_samples,
-                &crate::audio::AudioQueueConfig {
-                    master_volume: self.settings.audio.volume,
-                    playback_speed: result.audio_playback_speed,
-                    mute_during_fast_forward: self.settings.audio.mute_during_fast_forward,
-                    low_pass_enabled: self.settings.audio.low_pass_enabled,
-                    low_pass_cutoff_hz: self.settings.audio.low_pass_cutoff_hz,
-                },
-            );
-        }
+        self.queue_emulator_audio(&result.audio_samples, result.audio_playback_speed);
 
         if let Some(recorder) = &mut self.recording.audio_recorder {
             recorder.write_samples(&result.audio_samples);
@@ -307,7 +311,10 @@ impl App {
         reusable_audio.clear();
         self.recycled.audio = Some(reusable_audio);
 
-        let mut ui_data = result.ui_data;
+        self.process_ui_frame_data(result.ui_data);
+    }
+
+    pub(in crate::app) fn process_ui_frame_data(&mut self, mut ui_data: crate::ui::UiFrameData) {
         if let Some(batch) = ui_data.instruction_trace.take() {
             self.debug_windows
                 .execution_coverage

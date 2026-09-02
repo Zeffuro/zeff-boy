@@ -27,7 +27,10 @@ impl EmuLoop {
     }
 
     pub(in crate::emu_thread::emu_loop) fn periodic_battery_flush_blocked(&self) -> bool {
-        self.tas_control.is_leased() || self.pending_tcp_link.is_some() || self.tcp_link.is_some()
+        self.tas_control.is_leased()
+            || self.tas_repair.identity.is_some()
+            || self.pending_tcp_link.is_some()
+            || self.tcp_link.is_some()
     }
 
     pub(in crate::emu_thread::emu_loop) fn prepare_tas_control_retirement(
@@ -37,8 +40,12 @@ impl EmuLoop {
             return Ok(());
         };
         let backend = &mut self.backend;
+        let persistence = self.tas_repair.identity.map_or(
+            crate::emu_thread::TasPersistenceContract::Absent,
+            |identity| identity.persistence,
+        );
         let response = self.tas_control.rollback(lease_id, |checkpoint| {
-            restore_backend_checkpoint(backend, checkpoint)
+            restore_backend_checkpoint(backend, checkpoint, persistence)
         });
         match response {
             EmuResponse::TasControlRolledBack { .. } => {
@@ -61,6 +68,12 @@ impl EmuLoop {
             if self.save_recovery_on_shutdown {
                 let _ = self.resp_tx.send(EmuResponse::RecoverySaveFailed(error));
             }
+            let _ = self.resp_tx.send(EmuResponse::ShutdownComplete);
+            return;
+        }
+        if self.tas_repair.identity.is_some() {
+            self.tas_repair.nonpersistent_exit_requested = true;
+            let _ = self.resp_tx.send(EmuResponse::SramFlushed(None));
             let _ = self.resp_tx.send(EmuResponse::ShutdownComplete);
             return;
         }

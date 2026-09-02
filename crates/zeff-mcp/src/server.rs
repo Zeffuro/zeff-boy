@@ -22,6 +22,7 @@ mod pair_gb_trade_fixture_route;
 mod pair_gb_trade_fixture_screen;
 mod pair_sequence;
 mod sequence;
+mod tas;
 
 struct LaunchOptions<'a> {
     release: bool,
@@ -150,10 +151,26 @@ impl Server {
             "zeff_load_state" => self.tool_load_state(args),
             "zeff_state_slot" => self.tool_state_slot(args),
             "zeff_replay" => self.tool_replay(args),
+            "zeff_tas_create" => self.tool_tas_create(args),
             "zeff_tas_open" => self.tool_tas_open(args),
             "zeff_tas_status" => self.call_live(json!({ "command": "tas_status" })),
+            "zeff_tas_select" => self.tool_tas_select(args),
+            "zeff_tas_select_range" => self.tool_tas_select_range(args),
+            "zeff_tas_delete_selected_frames" => {
+                self.call_live(json!({ "command": "tas_delete_selected_frames" }))
+            }
+            "zeff_tas_insert_neutral_frames" => self.tool_tas_insert_neutral_frames(args),
+            "zeff_tas_set_input" => self.tool_tas_set_input(args),
+            "zeff_tas_go_to_selection" => {
+                self.call_live(json!({ "command": "tas_go_to_selection" }))
+            }
+            "zeff_tas_fork_branch" => self.tool_tas_fork_branch(args),
+            "zeff_tas_recording" => self.tool_tas_recording(args),
+            "zeff_tas_playback" => self.tool_tas_playback(args),
             "zeff_tas_link" => self.tool_tas_link(args),
-            "zeff_tas_record_frame" => self.call_live(json!({ "command": "tas_record_frame" })),
+            "zeff_tas_connect" => self.tool_tas_link(args),
+            "zeff_tas_reload_game" => self.call_live(json!({ "command": "tas_reload_game" })),
+            "zeff_tas_record_frame" => self.tool_tas_record_frame(args),
             "zeff_tas_disconnect" => self.tool_tas_disconnect(args),
             "zeff_link" => self.tool_link(args),
             "zeff_memory" => self.tool_memory(args),
@@ -386,28 +403,6 @@ impl Server {
         }
     }
 
-    fn tool_tas_open(&self, args: &Value) -> anyhow::Result<Value> {
-        self.call_live(json!({
-            "command": "tas_open",
-            "path": required_string(args, "path")?,
-        }))
-    }
-
-    fn tool_tas_link(&self, args: &Value) -> anyhow::Result<Value> {
-        self.call_live(json!({
-            "command": "tas_link",
-            "at_end": optional_bool(args, "at_end").unwrap_or(false),
-            "record": optional_bool(args, "record").unwrap_or(false),
-        }))
-    }
-
-    fn tool_tas_disconnect(&self, args: &Value) -> anyhow::Result<Value> {
-        self.call_live(json!({
-            "command": "tas_disconnect",
-            "keep": optional_bool(args, "keep").unwrap_or(false),
-        }))
-    }
-
     fn tool_link(&self, args: &Value) -> anyhow::Result<Value> {
         let action = required_string(args, "action")?;
         let command = match normalized_action(&action).as_str() {
@@ -486,6 +481,45 @@ fn required_slot(args: &Value) -> anyhow::Result<u8> {
     }
 }
 
+fn is_tas_digital_control(control: &str) -> bool {
+    matches!(
+        normalized_action(control).as_str(),
+        "right"
+            | "left"
+            | "up"
+            | "down"
+            | "a"
+            | "b"
+            | "select"
+            | "start"
+            | "l"
+            | "r"
+            | "i"
+            | "ii"
+            | "iii"
+            | "iv"
+            | "v"
+            | "vi"
+            | "run"
+            | "d0"
+            | "d1"
+            | "d2"
+            | "d3"
+            | "d4"
+            | "d5"
+            | "d6"
+            | "d7"
+            | "b0"
+            | "b1"
+            | "b2"
+            | "b3"
+            | "b4"
+            | "b5"
+            | "b6"
+            | "b7"
+    )
+}
+
 fn zeff_boy_cargo_args(repo_root: &Path, release: bool) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("run"),
@@ -525,9 +559,21 @@ mod tests {
         assert!(names.contains(&"zeff_load_state".to_string()));
         assert!(names.contains(&"zeff_state_slot".to_string()));
         assert!(names.contains(&"zeff_replay".to_string()));
+        assert!(names.contains(&"zeff_tas_create".to_string()));
         assert!(names.contains(&"zeff_tas_open".to_string()));
         assert!(names.contains(&"zeff_tas_status".to_string()));
+        assert!(names.contains(&"zeff_tas_select".to_string()));
+        assert!(names.contains(&"zeff_tas_select_range".to_string()));
+        assert!(names.contains(&"zeff_tas_delete_selected_frames".to_string()));
+        assert!(names.contains(&"zeff_tas_insert_neutral_frames".to_string()));
+        assert!(names.contains(&"zeff_tas_set_input".to_string()));
+        assert!(names.contains(&"zeff_tas_go_to_selection".to_string()));
+        assert!(names.contains(&"zeff_tas_fork_branch".to_string()));
+        assert!(names.contains(&"zeff_tas_recording".to_string()));
+        assert!(names.contains(&"zeff_tas_playback".to_string()));
         assert!(names.contains(&"zeff_tas_link".to_string()));
+        assert!(names.contains(&"zeff_tas_connect".to_string()));
+        assert!(names.contains(&"zeff_tas_reload_game".to_string()));
         assert!(names.contains(&"zeff_tas_record_frame".to_string()));
         assert!(names.contains(&"zeff_tas_disconnect".to_string()));
         assert!(names.contains(&"zeff_link".to_string()));
@@ -540,6 +586,188 @@ mod tests {
         assert!(names.contains(&"zeff_pair_gb_trade_fixture".to_string()));
         assert!(names.contains(&"zeff_pair_stop".to_string()));
         assert!(names.contains(&"zeff_stop".to_string()));
+    }
+
+    #[test]
+    fn tas_record_frame_advertises_replace_and_insert_modes() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "zeff_tas_record_frame")
+            .expect("TAS record tool must be advertised");
+        assert_eq!(
+            tool["inputSchema"]["properties"]["mode"]["default"],
+            "replace"
+        );
+        assert_eq!(
+            tool["inputSchema"]["properties"]["mode"]["enum"],
+            json!(["replace", "insert"])
+        );
+    }
+
+    #[test]
+    fn tas_create_requires_a_path_and_explicit_replacement() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "zeff_tas_create")
+            .expect("TAS create tool must be advertised");
+        assert_eq!(tool["inputSchema"]["required"], json!(["path"]));
+        assert_eq!(
+            tool["inputSchema"]["properties"]["replace_existing"]["default"],
+            false
+        );
+    }
+
+    #[test]
+    fn tas_go_to_selection_has_an_empty_schema() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "zeff_tas_go_to_selection")
+            .expect("TAS go-to-selection tool must be advertised");
+        assert_eq!(
+            tool["inputSchema"],
+            json!({ "type": "object", "properties": {} })
+        );
+    }
+
+    #[test]
+    fn tas_range_edit_tools_advertise_half_open_bounded_inputs() {
+        let tools = tools();
+        let select = tools
+            .iter()
+            .find(|tool| tool["name"] == "zeff_tas_select_range")
+            .expect("TAS range selection tool must be advertised");
+        assert_eq!(select["inputSchema"]["required"], json!(["start", "end"]));
+        assert!(
+            select["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("[start, end)"))
+        );
+
+        let delete = tools
+            .iter()
+            .find(|tool| tool["name"] == "zeff_tas_delete_selected_frames")
+            .expect("TAS range deletion tool must be advertised");
+        assert_eq!(
+            delete["inputSchema"],
+            json!({ "type": "object", "properties": {} })
+        );
+
+        let insert = tools
+            .iter()
+            .find(|tool| tool["name"] == "zeff_tas_insert_neutral_frames")
+            .expect("TAS neutral insertion tool must be advertised");
+        assert_eq!(
+            insert["inputSchema"]["required"],
+            json!(["boundary", "count"])
+        );
+        assert_eq!(insert["inputSchema"]["properties"]["count"]["minimum"], 1);
+        assert_eq!(
+            insert["inputSchema"]["properties"]["count"]["maximum"],
+            1_000_000_000_u64
+        );
+    }
+
+    #[test]
+    fn tas_set_input_advertises_absolute_bounded_input() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "zeff_tas_set_input")
+            .expect("TAS input tool must be advertised");
+        assert_eq!(
+            tool["inputSchema"]["required"],
+            json!(["frame", "control", "pressed"])
+        );
+        assert_eq!(tool["inputSchema"]["properties"]["player"]["minimum"], 1);
+        assert_eq!(tool["inputSchema"]["properties"]["player"]["maximum"], 5);
+        assert_eq!(
+            tool["inputSchema"]["properties"]["frame"]["maximum"],
+            999_999_999_u64
+        );
+        assert!(
+            tool["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("no-op"))
+        );
+    }
+
+    #[test]
+    fn tas_range_edit_routes_reject_invalid_arguments_before_live_control() {
+        let server = Server::new();
+        assert!(
+            server
+                .tool_tas_select_range(&json!({ "start": 7, "end": 7 }))
+                .unwrap_err()
+                .to_string()
+                .contains("start < end")
+        );
+        assert!(
+            server
+                .tool_tas_insert_neutral_frames(&json!({ "boundary": 7, "count": 0 }))
+                .unwrap_err()
+                .to_string()
+                .contains("between 1 and 1000000000")
+        );
+        assert!(
+            server
+                .tool_tas_set_input(
+                    &json!({ "frame": 7, "player": 6, "control": "a", "pressed": true })
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("player must be 1 through 5")
+        );
+        assert!(
+            server
+                .tool_tas_set_input(&json!({ "frame": 7, "control": "unknown", "pressed": true }))
+                .unwrap_err()
+                .to_string()
+                .contains("unknown TAS digital control")
+        );
+    }
+
+    #[test]
+    fn tas_fork_branch_requires_an_id() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "zeff_tas_fork_branch")
+            .expect("TAS branch tool must be advertised");
+        assert_eq!(tool["inputSchema"]["required"], json!(["id"]));
+    }
+
+    #[test]
+    fn tas_recording_advertises_start_and_stop_actions() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "zeff_tas_recording")
+            .expect("TAS recording tool must be advertised");
+        assert_eq!(
+            tool["inputSchema"]["properties"]["action"]["enum"],
+            json!(["start", "stop"])
+        );
+    }
+
+    #[test]
+    fn tas_reload_and_restore_descriptions_publish_transactional_rollback() {
+        let tools = tools();
+        let reload = tools
+            .iter()
+            .find(|tool| tool["name"] == "zeff_tas_reload_game")
+            .expect("TAS reload tool must be advertised");
+        assert!(reload["description"].as_str().is_some_and(|description| {
+            description.contains("park the current game")
+                && description.contains("restores the exact parked game")
+        }));
+        let disconnect = tools
+            .iter()
+            .find(|tool| tool["name"] == "zeff_tas_disconnect")
+            .expect("TAS disconnect tool must be advertised");
+        assert!(
+            disconnect["description"]
+                .as_str()
+                .is_some_and(|description| {
+                    description.contains("exact parked pre-reload game")
+                })
+        );
     }
 
     #[test]

@@ -228,6 +228,8 @@ impl App {
                             }
                         }
                         MenuAction::ResetGame => self.reset_game(),
+                        #[cfg(not(target_arch = "wasm32"))]
+                        MenuAction::ReloadGame => self.reload_game(),
                         MenuAction::StopGame => self.stop_game(),
                         MenuAction::SaveStateFile => self.save_state_file_dialog(),
                         MenuAction::LoadStateFile => self.load_state_file_dialog(),

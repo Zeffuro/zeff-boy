@@ -2,9 +2,14 @@ use super::super::support::tas_nes_test_loop;
 use super::{acquire, advance_request, advance_request_in_segment, completed_proof, request};
 use crate::emu_thread::{
     EmuCommand, EmuResponse, TasExecutionRejectedReason as Rejected,
-    TasFrameAdvanceRejectedReason as AdvanceRejected, TasInputFrame,
+    TasFrameAdvanceRejectedReason as AdvanceRejected, TasFrameAdvanceSnapshot, TasInputFrame,
 };
 use crate::tas_project::TasDigest;
+
+mod advance_failures;
+mod cache;
+mod segments;
+mod zapper;
 
 #[test]
 fn direct_nes_run_executes_exact_prefix_and_rollback_restores_checkpoint() {
@@ -77,6 +82,198 @@ fn direct_nes_run_executes_exact_prefix_and_rollback_restores_checkpoint() {
         } if actual_lease == lease_id
     ));
     assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), checkpoint);
+}
+
+#[test]
+fn direct_nes_zero_boundary_restores_start_state_and_completes() {
+    let (mut emu_loop, responses) = tas_nes_test_loop();
+    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
+    emu_loop.backend.step_frame();
+    assert_ne!(emu_loop.backend.encode_state_bytes().unwrap(), start_state);
+
+    assert!(emu_loop.handle_command(request(lease_id, 1, start_state.clone(), Vec::new(),)));
+    assert!(matches!(
+        responses.recv().unwrap(),
+        EmuResponse::TasExecutionCompleted {
+            lease_id: actual_lease_id,
+            run_id: 1,
+            segment_id: 1,
+            segment_frame_count: 0,
+            executed_project_frames: 0,
+            frame_count: 0,
+            state_sha256,
+            ..
+        } if actual_lease_id == lease_id && state_sha256 == TasDigest::from_bytes(&start_state)
+    ));
+    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), start_state);
+}
+
+#[test]
+fn silent_positioning_audio_does_not_leak_into_the_next_live_frame() {
+    let (mut emu_loop, responses) = tas_nes_test_loop();
+    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
+    let prefix = vec![TasInputFrame::default(); 8];
+    let live_input = TasInputFrame {
+        p1_buttons: 1,
+        ..TasInputFrame::default()
+    };
+
+    let (mut expected_loop, _) = tas_nes_test_loop();
+    expected_loop
+        .backend
+        .load_state_from_bytes(start_state.clone())
+        .unwrap();
+    for input in &prefix {
+        expected_loop
+            .backend
+            .apply_replay_input(&zeff_emu_common::replay::ReplayJoypadFrame {
+                buttons: input.p1_buttons,
+                dpad: input.p1_dpad,
+                buttons_p2: input.p2_buttons,
+                dpad_p2: input.p2_dpad,
+                ..Default::default()
+            });
+        expected_loop.backend.step_frame();
+    }
+    let mut silent_positioning_audio = Vec::new();
+    expected_loop
+        .backend
+        .drain_audio_samples_into(&mut silent_positioning_audio);
+    assert!(!silent_positioning_audio.is_empty());
+    expected_loop
+        .backend
+        .apply_replay_input(&zeff_emu_common::replay::ReplayJoypadFrame {
+            buttons: live_input.p1_buttons,
+            dpad: live_input.p1_dpad,
+            buttons_p2: live_input.p2_buttons,
+            dpad_p2: live_input.p2_dpad,
+            ..Default::default()
+        });
+    expected_loop.backend.step_frame();
+    let mut expected_live_audio = Vec::new();
+    expected_loop
+        .backend
+        .drain_audio_samples_into(&mut expected_live_audio);
+
+    assert!(emu_loop.handle_command(request(lease_id, 1, start_state, prefix,)));
+    let (frame_count, state_sha256) = completed_proof(responses.recv().unwrap(), lease_id, 1);
+    assert!(emu_loop.handle_command(advance_request(
+        lease_id,
+        1,
+        1,
+        frame_count,
+        state_sha256,
+        live_input,
+    )));
+    let actual_live_audio = match responses.recv().unwrap() {
+        EmuResponse::TasFrameAdvanced { audio_samples, .. } => audio_samples,
+        _ => panic!("unexpected frame-advance response"),
+    };
+
+    assert_eq!(actual_live_audio, expected_live_audio);
+}
+
+#[test]
+fn accepted_live_frame_captures_the_requested_debug_snapshot() {
+    let (mut emu_loop, responses) = tas_nes_test_loop();
+    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
+    assert!(emu_loop.handle_command(request(
+        lease_id,
+        1,
+        start_state,
+        vec![TasInputFrame::default()],
+    )));
+    let (frame_count, state_sha256) = completed_proof(responses.recv().unwrap(), lease_id, 1);
+    let mut frame_input = super::super::support::frame_input(0);
+    frame_input.snapshot.want_debug_info = true;
+    let mut command = advance_request(
+        lease_id,
+        1,
+        1,
+        frame_count,
+        state_sha256,
+        TasInputFrame::default(),
+    );
+    let EmuCommand::AdvanceTasControl(request) = &mut command else {
+        unreachable!();
+    };
+    request.snapshot = Some(TasFrameAdvanceSnapshot {
+        request: frame_input.snapshot,
+        buffers: frame_input.buffers,
+    });
+
+    assert!(emu_loop.handle_command(command));
+    match responses.recv().unwrap() {
+        EmuResponse::TasFrameAdvanced {
+            ui_data: Some(ui_data),
+            ..
+        } => assert!(ui_data.cpu_debug.is_some()),
+        _ => panic!("expected a TAS frame response with debug data"),
+    }
+}
+
+#[test]
+fn repeated_exact_boundary_uses_worker_cache_and_rollback_keeps_original_checkpoint() {
+    let (mut emu_loop, responses) = tas_nes_test_loop();
+    let checkpoint = emu_loop.backend.encode_state_bytes().unwrap();
+    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
+    let input = vec![TasInputFrame {
+        p1_buttons: 0x01,
+        ..TasInputFrame::default()
+    }];
+
+    assert!(emu_loop.handle_command(request(lease_id, 1, start_state.clone(), input.clone(),)));
+    let first_state_sha256 = match responses.recv().unwrap() {
+        EmuResponse::TasExecutionCompleted {
+            run_id: 1,
+            segment_frame_count: 1,
+            executed_project_frames: 1,
+            state_sha256,
+            ..
+        } => state_sha256,
+        _ => panic!("unexpected first execution response"),
+    };
+
+    assert!(emu_loop.handle_command(request(lease_id, 2, start_state, input)));
+    assert!(matches!(
+        responses.recv().unwrap(),
+        EmuResponse::TasExecutionCompleted {
+            run_id: 2,
+            segment_id: 1,
+            segment_frame_count: 0,
+            executed_project_frames: 1,
+            state_sha256,
+            ..
+        } if state_sha256 == first_state_sha256
+    ));
+
+    assert!(emu_loop.handle_command(EmuCommand::RollbackTasControl { lease_id }));
+    assert!(matches!(
+        responses.recv().unwrap(),
+        EmuResponse::TasControlRolledBack { .. }
+    ));
+    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), checkpoint);
+}
+
+#[test]
+fn execution_rejects_a_cache_proof_that_does_not_match_the_bounded_prefix_shape() {
+    let (mut emu_loop, responses) = tas_nes_test_loop();
+    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
+    let mut command = request(lease_id, 1, start_state, vec![TasInputFrame::default()]);
+    let EmuCommand::ExecuteTasControl(request) = &mut command else {
+        unreachable!();
+    };
+    request.cache_proof.target_cursor = 2;
+
+    assert!(emu_loop.handle_command(command));
+    assert!(matches!(
+        responses.recv().unwrap(),
+        EmuResponse::TasExecutionRejected {
+            reason: Rejected::InvalidCacheProof,
+            ..
+        }
+    ));
+    assert!(emu_loop.tas_control.is_leased());
 }
 
 #[test]
@@ -255,12 +452,12 @@ fn failed_repeated_run_poison_requires_rollback() {
         EmuResponse::TasExecutionCompleted { run_id: 1, .. }
     ));
 
-    assert!(emu_loop.handle_command(request(lease_id, 2, start_state.clone(), Vec::new())));
+    assert!(emu_loop.handle_command(request(lease_id, 2, Vec::new(), vec![Default::default()],)));
     assert!(matches!(
         responses.recv().unwrap(),
         EmuResponse::TasExecutionRejected {
             run_id: 2,
-            reason: Rejected::EmptyInputPrefix,
+            reason: Rejected::InvalidStartState,
             ..
         }
     ));
@@ -292,14 +489,14 @@ fn failed_repeated_run_poison_requires_rollback() {
 #[test]
 fn malformed_execution_is_typed_and_remains_leased_for_rollback() {
     let (mut emu_loop, responses) = tas_nes_test_loop();
-    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
-    assert!(emu_loop.handle_command(request(lease_id, 1, start_state, Vec::new())));
+    let (lease_id, _) = acquire(&mut emu_loop, &responses);
+    assert!(emu_loop.handle_command(request(lease_id, 1, Vec::new(), vec![Default::default()],)));
     assert!(matches!(
         responses.recv().unwrap(),
         EmuResponse::TasExecutionRejected {
             requested_lease_id,
             run_id: 1,
-            reason: Rejected::EmptyInputPrefix,
+            reason: Rejected::InvalidStartState,
             ..
         } if requested_lease_id == lease_id
     ));
@@ -403,17 +600,21 @@ fn one_frame_advance_updates_exact_candidate_and_commit_preserves_it() {
         state_sha256,
         next_input,
     )));
-    let advanced_sha256 = match responses.recv().unwrap() {
+    let (advanced_sha256, audio_samples) = match responses.recv().unwrap() {
         EmuResponse::TasFrameAdvanced {
             lease_id: actual_lease_id,
             run_id: actual_run_id,
             advance_id: 1,
             frame_count: 2,
             state_sha256,
+            audio_samples,
             ..
-        } if actual_lease_id == lease_id && actual_run_id == run_id => state_sha256,
+        } if actual_lease_id == lease_id && actual_run_id == run_id => {
+            (state_sha256, audio_samples)
+        }
         _ => panic!("unexpected frame-advance response"),
     };
+    assert!(!audio_samples.is_empty());
     assert!(emu_loop.tas_control.is_leased());
     assert_eq!(emu_loop.backend.frame_count(), 2);
     assert_eq!(
@@ -477,416 +678,4 @@ fn one_frame_advance_updates_exact_candidate_and_commit_preserves_it() {
         emu_loop.backend.encode_state_bytes().unwrap(),
         expected_final_state
     );
-}
-
-#[test]
-fn frame_advance_rejects_wrong_tokens_proof_and_nonsequential_ids_without_mutation() {
-    let (mut emu_loop, responses) = tas_nes_test_loop();
-    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
-    let run_id = 1;
-    assert!(emu_loop.handle_command(request(
-        lease_id,
-        run_id,
-        start_state,
-        vec![Default::default()],
-    )));
-    let (frame_count, state_sha256) = completed_proof(responses.recv().unwrap(), lease_id, run_id);
-    let candidate = emu_loop.backend.encode_state_bytes().unwrap();
-    let cases = [
-        (
-            advance_request(
-                lease_id + 1,
-                run_id,
-                1,
-                frame_count,
-                state_sha256,
-                Default::default(),
-            ),
-            AdvanceRejected::WrongLease {
-                active_lease_id: lease_id,
-            },
-            lease_id + 1,
-            run_id,
-            1,
-        ),
-        (
-            advance_request(
-                lease_id,
-                run_id + 1,
-                1,
-                frame_count,
-                state_sha256,
-                Default::default(),
-            ),
-            AdvanceRejected::WrongRun {
-                active_run_id: run_id,
-            },
-            lease_id,
-            run_id + 1,
-            1,
-        ),
-        (
-            advance_request(
-                lease_id,
-                run_id,
-                0,
-                frame_count,
-                state_sha256,
-                Default::default(),
-            ),
-            AdvanceRejected::InvalidAdvanceId,
-            lease_id,
-            run_id,
-            0,
-        ),
-        (
-            advance_request(
-                lease_id,
-                run_id,
-                2,
-                frame_count,
-                state_sha256,
-                Default::default(),
-            ),
-            AdvanceRejected::UnexpectedAdvanceId {
-                expected_advance_id: 1,
-            },
-            lease_id,
-            run_id,
-            2,
-        ),
-        (
-            advance_request_in_segment(
-                lease_id,
-                run_id,
-                1,
-                (1, 1, 1),
-                (frame_count + 1, state_sha256),
-                Default::default(),
-            ),
-            AdvanceRejected::CandidateProofMismatch,
-            lease_id,
-            run_id,
-            1,
-        ),
-        (
-            advance_request_in_segment(
-                lease_id,
-                run_id,
-                1,
-                (2, 1, 1),
-                (frame_count, state_sha256),
-                Default::default(),
-            ),
-            AdvanceRejected::UnexpectedSegmentId {
-                expected_segment_id: 1,
-            },
-            lease_id,
-            run_id,
-            1,
-        ),
-        (
-            advance_request_in_segment(
-                lease_id,
-                run_id,
-                1,
-                (1, 0, 1),
-                (frame_count, state_sha256),
-                Default::default(),
-            ),
-            AdvanceRejected::SegmentProofMismatch,
-            lease_id,
-            run_id,
-            1,
-        ),
-        (
-            advance_request_in_segment(
-                lease_id,
-                run_id,
-                1,
-                (1, 1, 2),
-                (frame_count, state_sha256),
-                Default::default(),
-            ),
-            AdvanceRejected::SegmentProofMismatch,
-            lease_id,
-            run_id,
-            1,
-        ),
-    ];
-    for (command, expected_reason, expected_lease_id, expected_run_id, expected_advance_id) in cases
-    {
-        assert!(emu_loop.handle_command(command));
-        assert!(matches!(
-            responses.recv().unwrap(),
-            EmuResponse::TasFrameAdvanceRejected {
-                requested_lease_id,
-                run_id,
-                advance_id,
-                reason,
-                ..
-            } if requested_lease_id == expected_lease_id
-                && run_id == expected_run_id
-                && advance_id == expected_advance_id
-                && reason == expected_reason
-        ));
-        assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), candidate);
-    }
-
-    assert!(emu_loop.handle_command(advance_request(
-        lease_id,
-        run_id,
-        1,
-        frame_count,
-        state_sha256,
-        Default::default(),
-    )));
-    let (advanced_frame_count, advanced_sha256) = match responses.recv().unwrap() {
-        EmuResponse::TasFrameAdvanced {
-            frame_count,
-            state_sha256,
-            ..
-        } => (frame_count, state_sha256),
-        _ => panic!("unexpected frame-advance response"),
-    };
-    let advanced = emu_loop.backend.encode_state_bytes().unwrap();
-    for advance_id in [1, 3] {
-        assert!(emu_loop.handle_command(advance_request(
-            lease_id,
-            run_id,
-            advance_id,
-            advanced_frame_count,
-            advanced_sha256,
-            Default::default(),
-        )));
-        assert!(matches!(
-            responses.recv().unwrap(),
-            EmuResponse::TasFrameAdvanceRejected {
-                reason: AdvanceRejected::UnexpectedAdvanceId {
-                    expected_advance_id: 2
-                },
-                ..
-            }
-        ));
-        assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), advanced);
-    }
-}
-
-#[test]
-fn frame_advance_requires_an_existing_completed_candidate() {
-    let (mut emu_loop, responses) = tas_nes_test_loop();
-    let digest = TasDigest::from_bytes(&[]);
-    assert!(emu_loop.handle_command(advance_request(1, 1, 1, 0, digest, Default::default(),)));
-    assert!(matches!(
-        responses.recv().unwrap(),
-        EmuResponse::TasFrameAdvanceRejected {
-            reason: AdvanceRejected::NoActiveLease,
-            ..
-        }
-    ));
-
-    let (lease_id, _) = acquire(&mut emu_loop, &responses);
-    assert!(emu_loop.handle_command(advance_request(
-        lease_id,
-        1,
-        1,
-        0,
-        digest,
-        Default::default(),
-    )));
-    assert!(matches!(
-        responses.recv().unwrap(),
-        EmuResponse::TasFrameAdvanceRejected {
-            reason: AdvanceRejected::NoCompletedExecution,
-            ..
-        }
-    ));
-    assert!(emu_loop.tas_control.is_leased());
-}
-
-#[test]
-fn candidate_tampering_rejects_advance_and_rollback_restores_checkpoint() {
-    let (mut emu_loop, responses) = tas_nes_test_loop();
-    let checkpoint = emu_loop.backend.encode_state_bytes().unwrap();
-    let checkpoint_sha256 = TasDigest::from_bytes(&checkpoint);
-    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
-    let run_id = 1;
-    assert!(emu_loop.handle_command(request(
-        lease_id,
-        run_id,
-        start_state,
-        vec![Default::default()],
-    )));
-    let (frame_count, state_sha256) = completed_proof(responses.recv().unwrap(), lease_id, run_id);
-    assert!(emu_loop.handle_command(advance_request(
-        lease_id,
-        run_id,
-        1,
-        frame_count,
-        state_sha256,
-        TasInputFrame {
-            p1_buttons: 0x40,
-            ..Default::default()
-        },
-    )));
-    let (frame_count, state_sha256) = match responses.recv().unwrap() {
-        EmuResponse::TasFrameAdvanced {
-            advance_id: 1,
-            frame_count,
-            state_sha256,
-            ..
-        } => (frame_count, state_sha256),
-        _ => panic!("unexpected frame-advance response"),
-    };
-    emu_loop.backend.step_frame();
-    let tampered = emu_loop.backend.encode_state_bytes().unwrap();
-
-    assert!(emu_loop.handle_command(advance_request(
-        lease_id,
-        run_id,
-        2,
-        frame_count,
-        state_sha256,
-        Default::default(),
-    )));
-    assert!(matches!(
-        responses.recv().unwrap(),
-        EmuResponse::TasFrameAdvanceRejected {
-            reason: AdvanceRejected::CandidateStateDigestMismatch,
-            ..
-        }
-    ));
-    assert!(emu_loop.tas_control.is_leased());
-    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), tampered);
-
-    assert!(emu_loop.handle_command(EmuCommand::RollbackTasControl { lease_id }));
-    assert!(matches!(
-        responses.recv().unwrap(),
-        EmuResponse::TasControlRolledBack {
-            lease_id: actual_lease_id,
-            restored_state_sha256,
-            frame_count: 0,
-        } if actual_lease_id == lease_id && restored_state_sha256 == checkpoint_sha256
-    ));
-    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), checkpoint);
-}
-
-#[test]
-fn frame_601_atomically_starts_segment_two_and_keeps_advance_ids_global() {
-    let (mut emu_loop, responses) = tas_nes_test_loop();
-    let checkpoint = emu_loop.backend.encode_state_bytes().unwrap();
-    let (lease_id, start_state) = acquire(&mut emu_loop, &responses);
-    let run_id = 1;
-    assert!(emu_loop.handle_command(request(
-        lease_id,
-        run_id,
-        start_state,
-        vec![Default::default(); crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES as usize],
-    )));
-    let (frame_count, state_sha256) = match responses.recv().unwrap() {
-        EmuResponse::TasExecutionCompleted {
-            lease_id: actual_lease_id,
-            run_id: actual_run_id,
-            segment_id: 1,
-            segment_frame_count,
-            executed_project_frames,
-            frame_count,
-            state_sha256,
-            ..
-        } if actual_lease_id == lease_id
-            && actual_run_id == run_id
-            && segment_frame_count == crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES
-            && executed_project_frames == crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES =>
-        {
-            (frame_count, state_sha256)
-        }
-        _ => panic!("unexpected execution response"),
-    };
-    let candidate = emu_loop.backend.encode_state_bytes().unwrap();
-
-    assert!(emu_loop.handle_command(advance_request(
-        lease_id,
-        run_id,
-        1,
-        frame_count,
-        state_sha256,
-        Default::default(),
-    )));
-    assert!(matches!(
-        responses.recv().unwrap(),
-        EmuResponse::TasFrameAdvanceRejected {
-            reason: AdvanceRejected::UnexpectedSegmentId {
-                expected_segment_id: 2,
-            },
-            ..
-        }
-    ));
-    assert!(emu_loop.tas_control.is_leased());
-    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), candidate);
-
-    assert!(emu_loop.handle_command(advance_request_in_segment(
-        lease_id,
-        run_id,
-        1,
-        (
-            2,
-            crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES,
-            crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES,
-        ),
-        (frame_count, state_sha256),
-        Default::default(),
-    )));
-    let (frame_count, state_sha256) = match responses.recv().unwrap() {
-        EmuResponse::TasFrameAdvanced {
-            lease_id: actual_lease_id,
-            run_id: actual_run_id,
-            advance_id: 1,
-            segment_id: 2,
-            segment_frame_count: 1,
-            executed_project_frames,
-            frame_count,
-            state_sha256,
-            ..
-        } if actual_lease_id == lease_id
-            && actual_run_id == run_id
-            && executed_project_frames
-                == crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES + 1 =>
-        {
-            (frame_count, state_sha256)
-        }
-        _ => panic!("unexpected frame-advance response"),
-    };
-    assert!(emu_loop.handle_command(advance_request_in_segment(
-        lease_id,
-        run_id,
-        2,
-        (
-            2,
-            1,
-            crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES + 1,
-        ),
-        (frame_count, state_sha256),
-        Default::default(),
-    )));
-    assert!(matches!(
-        responses.recv().unwrap(),
-        EmuResponse::TasFrameAdvanced {
-            advance_id: 2,
-            segment_id: 2,
-            segment_frame_count: 2,
-            executed_project_frames,
-            ..
-        } if executed_project_frames
-            == crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES + 2
-    ));
-
-    assert!(emu_loop.handle_command(EmuCommand::RollbackTasControl { lease_id }));
-    assert!(matches!(
-        responses.recv().unwrap(),
-        EmuResponse::TasControlRolledBack {
-            lease_id: actual_lease_id,
-            ..
-        } if actual_lease_id == lease_id
-    ));
-    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), checkpoint);
 }

@@ -20,6 +20,29 @@ fn acquire(emu_loop: &mut super::super::EmuLoop, request_id: u64) {
 }
 
 #[test]
+fn tas_readiness_inspection_is_non_mutating_and_structured() {
+    let (mut emu_loop, responses) = tas_nes_test_loop();
+    let before = emu_loop.backend.encode_state_bytes().unwrap();
+
+    assert!(emu_loop.handle_command(EmuCommand::InspectTasReadiness {
+        request_id: 39,
+        profile: TasExecutionProfile::DirectNesCartridge,
+    }));
+
+    let observation = match responses.recv().unwrap() {
+        EmuResponse::TasReadinessObserved {
+            request_id: 39,
+            observation,
+        } => observation,
+        _ => panic!("unexpected TAS readiness response"),
+    };
+    assert_eq!(observation.profile, TasExecutionProfile::DirectNesCartridge);
+    assert_eq!(observation.system, crate::emu_backend::ActiveSystem::Nes);
+    assert_eq!(observation.current_sample_rate, Some(48_000));
+    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), before);
+}
+
+#[test]
 fn tas_control_lease_is_exclusive_non_mutating_and_token_checked() {
     let (mut emu_loop, responses) = tas_nes_test_loop();
     let before = emu_loop.backend.encode_state_bytes().unwrap();
@@ -464,6 +487,13 @@ fn tas_control_commands_observe_fifo_worker_order() {
             profile: crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
             lease_id,
             run_id: 1,
+            intermediate_cache_proofs: Vec::new(),
+            cache_proof: crate::emu_thread::TasExecutionCacheProof {
+                sync_identity_sha256: crate::tas_project::TasDigest([0x93; 32]),
+                branch_prefix_sha256: crate::tas_project::TasDigest([0x94; 32]),
+                target_cursor: 1,
+            },
+            predecessor_window: None,
             start_state_bytes: start_state,
             input_prefix: vec![crate::emu_thread::TasInputFrame::default()],
         },

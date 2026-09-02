@@ -56,6 +56,25 @@ fn paste_at_cursor(state: &TasEditorWindowState) -> TasEditorAction {
     ))
 }
 
+fn insert_at_cursor(state: &TasEditorWindowState) -> TasEditorAction {
+    let session = state.session.as_ref().unwrap();
+    TasEditorAction::InputClipboard(input_clipboard::TasInputClipboardAction::insert_at_cursor(
+        session.project_content_sha256(),
+        session.selected_branch_id().to_owned(),
+        session
+            .project()
+            .branch_movie_sha256(session.selected_branch_id())
+            .unwrap(),
+        session.cursor(),
+        state.input_clipboard.generation(),
+    ))
+}
+
+fn selected_input_range(state: &mut TasEditorWindowState) -> Option<(u64, u64)> {
+    let session = state.session.as_ref().unwrap();
+    state.timeline_selection.selected_range(session)
+}
+
 fn paste_with(
     project_sha256: TasDigest,
     branch_id: String,
@@ -151,6 +170,174 @@ fn paste_is_fixed_length_and_rejects_a_stale_cursor_without_history() {
     assert_eq!(
         state.session.as_ref().unwrap().project().encode().unwrap(),
         before
+    );
+}
+
+#[test]
+fn linked_paste_reconstructs_once_after_the_complete_changed_range() {
+    let (_root, mut state) = tests::state_with_project(5);
+    let pressed = input(1);
+    set_input(&mut state, 0, 2, pressed);
+    state.reduce(copy_constant(&state, 0, 2, pressed)).unwrap();
+    state.reduce(TasEditorAction::SelectCursor(3)).unwrap();
+    state.set_live_status(TasEditorLiveStatus::Linked {
+        cursor: 1,
+        recording_available: true,
+    });
+
+    state.reduce(paste_at_cursor(&state)).unwrap();
+    assert_eq!(
+        state.take_pending_host_request(),
+        Some(TasEditorHostRequest::Live(
+            TasEditorLiveAction::ReconstructAfterEdit { start: 3, end: 5 }
+        ))
+    );
+
+    state.reduce(paste_at_cursor(&state)).unwrap();
+    assert_eq!(state.take_pending_host_request(), None);
+}
+
+#[test]
+fn timeline_selection_is_contiguous_and_clamps_an_end_anchor() {
+    let (_root, mut state) = tests::state_with_project(6);
+
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: 2,
+            extend_selection: false,
+        })
+        .unwrap();
+    assert_eq!(selected_input_range(&mut state), Some((2, 3)));
+
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: 5,
+            extend_selection: true,
+        })
+        .unwrap();
+    assert_eq!(selected_input_range(&mut state), Some((2, 6)));
+
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: 1,
+            extend_selection: true,
+        })
+        .unwrap();
+    assert_eq!(selected_input_range(&mut state), Some((1, 3)));
+
+    state
+        .reduce(TasEditorAction::ClearTimelineSelection)
+        .unwrap();
+    assert_eq!(selected_input_range(&mut state), Some((1, 2)));
+
+    state.reduce(TasEditorAction::SelectCursor(6)).unwrap();
+    state
+        .reduce(TasEditorAction::ClearTimelineSelection)
+        .unwrap();
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: 4,
+            extend_selection: true,
+        })
+        .unwrap();
+    assert_eq!(selected_input_range(&mut state), Some((4, 6)));
+}
+
+#[test]
+fn copied_frames_can_be_deleted_reinserted_and_undone_exactly() {
+    let (_root, mut state) = tests::state_with_project(6);
+    let first = input(1);
+    let second = input(2);
+    let third = input(4);
+    set_input(&mut state, 1, 1, first);
+    set_input(&mut state, 2, 1, second);
+    set_input(&mut state, 3, 1, third);
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: 1,
+            extend_selection: false,
+        })
+        .unwrap();
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: 3,
+            extend_selection: true,
+        })
+        .unwrap();
+    let original_movie = {
+        let session = state.session.as_ref().unwrap();
+        session.project().branch_movie_sha256("main").unwrap()
+    };
+    let copied = {
+        let session = state.session.as_ref().unwrap();
+        session.selected_branch().input_pattern(1, 3).unwrap()
+    };
+    let session = state.session.as_ref().unwrap();
+    let copy = input_clipboard::TasInputClipboardAction::copy_selection(
+        session.project_content_sha256(),
+        "main".to_owned(),
+        session.project().branch_movie_sha256("main").unwrap(),
+        1,
+        copied,
+        (1, 4),
+    );
+    state.reduce(TasEditorAction::InputClipboard(copy)).unwrap();
+
+    state
+        .reduce(TasEditorAction::DeleteFrames { start: 1, count: 3 })
+        .unwrap();
+    assert_eq!(
+        state
+            .session
+            .as_ref()
+            .unwrap()
+            .selected_branch()
+            .frame_count(),
+        3
+    );
+    state.reduce(TasEditorAction::SelectCursor(1)).unwrap();
+    state.reduce(insert_at_cursor(&state)).unwrap();
+    assert_eq!(
+        state
+            .session
+            .as_ref()
+            .unwrap()
+            .selected_branch()
+            .frame_count(),
+        6
+    );
+    assert_eq!(
+        state
+            .session
+            .as_ref()
+            .unwrap()
+            .project()
+            .branch_movie_sha256("main")
+            .unwrap(),
+        original_movie
+    );
+    assert_eq!(selected_input_range(&mut state), Some((1, 4)));
+
+    state.reduce(TasEditorAction::Undo).unwrap();
+    assert_eq!(
+        state
+            .session
+            .as_ref()
+            .unwrap()
+            .selected_branch()
+            .frame_count(),
+        3
+    );
+    state.reduce(TasEditorAction::Undo).unwrap();
+    assert_eq!(
+        state
+            .session
+            .as_ref()
+            .unwrap()
+            .project()
+            .branch_movie_sha256("main")
+            .unwrap(),
+        original_movie
     );
 }
 

@@ -7,7 +7,9 @@ use crate::platform::Instant;
 enum RealtimePhase {
     #[default]
     Off,
-    Armed,
+    Suspended {
+        frame_pending: bool,
+    },
     Running {
         next_frame_at: Instant,
         frame_pending: bool,
@@ -18,11 +20,15 @@ enum RealtimePhase {
 enum RealtimePoll {
     Idle,
     Record,
-    Stop,
 }
 
 #[derive(Debug, Default)]
 pub(in crate::app) struct TasRealtimeRecorder {
+    phase: RealtimePhase,
+}
+
+#[derive(Debug, Default)]
+pub(in crate::app) struct TasPlaybackScheduler {
     phase: RealtimePhase,
 }
 
@@ -61,21 +67,26 @@ impl TasRealtimeRecorder {
                     frame_pending: false,
                 }
             } else {
-                RealtimePhase::Armed
+                RealtimePhase::Suspended {
+                    frame_pending: false,
+                }
             };
             return RealtimePoll::Idle;
         }
 
         match self.phase {
             RealtimePhase::Off => unreachable!(),
-            RealtimePhase::Armed if input_owned => {
+            RealtimePhase::Suspended { frame_pending } if input_owned => {
                 self.phase = RealtimePhase::Running {
                     next_frame_at: now + frame_duration,
-                    frame_pending: false,
+                    frame_pending: frame_pending && !can_record,
                 };
             }
-            RealtimePhase::Armed => return RealtimePoll::Idle,
-            RealtimePhase::Running { .. } if !input_owned => return RealtimePoll::Stop,
+            RealtimePhase::Suspended { .. } => return RealtimePoll::Idle,
+            RealtimePhase::Running { frame_pending, .. } if !input_owned => {
+                self.phase = RealtimePhase::Suspended { frame_pending };
+                return RealtimePoll::Idle;
+            }
             RealtimePhase::Running {
                 ref mut next_frame_at,
                 ref mut frame_pending,
@@ -103,7 +114,120 @@ impl TasRealtimeRecorder {
     }
 }
 
+impl TasPlaybackScheduler {
+    pub(super) fn reset(&mut self) {
+        self.phase = RealtimePhase::Off;
+    }
+
+    pub(super) fn next_wake(&self) -> Option<Instant> {
+        match self.phase {
+            RealtimePhase::Running {
+                next_frame_at,
+                frame_pending: false,
+            } => Some(next_frame_at),
+            _ => None,
+        }
+    }
+
+    fn poll(
+        &mut self,
+        active: bool,
+        can_advance: bool,
+        now: Instant,
+        frame_duration: Duration,
+    ) -> RealtimePoll {
+        if !active {
+            self.reset();
+            return RealtimePoll::Idle;
+        }
+        if self.phase == RealtimePhase::Off {
+            self.phase = RealtimePhase::Running {
+                next_frame_at: now + frame_duration,
+                frame_pending: false,
+            };
+            return RealtimePoll::Idle;
+        }
+        let RealtimePhase::Running {
+            ref mut next_frame_at,
+            ref mut frame_pending,
+        } = self.phase
+        else {
+            unreachable!("playback scheduling never suspends for input focus")
+        };
+        if *frame_pending {
+            if !can_advance {
+                return RealtimePoll::Idle;
+            }
+            *frame_pending = false;
+            *next_frame_at = (*next_frame_at + frame_duration).max(now);
+        }
+        if can_advance && now >= *next_frame_at {
+            RealtimePoll::Record
+        } else {
+            RealtimePoll::Idle
+        }
+    }
+
+    fn mark_sent(&mut self) {
+        if let RealtimePhase::Running { frame_pending, .. } = &mut self.phase {
+            *frame_pending = true;
+        }
+    }
+}
+
 impl App {
+    pub(in crate::app) fn start_linked_tas_playback(&mut self) -> anyhow::Result<()> {
+        let session = self
+            .debug_windows
+            .tas_editor
+            .active_session()
+            .ok_or_else(|| anyhow::anyhow!("no TAS editor project is open"))?;
+        self.tas_control.start_playback(session)?;
+        self.tas_playback_scheduler.reset();
+        Ok(())
+    }
+
+    pub(in crate::app) fn pause_linked_tas_playback(&mut self) {
+        self.tas_control.pause_playback();
+        self.tas_playback_scheduler.reset();
+    }
+
+    pub(in crate::app) fn linked_tas_playback_next_wake(&self) -> Option<Instant> {
+        self.tas_playback_scheduler.next_wake()
+    }
+
+    pub(in crate::app) fn pump_linked_tas_playback(&mut self) {
+        let active = self.tas_control.playback_active();
+        let can_advance = self.tas_control.can_advance_playback();
+        let now = Instant::now();
+        let frame_duration = Duration::from_nanos(self.nominal_frame_duration_ns().max(1));
+        match self
+            .tas_playback_scheduler
+            .poll(active, can_advance, now, frame_duration)
+        {
+            RealtimePoll::Idle => {}
+            RealtimePoll::Record => {
+                let command = self
+                    .debug_windows
+                    .tas_editor
+                    .active_session()
+                    .ok_or_else(|| anyhow::anyhow!("no TAS editor project is open"))
+                    .and_then(|session| self.tas_control.begin_playback_frame(session));
+                match command {
+                    Ok(command) => {
+                        self.send_tas_control_command(command);
+                        self.tas_playback_scheduler.mark_sent();
+                    }
+                    Err(error) => {
+                        self.pause_linked_tas_playback();
+                        self.toast_manager
+                            .error(format!("Could not play TAS movie input: {error:#}"));
+                    }
+                }
+            }
+        }
+    }
+
     pub(in crate::app) fn start_realtime_tas_recording(&mut self) -> anyhow::Result<()> {
         self.tas_control.start_realtime_recording()?;
         if let Err(error) = self
@@ -126,6 +250,10 @@ impl App {
 
     pub(in crate::app) fn realtime_tas_recording_active(&self) -> bool {
         self.tas_control.realtime_recording_active()
+    }
+
+    pub(in crate::app) fn realtime_tas_recording_waiting_for_game_input(&self) -> bool {
+        self.realtime_tas_recording_active() && !self.realtime_tas_game_input_owned()
     }
 
     pub(in crate::app) fn realtime_tas_recording_next_wake(&self) -> Option<Instant> {
@@ -155,8 +283,7 @@ impl App {
 
     pub(in crate::app) fn pump_realtime_tas_recording(&mut self) {
         let active = self.tas_control.realtime_recording_active();
-        let input_owned =
-            self.game_window_focused && self.game_view_focused && !self.egui_wants_keyboard;
+        let input_owned = self.realtime_tas_game_input_owned();
         let can_record = self.tas_control.can_record_live_input();
         let now = Instant::now();
         let frame_duration = Duration::from_nanos(self.nominal_frame_duration_ns().max(1));
@@ -165,7 +292,6 @@ impl App {
             .poll(active, input_owned, can_record, now, frame_duration)
         {
             RealtimePoll::Idle => {}
-            RealtimePoll::Stop => self.stop_realtime_tas_recording(),
             RealtimePoll::Record => match self.record_current_tas_input_and_advance() {
                 Ok(()) => self.tas_realtime_recorder.mark_sent(),
                 Err(error) => {
@@ -175,6 +301,10 @@ impl App {
                 }
             },
         }
+    }
+
+    fn realtime_tas_game_input_owned(&self) -> bool {
+        self.game_window_focused && self.game_view_focused && !self.egui_wants_keyboard
     }
 }
 
@@ -237,19 +367,60 @@ mod tests {
     }
 
     #[test]
-    fn running_recording_stops_on_input_ownership_loss() {
+    fn running_recording_suspends_on_input_ownership_loss_and_resumes_fresh() {
         let start = Instant::now();
         let mut recorder = TasRealtimeRecorder::default();
         recorder.poll(true, true, true, start, FRAME);
 
         assert_eq!(
             recorder.poll(true, false, true, start + FRAME, FRAME),
-            RealtimePoll::Stop
+            RealtimePoll::Idle
+        );
+        assert_eq!(recorder.next_wake(), None);
+        assert_eq!(
+            recorder.poll(true, true, true, start + FRAME * 10, FRAME),
+            RealtimePoll::Idle
+        );
+        assert_eq!(recorder.next_wake(), Some(start + FRAME * 11));
+        assert_eq!(
+            recorder.poll(true, true, true, start + FRAME * 11, FRAME),
+            RealtimePoll::Record
         );
     }
 
     #[test]
-    fn cleared_intent_resets_armed_running_and_pending_states() {
+    fn suspended_pending_frame_never_samples_and_drops_timing_debt() {
+        let start = Instant::now();
+        let mut recorder = TasRealtimeRecorder::default();
+        recorder.poll(true, true, true, start, FRAME);
+        assert_eq!(
+            recorder.poll(true, true, true, start + FRAME, FRAME),
+            RealtimePoll::Record
+        );
+        recorder.mark_sent();
+
+        assert_eq!(
+            recorder.poll(true, false, false, start + FRAME * 2, FRAME),
+            RealtimePoll::Idle
+        );
+        assert_eq!(
+            recorder.poll(true, false, true, start + FRAME * 20, FRAME),
+            RealtimePoll::Idle
+        );
+        assert_eq!(recorder.next_wake(), None);
+        assert_eq!(
+            recorder.poll(true, true, true, start + FRAME * 20, FRAME),
+            RealtimePoll::Idle
+        );
+        assert_eq!(recorder.next_wake(), Some(start + FRAME * 21));
+        assert_eq!(
+            recorder.poll(true, true, true, start + FRAME * 21, FRAME),
+            RealtimePoll::Record
+        );
+    }
+
+    #[test]
+    fn cleared_intent_resets_suspended_running_and_pending_states() {
         let start = Instant::now();
         let mut recorder = TasRealtimeRecorder::default();
         recorder.poll(true, true, true, start, FRAME);
@@ -262,5 +433,48 @@ mod tests {
         );
         assert_eq!(recorder.phase, RealtimePhase::Off);
         assert_eq!(recorder.next_wake(), None);
+    }
+
+    #[test]
+    fn playback_uses_nominal_cadence_and_never_catches_up_in_batches() {
+        let start = Instant::now();
+        let mut scheduler = TasPlaybackScheduler::default();
+        assert_eq!(scheduler.poll(true, true, start, FRAME), RealtimePoll::Idle);
+        assert_eq!(scheduler.next_wake(), Some(start + FRAME));
+        assert_eq!(
+            scheduler.poll(true, true, start + FRAME, FRAME),
+            RealtimePoll::Record
+        );
+        scheduler.mark_sent();
+        assert_eq!(
+            scheduler.poll(true, false, start + FRAME * 20, FRAME),
+            RealtimePoll::Idle
+        );
+        assert_eq!(
+            scheduler.poll(true, true, start + FRAME * 20, FRAME),
+            RealtimePoll::Record
+        );
+        scheduler.mark_sent();
+        assert_eq!(scheduler.next_wake(), None);
+        assert_eq!(
+            scheduler.poll(true, true, start + FRAME * 20, FRAME),
+            RealtimePoll::Idle
+        );
+    }
+
+    #[test]
+    fn playback_pause_clears_pending_cadence_without_input_focus_state() {
+        let start = Instant::now();
+        let mut scheduler = TasPlaybackScheduler::default();
+        scheduler.poll(true, true, start, FRAME);
+        scheduler.poll(true, true, start + FRAME, FRAME);
+        scheduler.mark_sent();
+
+        assert_eq!(
+            scheduler.poll(false, false, start + FRAME * 2, FRAME),
+            RealtimePoll::Idle
+        );
+        assert_eq!(scheduler.next_wake(), None);
+        assert_eq!(scheduler.phase, RealtimePhase::Off);
     }
 }

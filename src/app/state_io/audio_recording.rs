@@ -40,7 +40,7 @@ impl App {
             let sample_rate = self
                 .audio
                 .as_ref()
-                .map(|a| a.sample_rate())
+                .map(|audio| audio.emulator_sample_rate())
                 .unwrap_or(DEFAULT_AUDIO_SAMPLE_RATE);
 
             let format = self.settings.audio.recording_format;

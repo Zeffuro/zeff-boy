@@ -15,7 +15,10 @@ mod io;
 mod ports;
 use ports::*;
 mod rtc;
+pub(crate) use rtc::DETERMINISTIC_RTC_EPOCH;
 use rtc::Rtc;
+pub(crate) use rtc::RtcSaveState;
+pub(crate) use rtc::valid_datetime as valid_rtc_datetime;
 mod serial;
 use serial::Uart;
 pub use serial::UartDebugSnapshot;
@@ -204,6 +207,9 @@ impl Bus {
             self.profiling.ppu_step_calls = self.profiling.ppu_step_calls.wrapping_add(1);
         }
         self.cycles = self.cycles.wrapping_add(u64::from(cycles));
+        if self.cartridge.footer().rtc_present {
+            self.rtc.step_cycles(cycles);
+        }
         let serial_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
         self.uart.step_cycles(cycles, serial_control, self.cycles);
         self.refresh_level_interrupts();
@@ -276,6 +282,28 @@ impl Bus {
         };
         self.cartridge.set_linear_bank(pending.value);
         self.pending_linear_bank = None;
+    }
+
+    pub(crate) fn deferred_linear_bank_save_values(&self) -> Option<(u8, u8)> {
+        self.pending_linear_bank
+            .map(|pending| (pending.value, pending.remaining_instruction_retires))
+    }
+
+    pub(crate) fn load_deferred_linear_bank_save_values(
+        &mut self,
+        state: Option<(u8, u8)>,
+    ) -> anyhow::Result<()> {
+        self.pending_linear_bank = match state {
+            None => None,
+            Some((value @ 0..=0x0F, remaining_instruction_retires @ 1..=2)) => {
+                Some(DeferredLinearBank {
+                    value,
+                    remaining_instruction_retires,
+                })
+            }
+            Some(_) => anyhow::bail!("invalid WonderSwan deferred ROM bank state"),
+        };
+        Ok(())
     }
 
     pub fn ppu_debug_snapshot(&self) -> PpuDebugSnapshot {
@@ -658,6 +686,53 @@ impl Bus {
     pub(crate) fn load_uart_save_state(&mut self, state: UartSaveState) {
         self.uart.load_state(state);
         self.refresh_level_interrupts();
+    }
+
+    pub(crate) fn rtc_save_state(&self) -> RtcSaveState {
+        self.rtc.save_state()
+    }
+
+    pub(crate) fn load_rtc_save_state(&mut self, state: RtcSaveState) -> anyhow::Result<()> {
+        self.rtc.load_state(state)
+    }
+
+    pub(crate) fn dump_rtc_persistence_state(&self) -> Option<Vec<u8>> {
+        self.cartridge
+            .footer()
+            .rtc_present
+            .then(|| rtc::encode_state(&self.rtc))
+    }
+
+    pub(crate) fn dump_complete_rtc_persistence(&self) -> Option<Vec<u8>> {
+        if !self.cartridge.footer().rtc_present {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(self.cartridge.save_data().len() + rtc::EXTENSION_LEN);
+        bytes.extend_from_slice(self.cartridge.save_data());
+        bytes.extend_from_slice(&rtc::encode_extension(&self.rtc));
+        Some(bytes)
+    }
+
+    pub(crate) fn load_complete_rtc_persistence(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.cartridge.footer().rtc_present,
+            "WonderSwan cartridge has no RTC"
+        );
+        let save_len = self.cartridge.save_data().len();
+        let extension = bytes
+            .get(save_len..)
+            .ok_or_else(|| anyhow::anyhow!("truncated WonderSwan RTC persistence"))?;
+        let rtc = rtc::decode_extension(extension)?;
+        self.cartridge.load_battery_data(&bytes[..save_len])?;
+        self.rtc.load_state(rtc)
+    }
+
+    pub(crate) fn load_battery_persistence(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        let save_len = self.cartridge.save_data().len();
+        if !self.cartridge.footer().rtc_present || bytes.len() == save_len {
+            return self.cartridge.load_battery_data(bytes);
+        }
+        self.load_complete_rtc_persistence(bytes)
     }
 }
 

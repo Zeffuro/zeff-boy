@@ -62,8 +62,19 @@ impl IO {
             timer: Timer::read_state(reader)?,
             ppu: PPU::read_state(reader, format_version)?,
             apu: Apu::read_state(reader, format_version)?,
-            sgb: SgbState::read_state(reader)?,
+            sgb: SgbState::read_state(reader, format_version)?,
             serial_device: SerialDevicePort::read_state(reader, format_version)?,
         })
+    }
+
+    pub(super) fn write_sgb_native_continuation(&self, writer: &mut StateWriter) {
+        self.sgb.write_native_continuation(writer);
+    }
+
+    pub(super) fn read_sgb_native_continuation(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<()> {
+        self.sgb.read_native_continuation(reader)
     }
 }

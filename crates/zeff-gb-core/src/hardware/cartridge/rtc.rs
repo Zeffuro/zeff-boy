@@ -13,11 +13,28 @@ pub(super) const RTC_DH_DAY_HIGH_BIT: u8 = 0x01;
 pub(super) const RTC_DH_HALT_BIT: u8 = 0x40;
 pub(super) const RTC_DH_CARRY_BIT: u8 = 0x80;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Mbc3RtcState {
+    pub internal: [u8; RTC_REG_COUNT],
+    pub latched: [u8; RTC_REG_COUNT],
+    pub subsecond_cycles: u64,
+}
+
 #[derive(Clone)]
 pub(super) struct Rtc {
     pub(super) internal: [u8; RTC_REG_COUNT],
     pub(super) latched: [u8; RTC_REG_COUNT],
     pub(super) subsecond_cycles: u64,
+}
+
+impl From<&Rtc> for Mbc3RtcState {
+    fn from(rtc: &Rtc) -> Self {
+        Self {
+            internal: rtc.internal,
+            latched: rtc.latched,
+            subsecond_cycles: rtc.subsecond_cycles,
+        }
+    }
 }
 
 impl Rtc {
@@ -47,9 +64,41 @@ impl Rtc {
             return;
         }
 
-        for _ in 0..seconds {
+        let mut remaining = seconds;
+        while remaining != 0
+            && (self.internal[RTC_SECONDS] > 59
+                || self.internal[RTC_MINUTES] > 59
+                || self.internal[RTC_HOURS] > 23)
+        {
             self.tick_one_second();
+            remaining -= 1;
         }
+        if remaining == 0 {
+            return;
+        }
+
+        const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+        const RTC_PERIOD_SECONDS: u64 = 512 * SECONDS_PER_DAY;
+        let day = ((u64::from(self.internal[RTC_DAY_HIGH] & RTC_DH_DAY_HIGH_BIT)) << 8)
+            | u64::from(self.internal[RTC_DAY_LOW]);
+        let current = day * SECONDS_PER_DAY
+            + u64::from(self.internal[RTC_HOURS]) * 60 * 60
+            + u64::from(self.internal[RTC_MINUTES]) * 60
+            + u64::from(self.internal[RTC_SECONDS]);
+        let overflowed = remaining >= RTC_PERIOD_SECONDS - current;
+        let next = (current + remaining % RTC_PERIOD_SECONDS) % RTC_PERIOD_SECONDS;
+        let next_day = next / SECONDS_PER_DAY;
+        let day_seconds = next % SECONDS_PER_DAY;
+        self.internal[RTC_SECONDS] = (day_seconds % 60) as u8;
+        self.internal[RTC_MINUTES] = ((day_seconds / 60) % 60) as u8;
+        self.internal[RTC_HOURS] = (day_seconds / (60 * 60)) as u8;
+        self.internal[RTC_DAY_LOW] = next_day as u8;
+        let mut day_high = self.internal[RTC_DAY_HIGH] & RTC_DH_HALT_BIT;
+        day_high |= ((next_day >> 8) as u8) & RTC_DH_DAY_HIGH_BIT;
+        if overflowed || self.internal[RTC_DAY_HIGH] & RTC_DH_CARRY_BIT != 0 {
+            day_high |= RTC_DH_CARRY_BIT;
+        }
+        self.internal[RTC_DAY_HIGH] = day_high;
     }
 
     pub(super) fn latch(&mut self) {

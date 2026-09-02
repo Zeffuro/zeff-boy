@@ -62,6 +62,20 @@ impl HostInputState {
         Self::set_mask_bit(&mut self.remote_p2_pressed, key, pressed);
     }
 
+    pub(super) fn clear_keyboard(&mut self) {
+        self.keyboard_pressed = 0;
+        self.keyboard_p2_pressed = 0;
+        self.keyboard_p3_pressed = 0;
+        self.keyboard_p4_pressed = 0;
+        self.keyboard_p5_pressed = 0;
+        self.coleco_keyboard_keypad_pressed = 0;
+        self.coleco_keyboard_keypad_p2_pressed = 0;
+        self.tilt_keyboard_pressed = 0;
+        self.ws_keyboard_x_pressed = 0;
+        self.ws_keyboard_y_pressed = 0;
+        self.ws_keyboard_button_pressed = 0;
+    }
+
     pub(super) fn set_keyboard_p3(&mut self, key: HostButton, pressed: bool) {
         Self::set_mask_bit(&mut self.keyboard_p3_pressed, key, pressed);
     }
@@ -117,12 +131,63 @@ impl HostInputState {
     }
 
     pub(super) fn coleco_keypad_pressed(&self, player: u8) -> Option<u8> {
-        let keypad_pressed = match player {
-            1 => self.coleco_keyboard_keypad_pressed | self.coleco_remote_keypad_pressed,
-            2 => self.coleco_keyboard_keypad_p2_pressed | self.coleco_remote_keypad_p2_pressed,
-            _ => return None,
-        };
+        let keypad_pressed = self.coleco_keypad_mask(player)?;
         (keypad_pressed != 0).then(|| keypad_pressed.trailing_zeros() as u8)
+    }
+
+    pub(super) fn coleco_tas_controllers(
+        &self,
+    ) -> anyhow::Result<[crate::tas_project::TasColecoControllerInput; 2]> {
+        Ok([
+            self.coleco_tas_controller(1)?,
+            self.coleco_tas_controller(2)?,
+        ])
+    }
+
+    fn coleco_tas_controller(
+        &self,
+        player: u8,
+    ) -> anyhow::Result<crate::tas_project::TasColecoControllerInput> {
+        let keypad_mask = self.coleco_keypad_mask(player).unwrap_or_default();
+        anyhow::ensure!(
+            keypad_mask.count_ones() <= 1,
+            "ColecoVision player {player} has multiple keypad keys held"
+        );
+        let buttons = match player {
+            1 => self.buttons_pressed(),
+            2 => self.buttons_p2_pressed(),
+            _ => 0,
+        };
+        anyhow::ensure!(
+            buttons & !0x0F == 0,
+            "ColecoVision player {player} has unsupported host buttons held"
+        );
+        let fallback_key_count = (buttons & 0x0C).count_ones();
+        anyhow::ensure!(
+            fallback_key_count <= 1 && !(keypad_mask != 0 && fallback_key_count != 0),
+            "ColecoVision player {player} has ambiguous keypad input"
+        );
+        let keypad = (keypad_mask != 0)
+            .then(|| coleco_tas_keypad(keypad_mask.trailing_zeros() as u8))
+            .flatten();
+        let dpad = match player {
+            1 => self.dpad_pressed(),
+            2 => self.dpad_p2_pressed(),
+            _ => 0,
+        };
+        Ok(crate::emu_backend::coleco::tas_controller_from_host_input(
+            buttons, dpad, keypad,
+        ))
+    }
+
+    fn coleco_keypad_mask(&self, player: u8) -> Option<u16> {
+        match player {
+            1 => Some(self.coleco_keyboard_keypad_pressed | self.coleco_remote_keypad_pressed),
+            2 => {
+                Some(self.coleco_keyboard_keypad_p2_pressed | self.coleco_remote_keypad_p2_pressed)
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn set_tilt_keyboard(&mut self, key: TiltBindingAction, pressed: bool) {
@@ -342,6 +407,26 @@ fn set_coleco_keypad_bit(mask: &mut u16, key: u8, pressed: bool) {
     } else {
         *mask &= !bit;
     }
+}
+
+fn coleco_tas_keypad(key: u8) -> Option<crate::tas_project::TasColecoKeypadKey> {
+    use crate::tas_project::TasColecoKeypadKey;
+
+    Some(match key {
+        0 => TasColecoKeypadKey::Zero,
+        1 => TasColecoKeypadKey::One,
+        2 => TasColecoKeypadKey::Two,
+        3 => TasColecoKeypadKey::Three,
+        4 => TasColecoKeypadKey::Four,
+        5 => TasColecoKeypadKey::Five,
+        6 => TasColecoKeypadKey::Six,
+        7 => TasColecoKeypadKey::Seven,
+        8 => TasColecoKeypadKey::Eight,
+        9 => TasColecoKeypadKey::Nine,
+        10 => TasColecoKeypadKey::Star,
+        11 => TasColecoKeypadKey::Pound,
+        _ => return None,
+    })
 }
 
 fn host_dpad_to_ws_diamond(mask: u8) -> u8 {

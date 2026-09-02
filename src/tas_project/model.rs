@@ -181,6 +181,49 @@ pub struct TasControllerInput {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TasColecoKeypadKey {
+    #[default]
+    None,
+    Zero,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    Star,
+    Pound,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasColecoControllerInput {
+    pub up: bool,
+    pub right: bool,
+    pub down: bool,
+    pub left: bool,
+    pub left_button: bool,
+    pub right_button: bool,
+    pub keypad: TasColecoKeypadKey,
+}
+
+impl TasColecoControllerInput {
+    pub const fn is_neutral(self) -> bool {
+        !self.up
+            && !self.right
+            && !self.down
+            && !self.left
+            && !self.left_button
+            && !self.right_button
+            && matches!(self.keypad, TasColecoKeypadKey::None)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TasZapperInput {
     pub enabled: bool,
@@ -201,10 +244,16 @@ pub enum TasCameraInput {
 #[serde(deny_unknown_fields)]
 pub struct TasInputFrame {
     pub players: [TasControllerInput; 5],
+    #[serde(default, skip_serializing_if = "coleco_inputs_are_neutral")]
+    pub coleco: [TasColecoControllerInput; 2],
     pub zapper: TasZapperInput,
     pub tilt_x_bits: u32,
     pub tilt_y_bits: u32,
     pub camera: TasCameraInput,
+}
+
+fn coleco_inputs_are_neutral(inputs: &[TasColecoControllerInput; 2]) -> bool {
+    inputs.iter().all(|input| input.is_neutral())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

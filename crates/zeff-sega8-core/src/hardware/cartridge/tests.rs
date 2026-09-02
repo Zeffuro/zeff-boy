@@ -90,7 +90,7 @@ fn detects_codemasters_header_and_mapper_kind() {
 }
 
 #[test]
-fn classifies_standard_mapper_ram_as_unknown_persistence() {
+fn keeps_standard_mapper_ram_persistence_unknown() {
     let cart = Cartridge::load_with_hint(
         &rom_with_header(HeaderLocation::Offset0x7ff0, 0x4C),
         SystemHint::MasterSystem,
@@ -105,13 +105,112 @@ fn classifies_standard_mapper_ram_as_unknown_persistence() {
 }
 
 #[test]
-fn codemasters_mapper_exposes_mapper_ram_as_unknown_persistence() {
+fn game_gear_board_catalog_requires_exact_identity() {
+    let absent = GameGearCartridgeIdentity {
+        sha256: [0x11; 32],
+        source_len: 32 * 1024,
+    };
+    let persistent = GameGearCartridgeIdentity {
+        sha256: [0x22; 32],
+        source_len: 256 * 1024,
+    };
+    let catalog = [
+        GameGearBoardCatalogEntry {
+            identity: absent,
+            ram: GameGearStandardMapperRam::Absent,
+        },
+        GameGearBoardCatalogEntry {
+            identity: persistent,
+            ram: GameGearStandardMapperRam::BatteryBacked8KiB,
+        },
+    ];
+
+    assert_eq!(
+        game_gear_standard_mapper_ram_in_catalog(absent, &catalog).map(|identity| identity.ram()),
+        Some(GameGearStandardMapperRam::Absent)
+    );
+    assert_eq!(
+        game_gear_standard_mapper_ram_in_catalog(persistent, &catalog)
+            .map(|identity| identity.ram()),
+        Some(GameGearStandardMapperRam::BatteryBacked8KiB)
+    );
+    assert_eq!(
+        game_gear_standard_mapper_ram_in_catalog(
+            GameGearCartridgeIdentity {
+                source_len: absent.source_len + 1,
+                ..absent
+            },
+            &catalog
+        ),
+        None
+    );
+    assert_eq!(game_gear_standard_mapper_ram_for_identity(absent), None);
+}
+
+#[test]
+fn game_gear_ram_identity_does_not_weaken_master_system() {
+    let rom = rom_with_header(HeaderLocation::Offset0x3ff0, 0x7A);
+    let absent = Cartridge::load_with_hint_mapper_and_game_gear_ram(
+        &rom,
+        SystemHint::GameGear,
+        None,
+        Some(GameGearStandardMapperRam::Absent),
+    )
+    .unwrap();
+    let persistent = Cartridge::load_with_hint_mapper_and_game_gear_ram(
+        &rom,
+        SystemHint::GameGear,
+        None,
+        Some(GameGearStandardMapperRam::BatteryBacked8KiB),
+    )
+    .unwrap();
+    let sms = Cartridge::load_with_hint(&rom, SystemHint::MasterSystem).unwrap();
+
+    assert_eq!(absent.save_ram_kind(), SaveRamKind::None);
+    assert_eq!(
+        persistent.save_ram_kind(),
+        SaveRamKind::known_battery_backed(8 * 1024)
+    );
+    assert_eq!(
+        sms.save_ram_kind(),
+        SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE)
+    );
+    assert!(
+        Cartridge::load_with_hint_mapper_and_game_gear_ram(
+            &rom,
+            SystemHint::MasterSystem,
+            None,
+            Some(GameGearStandardMapperRam::Absent),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn sg1000_cartridges_have_no_persistent_mapper_ram() {
+    let rom = [0x00, 0x76];
+    let sg1000 = Cartridge::load_with_hint(&rom, SystemHint::Sg1000).unwrap();
+    let sms = Cartridge::load_with_hint(&rom, SystemHint::MasterSystem).unwrap();
+    let game_gear = Cartridge::load_with_hint(&rom, SystemHint::GameGear).unwrap();
+    assert_eq!(sg1000.save_ram_kind(), SaveRamKind::None);
+    assert_eq!(
+        sms.save_ram_kind(),
+        SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE)
+    );
+    assert_eq!(
+        game_gear.save_ram_kind(),
+        SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE)
+    );
+}
+
+#[test]
+fn classifies_codemasters_mapper_ram_as_volatile() {
     let cart = Cartridge::load_with_hint(&rom_with_codemasters_header(), SystemHint::MasterSystem)
         .expect("Codemasters-style ROM should load");
 
     assert_eq!(
         cart.save_ram_kind(),
-        SaveRamKind::mapper_ram_unknown(crate::hardware::constants::CODEMASTERS_CARTRIDGE_RAM_SIZE)
+        SaveRamKind::known_volatile(crate::hardware::constants::CODEMASTERS_CARTRIDGE_RAM_SIZE)
     );
     assert!(!cart.save_ram_kind().is_battery_backed());
 }

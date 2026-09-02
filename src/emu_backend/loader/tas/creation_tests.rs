@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::AtomicBool;
 
 fn synthetic_nes_rom() -> Vec<u8> {
     let mut rom = vec![0; 16 + 0x4000 + 0x2000];
@@ -67,6 +68,46 @@ fn new_project_is_deterministic_neutral_and_immediately_executable() -> Result<(
 }
 
 #[test]
+fn repair_backend_keeps_direct_provenance_and_preloaded_copy_stays_ineligible() -> Result<()> {
+    let directory = crate::test_support::test_directory("tas-loader-repair-provenance")?;
+    let source_path = directory.path().join("game.nes");
+    let source_bytes = synthetic_nes_rom();
+    std::fs::write(&source_path, &source_bytes)?;
+    let loader = DirectNesTasExecutionLoader::new(source_path.clone(), Vec::new());
+    let project = loader.create_project()?;
+
+    let repair_backend = loader.load_editor_engine(&project)?.into_backend();
+    assert!(
+        crate::emu_thread::build_tas_repair_witness(
+            &repair_backend,
+            crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
+        )
+        .is_ok()
+    );
+
+    let preloaded = load_backend_from_rom_source(
+        ActiveSystem::Nes,
+        &source_path,
+        &source_path,
+        Some(source_bytes),
+        BackendLoadConfig {
+            apply_mods: false,
+            nes_load_battery_sram: false,
+            ..BackendLoadConfig::default()
+        },
+    )?
+    .backend;
+    assert_eq!(
+        crate::emu_thread::build_tas_repair_witness(
+            &preloaded,
+            crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
+        ),
+        Err(crate::emu_thread::TasControlAcquireRejectedReason::DirectNesFileRequired)
+    );
+    Ok(())
+}
+
+#[test]
 fn new_project_file_is_valid_and_never_replaces_an_occupied_target() -> Result<()> {
     let directory = crate::test_support::test_directory("tas-loader-create-file")?;
     let source_path = directory.path().join("game.nes");
@@ -124,5 +165,202 @@ fn new_project_rejects_non_project_destinations_without_publishing() -> Result<(
 
     assert!(loader.create_project_file(&destination).is_err());
     assert!(!destination.exists());
+    Ok(())
+}
+
+#[test]
+fn replay_import_uses_the_loaded_game_identity_and_publishes_a_project() -> Result<()> {
+    use zeff_emu_common::replay::{ReplayJoypadFrame, ReplayMetadata, ReplayRecorder};
+
+    let directory = crate::test_support::test_directory("tas-loader-import-replay")?;
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, synthetic_nes_rom())?;
+    let loader = DirectNesTasExecutionLoader::new(source_path, Vec::new());
+    let baseline = loader.create_project()?;
+    let replay_path = directory.path().join("run.zrpl");
+    let project_path = directory.path().join("run.ztas");
+    let metadata = ReplayMetadata {
+        system: Some(baseline.identity().system.clone()),
+        core_family: Some(baseline.identity().core_family.clone()),
+        rom_sha256: Some(baseline.identity().effective_media_sha256.0),
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(
+        PathBuf::new(),
+        baseline.start_state().to_vec(),
+        metadata,
+    );
+    recorder.record_joypad_frame(ReplayJoypadFrame::p1(1, 0));
+    std::fs::write(&replay_path, recorder.into_bytes()?)?;
+
+    let imported = PrivateTasExecutionLoader::DirectNes(loader).import_replay_file(
+        &replay_path,
+        &project_path,
+        false,
+    )?;
+
+    assert_eq!(TasProject::load(&project_path)?, imported);
+    assert_eq!(imported.identity(), baseline.identity());
+    assert_eq!(imported.branches()[0].frame_count(), 1);
+    assert_eq!(imported.branches()[0].input_at(0).players[0].buttons, 1);
+    assert_eq!(
+        imported.source_replay_sha256(),
+        Some(TasDigest::from_bytes(&std::fs::read(&replay_path)?))
+    );
+    Ok(())
+}
+
+#[test]
+fn replay_import_preserves_the_direct_nes_zapper_profile() -> Result<()> {
+    use zeff_emu_common::replay::{
+        ReplayJoypadFrame, ReplayMetadata, ReplayRecorder, ReplayZapperFrame,
+    };
+
+    let directory = crate::test_support::test_directory("tas-loader-import-zapper")?;
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, synthetic_nes_rom())?;
+    let loader = DirectNesTasExecutionLoader::new(source_path, Vec::new());
+    let (mut backend, _) = loader.load_fresh_backend()?;
+    backend.set_zapper_state(true, false, false, Some((120, 80)));
+    let start_state = backend.encode_state_bytes()?;
+    let baseline = loader.create_project()?;
+    let metadata = ReplayMetadata {
+        system: Some(baseline.identity().system.clone()),
+        core_family: Some(baseline.identity().core_family.clone()),
+        rom_sha256: Some(baseline.identity().effective_media_sha256.0),
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(PathBuf::new(), start_state, metadata);
+    recorder.record_joypad_frame(ReplayJoypadFrame {
+        zapper: ReplayZapperFrame {
+            enabled: true,
+            trigger: true,
+            hit: false,
+            screen_pos: Some((120, 80)),
+        },
+        ..ReplayJoypadFrame::default()
+    });
+    let replay_path = directory.path().join("zapper.zrpl");
+    let project_path = directory.path().join("zapper.ztas");
+    std::fs::write(&replay_path, recorder.into_bytes()?)?;
+
+    let imported = PrivateTasExecutionLoader::DirectNes(loader.clone()).import_replay_file(
+        &replay_path,
+        &project_path,
+        false,
+    )?;
+
+    assert_eq!(imported.identity().devices, direct_nes_zapper_tas_devices());
+    assert!(imported.branches()[0].input_at(0).zapper.trigger);
+    DirectNesTasExecutionLoader::validate_project_branch_scope(&imported, "main")?;
+    let mut engine = loader.load_editor_engine(&imported)?;
+    let autosaves = crate::tas_project::TasAutosaveStore::beside_manual_save(
+        &project_path,
+        crate::tas_project::TasAutosaveConfig::default(),
+    )?;
+    let seek_cache = crate::tas_project::TasSeekStateCache::open(directory.path().join("seek"))?;
+    let mut session = TasEditorSession::new(imported, &project_path, autosaves, seek_cache)?;
+    engine.seek(&mut session, 1)?;
+    assert_eq!(
+        engine
+            .backend()
+            .nes_has_standard_or_zapper_controller_topology(),
+        Some(true)
+    );
+    Ok(())
+}
+
+#[test]
+fn replay_import_rejects_the_wrong_game_without_touching_the_destination() -> Result<()> {
+    use zeff_emu_common::replay::{ReplayJoypadFrame, ReplayMetadata, ReplayRecorder};
+
+    let directory = crate::test_support::test_directory("tas-loader-import-mismatch")?;
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, synthetic_nes_rom())?;
+    let loader = DirectNesTasExecutionLoader::new(source_path, Vec::new());
+    let baseline = loader.create_project()?;
+    let replay_path = directory.path().join("wrong.zrpl");
+    let project_path = directory.path().join("occupied.ztas");
+    let metadata = ReplayMetadata {
+        system: Some(baseline.identity().system.clone()),
+        core_family: Some(baseline.identity().core_family.clone()),
+        rom_sha256: Some([0xA5; 32]),
+        ..ReplayMetadata::default()
+    };
+    let mut recorder = ReplayRecorder::new_with_metadata(
+        PathBuf::new(),
+        baseline.start_state().to_vec(),
+        metadata,
+    );
+    recorder.record_joypad_frame(ReplayJoypadFrame::default());
+    std::fs::write(&replay_path, recorder.into_bytes()?)?;
+    std::fs::write(&project_path, b"occupied")?;
+
+    let before = std::fs::read(&project_path)?;
+    assert!(
+        PrivateTasExecutionLoader::DirectNes(loader)
+            .import_replay_file(&replay_path, &project_path, true)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&project_path)?, before);
+    Ok(())
+}
+
+#[test]
+fn editor_export_verifies_saves_then_publishes_the_replay() -> Result<()> {
+    let directory = crate::test_support::test_directory("tas-loader-editor-export")?;
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, synthetic_nes_rom())?;
+    let loader = DirectNesTasExecutionLoader::new(source_path, Vec::new());
+    let project = loader.create_project()?;
+    let project_path = directory.path().join("movie.ztas");
+    let replay_path = directory.path().join("movie.zrpl");
+    let autosaves = crate::tas_project::TasAutosaveStore::beside_manual_save(
+        &project_path,
+        crate::tas_project::TasAutosaveConfig::default(),
+    )?;
+    let seek_cache = crate::tas_project::TasSeekStateCache::open(directory.path().join("seek"))?;
+    let mut session = TasEditorSession::new(project, &project_path, autosaves, seek_cache)?;
+
+    PrivateTasExecutionLoader::DirectNes(loader)
+        .verify_and_export_editor_session(&mut session, &replay_path)?;
+
+    assert!(!session.is_dirty());
+    assert!(replay_path.is_file());
+    let saved = TasProject::load(&project_path)?;
+    assert!(saved.verification_is_current("main")?);
+    assert!(saved.branches()[0].verification().is_some());
+    Ok(())
+}
+
+#[test]
+fn canceled_editor_export_does_not_save_or_publish() -> Result<()> {
+    let directory = crate::test_support::test_directory("tas-loader-canceled-editor-export")?;
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, synthetic_nes_rom())?;
+    let loader = DirectNesTasExecutionLoader::new(source_path, Vec::new());
+    let project = loader.create_project()?;
+    let project_path = directory.path().join("movie.ztas");
+    let replay_path = directory.path().join("movie.zrpl");
+    let autosaves = crate::tas_project::TasAutosaveStore::beside_manual_save(
+        &project_path,
+        crate::tas_project::TasAutosaveConfig::default(),
+    )?;
+    let seek_cache = crate::tas_project::TasSeekStateCache::open(directory.path().join("seek"))?;
+    let mut session = TasEditorSession::new(project, &project_path, autosaves, seek_cache)?;
+    let cancellation = AtomicBool::new(true);
+
+    let result = PrivateTasExecutionLoader::DirectNes(loader)
+        .verify_and_export_editor_session_cancellable(
+            &mut session,
+            &replay_path,
+            &cancellation,
+            &mut |_| {},
+        );
+
+    assert!(result.is_err());
+    assert!(!project_path.exists());
+    assert!(!replay_path.exists());
+    assert!(session.selected_branch().verification().is_none());
     Ok(())
 }

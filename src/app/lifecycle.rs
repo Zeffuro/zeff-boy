@@ -50,7 +50,7 @@ impl App {
         };
         let sample_rate = audio
             .as_ref()
-            .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::sample_rate);
+            .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::emulator_sample_rate);
         if self.emu_thread.is_some()
             && let Err(error) =
                 self.send_emu_command_checked(EmuCommand::SetSampleRate(sample_rate))
@@ -96,7 +96,7 @@ impl App {
             let sample_rate = self
                 .audio
                 .as_ref()
-                .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::sample_rate);
+                .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::emulator_sample_rate);
             if let Err(error) =
                 self.send_emu_command_checked(EmuCommand::SetSampleRate(sample_rate))
             {
@@ -309,6 +309,9 @@ impl App {
                     let mut next_frame_time = next_emu_frame_time.max(next_ui_frame_time);
                     if let Some(recording_wake) = self.realtime_tas_recording_next_wake() {
                         next_frame_time = next_frame_time.min(recording_wake);
+                    }
+                    if let Some(playback_wake) = self.linked_tas_playback_next_wake() {
+                        next_frame_time = next_frame_time.min(playback_wake);
                     }
                     if now >= next_frame_time {
                         event_loop.set_control_flow(ControlFlow::Poll);

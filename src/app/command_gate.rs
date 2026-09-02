@@ -83,15 +83,14 @@ impl App {
         &mut self,
         command: EmuCommand,
     ) -> Result<(), EmuCommandSendError> {
+        let authority = command.authority_classification();
+        #[cfg(not(target_arch = "wasm32"))]
+        let invalidates_readiness = invalidates_tas_readiness(&command);
         #[cfg(not(target_arch = "wasm32"))]
         let gameplay_allowed = self.worker_gameplay_commands_allowed();
         #[cfg(target_arch = "wasm32")]
         let gameplay_allowed = true;
-        let preflight = preflight_send(
-            command.authority_classification(),
-            gameplay_allowed,
-            self.emu_thread.is_some(),
-        );
+        let preflight = preflight_send(authority, gameplay_allowed, self.emu_thread.is_some());
         #[cfg(not(target_arch = "wasm32"))]
         if let Err(error) = preflight {
             if error == EmuCommandSendError::NoWorker {
@@ -119,8 +118,35 @@ impl App {
             .ok_or(EmuCommandSendError::NoWorker)?
             .send(command);
 
+        #[cfg(not(target_arch = "wasm32"))]
+        if invalidates_readiness {
+            self.tas_control.clear_readiness();
+        }
+
         Ok(())
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn invalidates_tas_readiness(command: &EmuCommand) -> bool {
+    matches!(
+        command,
+        EmuCommand::LoadStateSlot { .. }
+            | EmuCommand::LoadStateFromPath { .. }
+            | EmuCommand::InspectRecovery { resume: true, .. }
+            | EmuCommand::LoadStateBytes { .. }
+            | EmuCommand::SetSampleRate(_)
+            | EmuCommand::ApplyMediaEvent(_)
+            | EmuCommand::SetGameBoySerialDevice(_)
+            | EmuCommand::QueueBardigunBarcodeScan(_)
+            | EmuCommand::TriggerBarcodeBoyScan(_)
+            | EmuCommand::RestoreGameBoyLinkState(_)
+            | EmuCommand::UpdateCheats(_)
+            | EmuCommand::Reset
+            | EmuCommand::StartTcpLink(_)
+            | EmuCommand::DisconnectLink
+            | EmuCommand::Rewind(_)
+    )
 }
 
 #[cfg(test)]
@@ -150,9 +176,25 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn readiness_invalidation_tracks_profile_mutations_only() {
+        assert!(invalidates_tas_readiness(&EmuCommand::SetSampleRate(
+            48_000
+        )));
+        assert!(invalidates_tas_readiness(&EmuCommand::UpdateCheats(
+            Vec::new()
+        )));
+        assert!(!invalidates_tas_readiness(
+            &EmuCommand::SetUncappedBatchSize(64)
+        ));
+        assert!(!invalidates_tas_readiness(&EmuCommand::CaptureStateBytes));
+    }
+
     #[test]
     fn authority_transitions_are_the_only_fenced_exceptions() {
         for classification in [
+            EmuCommandAuthority::ObserveTasReadiness,
             EmuCommandAuthority::AcquireTasControl,
             EmuCommandAuthority::ExecuteTasControl,
             EmuCommandAuthority::AdvanceTasControl,
@@ -240,6 +282,13 @@ mod tests {
         #[cfg(not(target_arch = "wasm32"))]
         for (command, expected) in [
             (
+                EmuCommand::InspectTasReadiness {
+                    request_id: 3,
+                    profile: crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
+                },
+                EmuCommandAuthority::ObserveTasReadiness,
+            ),
+            (
                 EmuCommand::DisconnectLink,
                 EmuCommandAuthority::Gameplay(TasControlCommandKind::Link),
             ),
@@ -255,6 +304,13 @@ mod tests {
                     profile: crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
                     lease_id: 5,
                     run_id: 6,
+                    intermediate_cache_proofs: Vec::new(),
+                    cache_proof: crate::emu_thread::TasExecutionCacheProof {
+                        sync_identity_sha256: crate::tas_project::TasDigest([0; 32]),
+                        branch_prefix_sha256: crate::tas_project::TasDigest([0; 32]),
+                        target_cursor: 0,
+                    },
+                    predecessor_window: None,
                     start_state_bytes: Vec::new(),
                     input_prefix: Vec::new(),
                 })),
@@ -273,6 +329,7 @@ mod tests {
                         expected_frame_count: 7,
                         expected_state_sha256: crate::tas_project::TasDigest([0; 32]),
                         input: crate::emu_thread::TasInputFrame::default(),
+                        snapshot: None,
                     },
                 )),
                 EmuCommandAuthority::AdvanceTasControl,

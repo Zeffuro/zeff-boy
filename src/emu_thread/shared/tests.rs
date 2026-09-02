@@ -250,7 +250,7 @@ fn gbc_rewind_cadence_tracks_advanced_frames_across_batches() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn gb_rewind_uses_v13_state_framebuffer_without_a_sidecar() {
+fn gb_rewind_uses_current_state_framebuffer_without_a_sidecar() {
     let mut backend = gb_backend();
     backend.step_frame();
     let expected_frame = backend.frame_count();

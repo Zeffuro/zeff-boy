@@ -2,7 +2,8 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use super::{
     SAVE_STATE_DECODE_STACK_SIZE, SAVE_STATE_FORMAT_VERSION, SAVE_STATE_MAGIC, SAVE_STATE_VERSION,
-    SaveState, StateReader, StateReaderGbExt,
+    SGB_NATIVE_CONTINUATION_MAGIC, SGB_NATIVE_CONTINUATION_PAYLOAD_LEN, SaveState, StateReader,
+    StateReaderGbExt,
 };
 use crate::hardware::bus::Bus;
 use crate::hardware::cpu::Cpu;
@@ -47,12 +48,24 @@ pub(super) fn decode_state(bytes: &[u8]) -> Result<SaveState> {
     let cycle_count = reader.read_u64()?;
     let last_opcode = reader.read_u8()?;
     let last_opcode_pc = reader.read_u16()?;
-    let bus = Bus::read_state(&mut reader, format_version)?;
+    let mut bus = Bus::read_state(&mut reader, format_version)?;
     let boot_rom_enabled = if format_version >= 4 {
         reader.read_bool()?
     } else {
         false
     };
+    if format_version >= 14 {
+        let mut magic = [0; 4];
+        reader.read_exact(&mut magic)?;
+        if magic != SGB_NATIVE_CONTINUATION_MAGIC {
+            bail!("invalid SGB native continuation header");
+        }
+        let payload_len = reader.read_u32()? as usize;
+        if payload_len != SGB_NATIVE_CONTINUATION_PAYLOAD_LEN {
+            bail!("invalid SGB native continuation length {payload_len}");
+        }
+        bus.read_sgb_native_continuation(&mut reader)?;
+    }
     let extension = if format_version >= 13 {
         Some(super::bess::required_zeff_extension(
             bytes,

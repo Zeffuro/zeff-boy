@@ -13,17 +13,22 @@ mod lifecycle;
 mod linked_session;
 mod live_recording;
 mod messages;
+mod playback;
 mod project_binding;
+pub(in crate::app) mod readiness;
 pub(super) mod realtime;
+pub(in crate::app) mod repair;
 mod staged_execution;
 mod state;
 #[cfg(test)]
 use integration::acquisition_delivery_quiesced;
 use lifecycle::{ResponseDisposition, WorkerBoundCommand};
+pub(in crate::app) use live_recording::profile_supports_live_input_recording;
 use messages::{
     acquire_rejection_message, execution_rejection_message, frame_advance_rejection_message,
 };
 use project_binding::{TasAcquiredProjectBinding, TasControlHeldProof, TasEditorControlSnapshot};
+use readiness::{TasReadinessKey, TasReadinessRequest};
 use state::{TasControlState, TasControlTerminalReason};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,9 +40,15 @@ enum TasControlStartMode {
 pub(super) struct TasControlCoordinator {
     state: TasControlState,
     next_request_id: u64,
+    next_readiness_request_id: u64,
+    pending_readiness_request: Option<TasReadinessRequest>,
+    readiness_key: Option<TasReadinessKey>,
+    readiness_report: Option<readiness::TasReadinessReport>,
     next_run_id: u64,
+    worker_cache_cursors: Vec<u64>,
     pending_live_frame: Option<TasPreparedLiveFrame>,
     realtime_recording_active: bool,
+    playback_active: bool,
     start_mode: TasControlStartMode,
     pending_error: Option<String>,
     framebuffer_refresh_pending: bool,
@@ -81,7 +92,7 @@ impl TasControlCoordinator {
             bail!("TAS control is already changing authority");
         }
         if mode == TasControlStartMode::Record
-            && project.profile != crate::emu_thread::TasExecutionProfile::DirectNesCartridge
+            && !profile_supports_live_input_recording(project.profile)
         {
             bail!("live host-input recording is unavailable for this TAS profile");
         }
@@ -123,6 +134,7 @@ impl TasControlCoordinator {
     fn cancel(&mut self) -> Option<WorkerBoundCommand> {
         self.start_mode = TasControlStartMode::Preview;
         self.stop_realtime_recording();
+        self.pause_playback();
         match &self.state {
             TasControlState::Detached
             | TasControlState::RollbackPending { .. }
@@ -177,6 +189,12 @@ impl TasControlCoordinator {
                 proof,
                 ..
             }
+            | TasControlState::PlaybackPending {
+                worker_generation,
+                lease_id,
+                proof,
+                ..
+            }
             | TasControlState::FrameRecordCommitPending {
                 worker_generation,
                 lease_id,
@@ -201,6 +219,9 @@ impl TasControlCoordinator {
 
     #[allow(dead_code)]
     fn commit(&mut self, current: Option<&TasEditorControlSnapshot>) -> Option<WorkerBoundCommand> {
+        if self.playback_active || matches!(self.state, TasControlState::PlaybackPending { .. }) {
+            return None;
+        }
         self.stop_realtime_recording();
         let TasControlState::AwaitingDecision {
             worker_generation,
@@ -318,6 +339,17 @@ impl TasControlCoordinator {
                         acquired_project.expect("validated TAS project binding should be present");
                     let run_id = 1;
                     self.next_run_id = 2;
+                    let predecessor_source_cursors = acquired
+                        .predecessor_window
+                        .as_ref()
+                        .map(|window| {
+                            window
+                                .source_proofs
+                                .iter()
+                                .map(|proof| proof.target_cursor)
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     self.state = TasControlState::ExecutionPending {
                         worker_generation,
                         lease_id,
@@ -325,6 +357,7 @@ impl TasControlCoordinator {
                         proof,
                         project: acquired.snapshot.clone(),
                         total_input_frames: acquired.total_input_frames,
+                        predecessor_source_cursors,
                     };
                     ResponseDisposition::Consumed {
                         follow_up: Some(WorkerBoundCommand::execute(
@@ -333,6 +366,9 @@ impl TasControlCoordinator {
                                 profile: acquired.snapshot.profile,
                                 lease_id,
                                 run_id,
+                                cache_proof: acquired.snapshot.cache_proof(),
+                                intermediate_cache_proofs: acquired.intermediate_cache_proofs,
+                                predecessor_window: acquired.predecessor_window,
                                 start_state_bytes: acquired.start_state_bytes,
                                 input_prefix: acquired.input_prefix,
                             },
@@ -374,6 +410,7 @@ impl TasControlCoordinator {
                     proof,
                     project,
                     total_input_frames,
+                    predecessor_source_cursors,
                 } = &self.state
                 else {
                     return Self::stale_response();
@@ -395,12 +432,24 @@ impl TasControlCoordinator {
                 let worker_generation = *expected_worker_generation;
                 let proof = proof.clone();
                 let project = project.clone();
+                let total_input_frames = *total_input_frames;
+                let predecessor_source_cursors = predecessor_source_cursors.clone();
                 let initial_input_frames =
-                    (*total_input_frames).min(crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES);
-                if segment_id != 1
-                    || segment_frame_count != executed_project_frames
-                    || executed_project_frames != initial_input_frames
-                {
+                    total_input_frames.min(crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES);
+                let fresh_prefix = segment_frame_count == executed_project_frames
+                    && executed_project_frames == initial_input_frames;
+                let cached_target =
+                    segment_frame_count == 0 && executed_project_frames == total_input_frames;
+                let cached_predecessor = executed_project_frames <= total_input_frames
+                    && executed_project_frames
+                        .checked_sub(segment_frame_count)
+                        .is_some_and(|source| {
+                            predecessor_source_cursors.contains(&source)
+                                && segment_frame_count
+                                    == (total_input_frames - source)
+                                        .min(crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES)
+                        });
+                if segment_id != 1 || (!fresh_prefix && !cached_target && !cached_predecessor) {
                     self.stop_realtime_recording();
                     self.state = TasControlState::Terminal {
                         worker_generation,
@@ -420,7 +469,19 @@ impl TasControlCoordinator {
                         follow_up: Some(WorkerBoundCommand::rollback(worker_generation, lease_id)),
                     };
                 }
-                if executed_project_frames == *total_input_frames {
+                if cached_predecessor {
+                    self.remember_worker_cache_cursor(
+                        executed_project_frames - segment_frame_count,
+                    );
+                }
+                if crate::emu_thread::tas_is_intermediate_cache_cursor(
+                    total_input_frames,
+                    executed_project_frames,
+                ) || executed_project_frames == total_input_frames
+                {
+                    self.remember_worker_cache_cursor(executed_project_frames);
+                }
+                if executed_project_frames == total_input_frames {
                     self.state = TasControlState::AwaitingDecision {
                         worker_generation,
                         lease_id,
@@ -449,7 +510,7 @@ impl TasControlCoordinator {
                         candidate_executed_project_frames: executed_project_frames,
                         candidate_frame_count: frame_count,
                         candidate_state_sha256: state_sha256,
-                        total_input_frames: *total_input_frames,
+                        total_input_frames,
                     };
                     ResponseDisposition::ContinueExecutionReplay
                 }
@@ -522,7 +583,28 @@ impl TasControlCoordinator {
                 executed_project_frames,
                 frame_count,
                 state_sha256,
+                rumble,
+                audio_samples,
+                ui_data,
             } => {
+                if matches!(self.state, TasControlState::PlaybackPending { .. }) {
+                    return self.consume_playback_advanced(
+                        worker_generation,
+                        profile,
+                        lease_id,
+                        run_id,
+                        advance_id,
+                        segment_id,
+                        segment_frame_count,
+                        executed_project_frames,
+                        frame_count,
+                        state_sha256,
+                        rumble,
+                        audio_samples,
+                        ui_data,
+                        current_project,
+                    );
+                }
                 if matches!(self.state, TasControlState::ExecutionReplayPending { .. }) {
                     return self.consume_execution_replay_advanced(
                         worker_generation,
@@ -610,6 +692,9 @@ impl TasControlCoordinator {
                 };
                 ResponseDisposition::CommitLiveFrame {
                     prepared: Box::new(prepared),
+                    rumble,
+                    audio_samples,
+                    ui_data,
                 }
             }
             EmuResponse::TasFrameAdvanceRejected {
@@ -620,6 +705,17 @@ impl TasControlCoordinator {
                 segment_id,
                 reason,
             } => {
+                if matches!(self.state, TasControlState::PlaybackPending { .. }) {
+                    return self.consume_playback_rejection(
+                        worker_generation,
+                        profile,
+                        requested_lease_id,
+                        run_id,
+                        advance_id,
+                        segment_id,
+                        reason,
+                    );
+                }
                 if matches!(self.state, TasControlState::ExecutionReplayPending { .. }) {
                     return self.consume_execution_replay_rejection(
                         worker_generation,
@@ -782,74 +878,6 @@ impl TasControlCoordinator {
                 ResponseDisposition::Consumed { follow_up: None }
             }
             response => ResponseDisposition::Unrelated(response),
-        }
-    }
-
-    fn detach(&mut self) -> ResponseDisposition {
-        self.pending_live_frame = None;
-        self.stop_realtime_recording();
-        self.state = TasControlState::Detached;
-        ResponseDisposition::Consumed { follow_up: None }
-    }
-
-    fn stale_response() -> ResponseDisposition {
-        ResponseDisposition::Consumed { follow_up: None }
-    }
-
-    fn stale_acquired(
-        &mut self,
-        worker_generation: u64,
-        lease_id: u64,
-        proof: TasControlHeldProof,
-    ) -> ResponseDisposition {
-        let state_generation = match &self.state {
-            TasControlState::Detached => None,
-            TasControlState::AcquireQueued {
-                worker_generation, ..
-            }
-            | TasControlState::AcquirePending {
-                worker_generation, ..
-            }
-            | TasControlState::ExecutionPending {
-                worker_generation, ..
-            }
-            | TasControlState::ExecutionReplayReady {
-                worker_generation, ..
-            }
-            | TasControlState::ExecutionReplayPending {
-                worker_generation, ..
-            }
-            | TasControlState::AwaitingDecision {
-                worker_generation, ..
-            }
-            | TasControlState::FrameAdvancePending {
-                worker_generation, ..
-            }
-            | TasControlState::FrameRecordCommitPending {
-                worker_generation, ..
-            }
-            | TasControlState::RollbackPending {
-                worker_generation, ..
-            }
-            | TasControlState::CommitPending {
-                worker_generation, ..
-            }
-            | TasControlState::Terminal {
-                worker_generation, ..
-            } => Some(*worker_generation),
-        };
-        if state_generation.is_none_or(|generation| generation == worker_generation) {
-            self.pending_live_frame = None;
-            self.stop_realtime_recording();
-            self.state = TasControlState::RollbackPending {
-                worker_generation,
-                lease_id,
-                checkpoint_sha256: proof.current_state_sha256,
-                checkpoint_frame_count: proof.frame_count,
-            };
-        }
-        ResponseDisposition::Consumed {
-            follow_up: Some(WorkerBoundCommand::rollback(worker_generation, lease_id)),
         }
     }
 }

@@ -24,6 +24,13 @@ impl App {
             self.stop_replay_recording_for_teardown();
             self.recording.pending_replay_start = None;
             self.retire_tas_control_worker();
+            if !matches!(
+                self.tas_repair_state(),
+                crate::app::tas_control::repair::TasRepairState::Detached
+            ) && let Err(error) = self.keep_tas_repair()
+            {
+                log::error!("Could not discard the parked TAS repair worker: {error:#}");
+            }
         }
         if let Some(mut thread) = self.emu_thread.take() {
             thread.shutdown();

@@ -52,10 +52,17 @@ impl App {
             .source_path
             .as_ref()
             .map(|_| self.active_system);
+        let project = self
+            .debug_windows
+            .tas_editor
+            .active_session()
+            .map(|session| session.project().clone());
         let attachment = crate::emu_backend::loader::select_private_tas_execution_attachment(
             self.rom_info.source_path.clone(),
+            self.rom_info.rom_path.clone(),
             running_system,
             self.settings.emulation.firmware_search_dirs(),
+            project.as_ref(),
         );
         self.debug_windows.tas_editor.attach_execution(attachment);
     }
@@ -77,11 +84,21 @@ impl App {
 
         BackendLoadConfig {
             gb_hardware_mode_preference: self.settings.emulation.hardware_mode_preference,
-            sample_rate: self.audio.as_ref().map(|audio| audio.sample_rate()),
+            sample_rate: self
+                .audio
+                .as_ref()
+                .map(|audio| audio.emulator_sample_rate()),
             apply_mods: true,
             initial_input: Some(self.host_joypad_input_for_system(system)),
+            gb_tas_source_media: None,
             gb_load_battery_sram: true,
+            gb_rtc_time_override: None,
+            gba_load_battery_sram: true,
+            gba_seed_rtc_from_host: true,
             nes_load_battery_sram: true,
+            sega8_load_battery_sram: true,
+            ws_load_battery_sram: true,
+            game_gear_standard_mapper_ram_identity: None,
             sega8_video_standard: self
                 .settings
                 .emulation
@@ -90,6 +107,12 @@ impl App {
             sega8_console_region: self.settings.emulation.sega8_console_region.forced_region(),
             pce_console_wiring: self.settings.emulation.pce_console_wiring.forced_wiring(),
             pce_hucard_board: None,
+            pce_cartridge_hardware: None,
+            pce_cd_tas_source_media: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pce_cd_tas_ppf_stack: None,
+            pce_controller_mode: self.settings.emulation.pce_controller.core_mode(),
+            pce_memory_base_mode: self.settings.emulation.pce_memory_base.core_mode(),
             pce_arcade_card_mode: self.settings.emulation.pce_arcade_card.core_mode(),
             pce_cd_archive_memory_limit_mib: self
                 .settings

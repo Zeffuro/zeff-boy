@@ -2,6 +2,46 @@ use super::*;
 use crate::app::{App, DebugRequests};
 
 impl App {
+    pub(in crate::app) fn refresh_tas_control_readiness(&mut self) {
+        if !self.tas_control.gameplay_commands_allowed() {
+            return;
+        }
+        let Some(session) = self.debug_windows.tas_editor.active_session() else {
+            self.tas_control.clear_readiness();
+            return;
+        };
+        let Ok(profile) =
+            crate::emu_backend::loader::classify_direct_tas_execution_profile(session.project())
+        else {
+            self.tas_control.clear_readiness();
+            return;
+        };
+        let key = TasReadinessKey {
+            worker_generation: self.emu_worker_generation,
+            profile,
+            project_content_sha256: session.project_content_sha256(),
+            configured_sample_rate: self.settings.audio.output_sample_rate,
+        };
+        let command = match self.tas_control.begin_readiness_observation(key) {
+            Ok(Some(command)) => command,
+            Ok(None) => return,
+            Err(error) => {
+                log::error!("Could not inspect TAS readiness: {error:#}");
+                self.tas_control.clear_readiness();
+                return;
+            }
+        };
+        if self.send_emu_command_checked(command).is_err() {
+            self.tas_control.clear_readiness();
+        }
+    }
+
+    pub(in crate::app) fn tas_control_readiness_report(
+        &self,
+    ) -> Option<&readiness::TasReadinessReport> {
+        self.tas_control.readiness_report()
+    }
+
     pub(in crate::app) fn tas_control_live_status(&self) -> crate::debug::TasEditorLiveStatus {
         self.tas_control.live_status()
     }
@@ -41,9 +81,41 @@ impl App {
             .tas_editor
             .active_session()
             .ok_or_else(|| anyhow::anyhow!("no TAS editor project is open"))?;
-        let binding =
-            TasEditorControlSnapshot::prepare_linked_seek(session, profile, sync_identity_sha256)?;
+        let binding = TasEditorControlSnapshot::prepare_linked_seek(
+            session,
+            profile,
+            sync_identity_sha256,
+            self.tas_control.linked_cache_candidate_cursors(),
+        )?;
         let command = self.tas_control.begin_linked_seek(binding)?;
+        self.send_tas_control_command(command);
+        Ok(())
+    }
+
+    pub(in crate::app) fn reconstruct_linked_tas_after_edit(
+        &mut self,
+        edited_start: u64,
+        edited_end: u64,
+    ) -> Result<()> {
+        let (profile, sync_identity_sha256) = self
+            .tas_control
+            .linked_identity()
+            .ok_or_else(|| anyhow::anyhow!("the loaded game is not linked to the TAS editor"))?;
+        let session = self
+            .debug_windows
+            .tas_editor
+            .active_session()
+            .ok_or_else(|| anyhow::anyhow!("no TAS editor project is open"))?;
+        let binding = TasEditorControlSnapshot::prepare_linked_seek_at(
+            session,
+            edited_end,
+            profile,
+            sync_identity_sha256,
+            self.tas_control.linked_cache_candidate_cursors(),
+        )?;
+        let command =
+            self.tas_control
+                .begin_linked_edit_follow(binding, edited_start, edited_end)?;
         self.send_tas_control_command(command);
         Ok(())
     }
@@ -59,6 +131,12 @@ impl App {
         }
         if self.emu_thread.is_none() {
             bail!("no emulator is running");
+        }
+        match self.detached_tas_editor_live_status() {
+            crate::debug::TasEditorLiveStatus::Ready { .. } => {}
+            crate::debug::TasEditorLiveStatus::ReloadRequired(reason)
+            | crate::debug::TasEditorLiveStatus::Unavailable(reason) => bail!(reason),
+            _ => bail!("finish the current TAS action before connecting again"),
         }
         let project = self
             .debug_windows
@@ -106,11 +184,13 @@ impl App {
     }
 
     pub(in crate::app) fn cancel_tas_control(&mut self) {
+        self.request_tas_repair_resolution(repair::TasRepairResolution::Restore);
         self.stop_realtime_tas_recording();
         if let Some(command) = self.tas_control.cancel() {
             self.send_tas_control_command(command);
         }
         self.finish_realtime_tas_history_group_if_idle();
+        self.pump_tas_repair_resolution();
     }
 
     #[allow(dead_code)]
@@ -125,6 +205,7 @@ impl App {
             .tas_control
             .commit(current.as_ref())
             .ok_or_else(|| anyhow::anyhow!("no completed TAS execution is awaiting a decision"))?;
+        self.request_tas_repair_resolution(repair::TasRepairResolution::Keep);
         self.send_tas_control_command(command);
         Ok(())
     }
@@ -136,12 +217,13 @@ impl App {
         if !self.tas_control.can_record_live_input() {
             bail!("no completed TAS execution is awaiting a live input frame");
         }
+        let recording_mode = self.debug_windows.tas_editor.live_recording_mode();
         let prepared = self
             .debug_windows
             .tas_editor
             .active_session()
             .ok_or_else(|| anyhow::anyhow!("no TAS editor project is open"))?
-            .prepare_live_frame(input)?;
+            .prepare_live_frame_with_mode(input, recording_mode)?;
         let command = self.tas_control.begin_live_frame_advance(prepared)?;
         self.send_tas_control_command(command);
         Ok(())
@@ -152,7 +234,13 @@ impl App {
             .debug_windows
             .tas_editor
             .active_session()
-            .and_then(|session| TasEditorControlSnapshot::capture(session).ok());
+            .and_then(|session| {
+                let cursor = self
+                    .tas_control
+                    .project_binding_cursor()
+                    .unwrap_or(session.cursor());
+                TasEditorControlSnapshot::capture_at(session, cursor).ok()
+            });
         if let Some(command) = self.tas_control.reconcile_project(current.as_ref()) {
             self.send_tas_control_command(command);
         }
@@ -162,11 +250,42 @@ impl App {
         &mut self,
         response: EmuResponse,
     ) -> Option<EmuResponse> {
+        let response = match response {
+            EmuResponse::TasReadinessObserved {
+                request_id,
+                observation,
+            } => {
+                let accepted = if let Some(session) = self.debug_windows.tas_editor.active_session()
+                {
+                    self.tas_control.accept_readiness_observation(
+                        self.emu_worker_generation,
+                        request_id,
+                        session.project().identity(),
+                        &observation,
+                    )
+                } else {
+                    false
+                };
+                if accepted {
+                    self.pump_tas_repair_connect_after_readiness();
+                }
+                return None;
+            }
+            response => response,
+        };
         let replay_response = self.tas_control.execution_replay_pending()
             && matches!(
                 &response,
                 EmuResponse::TasFrameAdvanced { .. } | EmuResponse::TasFrameAdvanceRejected { .. }
             );
+        let repair_failure = matches!(
+            &response,
+            EmuResponse::TasControlAcquireRejected { .. }
+                | EmuResponse::TasExecutionRejected { .. }
+                | EmuResponse::TasFrameAdvanceRejected { .. }
+                | EmuResponse::TasControlRollbackRejected { .. }
+                | EmuResponse::TasControlCommitRejected { .. }
+        );
         let replay_session = replay_response
             .then(|| self.debug_windows.tas_editor.active_session())
             .flatten();
@@ -175,7 +294,13 @@ impl App {
                 self.debug_windows
                     .tas_editor
                     .active_session()
-                    .and_then(|session| TasEditorControlSnapshot::capture(session).ok())
+                    .and_then(|session| {
+                        let cursor = self
+                            .tas_control
+                            .project_binding_cursor()
+                            .unwrap_or(session.cursor());
+                        TasEditorControlSnapshot::capture_at(session, cursor).ok()
+                    })
             })
             .flatten();
         let acquired_project = match &response {
@@ -195,8 +320,16 @@ impl App {
             current_project.as_ref(),
             replay_session,
         );
+        let mut live_audio = None;
+        let mut live_rumble = None;
+        let mut live_ui_data = None;
         let disposition = match disposition {
-            ResponseDisposition::CommitLiveFrame { prepared } => {
+            ResponseDisposition::CommitLiveFrame {
+                prepared,
+                rumble,
+                audio_samples,
+                ui_data,
+            } => {
                 let committed = self
                     .debug_windows
                     .tas_editor
@@ -208,7 +341,22 @@ impl App {
                             .ok_or_else(|| anyhow::anyhow!("no TAS editor project is open"))
                             .and_then(TasEditorControlSnapshot::capture)
                     });
+                if committed.is_ok() {
+                    live_audio = Some(audio_samples);
+                    live_rumble = Some(rumble);
+                    live_ui_data = ui_data;
+                }
                 self.tas_control.finish_live_frame_commit(committed)
+            }
+            ResponseDisposition::PresentPlaybackFrame {
+                rumble,
+                audio_samples,
+                ui_data,
+            } => {
+                live_audio = Some(audio_samples);
+                live_rumble = Some(rumble);
+                live_ui_data = ui_data;
+                ResponseDisposition::Consumed { follow_up: None }
             }
             ResponseDisposition::ContinueExecutionReplay => self
                 .tas_control
@@ -225,11 +373,20 @@ impl App {
             }
         }
         self.finish_realtime_tas_history_group_if_idle();
+        if let Some(audio_samples) = live_audio {
+            self.queue_emulator_audio(&audio_samples, 1);
+        }
+        if let (Some(rumble), Some(gamepad)) = (live_rumble, &mut self.gamepad) {
+            gamepad.set_rumble(rumble);
+        }
+        if let Some(ui_data) = live_ui_data {
+            self.process_ui_frame_data(*ui_data);
+        }
         let refresh_framebuffer = self.tas_control.take_framebuffer_refresh();
         if let Some(error) = self.tas_control.take_error() {
             self.toast_manager.error(error);
         }
-        match disposition {
+        let response = match disposition {
             ResponseDisposition::Unrelated(response) => Some(response),
             ResponseDisposition::Consumed { follow_up } => {
                 if refresh_framebuffer && let Some(thread) = &self.emu_thread {
@@ -258,17 +415,30 @@ impl App {
             ResponseDisposition::CommitLiveFrame { .. } => {
                 unreachable!("live frame commit must complete before response disposition")
             }
+            ResponseDisposition::PresentPlaybackFrame { .. } => {
+                unreachable!("playback frame must be presented before response disposition")
+            }
             ResponseDisposition::ContinueExecutionReplay => {
                 unreachable!("staged execution replay must enqueue its next frame before dispatch")
             }
+        };
+        if repair_failure
+            && self.request_tas_repair_resolution(repair::TasRepairResolution::Restore)
+            && self.tas_control.terminal()
+        {
+            self.tas_control.retire_worker(self.emu_worker_generation);
         }
+        self.pump_tas_repair_resolution();
+        response
     }
 
     pub(in crate::app) fn retire_tas_control_worker(&mut self) {
         self.tas_control.retire_worker(self.emu_worker_generation);
         self.tas_realtime_recorder.reset();
+        self.tas_playback_scheduler.reset();
         self.finish_realtime_tas_history_group_if_idle();
         self.recompute_pause();
+        self.pump_tas_repair_resolution();
     }
 
     pub(in crate::app) fn terminalize_tas_control_runtime_fault(&mut self) {
@@ -284,17 +454,37 @@ impl App {
     }
 
     fn terminalize_tas_control_worker(&mut self, reason: TasControlTerminalReason) {
+        let repairing = self.request_tas_repair_resolution(repair::TasRepairResolution::Restore);
         self.tas_control
             .terminalize_worker(self.emu_worker_generation, reason);
+        if repairing {
+            self.tas_control.retire_worker(self.emu_worker_generation);
+        }
         self.tas_realtime_recorder.reset();
+        self.tas_playback_scheduler.reset();
         self.finish_realtime_tas_history_group_if_idle();
         self.recompute_pause();
+        self.pump_tas_repair_resolution();
     }
 
-    fn send_tas_control_command(&mut self, command: WorkerBoundCommand) {
-        let Some((_, command)) = command.into_parts_for_worker(self.emu_worker_generation) else {
+    pub(in crate::app) fn send_tas_control_command(&mut self, command: WorkerBoundCommand) {
+        let Some((_, mut command)) = command.into_parts_for_worker(self.emu_worker_generation)
+        else {
             return;
         };
+        if self.tas_control.captures_frame_snapshot()
+            && let crate::emu_thread::EmuCommand::AdvanceTasControl(request) = &mut command
+        {
+            let requirements = if self.debug_workspace_visible() {
+                crate::debug::compute_tab_requirements(&self.debug_dock)
+            } else {
+                crate::debug::dock::TabDataRequirements::default()
+            };
+            request.snapshot = Some(crate::emu_thread::TasFrameAdvanceSnapshot {
+                request: self.build_snapshot_request(&requirements, true),
+                buffers: self.take_reusable_buffers(),
+            });
+        }
         let sent = self
             .emu_thread
             .as_ref()

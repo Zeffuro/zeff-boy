@@ -204,8 +204,13 @@ impl TasEditorExecutionEngine {
                     usize::from(apply_immediate_replay_event(&mut self.backend, event)?);
                 event_index += 1;
             }
-            let frame = materialize_input(project, branch.input_at(cursor))?;
-            self.backend.apply_replay_input(&frame);
+            let input = branch.input_at(cursor);
+            if self.backend.system() == crate::emu_backend::ActiveSystem::Coleco {
+                self.backend.apply_coleco_tas_input(input.coleco)?;
+            } else {
+                let frame = materialize_input(project, input)?;
+                self.backend.apply_replay_input(&frame);
+            }
             let frame_count_before = self.backend.frame_count();
             self.backend.step_frame();
             if self.backend.frame_count() == frame_count_before {
@@ -219,7 +224,7 @@ impl TasEditorExecutionEngine {
             .backend
             .encode_state_bytes()
             .context("failed to encode exact TAS editor cursor state")?;
-        if reached_cursor == target_cursor {
+        if reached_cursor == target_cursor && reached_cursor == branch.frame_count() {
             while let Some(event) = branch.events().get(event_index)
                 && event.frame() == reached_cursor
             {
@@ -408,6 +413,7 @@ fn materialize_input(project: &TasProject, frame: TasInputFrame) -> Result<Repla
             f32::from_bits(frame.tilt_y_bits),
         ),
         camera_frame,
+        coleco: Default::default(),
     })
 }
 

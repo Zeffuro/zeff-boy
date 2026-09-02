@@ -8,7 +8,10 @@ pub(crate) mod recovery_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod sram_recovery;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use sram_recovery::RecoverySession as SramRecoverySession;
+pub(crate) use sram_recovery::{
+    RecoverySession as SramRecoverySession, SavePublicationOutcome, SaveRecoveryIdentity,
+    SaveTargetBaseline,
+};
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Default)]
@@ -27,6 +30,11 @@ impl SramRecoverySession {
 }
 
 pub(crate) const SRAM_COMPONENT: &str = "sram";
+pub(crate) const GB_RTC_COMPONENT: &str = "gb-rtc";
+pub(crate) const GBA_BACKUP_COMPONENT: &str = "gba-backup";
+pub(crate) const GBA_RTC_COMPONENT: &str = "gba-rtc";
+pub(crate) const WS_BACKUP_COMPONENT: &str = "ws-backup";
+pub(crate) const WS_RTC_COMPONENT: &str = "ws-rtc";
 
 pub(crate) fn slot_path(
     system_subdir: &str,
@@ -159,6 +167,101 @@ pub(crate) fn flush_battery_sram(
         &bytes,
     )?;
     Ok(Some(save_path.display().to_string()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn battery_sram_baseline(rom_path: &Path) -> anyhow::Result<SaveTargetBaseline> {
+    sram_recovery::capture_baseline(&sram_path_for_rom(rom_path))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn publish_battery_sram_if_unchanged(
+    recovery_session: &mut SramRecoverySession,
+    rom_path: &Path,
+    system_subdir: &str,
+    media_identity: [u8; 32],
+    expected: SaveTargetBaseline,
+    bytes: &[u8],
+) -> (String, SavePublicationOutcome) {
+    let (path, outcome, _) = publish_battery_sram_if_unchanged_with_receipt(
+        recovery_session,
+        rom_path,
+        system_subdir,
+        media_identity,
+        expected,
+        bytes,
+    );
+    (path, outcome)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn publish_battery_sram_if_unchanged_with_receipt(
+    recovery_session: &mut SramRecoverySession,
+    rom_path: &Path,
+    system_subdir: &str,
+    media_identity: [u8; 32],
+    expected: SaveTargetBaseline,
+    bytes: &[u8],
+) -> (
+    String,
+    SavePublicationOutcome,
+    recovery_state::BatteryPublicationReceipt,
+) {
+    let save_path = sram_path_for_rom(rom_path);
+    let receipt =
+        recovery_state::BatteryPublicationReceipt::from_components(&[(SRAM_COMPONENT, bytes)]);
+    let outcome = recovery_session.write_if_unchanged(
+        &save_path,
+        SaveRecoveryIdentity {
+            system_subdir,
+            media_identity,
+            component: SRAM_COMPONENT,
+        },
+        expected,
+        bytes,
+    );
+    (save_path.display().to_string(), outcome, receipt)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn publish_battery_aggregate_if_unchanged(
+    recovery_session: &mut SramRecoverySession,
+    rom_path: &Path,
+    identity: SaveRecoveryIdentity<'_>,
+    expected: SaveTargetBaseline,
+    bytes: &[u8],
+    receipt: recovery_state::BatteryPublicationReceipt,
+) -> (
+    String,
+    SavePublicationOutcome,
+    recovery_state::BatteryPublicationReceipt,
+) {
+    let save_path = sram_path_for_rom(rom_path);
+    let outcome = recovery_session.write_if_unchanged(&save_path, identity, expected, bytes);
+    (save_path.display().to_string(), outcome, receipt)
+}
+
+pub(crate) fn aggregate_battery_receipt(
+    bytes: &[u8],
+    backup_len: usize,
+    backup_component: &'static str,
+    rtc_component: &'static str,
+) -> Option<recovery_state::BatteryPublicationReceipt> {
+    let rtc = bytes.get(backup_len..)?;
+    if rtc.is_empty() {
+        return None;
+    }
+    let components = if backup_len == 0 {
+        vec![(rtc_component, rtc)]
+    } else {
+        vec![
+            (backup_component, &bytes[..backup_len]),
+            (rtc_component, rtc),
+        ]
+    };
+    Some(recovery_state::BatteryPublicationReceipt::from_components(
+        &components,
+    ))
 }
 
 pub(crate) fn begin_battery_sram_session(
@@ -339,6 +442,38 @@ mod tests {
             None
         );
         assert!(!sram_path_for_rom(&rom_path).exists());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn conditional_publication_receipt_matches_exact_rtc_sidecar_bytes() {
+        let dir = test_dir();
+        let rom_path = dir.0.join("clock.gb");
+        let mut recovery = battery_sram_session(&rom_path, "gb", [0x31; 32]);
+        let mut bytes = [0u8; 64];
+        bytes[40..48].copy_from_slice(&1_725_000_000u64.to_le_bytes());
+        bytes[48..56].copy_from_slice(b"ZBRTC001");
+        bytes[56..64].copy_from_slice(&2_097_151u64.to_le_bytes());
+
+        let (_, outcome, receipt) = publish_battery_sram_if_unchanged_with_receipt(
+            &mut recovery,
+            &rom_path,
+            "gb",
+            [0x31; 32],
+            SaveTargetBaseline::Missing,
+            &bytes,
+        );
+
+        assert!(matches!(outcome, SavePublicationOutcome::PublishedDurable));
+        assert_eq!(std::fs::read(sram_path_for_rom(&rom_path)).unwrap(), bytes);
+        assert!(receipt.is_consistent());
+        assert_eq!(receipt.components.len(), 1);
+        assert_eq!(receipt.components[0].name, SRAM_COMPONENT);
+        assert_eq!(receipt.components[0].byte_len, 64);
+        assert_eq!(
+            receipt.components[0].sha256,
+            zeff_firmware::sha256_bytes(&bytes)
+        );
     }
 
     #[test]

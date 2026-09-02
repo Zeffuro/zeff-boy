@@ -3,13 +3,44 @@ use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use crate::emulator::Emulator;
 
-const MAGIC: &[u8; 8] = b"ZBCOLCO\0";
-const VERSION: u32 = 1;
+pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBCOLCO\0";
+pub const SAVE_STATE_FORMAT_VERSION: u32 = 1;
+pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-coleco-determinism-v1";
+pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-coleco-native-state-v1";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentNativeTasStateProjection {
+    pub replay_state_bytes: Vec<u8>,
+    pub frame_count: u64,
+    pub framebuffer: Box<[u8]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CurrentNativeTasStateIdentity {
+    pub bios_sha256: [u8; 32],
+    pub cartridge_sha256: [u8; 32],
+}
+
+pub fn inspect_current_native_tas_state_identity(
+    data: &[u8],
+) -> anyhow::Result<CurrentNativeTasStateIdentity> {
+    if data.len() < 76 || data[..8] != SAVE_STATE_MAGIC {
+        bail!("TAS requires a native ColecoVision save-state");
+    }
+    let version = u32::from_le_bytes(data[8..12].try_into().expect("length checked"));
+    if version != SAVE_STATE_FORMAT_VERSION {
+        bail!("TAS requires ColecoVision save-state format {SAVE_STATE_FORMAT_VERSION}");
+    }
+    Ok(CurrentNativeTasStateIdentity {
+        bios_sha256: data[12..44].try_into().expect("length checked"),
+        cartridge_sha256: data[44..76].try_into().expect("length checked"),
+    })
+}
 
 pub fn encode_state(emulator: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut writer = StateWriter::with_capacity(0x40_000);
-    writer.write_bytes(MAGIC);
-    writer.write_u32(VERSION);
+    writer.write_bytes(&SAVE_STATE_MAGIC);
+    writer.write_u32(SAVE_STATE_FORMAT_VERSION);
     writer.write_bytes(&emulator.bios_hash);
     writer.write_bytes(&emulator.cartridge_hash);
     writer.write_u64(emulator.effective_cycles);
@@ -22,11 +53,11 @@ pub fn decode_state(emulator: &mut Emulator, data: &[u8]) -> anyhow::Result<()> 
     let mut reader = StateReader::new(data);
     let mut magic = [0; 8];
     reader.read_exact(&mut magic)?;
-    if &magic != MAGIC {
+    if magic != SAVE_STATE_MAGIC {
         bail!("not a valid ColecoVision save-state");
     }
     let version = reader.read_u32()?;
-    if version != VERSION {
+    if version != SAVE_STATE_FORMAT_VERSION {
         bail!("unsupported ColecoVision save-state version {version}");
     }
 
@@ -56,6 +87,19 @@ pub fn decode_state(emulator: &mut Emulator, data: &[u8]) -> anyhow::Result<()> 
     emulator.opcode_log.clear();
     emulator.instruction_trace.clear();
     Ok(())
+}
+
+pub fn validate_and_load_current_native_tas_state(
+    emulator: &mut Emulator,
+    data: &[u8],
+) -> anyhow::Result<CurrentNativeTasStateProjection> {
+    inspect_current_native_tas_state_identity(data)?;
+    decode_state(emulator, data)?;
+    Ok(CurrentNativeTasStateProjection {
+        replay_state_bytes: data.to_vec(),
+        frame_count: emulator.frame_count(),
+        framebuffer: emulator.framebuffer().into(),
+    })
 }
 
 #[cfg(test)]
@@ -132,5 +176,42 @@ mod tests {
         assert!(emulator.recent_opcodes(1).is_empty());
         assert!(emulator.instruction_trace().is_enabled());
         assert!(emulator.instruction_trace().is_empty());
+    }
+
+    #[test]
+    fn current_native_tas_state_restores_exact_frame_output() {
+        let mut source = emulator(0x11);
+        source.step_frame();
+        source.bus_mut().vdp_mut().write_register(7, 0x02);
+        source.step_frame();
+        let state = source.save_state().unwrap();
+
+        let mut target = emulator(0x11);
+        let projection = validate_and_load_current_native_tas_state(&mut target, &state).unwrap();
+
+        assert_eq!(projection.replay_state_bytes, state);
+        assert_eq!(projection.frame_count, source.frame_count());
+        assert_eq!(projection.framebuffer.as_ref(), source.framebuffer());
+        assert_eq!(target.save_state().unwrap(), state);
+        assert_eq!(target.framebuffer(), source.framebuffer());
+    }
+
+    #[test]
+    fn current_native_tas_state_rejects_wrong_schema_or_identity_transactionally() {
+        let source = emulator(0x11);
+        let current = source.save_state().unwrap();
+        let mut target = emulator(0x11);
+        target.step_instruction();
+        let before = target.save_state().unwrap();
+
+        let mut wrong_version = current.clone();
+        wrong_version[8..12].copy_from_slice(&(SAVE_STATE_FORMAT_VERSION + 1).to_le_bytes());
+        let mut wrong_magic = current.clone();
+        wrong_magic[0] ^= 1;
+        let wrong_cartridge = emulator(0x22).save_state().unwrap();
+        for invalid in [&wrong_version, &wrong_magic, &wrong_cartridge] {
+            assert!(validate_and_load_current_native_tas_state(&mut target, invalid).is_err());
+            assert_eq!(target.save_state().unwrap(), before);
+        }
     }
 }

@@ -8,6 +8,15 @@ use crate::tas_project::{
 };
 use zeff_emu_common::replay::ReplayStartMetadata;
 
+#[path = "state_tests/branch_deletion_tests.rs"]
+mod branch_deletion_tests;
+#[path = "state_tests/coleco_timeline_tests.rs"]
+mod coleco_timeline_tests;
+#[path = "state_tests/timeline_live_control_tests.rs"]
+mod timeline_live_control_tests;
+#[path = "state_tests/window_close_tests.rs"]
+mod window_close_tests;
+
 #[test]
 fn editor_presentation_switches_between_embedded_and_separate_hosts() {
     let mut state = TasEditorWindowState::new();
@@ -24,8 +33,15 @@ fn editor_presentation_switches_between_embedded_and_separate_hosts() {
 }
 
 #[test]
+fn verified_export_busy_blocks_editor_reducers() {
+    let mut state = TasEditorWindowState::new();
+    state.set_verified_export_busy(true);
+    assert!(state.reduce(TasEditorAction::SelectCursor(0)).is_err());
+}
+
+#[test]
 fn live_staging_accepts_selected_rows_and_the_end_cursor() {
-    assert_eq!(live_execution_ui::selected_input_target(0, 1), Some(1));
+    assert_eq!(live_execution_ui::selected_input_target(0, 1), Some(0));
     assert_eq!(live_execution_ui::selected_input_target(4, 4), Some(4));
     assert_eq!(live_execution_ui::selected_input_target(5, 4), None);
     assert!(live_execution_ui::can_stage_selected_input(0, 1));
@@ -36,7 +52,7 @@ fn live_staging_accepts_selected_rows_and_the_end_cursor() {
             crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES - 1,
             crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES,
         ),
-        Some(crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES)
+        Some(crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES - 1)
     );
     assert!(live_execution_ui::can_stage_selected_input(
         crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES - 1,
@@ -47,7 +63,7 @@ fn live_staging_accepts_selected_rows_and_the_end_cursor() {
             crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES,
             crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES + 1,
         ),
-        Some(crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES + 1)
+        Some(crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES)
     );
     assert!(live_execution_ui::can_stage_selected_input(
         crate::tas_project::MAX_EDITOR_SEEK_EXECUTION_FRAMES,
@@ -57,61 +73,6 @@ fn live_staging_accepts_selected_rows_and_the_end_cursor() {
         u64::MAX,
         u64::MAX
     ));
-}
-
-#[test]
-fn linked_editor_stays_editable_and_close_keeps_the_linked_game_position() {
-    let mut state = TasEditorWindowState::new();
-    assert!(
-        !TasEditorLiveStatus::Ready {
-            recording_available: true
-        }
-        .locks_editor()
-    );
-    assert!(
-        TasEditorLiveStatus::Staging {
-            completed: 0,
-            total: 1,
-        }
-        .locks_editor()
-    );
-    assert!(TasEditorLiveStatus::AdvancingFrame.locks_editor());
-    assert!(TasEditorLiveStatus::Recording.locks_editor());
-    assert!(TasEditorLiveStatus::Terminal("worker lost".to_owned()).locks_editor());
-
-    state.set_live_status(TasEditorLiveStatus::Linked {
-        cursor: 1,
-        recording_available: true,
-    });
-    assert!(!state.live_status.locks_editor());
-    state.close();
-    assert_eq!(
-        state.take_pending_host_request(),
-        Some(TasEditorHostRequest::Live(
-            TasEditorLiveAction::KeepResultAndReturnToGame
-        ))
-    );
-
-    state.set_live_status(TasEditorLiveStatus::Linked {
-        cursor: 1,
-        recording_available: false,
-    });
-    state.close();
-    assert_eq!(
-        state.take_pending_host_request(),
-        Some(TasEditorHostRequest::Live(
-            TasEditorLiveAction::KeepResultAndReturnToGame
-        ))
-    );
-
-    state.set_live_status(TasEditorLiveStatus::AdvancingFrame);
-    state.close();
-    assert_eq!(
-        state.take_pending_host_request(),
-        Some(TasEditorHostRequest::Live(
-            TasEditorLiveAction::ReturnToGameUnchanged
-        ))
-    );
 }
 
 #[test]
@@ -145,7 +106,7 @@ fn live_authority_rejects_keyboard_history_and_cursor_mutations() {
 }
 
 #[test]
-fn linked_selection_and_input_edit_request_one_core_reposition() {
+fn linked_selection_stays_put_but_input_edit_requests_one_reconstruction() {
     let (_root, mut state) = state_with_project(2);
     state.set_live_status(TasEditorLiveStatus::Linked {
         cursor: 1,
@@ -153,12 +114,7 @@ fn linked_selection_and_input_edit_request_one_core_reposition() {
     });
 
     state.reduce(TasEditorAction::SelectCursor(1)).unwrap();
-    assert_eq!(
-        state.take_pending_host_request(),
-        Some(TasEditorHostRequest::Live(
-            TasEditorLiveAction::SeekLinkedInput
-        ))
-    );
+    assert_eq!(state.take_pending_host_request(), None);
     state
         .reduce(TasEditorAction::ToggleDigital {
             cursor: 1,
@@ -170,30 +126,63 @@ fn linked_selection_and_input_edit_request_one_core_reposition() {
     assert_eq!(
         state.take_pending_host_request(),
         Some(TasEditorHostRequest::Live(
-            TasEditorLiveAction::SeekLinkedInput
+            TasEditorLiveAction::ReconstructAfterEdit { start: 1, end: 2 }
         ))
     );
 }
 
 #[test]
-fn separate_window_focus_request_is_one_shot_and_clears_when_embedded_or_closed() {
-    let mut state = TasEditorWindowState::new();
-    state.open_separate_window();
-    assert!(state.take_separate_focus_request());
-    assert!(!state.take_separate_focus_request());
+fn live_control_branch_fork_requires_and_selects_the_linked_boundary() {
+    let (_root, mut state) = state_with_project(2);
+    state.reduce(TasEditorAction::SelectCursor(1)).unwrap();
+    state.set_live_status(TasEditorLiveStatus::Linked {
+        cursor: 1,
+        recording_available: true,
+    });
 
-    state.open_separate_window();
-    state.open_embedded();
-    assert!(!state.take_separate_focus_request());
+    state
+        .fork_branch_at_linked_boundary_for_live_control(
+            1,
+            "alternate".to_owned(),
+            "Alternate".to_owned(),
+        )
+        .unwrap();
+    assert_eq!(
+        state.session.as_ref().unwrap().selected_branch_id(),
+        "alternate"
+    );
+    assert_eq!(state.session.as_ref().unwrap().cursor(), 1);
 
-    state.open_separate_window();
-    state.close();
-    assert!(!state.take_separate_focus_request());
+    state.reduce(TasEditorAction::SelectCursor(0)).unwrap();
+    assert!(
+        state
+            .fork_branch_at_linked_boundary_for_live_control(
+                1,
+                "wrong-boundary".to_owned(),
+                "Wrong boundary".to_owned(),
+            )
+            .is_err()
+    );
 }
 
 #[test]
-fn compact_editor_body_remains_scrollable() {
+fn replacement_request_waits_for_editor_confirmation() {
+    let mut state = TasEditorWindowState::new();
+    let path = PathBuf::from("movie.ztas");
+
+    state.request_project_replacement_with_game_gear_no_save(path.clone(), false);
+
+    assert_eq!(state.pending_project_replacement, Some((path, false)));
+    assert_eq!(state.take_pending_host_request(), None);
+}
+
+#[test]
+fn compact_editor_body_remains_scrollable_under_the_compact_policy() {
     let (_root, mut state) = state_with_project(8);
+    assert_eq!(
+        content::project_content_render_policy(620.0),
+        content::TasProjectContentRenderPolicy::ScrollableCompact
+    );
     let context = egui::Context::default();
     let mut dimensions = None;
     let _ = context.run_ui(
@@ -207,14 +196,8 @@ fn compact_editor_body_remains_scrollable() {
         |ui| {
             let mut actions = Vec::new();
             let mut live_action = None;
-            let available_height = ui.available_height();
-            let output = draw_scrollable_project_content(
-                ui,
-                &mut state,
-                &mut actions,
-                &mut live_action,
-                available_height,
-            );
+            let output =
+                draw_scrollable_project_content(ui, &mut state, &mut actions, &mut live_action);
             dimensions = Some((output.content_size.y, output.inner_rect.height()));
         },
     );
@@ -224,10 +207,51 @@ fn compact_editor_body_remains_scrollable() {
 }
 
 #[test]
+fn wide_editor_body_renders_with_fixed_project_chrome() {
+    let (_root, mut state) = state_with_project(8);
+    assert_eq!(
+        content::project_content_render_policy(1_000.0),
+        content::TasProjectContentRenderPolicy::FixedWide
+    );
+    let context = egui::Context::default();
+    let output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1_000.0, 720.0),
+            )),
+            ..egui::RawInput::default()
+        },
+        |ui| {
+            let mut actions = Vec::new();
+            let mut live_action = None;
+            project_content_ui::draw_project_content(
+                ui,
+                &mut state,
+                &mut actions,
+                &mut live_action,
+            );
+            assert!(actions.is_empty());
+            assert!(live_action.is_none());
+        },
+    );
+
+    assert!(!output.shapes.is_empty());
+}
+
+#[test]
 fn timeline_viewport_stays_useful_across_window_sizes() {
     assert_eq!(timeline_height(200.0), MIN_TIMELINE_HEIGHT);
     assert_eq!(timeline_height(600.0), 450.0);
     assert_eq!(timeline_height(1_200.0), MAX_TIMELINE_HEIGHT);
+}
+
+#[test]
+fn compact_layout_stacks_at_the_effective_ui_width_boundary() {
+    assert!(!project_content_ui::uses_two_pane_layout(
+        TWO_PANE_MIN_WIDTH - 0.1
+    ));
+    assert!(project_content_ui::uses_two_pane_layout(TWO_PANE_MIN_WIDTH));
 }
 
 fn project(frame_count: u64) -> TasProject {
@@ -414,7 +438,9 @@ fn insert_delete_and_fork_actions_preserve_controller_invariants() {
     assert_eq!(session.cursor(), 2);
     assert_eq!(session.project().branches().len(), 2);
 
-    state.reduce(TasEditorAction::DeleteFrame(2)).unwrap();
+    state
+        .reduce(TasEditorAction::DeleteFrames { start: 2, count: 1 })
+        .unwrap();
     let session = state.session.as_ref().unwrap();
     assert_eq!(session.selected_branch().frame_count(), 3);
     assert_eq!(session.cursor(), 2);
@@ -617,7 +643,7 @@ fn digital_labels_match_known_backends_and_stay_raw_when_ambiguous() {
         ]
     );
 
-    for system in ["coleco", "wonderswan", "sms", "unknown"] {
+    for system in ["coleco", "unknown"] {
         let columns = digital_columns(system);
         assert_eq!(columns.len(), 16);
         assert_eq!(columns[0].label, "D0");
@@ -690,6 +716,55 @@ fn undo_and_redo_actions_restore_exact_ui_session_snapshots() {
 }
 
 #[test]
+fn renaming_the_active_branch_is_transactional_and_undoable() {
+    let (_root, mut state) = state_with_project(2);
+    let before = state.session.as_ref().unwrap().project().encode().unwrap();
+
+    state
+        .reduce(TasEditorAction::RenameActiveBranch {
+            name: "  Any% route  ".to_owned(),
+        })
+        .unwrap();
+    let session = state.session.as_ref().unwrap();
+    assert_eq!(session.selected_branch().name(), "Any% route");
+    assert!(session.can_undo());
+    assert_eq!(state.active_branch_name, "Any% route");
+
+    state.reduce(TasEditorAction::Undo).unwrap();
+    assert_eq!(
+        state.session.as_ref().unwrap().project().encode().unwrap(),
+        before
+    );
+    assert_eq!(state.active_branch_name, "Main");
+
+    state.reduce(TasEditorAction::Redo).unwrap();
+    assert_eq!(
+        state.session.as_ref().unwrap().selected_branch().name(),
+        "Any% route"
+    );
+    assert_eq!(state.active_branch_name, "Any% route");
+}
+
+#[test]
+fn rejected_active_branch_rename_leaves_the_project_and_history_unchanged() {
+    let (_root, mut state) = state_with_project(2);
+    let before = state.session.as_ref().unwrap().project().encode().unwrap();
+    let undo_count = state.session.as_ref().unwrap().undo_count();
+
+    assert!(
+        state
+            .reduce(TasEditorAction::RenameActiveBranch {
+                name: " \t ".to_owned(),
+            })
+            .is_err()
+    );
+
+    let session = state.session.as_ref().unwrap();
+    assert_eq!(session.project().encode().unwrap(), before);
+    assert_eq!(session.undo_count(), undo_count);
+}
+
+#[test]
 fn persistence_actions_keep_manual_and_autosave_witnesses_separate() {
     let (_root, mut state) = state_with_project(2);
     state
@@ -749,4 +824,50 @@ fn periodic_autosave_runs_while_closed_without_duplicate_generations() {
 
     state.test_tick_periodic_autosave_at(Duration::from_secs(60));
     assert_eq!(state.message, first_message);
+}
+
+#[test]
+fn selection_changes_request_one_timeline_recenter() {
+    let (_root, mut state) = state_with_project(8);
+    std::mem::take(&mut state.timeline_follow_selection);
+
+    state.reduce(TasEditorAction::SelectCursor(6)).unwrap();
+
+    assert_eq!(state.session.as_ref().unwrap().cursor(), 6);
+    assert!(state.timeline_follow_selection);
+    assert!(std::mem::take(&mut state.timeline_follow_selection));
+    assert!(!state.timeline_follow_selection);
+}
+
+#[test]
+fn show_game_position_reselects_the_linked_boundary_without_moving_the_game() -> anyhow::Result<()>
+{
+    let (_root, mut state) = state_with_project(8);
+    state.set_live_status(TasEditorLiveStatus::Linked {
+        cursor: 6,
+        recording_available: true,
+    });
+    state.reduce(TasEditorAction::SelectTimelineRange {
+        anchor: 1,
+        active: 3,
+    })?;
+    let before = state.session.as_ref().unwrap().project().encode()?;
+    let undo_count = state.session.as_ref().unwrap().undo_count();
+    std::mem::take(&mut state.timeline_follow_selection);
+
+    state.reduce(TasEditorAction::SelectLiveExecutionBoundary)?;
+
+    assert_eq!(state.session.as_ref().unwrap().cursor(), 6);
+    assert_eq!(
+        state
+            .timeline_selection
+            .selected_range(state.session.as_ref().unwrap()),
+        Some((6, 7))
+    );
+    assert_eq!(state.session.as_ref().unwrap().project().encode()?, before);
+    assert_eq!(state.session.as_ref().unwrap().undo_count(), undo_count);
+    assert_eq!(state.live_status.execution_boundary(), Some(6));
+    assert_eq!(state.take_pending_host_request(), None);
+    assert!(state.timeline_follow_selection);
+    Ok(())
 }

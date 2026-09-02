@@ -49,6 +49,20 @@ impl App {
             return;
         }
 
+        self.reload_game_from_source();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn reload_game(&mut self) {
+        if let Err(error) = self.preflight_emu_command(&EmuCommand::Reset) {
+            self.toast_manager.error(error.to_string());
+            return;
+        }
+
+        self.reload_game_from_source();
+    }
+
+    fn reload_game_from_source(&mut self) {
         let Some(path) = self.rom_info.source_path.clone() else {
             self.toast_manager.info("No ROM loaded");
             return;

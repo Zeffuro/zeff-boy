@@ -13,6 +13,9 @@ pub(super) fn draw_pending_file_request(
         TasEditorFileRequest::LoadGame => "loading another game",
         TasEditorFileRequest::OpenProject => "opening another TAS project",
         TasEditorFileRequest::NewProject => "creating another TAS project",
+        TasEditorFileRequest::NewGameGearNoSaveProject => "creating another TAS project",
+        TasEditorFileRequest::ImportReplay => "importing a replay as a TAS project",
+        TasEditorFileRequest::ExportReplay => "exporting the TAS project as a replay",
     };
     egui::Window::new("Unsaved TAS changes")
         .collapsible(false)
@@ -41,6 +44,35 @@ pub(super) fn draw_pending_file_request(
                 }
             });
         });
+}
+
+pub(super) fn draw_game_gear_no_save_confirmation(ui: &egui::Ui, pending: bool) -> Option<bool> {
+    if !pending {
+        return None;
+    }
+    let mut response = None;
+    egui::Window::new("Confirm Game Gear cartridge memory")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ui.ctx(), |ui| {
+            ui.label("This Game Gear cartridge has no verified board record.");
+            ui.label(
+                "Create a TAS only if you have confirmed that it has no cartridge save memory.",
+            );
+            ui.small(
+                "This choice is saved in the project. Battery-backed cartridges are not supported by this profile.",
+            );
+            ui.horizontal(|ui| {
+                if ui.button("I confirm: no cartridge save memory").clicked() {
+                    response = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    response = Some(false);
+                }
+            });
+        });
+    response
 }
 
 pub(super) fn draw_autosave_recovery_confirmation(
@@ -78,6 +110,32 @@ pub(super) fn draw_autosave_recovery_confirmation(
         });
 }
 
+pub(super) fn draw_project_replacement_confirmation(
+    ui: &egui::Ui,
+    path: Option<&std::path::Path>,
+) -> Option<bool> {
+    let path = path?;
+    let mut response = None;
+    egui::Window::new("Replace TAS project?")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ui.ctx(), |ui| {
+            ui.label(format!("{} already exists.", path.display()));
+            ui.label("Replace it with a new TAS project?");
+            ui.small("The existing valid project will be kept as a .bak file.");
+            ui.horizontal(|ui| {
+                if ui.button("Replace project").clicked() {
+                    response = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    response = Some(false);
+                }
+            });
+        });
+    response
+}
+
 pub(super) fn draw_empty_project_state(
     ui: &mut egui::Ui,
     availability: &TasEditorExecutionAvailability,
@@ -91,11 +149,11 @@ pub(super) fn draw_empty_project_state(
 
         match availability {
             TasEditorExecutionAvailability::GameReady => {
-                ui.label("A compatible NES cartridge is loaded and ready.");
+                ui.label("A compatible direct cartridge is loaded and ready.");
                 if ui
                     .add_enabled(
                         action_allowed,
-                        egui::Button::new("Create TAS from loaded game…"),
+                        egui::Button::new("New TAS from Loaded Game…"),
                     )
                     .clicked()
                 {
@@ -128,7 +186,16 @@ pub(super) fn draw_empty_project_state(
         {
             *file_request = Some(TasEditorFileRequest::OpenProject);
         }
+        if matches!(availability, TasEditorExecutionAvailability::GameReady)
+            && ui
+                .add_enabled(action_allowed, egui::Button::new("Import .zrpl as TAS…"))
+                .clicked()
+        {
+            *file_request = Some(TasEditorFileRequest::ImportReplay);
+        }
         ui.separator();
-        ui.small("Open a project, then link its timeline to the loaded game to play or record.");
+        ui.small(
+            "Open a project, then connect it to the loaded game to record or replay its timeline.",
+        );
     });
 }

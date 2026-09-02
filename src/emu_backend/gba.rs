@@ -6,6 +6,7 @@ use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{FrameLifecycle, MachineTiming, Reset, TimingSnapshot};
 use zeff_gba_core::emulator::Emulator as GbaEmulator;
 use zeff_gba_core::hardware::apu::ApuDebugSnapshot;
+use zeff_gba_core::hardware::cartridge::BackupKind;
 
 use crate::audio_tooling::{
     AudioChannelDescriptor, AudioChannelId, AudioSemanticCaps, AudioSemanticFrame, AudioTopology,
@@ -14,6 +15,36 @@ use crate::audio_tooling::{
 use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
+
+mod tas_provenance;
+#[cfg(not(target_arch = "wasm32"))]
+mod tas_runtime;
+
+pub(crate) use tas_provenance::{
+    GbaTasLoadProvenance, GbaTasLoadProvenanceSeed, GbaTasLoadProvenanceView, GbaTasLoadSetup,
+    GbaTasPersistentLoadOutcome, persistent_load_outcome,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas_runtime::{
+    DIRECT_GBA_SAMPLE_RATE, MAX_DIRECT_GBA_ROM_BYTES, direct_gba_tas_identity,
+    direct_gba_tas_sync_config_sha256, gba_rtc_persistence_witness, gba_tas_sync_config,
+    restore_direct_gba_tas_execution_state, supported_gba_rtc_backup_kinds,
+    validate_direct_gba_tas_branch_scope, validate_direct_gba_tas_execution_runtime,
+    validate_direct_gba_tas_private_execution_runtime, validate_direct_gba_tas_private_runtime,
+    validate_direct_gba_tas_project_identity, validate_direct_gba_tas_project_witness,
+    validate_direct_gba_tas_runtime, validate_direct_gba_tas_state,
+    zip_gba_battery_tas_sync_config_sha256, zip_gba_rtc_tas_sync_config_sha256,
+    zip_gba_tas_identity, zip_gba_tas_sync_config_sha256,
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GbaRtcPersistenceWitness {
+    pub(crate) backup_kind: BackupKind,
+    pub(crate) persistent_state: crate::tas_project::TasExternalIdentity,
+    pub(crate) rtc_state: crate::tas_project::TasExternalIdentity,
+    pub(crate) complete_byte_len: u64,
+    pub(crate) complete_sha256: crate::tas_project::TasDigest,
+}
 
 const GBA_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
@@ -140,6 +171,7 @@ pub(crate) struct GbaBackend {
     pub(crate) emu: GbaEmulator,
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
+    tas_load_provenance: Option<GbaTasLoadProvenance>,
 }
 
 impl GbaBackend {
@@ -150,6 +182,108 @@ impl GbaBackend {
             .unwrap_or_default()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn persisted_rtc_battery_receipt(
+        &self,
+    ) -> anyhow::Result<Option<crate::save_paths::recovery_state::BatteryPublicationReceipt>> {
+        if self.tas_load_provenance.is_none() || !self.emu.has_rtc() {
+            return Ok(None);
+        }
+        let Some(bytes) = crate::platform::read_save_data(&crate::save_paths::sram_path_for_rom(
+            self.paths.rom_path(),
+        ))?
+        else {
+            return Ok(Some(
+                crate::save_paths::recovery_state::BatteryPublicationReceipt::from_components(&[]),
+            ));
+        };
+        rtc_battery_receipt(&self.emu, &bytes)
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("persisted GBA RTC sidecar layout is invalid"))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_rtc_battery_bytes(&self) -> Option<Vec<u8>> {
+        self.emu.dump_complete_rtc_persistence()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_component(
+        &self,
+    ) -> anyhow::Result<Option<(crate::emu_thread::TasGbaPersistenceKind, Vec<u8>)>> {
+        use crate::emu_thread::TasGbaPersistenceKind;
+        use zeff_gba_core::hardware::cartridge::BackupKind;
+
+        let kind = tas_runtime::validate_gba_backup_kind(&self.emu)?;
+        let Some(bytes) = self.emu.dump_battery_sram() else {
+            anyhow::ensure!(kind == BackupKind::None, "GBA battery state is unavailable");
+            return Ok(None);
+        };
+        anyhow::ensure!(
+            bytes.len() == kind.size(),
+            "GBA battery state has the wrong size"
+        );
+        let kind = match kind {
+            BackupKind::Sram => TasGbaPersistenceKind::Sram,
+            BackupKind::Flash512 => TasGbaPersistenceKind::Flash512,
+            BackupKind::Flash1M => TasGbaPersistenceKind::Flash1M,
+            BackupKind::Eeprom => TasGbaPersistenceKind::Eeprom,
+            BackupKind::None => anyhow::bail!("GBA battery state has no backup kind"),
+        };
+        Ok(Some((kind, bytes)))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_baseline(
+        &self,
+    ) -> anyhow::Result<crate::save_paths::SaveTargetBaseline> {
+        crate::save_paths::battery_sram_baseline(self.paths.rom_path())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn publish_tas_battery_if_unchanged(
+        &mut self,
+        expected: crate::save_paths::SaveTargetBaseline,
+    ) -> anyhow::Result<Option<(String, crate::save_paths::SavePublicationOutcome)>> {
+        let Some((_, bytes)) = self.tas_battery_component()? else {
+            return Ok(None);
+        };
+        Ok(Some(crate::save_paths::publish_battery_sram_if_unchanged(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            crate::emu_backend::ActiveSystem::GameBoyAdvance.storage_subdir(),
+            self.emu.rom_hash(),
+            expected,
+            &bytes,
+        )))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn publish_tas_rtc_battery_if_unchanged(
+        &mut self,
+        expected: crate::save_paths::SaveTargetBaseline,
+    ) -> Option<(
+        String,
+        crate::save_paths::SavePublicationOutcome,
+        crate::save_paths::recovery_state::BatteryPublicationReceipt,
+    )> {
+        let bytes = self.emu.dump_complete_rtc_persistence()?;
+        let receipt = rtc_battery_receipt(&self.emu, &bytes)?;
+        Some(crate::save_paths::publish_battery_aggregate_if_unchanged(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            crate::save_paths::SaveRecoveryIdentity {
+                system_subdir: crate::emu_backend::ActiveSystem::GameBoyAdvance.storage_subdir(),
+                media_identity: self.emu.rom_hash(),
+                component: crate::save_paths::SRAM_COMPONENT,
+            },
+            expected,
+            &bytes,
+            receipt,
+        ))
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn new(emu: GbaEmulator, rom_path: PathBuf) -> Self {
         let sram_recovery =
             crate::save_paths::battery_sram_session(&rom_path, "gba", emu.rom_hash());
@@ -157,9 +291,11 @@ impl GbaBackend {
             emu,
             paths: BackendPaths::new(rom_path),
             sram_recovery,
+            tas_load_provenance: None,
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn with_source_path(
         emu: GbaEmulator,
         rom_path: PathBuf,
@@ -171,6 +307,23 @@ impl GbaBackend {
             emu,
             paths: BackendPaths::with_source_path(rom_path, source_path),
             sram_recovery,
+            tas_load_provenance: None,
+        }
+    }
+
+    pub(crate) fn with_tas_load_provenance(
+        emu: GbaEmulator,
+        rom_path: PathBuf,
+        source_path: PathBuf,
+        provenance: GbaTasLoadProvenance,
+    ) -> Self {
+        let sram_recovery =
+            crate::save_paths::battery_sram_session(&rom_path, "gba", emu.rom_hash());
+        Self {
+            emu,
+            paths: BackendPaths::with_source_path(rom_path, source_path),
+            sram_recovery,
+            tas_load_provenance: Some(provenance),
         }
     }
 
@@ -188,6 +341,48 @@ impl GbaBackend {
     ) {
         self.paths.set_firmware_manifests(firmware_manifests);
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn tas_load_provenance(&self) -> Option<GbaTasLoadProvenanceView<'_>> {
+        Some(GbaTasLoadProvenanceView {
+            load: self.tas_load_provenance.as_ref()?,
+            current_sample_rate: self.emu.apu_debug_snapshot().sample_rate,
+            external_bios_present: self.emu.has_external_bios(),
+        })
+    }
+
+    pub(crate) fn tas_source_media_identity(
+        &self,
+    ) -> Option<crate::emu_backend::capabilities::TasSourceMediaIdentity> {
+        self.tas_load_provenance
+            .map(GbaTasLoadProvenance::source_media_identity)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_tas_sync_config_sha256(&mut self, sync_config_sha256: [u8; 32]) {
+        if let Some(provenance) = &mut self.tas_load_provenance {
+            provenance.set_sync_config_sha256(sync_config_sha256);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn rtc_battery_receipt(
+    emu: &GbaEmulator,
+    bytes: &[u8],
+) -> Option<crate::save_paths::recovery_state::BatteryPublicationReceipt> {
+    let backup_len = emu.backup_kind().size();
+    if bytes.len() != backup_len + 40 {
+        return None;
+    }
+    let mut validation = emu.clone();
+    validation.load_complete_rtc_persistence(bytes).ok()?;
+    crate::save_paths::aggregate_battery_receipt(
+        bytes,
+        backup_len,
+        crate::save_paths::GBA_BACKUP_COMPONENT,
+        crate::save_paths::GBA_RTC_COMPONENT,
+    )
 }
 
 impl EmulatorCore for GbaBackend {
@@ -225,12 +420,17 @@ impl EmulatorCore for GbaBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        let persistence = self
+            .tas_load_provenance
+            .as_ref()
+            .and_then(|_| self.emu.dump_complete_rtc_persistence())
+            .or_else(|| self.emu.dump_battery_sram());
         crate::save_paths::flush_battery_sram(
             &mut self.sram_recovery,
             self.paths.rom_path(),
             "gba",
             self.emu.rom_hash(),
-            self.emu.dump_battery_sram(),
+            persistence,
         )
     }
 

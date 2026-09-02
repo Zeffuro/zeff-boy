@@ -24,7 +24,8 @@ use super::{
 };
 use tas_control::TasControl;
 
-mod tas_control;
+pub(in crate::emu_thread) mod tas_control;
+mod tas_repair;
 
 const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -60,6 +61,7 @@ pub(super) struct EmuLoop {
     speculation: SpeculationBoundary,
     save_recovery_on_shutdown: bool,
     tas_control: TasControl,
+    tas_repair: tas_repair::TasRepairWorkerState,
 }
 
 pub(super) struct EmuLoopConfig {
@@ -117,6 +119,7 @@ impl EmuLoop {
             speculation: SpeculationBoundary::default(),
             save_recovery_on_shutdown: config.save_recovery_on_shutdown,
             tas_control: TasControl::new(),
+            tas_repair: tas_repair::TasRepairWorkerState::default(),
         }
     }
 
@@ -162,7 +165,7 @@ impl EmuLoop {
             if let Some(command) = command {
                 let is_shutdown = matches!(&command, EmuCommand::Shutdown);
                 if !self.handle_command(command) {
-                    if !is_shutdown {
+                    if !is_shutdown && !self.tas_repair.nonpersistent_exit_requested {
                         self.finish_shutdown();
                     }
                     break;
@@ -194,7 +197,7 @@ impl EmuLoop {
     }
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
-        let command = match self.dispatch_tas_control(command) {
+        let command = match self.dispatch_tas_authority(command) {
             std::ops::ControlFlow::Continue(command) => command,
             std::ops::ControlFlow::Break(keep_running) => return keep_running,
         };
@@ -592,7 +595,13 @@ impl EmuLoop {
                 return false;
             }
 
-            EmuCommand::AcquireTasControl { .. }
+            EmuCommand::SuspendTasRepair { .. }
+            | EmuCommand::ResumeTasRepair { .. }
+            | EmuCommand::DiscardTasRepair { .. }
+            | EmuCommand::CommitRepairedTasWorker { .. }
+            | EmuCommand::DiscardRepairedTasWorker { .. }
+            | EmuCommand::InspectTasReadiness { .. }
+            | EmuCommand::AcquireTasControl { .. }
             | EmuCommand::ExecuteTasControl(_)
             | EmuCommand::AdvanceTasControl(_)
             | EmuCommand::RollbackTasControl { .. }

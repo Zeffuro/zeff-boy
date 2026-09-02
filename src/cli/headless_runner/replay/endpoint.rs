@@ -113,7 +113,36 @@ fn run_loaded_replay(
         let Some(frame) = player.peek_joypad_frames(0, 1).into_iter().next() else {
             break;
         };
-        backend.apply_replay_input(&frame);
+        if backend.system() == crate::emu_backend::ActiveSystem::Coleco {
+            backend.apply_coleco_tas_input(frame.coleco.map(|controller| {
+                crate::tas_project::TasColecoControllerInput {
+                    up: controller.up,
+                    right: controller.right,
+                    down: controller.down,
+                    left: controller.left,
+                    left_button: controller.left_button,
+                    right_button: controller.right_button,
+                    keypad: match controller.keypad {
+                        0 => crate::tas_project::TasColecoKeypadKey::None,
+                        1 => crate::tas_project::TasColecoKeypadKey::Zero,
+                        2 => crate::tas_project::TasColecoKeypadKey::One,
+                        3 => crate::tas_project::TasColecoKeypadKey::Two,
+                        4 => crate::tas_project::TasColecoKeypadKey::Three,
+                        5 => crate::tas_project::TasColecoKeypadKey::Four,
+                        6 => crate::tas_project::TasColecoKeypadKey::Five,
+                        7 => crate::tas_project::TasColecoKeypadKey::Six,
+                        8 => crate::tas_project::TasColecoKeypadKey::Seven,
+                        9 => crate::tas_project::TasColecoKeypadKey::Eight,
+                        10 => crate::tas_project::TasColecoKeypadKey::Nine,
+                        11 => crate::tas_project::TasColecoKeypadKey::Star,
+                        12 => crate::tas_project::TasColecoKeypadKey::Pound,
+                        _ => unreachable!("replay keypad values are validated while decoding"),
+                    },
+                }
+            }))?;
+        } else {
+            backend.apply_replay_input(&frame);
+        }
         let frame_count_before = backend.frame_count();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(link) = game_boy_replay_link.as_mut() {

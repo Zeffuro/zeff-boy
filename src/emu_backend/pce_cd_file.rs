@@ -12,12 +12,17 @@ use super::pce_cd::{
     cue_track_layout, resolve_direct_file_reference,
 };
 use super::pce_cd_overlay::{
-    PatchOverlayBuilder, PatchOverlayStack, apply_ppf_stack, log_ppf_overlay, slice_source,
+    PatchOverlayBuilder, PatchOverlayStack, apply_ppf_bytes_stack, apply_ppf_stack,
+    log_ppf_overlay, slice_source,
 };
 
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
 #[cfg(windows)]
 const WINDOWS_REPARSE_POINT: u32 = 0x400;
+
+mod source_identity;
+pub(crate) use source_identity::direct_file_sha256;
+use source_identity::disc_payload_len;
 
 struct FileBackedCueFile {
     path: PathBuf,
@@ -66,7 +71,18 @@ pub(super) fn try_load_direct_cue_ppf_overlay(
     mods: &[crate::mods::ModEntry],
 ) -> Result<Option<CdDisc>, PceCdLoadError> {
     let files = open_files(cue_path, sheet)?;
-    try_build_ppf_overlay_disc(sheet, &files, dir, mods)
+    try_build_ppf_overlay_disc(sheet, &files, |builder| apply_ppf_stack(builder, dir, mods))
+}
+
+pub(super) fn try_load_direct_cue_ppf_overlay_bytes(
+    cue_path: &Path,
+    sheet: &CueSheet,
+    patches: &[(String, Vec<u8>)],
+) -> Result<Option<CdDisc>, PceCdLoadError> {
+    let files = open_files(cue_path, sheet)?;
+    try_build_ppf_overlay_disc(sheet, &files, |builder| {
+        apply_ppf_bytes_stack(builder, patches)
+    })
 }
 
 pub(super) fn try_load_cached_cue_ppf_overlay(
@@ -76,7 +92,7 @@ pub(super) fn try_load_cached_cue_ppf_overlay(
     mods: &[crate::mods::ModEntry],
 ) -> Result<Option<CdDisc>, PceCdLoadError> {
     let files = cached_files(sources)?;
-    try_build_ppf_overlay_disc(sheet, &files, dir, mods)
+    try_build_ppf_overlay_disc(sheet, &files, |builder| apply_ppf_stack(builder, dir, mods))
 }
 
 fn cached_files(sources: Vec<CueFileSource>) -> Result<Vec<FileBackedCueFile>, PceCdLoadError> {
@@ -112,7 +128,10 @@ fn load_cue_file_backed(
     let (content_sha256, content_crc32) = content_identity(cue_bytes, sheet, &files, progress)?;
     let disc = build_disc(sheet, &files)?;
     let source_disc_sha256 = disc.content_hash();
+    let raw_source_media_len = disc_payload_len(&disc)?;
     Ok(LoadedPceCd {
+        raw_source_media_sha256: source_disc_sha256,
+        raw_source_media_len,
         disc,
         content_sha256,
         content_crc32,
@@ -124,14 +143,13 @@ fn load_cue_file_backed(
 fn try_build_ppf_overlay_disc(
     sheet: &CueSheet,
     files: &[FileBackedCueFile],
-    dir: &Path,
-    mods: &[crate::mods::ModEntry],
+    apply: impl FnOnce(&mut PatchOverlayBuilder) -> PatchOverlayStack,
 ) -> Result<Option<CdDisc>, PceCdLoadError> {
     let sources = full_file_sources(sheet, files)?;
     let Some(mut builder) = PatchOverlayBuilder::for_tracks(&sources) else {
         return Ok(None);
     };
-    let PatchOverlayStack::Applied(applied) = apply_ppf_stack(&mut builder, dir, mods) else {
+    let PatchOverlayStack::Applied(applied) = apply(&mut builder) else {
         return Ok(None);
     };
     let Some(sources) = builder.finish_tracks(sources) else {

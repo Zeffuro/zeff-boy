@@ -18,7 +18,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
 
     ui.separator();
     ui.heading("Output");
-    egui::ComboBox::from_label("Sample rate")
+    egui::ComboBox::from_label("Emulator sample rate")
         .selected_text(format!("{} Hz", settings.audio.output_sample_rate))
         .show_ui(ui, |ui| {
             for rate in OUTPUT_SAMPLE_RATES {
@@ -28,7 +28,11 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
                     format!("{rate} Hz"),
                 );
             }
-        });
+        })
+        .response
+        .on_hover_text(
+            "Your audio device may use a different rate; output is resampled automatically.",
+        );
 
     ui.separator();
     ui.heading("Filtering");

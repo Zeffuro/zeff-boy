@@ -7,25 +7,38 @@ use anyhow::{Result, bail};
 
 use crate::tas_project::{
     TasAutosaveConfig, TasAutosaveStore, TasEditorExecutionEngine, TasEditorSession,
-    TasEditorSessionSource, TasSeekStateCache,
+    TasEditorSessionSource, TasFrameRange, TasLiveRecordingMode, TasSeekStateCache,
 };
 
+mod action;
 mod attachment;
 mod autosave;
 mod branch_diff_editor;
+mod branch_navigator;
+mod coleco_input;
+mod content;
 mod event_editor;
 mod execution_preview;
 mod input_clipboard;
 mod input_columns;
+mod inspector_ui;
+mod live_control;
 mod live_execution_ui;
 mod metadata_editor;
 mod presentation;
 mod project_content_ui;
 mod recording;
 mod special_input_editor;
+mod state;
 mod timeline;
+mod timeline_selection;
 mod workflow_ui;
 
+use action::{TasEditorAction, TasTimelineNavigation};
+#[cfg(test)]
+use coleco_input::ColecoControl;
+#[cfg(test)]
+use content::draw_scrollable_project_content;
 use input_columns::DigitalField;
 #[cfg(test)]
 use input_columns::{applicable_player_count, digital_columns, player_number};
@@ -43,6 +56,14 @@ const MAX_TIMELINE_HEIGHT: f32 = 920.0;
 const TWO_PANE_MIN_WIDTH: f32 = 860.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum TasInspectorTab {
+    #[default]
+    Branches,
+    Markers,
+    Tools,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum TasEditorPresentation {
     #[default]
     Embedded,
@@ -54,74 +75,9 @@ pub(crate) enum TasEditorFileRequest {
     LoadGame,
     OpenProject,
     NewProject,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum TasEditorAction {
-    OpenProject(PathBuf),
-    SaveManual,
-    Autosave,
-    RecoverAutosave,
-    Undo,
-    Redo,
-    ContinueFileRequest {
-        save: bool,
-    },
-    CancelFileRequest,
-    CancelAutosaveRecovery,
-    SelectBranch(String),
-    SelectCursor(u64),
-    ExecuteSeek(u64),
-    JumpToBranchDiffHunk(branch_diff_editor::TasBranchDiffJumpAction),
-    InputClipboard(input_clipboard::TasInputClipboardAction),
-    Event(event_editor::TasEventAction),
-    Metadata(metadata_editor::TasMetadataAction),
-    SpecialInput(special_input_editor::TasSpecialInputAction),
-    ToggleDigital {
-        cursor: u64,
-        player: usize,
-        field: DigitalField,
-        mask: u8,
-    },
-    InsertNeutralFrames {
-        cursor: u64,
-        count: u64,
-    },
-    DeleteFrame(u64),
-    StartRecordingAtEnd,
-    CaptureRecordingFrame,
-    StopRecording,
-    ForkBranch {
-        id: String,
-        name: String,
-    },
-}
-
-impl TasEditorAction {
-    fn blocked_while_live_authority_is_active(&self) -> bool {
-        matches!(
-            self,
-            Self::RecoverAutosave
-                | Self::Undo
-                | Self::Redo
-                | Self::ContinueFileRequest { .. }
-                | Self::SelectBranch(_)
-                | Self::SelectCursor(_)
-                | Self::ExecuteSeek(_)
-                | Self::JumpToBranchDiffHunk(_)
-                | Self::InputClipboard(_)
-                | Self::Event(_)
-                | Self::Metadata(_)
-                | Self::SpecialInput(_)
-                | Self::ToggleDigital { .. }
-                | Self::InsertNeutralFrames { .. }
-                | Self::DeleteFrame(_)
-                | Self::StartRecordingAtEnd
-                | Self::CaptureRecordingFrame
-                | Self::StopRecording
-                | Self::ForkBranch { .. }
-        )
-    }
+    NewGameGearNoSaveProject,
+    ImportReplay,
+    ExportReplay,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,6 +95,23 @@ enum TasEditorExecutionAvailability {
     Unavailable(String),
 }
 
+#[derive(Clone, Copy)]
+enum TasTimelineSelectionChange {
+    Boundary(u64),
+    Frame {
+        frame: u64,
+        extend_selection: bool,
+    },
+    Range {
+        anchor: u64,
+        active: u64,
+    },
+    Navigate {
+        navigation: TasTimelineNavigation,
+        extend_selection: bool,
+    },
+}
+
 pub(crate) struct TasEditorWindowState {
     pub(crate) open: bool,
     presentation: TasEditorPresentation,
@@ -148,21 +121,33 @@ pub(crate) struct TasEditorWindowState {
     session: Option<TasEditorSession>,
     pending_file_request: Option<TasEditorFileRequest>,
     ready_file_request: Option<TasEditorFileRequest>,
+    pending_project_replacement: Option<(PathBuf, bool)>,
+    pending_game_gear_no_save_confirmation: bool,
     pending_autosave_recovery: bool,
     execution_engine: Option<TasEditorExecutionEngine>,
     execution_availability: TasEditorExecutionAvailability,
     live_status: TasEditorLiveStatus,
+    linked_session_active: bool,
+    close_keep_after_live_command: bool,
+    live_recording_mode: TasLiveRecordingMode,
     execution_preview: execution_preview::TasEditorExecutionPreview,
     branch_diff_editor: branch_diff_editor::TasBranchDiffEditorState,
     input_clipboard: input_clipboard::TasInputClipboardState,
+    timeline_selection: timeline_selection::TasTimelineSelectionState,
+    timeline_follow_selection: bool,
     event_editor: event_editor::TasEventEditorState,
     metadata_editor: metadata_editor::TasMetadataEditorState,
+    inspector_tab: TasInspectorTab,
     autosave_scheduler: crate::tas_project::TasEditorAutosaveScheduler,
     autosave_clock: Instant,
     seek_cache_root: PathBuf,
     new_branch_id: String,
     new_branch_name: String,
+    active_branch_name: String,
     recording: Option<TasEditorRecordingState>,
+    verified_export_busy: bool,
+    verified_export_status: Option<String>,
+    verified_export_cancel_requested: bool,
     neutral_insert_count: u64,
     message: Option<(bool, String)>,
     pending_host_request: Option<TasEditorHostRequest>,
@@ -179,23 +164,35 @@ impl TasEditorWindowState {
             session: None,
             pending_file_request: None,
             ready_file_request: None,
+            pending_project_replacement: None,
+            pending_game_gear_no_save_confirmation: false,
             pending_autosave_recovery: false,
             execution_engine: None,
             execution_availability: TasEditorExecutionAvailability::Unavailable(
                 "no emulator is running".to_owned(),
             ),
             live_status: TasEditorLiveStatus::default(),
+            linked_session_active: false,
+            close_keep_after_live_command: false,
+            live_recording_mode: TasLiveRecordingMode::default(),
             execution_preview: execution_preview::TasEditorExecutionPreview::new(),
             branch_diff_editor: branch_diff_editor::TasBranchDiffEditorState::new(),
             input_clipboard: input_clipboard::TasInputClipboardState::new(),
+            timeline_selection: timeline_selection::TasTimelineSelectionState::new(),
+            timeline_follow_selection: false,
             event_editor: event_editor::TasEventEditorState::new(),
             metadata_editor: metadata_editor::TasMetadataEditorState::new(),
+            inspector_tab: TasInspectorTab::default(),
             autosave_scheduler: crate::tas_project::TasEditorAutosaveScheduler::default(),
             autosave_clock: Instant::now(),
             seek_cache_root: default_seek_cache_root(),
             new_branch_id: String::new(),
             new_branch_name: String::new(),
+            active_branch_name: String::new(),
             recording: None,
+            verified_export_busy: false,
+            verified_export_status: None,
+            verified_export_cancel_requested: false,
             neutral_insert_count: 60,
             message: None,
             pending_host_request: None,
@@ -215,6 +212,18 @@ impl TasEditorWindowState {
                 Err(error)
             }
         }
+    }
+
+    pub(crate) fn request_project_replacement_with_game_gear_no_save(
+        &mut self,
+        path: PathBuf,
+        game_gear_no_save: bool,
+    ) {
+        self.pending_project_replacement = Some((path, game_gear_no_save));
+    }
+
+    pub(crate) fn request_game_gear_no_save_confirmation(&mut self) {
+        self.pending_game_gear_no_save_confirmation = true;
     }
 
     pub(crate) fn open_embedded(&mut self) {
@@ -259,74 +268,36 @@ impl TasEditorWindowState {
         self.separate_focus_pending = false;
     }
 
-    pub(crate) fn set_live_status(&mut self, status: TasEditorLiveStatus) {
-        if matches!(&status, TasEditorLiveStatus::Acquiring) {
-            self.execution_preview.clear();
-        }
-        self.live_status = status;
-    }
-
-    pub(crate) fn take_pending_host_request(&mut self) -> Option<TasEditorHostRequest> {
-        self.pending_host_request.take()
-    }
-
-    pub(crate) fn active_session(&self) -> Option<&TasEditorSession> {
-        self.session.as_ref()
-    }
-
-    pub(crate) fn live_status(&self) -> &TasEditorLiveStatus {
-        &self.live_status
-    }
-
-    pub(crate) fn select_cursor_for_live_control(&mut self, cursor: u64) -> Result<()> {
-        self.reduce(TasEditorAction::SelectCursor(cursor))?;
-        Ok(())
-    }
-
-    pub(crate) fn select_end_cursor_for_live_control(&mut self) -> Result<()> {
-        let frame_count = self.session_mut()?.selected_branch().frame_count();
-        self.select_cursor_for_live_control(frame_count)
-    }
-
-    pub(crate) fn commit_prepared_live_frame(
-        &mut self,
-        prepared: crate::tas_project::TasPreparedLiveFrame,
-    ) -> Result<()> {
-        self.session_mut()?.commit_prepared_live_frame(prepared)?;
-        self.execution_preview.clear();
-        Ok(())
-    }
-
-    pub(crate) fn begin_live_recording_history_group(&mut self) -> Result<()> {
-        self.session_mut()?.begin_live_recording_history_group()
-    }
-
-    pub(crate) fn end_live_recording_history_group(&mut self) -> Result<bool> {
-        let session = self.session_mut()?;
-        if !session.live_recording_history_group_active() {
-            return Ok(false);
-        }
-        session.end_live_recording_history_group()
-    }
-
-    fn queue_return_to_game_unchanged(&mut self) {
-        if self.live_status.is_linked() {
-            self.pending_host_request = Some(TasEditorHostRequest::Live(
-                TasEditorLiveAction::KeepResultAndReturnToGame,
-            ));
-        } else if self.live_status.requires_return_on_close() {
-            self.pending_host_request = Some(TasEditorHostRequest::Live(
-                TasEditorLiveAction::ReturnToGameUnchanged,
-            ));
+    pub(crate) fn set_verified_export_busy(&mut self, busy: bool) {
+        self.verified_export_busy = busy;
+        if !busy {
+            self.verified_export_cancel_requested = false;
         }
     }
 
-    fn queue_linked_seek(&mut self) {
-        if self.live_status.is_linked() {
-            self.pending_host_request = Some(TasEditorHostRequest::Live(
-                TasEditorLiveAction::SeekLinkedInput,
-            ));
-        }
+    pub(crate) fn set_verified_export_status(&mut self, status: Option<String>) {
+        self.verified_export_status = status;
+    }
+
+    pub(crate) fn request_verified_export_cancellation(&mut self) {
+        self.verified_export_cancel_requested = true;
+    }
+
+    pub(crate) fn take_verified_export_cancellation_request(&mut self) -> bool {
+        std::mem::take(&mut self.verified_export_cancel_requested)
+    }
+
+    pub(crate) fn verified_export_status(&self) -> Option<&str> {
+        self.verified_export_status.as_deref()
+    }
+
+    pub(crate) fn verified_export_cancel_requested(&self) -> bool {
+        self.verified_export_cancel_requested
+    }
+
+    pub(crate) fn install_verified_export_session(&mut self, session: TasEditorSession) {
+        self.session = Some(session);
+        self.reset_active_branch_name();
     }
 
     #[cfg(test)]
@@ -349,7 +320,13 @@ impl TasEditorWindowState {
     }
 
     fn reduce(&mut self, action: TasEditorAction) -> Result<Option<String>> {
-        if self.live_status.locks_editor() && action.blocked_while_live_authority_is_active() {
+        if self.verified_export_busy {
+            bail!("wait for the verified replay export to finish before changing the TAS project");
+        }
+        if self.live_status.locks_editor()
+            && action.blocked_while_live_authority_is_active()
+            && !self.allows_linked_boundary_branch(&action)
+        {
             bail!("finish the live game decision before changing the TAS project");
         }
         match action {
@@ -360,6 +337,8 @@ impl TasEditorWindowState {
                 let session = TasEditorSession::open(&path, autosaves, seek_cache)?;
                 let source = source_label(session.source());
                 self.input_clipboard.clear()?;
+                self.timeline_selection.reset();
+                self.timeline_follow_selection = true;
                 let _ = self.execution_engine.take();
                 self.execution_availability = TasEditorExecutionAvailability::Checking;
                 self.execution_preview.clear();
@@ -372,6 +351,7 @@ impl TasEditorWindowState {
                 self.pending_autosave_recovery = false;
                 self.recording = None;
                 self.session = Some(session);
+                self.reset_active_branch_name();
                 Ok(Some(format!("Opened {} ({source})", path.display())))
             }
             TasEditorAction::SaveManual => {
@@ -411,11 +391,14 @@ impl TasEditorWindowState {
                     })
                 });
                 if recovered.is_some() {
+                    self.timeline_follow_selection = true;
                     self.execution_preview.clear();
                     self.branch_diff_editor.clear();
                     self.input_clipboard.clear()?;
+                    self.timeline_selection.reset();
                     self.event_editor.clear();
                     self.metadata_editor.clear();
+                    self.reset_active_branch_name();
                 }
                 if attachment_error.is_some() {
                     let _ = self.execution_engine.take();
@@ -445,8 +428,9 @@ impl TasEditorWindowState {
                 }
                 let changed = self.session_mut()?.undo()?;
                 if changed {
+                    self.timeline_follow_selection = true;
                     self.execution_preview.clear();
-                    self.queue_linked_seek();
+                    self.reset_active_branch_name();
                 }
                 Ok(changed.then(|| {
                     self.detach_incompatible_execution().map_or_else(
@@ -465,8 +449,9 @@ impl TasEditorWindowState {
                 }
                 let changed = self.session_mut()?.redo()?;
                 if changed {
+                    self.timeline_follow_selection = true;
                     self.execution_preview.clear();
-                    self.queue_linked_seek();
+                    self.reset_active_branch_name();
                 }
                 Ok(changed.then(|| {
                     self.detach_incompatible_execution().map_or_else(
@@ -504,21 +489,84 @@ impl TasEditorWindowState {
             TasEditorAction::SelectBranch(branch_id) => {
                 self.discard_recording_draft()?;
                 self.session_mut()?.select_branch(&branch_id)?;
+                self.timeline_follow_selection = true;
                 self.execution_preview.clear();
+                self.reset_active_branch_name();
                 Ok(None)
             }
             TasEditorAction::SelectCursor(cursor) => {
-                if self
-                    .recording
+                self.apply_timeline_selection_change(TasTimelineSelectionChange::Boundary(cursor))?;
+                Ok(None)
+            }
+            TasEditorAction::SelectTimelineFrame {
+                frame,
+                extend_selection,
+            } => {
+                self.apply_timeline_selection_change(TasTimelineSelectionChange::Frame {
+                    frame,
+                    extend_selection,
+                })?;
+                Ok(None)
+            }
+            TasEditorAction::SelectTimelineRange { anchor, active } => {
+                self.apply_timeline_selection_change(TasTimelineSelectionChange::Range {
+                    anchor,
+                    active,
+                })?;
+                Ok(None)
+            }
+            TasEditorAction::NavigateTimelineSelection {
+                navigation,
+                extend_selection,
+            } => {
+                self.apply_timeline_selection_change(TasTimelineSelectionChange::Navigate {
+                    navigation,
+                    extend_selection,
+                })?;
+                Ok(None)
+            }
+            TasEditorAction::SelectAllTimelineFrames => {
+                let session = self
+                    .session
                     .as_ref()
-                    .is_some_and(|recording| recording.cursor != cursor)
-                {
-                    self.discard_recording_draft()?;
+                    .ok_or_else(|| anyhow::anyhow!("open a TAS project first"))?;
+                self.timeline_selection.select_all(session);
+                Ok(None)
+            }
+            TasEditorAction::ClearTimelineSelection => {
+                let session = self
+                    .session
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("open a TAS project first"))?;
+                self.timeline_selection.collapse_to_cursor(session);
+                Ok(None)
+            }
+            TasEditorAction::SelectLiveExecutionBoundary => {
+                if let Some(cursor) = self.live_status.execution_boundary() {
+                    self.apply_timeline_selection_change(TasTimelineSelectionChange::Boundary(
+                        cursor,
+                    ))?;
                 }
-                let frame_count = self.session_mut()?.selected_branch().frame_count();
-                self.session_mut()?.set_cursor(cursor.min(frame_count))?;
-                self.execution_preview.clear();
-                self.queue_linked_seek();
+                Ok(None)
+            }
+            TasEditorAction::RequestLiveGoToSelection => {
+                let session = self
+                    .session
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("open a TAS project first"))?;
+                if self.timeline_selection.snapshot(session).is_none() {
+                    return Ok(None);
+                }
+                let target = session.cursor();
+                if self
+                    .live_status
+                    .execution_boundary()
+                    .is_some_and(|boundary| boundary != target)
+                {
+                    self.pending_host_request = Some(TasEditorHostRequest::Live(
+                        TasEditorLiveAction::GoToSelection,
+                    ));
+                }
                 Ok(None)
             }
             TasEditorAction::ExecuteSeek(cursor) => {
@@ -557,52 +605,65 @@ impl TasEditorWindowState {
                 player,
                 field,
                 mask,
-            } => {
-                if player >= 5 || mask.count_ones() != 1 {
-                    bail!("invalid TAS digital input column");
-                }
-                let session = self.session_mut()?;
-                let branch_id = session.selected_branch_id().to_owned();
-                if cursor >= session.selected_branch().frame_count() {
-                    bail!("cannot edit input at the end cursor");
-                }
-                let mut input = session.selected_branch().input_at(cursor);
-                let controller = &mut input.players[player];
-                match field {
-                    DigitalField::Buttons => controller.buttons ^= mask,
-                    DigitalField::Dpad => controller.dpad ^= mask,
-                }
-                session.edit_transaction(move |edit| {
-                    edit.set_input_range(&branch_id, cursor, 1, input)
-                })?;
-                self.execution_preview.clear();
-                self.queue_linked_seek();
-                Ok(None)
-            }
+            } => self.edit_digital_input(cursor, player, field, mask, None),
+            TasEditorAction::SetDigital {
+                cursor,
+                player,
+                field,
+                mask,
+                pressed,
+            } => self.edit_digital_input(cursor, player, field, mask, Some(pressed)),
+            TasEditorAction::ToggleColecoControl {
+                cursor,
+                player,
+                control,
+            } => self.toggle_coleco_control(cursor, player, control),
+            TasEditorAction::SetColecoKeypad {
+                cursor,
+                player,
+                key,
+            } => self.set_coleco_keypad(cursor, player, key),
             TasEditorAction::InsertNeutralFrames { cursor, count } => {
                 if count == 0 {
                     bail!("neutral frame count must be greater than zero");
                 }
                 self.discard_recording_draft()?;
                 let session = self.session_mut()?;
-                let branch_id = session.selected_branch_id().to_owned();
-                session
-                    .edit_transaction(move |edit| edit.insert_frames(&branch_id, cursor, count))?;
+                session.insert_neutral_frames(cursor, count)?;
                 session.set_cursor(cursor)?;
+                let end = cursor
+                    .checked_add(count)
+                    .ok_or_else(|| anyhow::anyhow!("inserted TAS selection boundary overflow"))?;
+                let session = self
+                    .session
+                    .as_ref()
+                    .expect("open session was checked before inserting frames");
+                self.timeline_selection.select_range(session, cursor, end);
+                self.timeline_follow_selection = true;
                 self.execution_preview.clear();
-                self.queue_linked_seek();
                 Ok(None)
             }
-            TasEditorAction::DeleteFrame(cursor) => {
-                self.discard_recording_draft()?;
-                let session = self.session_mut()?;
-                let branch_id = session.selected_branch_id().to_owned();
-                if cursor >= session.selected_branch().frame_count() {
-                    bail!("cannot delete the end cursor");
+            TasEditorAction::DeleteFrames { start, count } => {
+                if count == 0 {
+                    bail!("select one or more input frames to delete");
                 }
-                session.edit_transaction(move |edit| edit.delete_frames(&branch_id, cursor, 1))?;
+                self.discard_recording_draft()?;
+                let end = start
+                    .checked_add(count)
+                    .ok_or_else(|| anyhow::anyhow!("deleted TAS range boundary overflow"))?;
+                self.session_mut()?
+                    .delete_frame_range(TasFrameRange::new(start, end)?)?;
+                let session = self
+                    .session
+                    .as_ref()
+                    .expect("open session was checked before deleting selected frames");
+                if start < session.selected_branch().frame_count() {
+                    self.timeline_selection.select_frame(session, start, false);
+                } else {
+                    self.timeline_selection.collapse_to_cursor(session);
+                }
+                self.timeline_follow_selection = true;
                 self.execution_preview.clear();
-                self.queue_linked_seek();
                 Ok(None)
             }
             TasEditorAction::StartRecordingAtEnd => self.start_frame_recording(),
@@ -623,10 +684,66 @@ impl TasEditorWindowState {
                     edit.fork_branch(&source_id, fork_cursor, id, name)?;
                     edit.set_active_branch(&selected_id)
                 })?;
+                self.timeline_follow_selection = true;
                 self.new_branch_id.clear();
                 self.new_branch_name.clear();
                 self.execution_preview.clear();
+                self.reset_active_branch_name();
                 Ok(None)
+            }
+            TasEditorAction::DeleteBranchSubtree { id } => {
+                if self.recording.is_some() {
+                    bail!("stop frame recording before deleting a branch");
+                }
+                if self.live_status.holds_authority() {
+                    bail!("finish the live game decision before deleting a branch");
+                }
+                let session = self.session_mut()?;
+                let name = session
+                    .project()
+                    .branch(&id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {id:?}"))?
+                    .name()
+                    .to_owned();
+                let mut deleted = 0;
+                session.edit_transaction(|edit| {
+                    deleted = edit.delete_branch_subtree(&id)?;
+                    Ok(())
+                })?;
+                self.branch_diff_editor.clear();
+                self.execution_preview.clear();
+                Ok(Some(if deleted == 1 {
+                    format!("Deleted branch {name}")
+                } else {
+                    format!("Deleted branch {name} and {} descendants", deleted - 1)
+                }))
+            }
+            TasEditorAction::RenameActiveBranch { name } => {
+                if self.recording.is_some() {
+                    bail!("stop frame recording before renaming a branch");
+                }
+                let name = name.trim().to_owned();
+                if name.is_empty() {
+                    bail!("branch name is required");
+                }
+                let session = self.session_mut()?;
+                let branch_id = session.selected_branch_id().to_owned();
+                let changed = session
+                    .edit_transaction(move |edit| edit.rename_branch(&branch_id, name))?
+                    .changed;
+                if changed {
+                    self.reset_active_branch_name();
+                    Ok(Some(format!(
+                        "Renamed active branch to {}",
+                        self.session
+                            .as_ref()
+                            .expect("open session was checked before renaming a branch")
+                            .selected_branch()
+                            .name()
+                    )))
+                } else {
+                    Ok(None)
+                }
             }
         }
     }
@@ -658,26 +775,7 @@ pub(crate) fn draw_tas_editor_window(
     ctx: &egui::Context,
     state: &mut TasEditorWindowState,
 ) -> Option<TasEditorHostRequest> {
-    if !state.open || state.presentation != TasEditorPresentation::Embedded {
-        return None;
-    }
-
-    let mut open = state.open;
-    let mut host_request = None;
-    egui::Window::new("TAS Editor")
-        .id(egui::Id::new("tas_editor_window"))
-        .open(&mut open)
-        .default_size([980.0, 640.0])
-        .min_size([620.0, 360.0])
-        .show(ctx, |ui| {
-            host_request = draw_tas_editor_content(ui, state);
-        });
-    state.open = open;
-    if !open {
-        state.queue_return_to_game_unchanged();
-        return state.take_pending_host_request();
-    }
-    host_request.or_else(|| state.take_pending_host_request())
+    presentation::draw_embedded_window(ctx, state)
 }
 
 pub(crate) fn draw_tas_editor_content(
@@ -686,170 +784,35 @@ pub(crate) fn draw_tas_editor_content(
 ) -> Option<TasEditorHostRequest> {
     let mut actions = Vec::new();
     let mut file_request = None;
+    let mut project_replacement: Option<(PathBuf, bool)> = None;
     let mut live_action = None;
-    draw_content(ui, state, &mut actions, &mut file_request, &mut live_action);
+    content::draw(
+        ui,
+        state,
+        &mut actions,
+        &mut file_request,
+        &mut project_replacement,
+        &mut live_action,
+    );
     for action in actions {
         state.apply(action);
     }
-    state.take_pending_host_request().or_else(|| {
-        live_action.map(TasEditorHostRequest::Live).or_else(|| {
-            file_request
-                .or_else(|| state.ready_file_request.take())
-                .map(TasEditorHostRequest::File)
+    state
+        .take_pending_host_request()
+        .or_else(|| {
+            live_action.map(TasEditorHostRequest::Live).or_else(|| {
+                file_request
+                    .or_else(|| state.ready_file_request.take())
+                    .map(TasEditorHostRequest::File)
+            })
         })
-    })
-}
-
-fn draw_content(
-    ui: &mut egui::Ui,
-    state: &mut TasEditorWindowState,
-    actions: &mut Vec<TasEditorAction>,
-    file_request: &mut Option<TasEditorFileRequest>,
-    live_action: &mut Option<TasEditorLiveAction>,
-) {
-    let editor_locked = state.live_status.locks_editor();
-    let file_actions_locked = state.live_status.holds_authority() || state.recording.is_some();
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(!file_actions_locked, egui::Button::new("Open .ztas..."))
-            .clicked()
-        {
-            *file_request = state.begin_file_request(TasEditorFileRequest::OpenProject);
-        }
-        if ui
-            .add_enabled(!file_actions_locked, egui::Button::new("New TAS..."))
-            .clicked()
-        {
-            *file_request = state.begin_file_request(TasEditorFileRequest::NewProject);
-        }
-        let loaded = state.session.is_some();
-        if ui
-            .add_enabled(
-                loaded && !file_actions_locked,
-                egui::Button::new("Save project"),
-            )
-            .on_hover_text("Write this project to its .ztas file")
-            .clicked()
-        {
-            actions.push(TasEditorAction::SaveManual);
-        }
-        let can_undo = state
-            .session
-            .as_ref()
-            .is_some_and(TasEditorSession::can_undo);
-        let can_redo = state
-            .session
-            .as_ref()
-            .is_some_and(TasEditorSession::can_redo);
-        if ui
-            .add_enabled(!file_actions_locked && can_undo, egui::Button::new("Undo"))
-            .on_hover_text("Ctrl/Cmd+Z")
-            .clicked()
-        {
-            actions.push(TasEditorAction::Undo);
-        }
-        if ui
-            .add_enabled(!file_actions_locked && can_redo, egui::Button::new("Redo"))
-            .on_hover_text("Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z")
-            .clicked()
-        {
-            actions.push(TasEditorAction::Redo);
-        }
-    });
-    workflow_ui::draw_pending_file_request(
-        ui,
-        state.pending_file_request,
-        !file_actions_locked,
-        actions,
-    );
-
-    ui.collapsing("Recovery", |ui| {
-        ui.small("Autosaves are separate recovery copies; Save updates the project file.");
-        ui.horizontal_wrapped(|ui| {
-            let loaded = state.session.is_some();
-            if ui
-                .add_enabled(
-                    !file_actions_locked && loaded,
-                    egui::Button::new("Autosave now"),
-                )
-                .on_hover_text("Write a separate recovery copy without changing the manual save")
-                .clicked()
-            {
-                actions.push(TasEditorAction::Autosave);
-            }
-            if ui
-                .add_enabled(
-                    !file_actions_locked && loaded,
-                    egui::Button::new("Recover newest autosave"),
-                )
-                .on_hover_text("Restore the newest valid recovery copy in the editor")
-                .clicked()
-            {
-                state.pending_autosave_recovery = true;
-            }
-        });
-    });
-    workflow_ui::draw_autosave_recovery_confirmation(
-        ui,
-        state.pending_autosave_recovery,
-        !file_actions_locked,
-        actions,
-    );
-
-    let (undo_requested, redo_requested) = ui.input(|input| {
-        let command = input.modifiers.command;
-        let undo = command && input.key_pressed(egui::Key::Z) && !input.modifiers.shift;
-        let redo = command
-            && (input.key_pressed(egui::Key::Y)
-                || (input.key_pressed(egui::Key::Z) && input.modifiers.shift));
-        (undo, redo)
-    });
-    if !file_actions_locked
-        && undo_requested
-        && state
-            .session
-            .as_ref()
-            .is_some_and(TasEditorSession::can_undo)
-    {
-        actions.push(TasEditorAction::Undo);
-    } else if !file_actions_locked
-        && redo_requested
-        && state
-            .session
-            .as_ref()
-            .is_some_and(TasEditorSession::can_redo)
-    {
-        actions.push(TasEditorAction::Redo);
-    }
-
-    draw_status_message(ui, state.message.as_ref());
-
-    if state.session.is_none() {
-        workflow_ui::draw_empty_project_state(
-            ui,
-            &state.execution_availability,
-            !editor_locked,
-            file_request,
-        );
-        return;
-    };
-
-    let body_height = ui.available_height();
-    draw_scrollable_project_content(ui, state, actions, live_action, body_height);
-}
-
-fn draw_scrollable_project_content(
-    ui: &mut egui::Ui,
-    state: &mut TasEditorWindowState,
-    actions: &mut Vec<TasEditorAction>,
-    live_action: &mut Option<TasEditorLiveAction>,
-    body_height: f32,
-) -> egui::scroll_area::ScrollAreaOutput<()> {
-    egui::ScrollArea::vertical()
-        .id_salt("tas_editor_body")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            project_content_ui::draw_project_content(ui, state, actions, live_action, body_height);
+        .or_else(|| {
+            project_replacement.map(|(path, game_gear_no_save)| {
+                TasEditorHostRequest::ReplaceProject {
+                    path,
+                    game_gear_no_save,
+                }
+            })
         })
 }
 

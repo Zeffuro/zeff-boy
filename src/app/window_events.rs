@@ -721,10 +721,16 @@ impl App {
         };
         gfx.handle_event(event)
     }
-
     fn dispatch_window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(export) = self.tas_verified_replay_export.as_ref() {
+                    export.request_cancel();
+                    self.toast_manager
+                        .info("Canceling replay export; wait before closing Zeff-boy");
+                    return;
+                }
                 self.perform_shutdown();
                 event_loop.exit();
             }
@@ -753,7 +759,8 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         if !focused {
             self.release_pce_mouse(false);
-            self.stop_realtime_tas_recording();
+            self.host_input.clear_keyboard();
+            self.modifiers = Default::default();
         }
         self.game_window_focused = focused;
         self.focus_state_dirty = true;

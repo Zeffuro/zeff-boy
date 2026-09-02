@@ -36,7 +36,7 @@ impl AudioOutput {
         })
     }
 
-    pub(crate) fn sample_rate(&self) -> u32 {
+    pub(crate) fn emulator_sample_rate(&self) -> u32 {
         self.sample_rate
     }
 

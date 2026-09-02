@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
@@ -37,6 +38,26 @@ pub(crate) fn write_new_file_atomically_validated(
     validate: impl FnOnce(&mut File) -> Result<()>,
 ) -> Result<()> {
     write_file_atomically_with(path, bytes, validate, publish_new_file, |_| Ok(()))
+}
+
+pub(crate) fn write_new_file_atomically_validated_cancellable(
+    path: &Path,
+    bytes: &[u8],
+    validate: impl FnOnce(&mut File) -> Result<()>,
+    check_cancelled: impl FnMut() -> Result<()>,
+) -> Result<()> {
+    let check_cancelled = RefCell::new(check_cancelled);
+    write_file_atomically_with(
+        path,
+        bytes,
+        |file| {
+            (check_cancelled.borrow_mut())()?;
+            validate(file)?;
+            (check_cancelled.borrow_mut())()
+        },
+        publish_new_file,
+        |_| (check_cancelled.borrow_mut())(),
+    )
 }
 
 fn write_file_atomically_with(
@@ -642,6 +663,23 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"concurrent output");
+        assert_no_staging_files(&root.0);
+    }
+
+    #[test]
+    fn canceled_new_publication_leaves_no_output_or_staging_file() {
+        let root = TestDir::new("canceled-create-new");
+        let path = root.0.join("replay.zrpl");
+
+        let result = write_new_file_atomically_validated_cancellable(
+            &path,
+            b"verified replay",
+            |_| Ok(()),
+            || bail!("canceled"),
+        );
+
+        assert!(result.is_err());
+        assert!(!path.exists());
         assert_no_staging_files(&root.0);
     }
 

@@ -18,13 +18,19 @@ use crate::hardware::cpu::Cpu;
 use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference};
 
 pub const SAVE_STATE_VERSION: u32 = 1;
-pub const SAVE_STATE_FORMAT_VERSION: u32 = 13;
+pub const SAVE_STATE_FORMAT_VERSION: u32 = 14;
 pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSTATE\0";
 pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-gb-determinism-v1";
-pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gb-native-state-v13";
+pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gb-native-state-v14";
 #[cfg(test)]
 pub(crate) const ZEFF_EXTENSION_BLOCK_LEN_FOR_TEST: u32 = bess::ZEFF_EXTENSION_BLOCK_LEN;
 const SAVE_STATE_DECODE_STACK_SIZE: usize = 8 * 1024 * 1024;
+const SGB_NATIVE_CONTINUATION_MAGIC: [u8; 4] = *b"SGBC";
+const SGB_NATIVE_CONTINUATION_PAYLOAD_LEN: usize = 114;
+const SGB_NATIVE_CONTINUATION_BLOCK_LEN: usize = 8 + SGB_NATIVE_CONTINUATION_PAYLOAD_LEN;
+
+#[cfg(test)]
+pub(crate) const SGB_NATIVE_CONTINUATION_MAGIC_FOR_TEST: [u8; 4] = SGB_NATIVE_CONTINUATION_MAGIC;
 
 pub trait StateWriterGbExt {
     fn write_len(&mut self, len: usize);
@@ -94,6 +100,37 @@ pub struct CurrentNativeTasStateInspection {
     pub hardware_mode: HardwareMode,
     pub boot_rom_enabled: bool,
     pub serial_device: crate::hardware::GameBoySerialDevice,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CurrentNativeTasStateIdentity {
+    pub rom_sha256: [u8; 32],
+    pub hardware_mode_preference: HardwareModePreference,
+    pub hardware_mode: HardwareMode,
+}
+
+pub fn inspect_current_native_tas_state_identity(
+    bytes: &[u8],
+) -> Result<CurrentNativeTasStateIdentity> {
+    ensure!(
+        bytes.len() >= 12 && bytes[..8] == SAVE_STATE_MAGIC,
+        "TAS requires a native GB save state"
+    );
+    let format_version = u32::from_le_bytes(bytes[8..12].try_into().expect("length checked"));
+    ensure!(
+        format_version == SAVE_STATE_FORMAT_VERSION,
+        "TAS requires native GB save-state format {SAVE_STATE_FORMAT_VERSION}"
+    );
+    let state = decode_on_thread(bytes.to_vec())?;
+    ensure!(
+        state.frame_count.is_some() && state.lcd_framebuffer.is_some(),
+        "native GB TAS state is missing its exact frame output"
+    );
+    Ok(CurrentNativeTasStateIdentity {
+        rom_sha256: state.rom_hash,
+        hardware_mode_preference: state.hardware_mode_preference,
+        hardware_mode: state.hardware_mode,
+    })
 }
 
 pub fn inspect_current_native_tas_state(

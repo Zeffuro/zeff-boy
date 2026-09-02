@@ -142,6 +142,7 @@ fn input_hunks_preserve_every_materialized_channel_bit_exactly() {
                 dpad: 10,
             },
         ],
+        coleco: [TasColecoControllerInput::default(); 2],
         zapper: TasZapperInput {
             enabled: true,
             trigger: true,

@@ -144,14 +144,14 @@ fn gb_rtc_replay_hash_uses_legacy_v12_projection_and_ignores_wall_clock_timestam
 }
 
 #[test]
-fn gb_replay_start_v13_is_authoritative_and_legacy_v12_remains_loadable() {
+fn gb_replay_start_current_native_is_authoritative_and_legacy_v12_remains_loadable() {
     let mut backend = build_gb_backend();
     backend.step_frame();
     let mut seeded_state = backend.encode_state_bytes().unwrap();
     let extension_start = seeded_state
         .windows(4)
         .position(|window| window == b"ZBEX")
-        .expect("v13 GB state should contain ZBEX");
+        .expect("current GB state should contain ZBEX");
     let authoritative_frame = backend.frame_count() + 123;
     seeded_state[extension_start + 8..extension_start + 16]
         .copy_from_slice(&authoritative_frame.to_le_bytes());
@@ -164,31 +164,31 @@ fn gb_replay_start_v13_is_authoritative_and_legacy_v12_remains_loadable() {
     }
     backend
         .load_state_from_bytes(seeded_state)
-        .expect("seeded authoritative v13 state should load");
+        .expect("seeded authoritative current state should load");
     let expected_framebuffer = backend.framebuffer().to_vec();
     assert!(expected_framebuffer.iter().any(|&byte| byte != 0));
     let replay_start = backend
         .encode_replay_start_state_bytes()
-        .expect("GB backend should encode a v13 state");
+        .expect("GB backend should encode a current state");
     assert!(
         replay_start == backend.encode_state_bytes().unwrap(),
-        "replay-start helper must preserve raw v13 bytes"
+        "replay-start helper must preserve raw current-state bytes"
     );
 
     assert_eq!(
         u32::from_le_bytes(replay_start[8..12].try_into().unwrap()),
-        13
+        zeff_gb_core::save_state::SAVE_STATE_FORMAT_VERSION
     );
 
     let probe = backend
         .probe_replay_state_load(&replay_start, None, false, false)
-        .expect("v13 replay start should remain probeable");
+        .expect("current replay start should remain probeable");
     assert_eq!(probe.0, authoritative_frame);
     assert_eq!(probe.1, backend.game_boy_cpu_cycles());
     let mut restored = build_gb_backend();
     restored
         .load_state_from_bytes(replay_start.clone())
-        .expect("v13 replay start should remain loadable");
+        .expect("current replay start should remain loadable");
     assert_eq!(restored.frame_count(), authoritative_frame);
     assert!(
         restored.framebuffer() == expected_framebuffer,

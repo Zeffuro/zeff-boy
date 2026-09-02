@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use crate::emu_backend::EmuBackend;
 use crate::save_paths::recovery_state::{
-    BatteryGenerationRecord, BatteryGenerationWitness, RecoveryFreshness, RecoveryStateEnvelope,
-    RecoveryStateIdentity, battery_generation_path, classify_recovery_freshness,
-    decode_battery_generation, decode_recovery_state, encode_battery_generation,
-    encode_recovery_state, reconcile_battery_generation, recovery_state_path,
+    BatteryGenerationRecord, BatteryGenerationWitness, BatteryPublicationReceipt,
+    RecoveryFreshness, RecoveryStateEnvelope, RecoveryStateIdentity, battery_generation_path,
+    classify_recovery_freshness, decode_battery_generation, decode_recovery_state,
+    encode_battery_generation, encode_recovery_state, reconcile_battery_generation,
+    recovery_state_path,
 };
 
 pub(super) struct RecoveryCoordinator {
@@ -20,10 +21,10 @@ pub(super) struct RecoveryCoordinator {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub(super) struct RecoveryTestConfig {
-    pub(super) generation_path: PathBuf,
-    pub(super) state_path: PathBuf,
-    pub(super) fail_generation_write: bool,
+pub(crate) struct RecoveryTestConfig {
+    pub(crate) generation_path: PathBuf,
+    pub(crate) state_path: PathBuf,
+    pub(crate) fail_generation_write: bool,
 }
 
 pub(super) enum RecoveryCandidate {
@@ -114,15 +115,31 @@ impl RecoveryCoordinator {
         coordinator
     }
 
+    #[cfg(target_arch = "wasm32")]
     pub(super) fn prepare_generation(
         &self,
         backend: &EmuBackend,
     ) -> anyhow::Result<(BatteryGenerationRecord, Vec<u8>)> {
-        let record = reconcile_battery_generation(
-            self.persisted_generation,
-            backend.battery_component_hash(),
-        )
-        .ok_or_else(|| anyhow::anyhow!("battery generation overflow"))?;
+        let components = backend.battery_components();
+        let borrowed = components
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect::<Vec<_>>();
+        let receipt = BatteryPublicationReceipt::from_components(&borrowed);
+        self.prepare_generation_for_receipt(&receipt)
+    }
+
+    pub(super) fn prepare_generation_for_receipt(
+        &self,
+        receipt: &BatteryPublicationReceipt,
+    ) -> anyhow::Result<(BatteryGenerationRecord, Vec<u8>)> {
+        anyhow::ensure!(
+            receipt.is_consistent(),
+            "battery publication receipt is inconsistent"
+        );
+        let record =
+            reconcile_battery_generation(self.persisted_generation, receipt.component_sha256)
+                .ok_or_else(|| anyhow::anyhow!("battery generation overflow"))?;
         let bytes = encode_battery_generation(self.media_sha256, record);
         Ok((record, bytes))
     }
@@ -131,7 +148,23 @@ impl RecoveryCoordinator {
         &mut self,
         backend: &EmuBackend,
     ) -> anyhow::Result<BatteryGenerationRecord> {
-        let (record, bytes) = self.prepare_generation(backend)?;
+        let receipt = backend.battery_generation_receipt()?;
+        self.write_generation_for_receipt(&receipt)
+    }
+
+    pub(super) fn write_generation_for_receipt(
+        &mut self,
+        receipt: &BatteryPublicationReceipt,
+    ) -> anyhow::Result<BatteryGenerationRecord> {
+        let (record, bytes) = self.prepare_generation_for_receipt(receipt)?;
+        self.write_prepared_generation(record, bytes)
+    }
+
+    fn write_prepared_generation(
+        &mut self,
+        record: BatteryGenerationRecord,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<BatteryGenerationRecord> {
         if self.persisted_generation != Some(record) {
             #[cfg(all(test, not(target_arch = "wasm32")))]
             anyhow::ensure!(
@@ -220,7 +253,11 @@ impl RecoveryCoordinator {
     }
 
     fn current_witness(&self, backend: &EmuBackend) -> BatteryGenerationWitness {
-        witness_for_current_components(self.persisted_generation, backend.battery_component_hash())
+        backend
+            .battery_generation_receipt()
+            .map_or(BatteryGenerationWitness::Unknown, |receipt| {
+                witness_for_current_components(self.persisted_generation, receipt.component_sha256)
+            })
     }
 }
 
@@ -236,6 +273,18 @@ fn witness_for_current_components(
             }
         }
         _ => BatteryGenerationWitness::Unknown,
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn inspect_freshness_for_test(
+    backend: &EmuBackend,
+    config: RecoveryTestConfig,
+) -> Result<RecoveryFreshness, String> {
+    match RecoveryCoordinator::new_for_test(backend, config).inspect(backend) {
+        RecoveryCandidate::Available { freshness, .. } => Ok(freshness),
+        RecoveryCandidate::Missing => Err("recovery state is missing".to_owned()),
+        RecoveryCandidate::Rejected(error) => Err(error),
     }
 }
 

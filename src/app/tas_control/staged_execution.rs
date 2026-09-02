@@ -147,6 +147,7 @@ impl TasControlCoordinator {
                     expected_frame_count: candidate_frame_count,
                     expected_state_sha256: candidate_state_sha256,
                     input,
+                    snapshot: None,
                 },
             )),
         }
@@ -203,6 +204,7 @@ impl TasControlCoordinator {
         }
         let proof = proof.clone();
         let project = project.clone();
+        let next_advance_id = *next_advance_id;
         let total_input_frames = *total_input_frames;
         let project_matches = if executed_project_frames == total_input_frames {
             current_session
@@ -229,12 +231,19 @@ impl TasControlCoordinator {
             };
             return ResponseDisposition::Consumed { follow_up: None };
         }
+        if crate::emu_thread::tas_is_intermediate_cache_cursor(
+            total_input_frames,
+            executed_project_frames,
+        ) || executed_project_frames == total_input_frames
+        {
+            self.remember_worker_cache_cursor(executed_project_frames);
+        }
         if executed_project_frames == total_input_frames {
             self.state = TasControlState::AwaitingDecision {
                 worker_generation,
                 lease_id,
                 run_id,
-                next_advance_id: *next_advance_id,
+                next_advance_id,
                 proof,
                 project,
                 candidate_segment_id: segment_id,
@@ -250,7 +259,7 @@ impl TasControlCoordinator {
                 worker_generation,
                 lease_id,
                 run_id,
-                next_advance_id: *next_advance_id,
+                next_advance_id,
                 proof,
                 project,
                 candidate_segment_id: segment_id,

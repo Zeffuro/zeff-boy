@@ -1,8 +1,15 @@
 use anyhow::{Result, bail};
+use zeff_emu_common::media::MediaObjectId;
 use zeff_emu_common::replay::ReplayEvent;
 
 use super::{TasEditorAction, TasEditorWindowState};
-use crate::tas_project::{TasDigest, TasEditorSession, TasFirmwareIdentity, TasProjectIdentity};
+use crate::tas_project::{TasDigest, TasEditorSession};
+
+mod fds;
+#[cfg(test)]
+pub(super) use fds::is_editable_event;
+use fds::{FdsDraft, FdsDrawContext};
+pub(super) use fds::{FdsMediaMutation, can_author_fds_events};
 
 const EVENT_ROW_HEIGHT: f32 = 22.0;
 const EVENT_LIST_HEIGHT: f32 = 176.0;
@@ -21,6 +28,18 @@ pub(super) enum TasEventMutation {
         expected_event: ReplayEvent,
         frame: u64,
         side: u8,
+    },
+    AddMedia {
+        branch_id: String,
+        frame: u64,
+        mutation: FdsMediaMutation,
+    },
+    UpdateMedia {
+        branch_id: String,
+        canonical_index: usize,
+        expected_event: ReplayEvent,
+        frame: u64,
+        mutation: FdsMediaMutation,
     },
     Remove {
         branch_id: String,
@@ -48,25 +67,6 @@ impl TasEventAction {
 struct EditorContext {
     project_sha256: TasDigest,
     branch_id: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct FdsDraft {
-    canonical_index: Option<usize>,
-    expected_event: Option<ReplayEvent>,
-    frame: u64,
-    side: u8,
-}
-
-impl FdsDraft {
-    fn new(frame: u64) -> Self {
-        Self {
-            canonical_index: None,
-            expected_event: None,
-            frame,
-            side: 0,
-        }
-    }
 }
 
 pub(super) struct TasEventEditorState {
@@ -112,6 +112,8 @@ impl TasEditorWindowState {
             }
 
             let selected_branch_id = session.selected_branch_id().to_owned();
+            let frame_count = session.selected_branch().frame_count();
+            let project_media_id = fds::project_media_id(session.project().identity());
             let mut events = session.selected_branch().events().to_vec();
             let label = match action.mutation {
                 TasEventMutation::Add {
@@ -136,9 +138,45 @@ impl TasEditorWindowState {
                     side,
                 } => {
                     ensure_selected_branch(&selected_branch_id, &branch_id)?;
-                    let event = exact_fds_event_mut(&mut events, canonical_index, &expected_event)?;
+                    let event = exact_fds_event_mut(
+                        &mut events,
+                        canonical_index,
+                        &expected_event,
+                        &project_media_id,
+                    )?;
                     *event = ReplayEvent::FdsDiskSide { frame, side };
                     "Updated FDS disk-side event"
+                }
+                TasEventMutation::AddMedia {
+                    branch_id,
+                    frame,
+                    mutation,
+                } => {
+                    ensure_selected_branch(&selected_branch_id, &branch_id)?;
+                    if !can_author_fds_events(session.project().identity()) {
+                        bail!(
+                            "adding FDS drive events requires a NES project with declared {FDS_BIOS_FIRMWARE_ID} firmware"
+                        );
+                    }
+                    events.push(fds::media_event(frame, mutation, project_media_id.clone()));
+                    "Added FDS drive event"
+                }
+                TasEventMutation::UpdateMedia {
+                    branch_id,
+                    canonical_index,
+                    expected_event,
+                    frame,
+                    mutation,
+                } => {
+                    ensure_selected_branch(&selected_branch_id, &branch_id)?;
+                    let event = exact_fds_event_mut(
+                        &mut events,
+                        canonical_index,
+                        &expected_event,
+                        &project_media_id,
+                    )?;
+                    *event = fds::media_event(frame, mutation, project_media_id.clone());
+                    "Updated FDS drive event"
                 }
                 TasEventMutation::Remove {
                     branch_id,
@@ -146,11 +184,18 @@ impl TasEditorWindowState {
                     expected_event,
                 } => {
                     ensure_selected_branch(&selected_branch_id, &branch_id)?;
-                    exact_fds_event_mut(&mut events, canonical_index, &expected_event)?;
+                    exact_fds_event_mut(
+                        &mut events,
+                        canonical_index,
+                        &expected_event,
+                        &project_media_id,
+                    )?;
                     events.remove(canonical_index);
-                    "Removed FDS disk-side event"
+                    "Removed FDS event"
                 }
             };
+            events.sort_by(ReplayEvent::canonical_cmp);
+            fds::validate_timeline(&events, frame_count, &project_media_id)?;
 
             let branch_id = selected_branch_id;
             let outcome = session
@@ -184,6 +229,7 @@ fn exact_fds_event_mut<'a>(
     events: &'a mut [ReplayEvent],
     canonical_index: usize,
     expected_event: &ReplayEvent,
+    project_media_id: &MediaObjectId,
 ) -> Result<&'a mut ReplayEvent> {
     let Some(event) = events.get_mut(canonical_index) else {
         bail!("the selected TAS event no longer exists; retry the edit");
@@ -191,21 +237,10 @@ fn exact_fds_event_mut<'a>(
     if event != expected_event {
         bail!("the selected TAS event changed; retry the edit");
     }
-    if !matches!(event, ReplayEvent::FdsDiskSide { .. }) {
-        bail!("only FDS disk-side events are editable in this panel");
+    if !fds::is_editable_event(event, project_media_id) {
+        bail!("only exact FDS drive events are editable in this panel");
     }
     Ok(event)
-}
-
-pub(super) fn can_author_fds_events(identity: &TasProjectIdentity) -> bool {
-    identity.system == "nes"
-        && identity.firmware.iter().any(|firmware| {
-            matches!(
-                firmware,
-                TasFirmwareIdentity::External { firmware_id, .. }
-                    if firmware_id == FDS_BIOS_FIRMWARE_ID
-            )
-        })
 }
 
 pub(super) fn draw_event_editor(
@@ -219,14 +254,15 @@ pub(super) fn draw_event_editor(
     let branch_id = session.selected_branch_id();
     let frame_count = session.selected_branch().frame_count();
     let events = session.selected_branch().events();
-    let can_add = can_author_fds_events(session.project().identity());
+    let project_media_id = fds::project_media_id(session.project().identity());
+    let can_add = can_author_fds_events(session.project().identity()) && frame_count != 0;
 
     ui.collapsing(format!("Replay events ({})", events.len()), |ui| {
         ui.small(
-            "FDS disk-side changes are editable. Media and synchronized link events remain read-only.",
+            "Exact FDS drive events are editable. Other media and link events remain read-only.",
         );
         if can_add || state.draft.canonical_index.is_some() {
-            draw_fds_form(
+            fds::draw_form(
                 ui,
                 FdsDrawContext {
                     project_sha256,
@@ -253,7 +289,7 @@ pub(super) fn draw_event_editor(
                     ui.horizontal(|ui| {
                         ui.monospace(format!("{:>8}", event.frame()));
                         ui.label(event_summary(event));
-                        if matches!(event, ReplayEvent::FdsDiskSide { .. }) {
+                        if fds::is_editable_event(event, &project_media_id) {
                             if ui.small_button("Edit").clicked() {
                                 selected = Some((index, event.clone()));
                             }
@@ -277,73 +313,8 @@ pub(super) fn draw_event_editor(
             ui.small("No recorded frame-boundary or synchronized events on this branch.");
         }
         if let Some((index, event)) = selected {
-            let ReplayEvent::FdsDiskSide { frame, side } = event.clone() else {
-                unreachable!("only FDS rows offer editing")
-            };
-            state.draft = FdsDraft {
-                canonical_index: Some(index),
-                expected_event: Some(event),
-                frame,
-                side,
-            };
-        }
-    });
-}
-
-#[derive(Clone, Copy)]
-struct FdsDrawContext<'a> {
-    project_sha256: TasDigest,
-    branch_id: &'a str,
-    frame_count: u64,
-}
-
-fn draw_fds_form(
-    ui: &mut egui::Ui,
-    context: FdsDrawContext<'_>,
-    can_add: bool,
-    state: &mut TasEventEditorState,
-    actions: &mut Vec<TasEditorAction>,
-) {
-    egui::Grid::new("tas_fds_event_editor").show(ui, |ui| {
-        ui.label("Frame boundary");
-        ui.add(egui::DragValue::new(&mut state.draft.frame).range(0..=context.frame_count));
-        ui.end_row();
-        ui.label("Disk side (raw u8)");
-        ui.add(egui::DragValue::new(&mut state.draft.side).range(0..=u8::MAX));
-        ui.end_row();
-    });
-    ui.horizontal(|ui| {
-        if let (Some(canonical_index), Some(expected_event)) = (
-            state.draft.canonical_index,
-            state.draft.expected_event.clone(),
-        ) {
-            if ui.button("Update FDS event").clicked() {
-                actions.push(TasEditorAction::Event(TasEventAction::new(
-                    context.project_sha256,
-                    TasEventMutation::Update {
-                        branch_id: context.branch_id.to_owned(),
-                        canonical_index,
-                        expected_event,
-                        frame: state.draft.frame,
-                        side: state.draft.side,
-                    },
-                )));
-            }
-            if ui.button("Cancel edit").clicked() {
-                state.draft = FdsDraft::new(state.draft.frame.min(context.frame_count));
-            }
-        } else if ui
-            .add_enabled(can_add, egui::Button::new("Add FDS event"))
-            .clicked()
-        {
-            actions.push(TasEditorAction::Event(TasEventAction::new(
-                context.project_sha256,
-                TasEventMutation::Add {
-                    branch_id: context.branch_id.to_owned(),
-                    frame: state.draft.frame,
-                    side: state.draft.side,
-                },
-            )));
+            state.draft =
+                FdsDraft::from_event(index, event).expect("only supported FDS rows offer editing");
         }
     });
 }

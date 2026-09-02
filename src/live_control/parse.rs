@@ -4,7 +4,7 @@ use crate::input::HostButton;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::types::{LiveCommand, LiveMemorySpace};
+use super::types::{LiveCommand, LiveMemorySpace, TasDigitalInput, TasRecordMode};
 
 #[derive(Debug)]
 pub(super) struct ParsedWireRequest {
@@ -18,6 +18,7 @@ struct WireRequest {
     #[serde(alias = "method")]
     command: String,
     button: Option<String>,
+    control: Option<String>,
     keypad: Option<String>,
     #[serde(alias = "controller", alias = "port")]
     player: Option<u8>,
@@ -25,13 +26,23 @@ struct WireRequest {
     enabled: Option<bool>,
     frames: Option<usize>,
     path: Option<String>,
+    replace_existing: Option<bool>,
     at_end: Option<bool>,
     record: Option<bool>,
+    mode: Option<String>,
+    boundary: Option<u64>,
+    cursor: Option<u64>,
+    branch_id: Option<String>,
+    name: Option<String>,
+    action: Option<String>,
     keep: Option<bool>,
     slot: Option<u8>,
     addr: Option<String>,
     space: Option<String>,
     start: Option<Value>,
+    end: Option<Value>,
+    count: Option<u64>,
+    frame: Option<u64>,
     address: Option<Value>,
     length: Option<usize>,
     x: Option<Value>,
@@ -167,13 +178,107 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
                     .ok_or_else(|| "missing required field: path".to_string())?,
             }
         }
+        "tas_create" | "tascreate" | "tas_create_project" | "tascreateproject" => {
+            LiveCommand::TasCreateProject {
+                path: request
+                    .path
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| "missing required field: path".to_string())?,
+                replace_existing: request.replace_existing.unwrap_or(false),
+            }
+        }
         "tas_status" | "tasstatus" => LiveCommand::TasStatus,
-        "tas_link" | "taslink" => LiveCommand::TasLink {
+        "tas_select" | "tasselect" | "tas_select_boundary" | "tasselectboundary" => {
+            LiveCommand::TasSelectBoundary {
+                boundary: request
+                    .boundary
+                    .or(request.cursor)
+                    .ok_or_else(|| "missing required integer field: boundary".to_string())?,
+            }
+        }
+        "tas_select_range" | "tasselectrange" => {
+            let start = required_u64_value(&request.start, "start")?;
+            let end = required_u64_value(&request.end, "end")?;
+            if start >= end {
+                return Err("TAS selection range must satisfy start < end".to_owned());
+            }
+            if end > crate::tas_project::MAX_PROJECT_FRAMES {
+                return Err(format!(
+                    "TAS selection end must not exceed {}",
+                    crate::tas_project::MAX_PROJECT_FRAMES
+                ));
+            }
+            LiveCommand::TasSelectRange { start, end }
+        }
+        "tas_delete_selected_frames"
+        | "tasdeleteselectedframes"
+        | "tas_delete_range"
+        | "tasdeleterange" => LiveCommand::TasDeleteSelectedFrames,
+        "tas_insert_neutral_frames" | "tasinsertneutralframes" => {
+            let boundary = request
+                .boundary
+                .or(request.cursor)
+                .ok_or_else(|| "missing required integer field: boundary".to_string())?;
+            if boundary > crate::tas_project::MAX_PROJECT_FRAMES {
+                return Err(format!(
+                    "TAS insertion boundary must not exceed {}",
+                    crate::tas_project::MAX_PROJECT_FRAMES
+                ));
+            }
+            LiveCommand::TasInsertNeutralFrames {
+                boundary,
+                count: required_tas_frame_count(&request)?,
+            }
+        }
+        "tas_set_input" | "tassetinput" | "tas_set_digital_input" | "tassetdigitalinput" => {
+            let frame = request
+                .frame
+                .ok_or_else(|| "missing required integer field: frame".to_owned())?;
+            if frame >= crate::tas_project::MAX_PROJECT_FRAMES {
+                return Err(format!(
+                    "TAS input frame must be less than {}",
+                    crate::tas_project::MAX_PROJECT_FRAMES
+                ));
+            }
+            LiveCommand::TasSetDigitalInput {
+                frame,
+                player: optional_player(&request)?,
+                input: required_tas_digital_input(&request)?,
+                pressed: request
+                    .pressed
+                    .ok_or_else(|| "missing required boolean field: pressed".to_owned())?,
+            }
+        }
+        "tas_go_to_selection" | "tasgotoselection" => LiveCommand::TasGoToSelection,
+        "tas_fork_branch" | "tasforkbranch" | "tas_create_branch" | "tascreatebranch" => {
+            LiveCommand::TasForkBranch {
+                id: request
+                    .branch_id
+                    .clone()
+                    .ok_or_else(|| "missing required field: branch_id".to_string())?,
+                name: request.name.clone(),
+            }
+        }
+        "tas_recording" | "tasrecording" | "tas_realtime_recording" | "tasrealtimerecording" => {
+            LiveCommand::TasSetRealtimeRecording {
+                active: tas_recording_active(&request)?,
+            }
+        }
+        "tas_playback" | "tasplayback" | "tas_play" | "tasplay" => LiveCommand::TasSetPlayback {
+            active: tas_playback_active(&request)?,
+        },
+        "tas_link" | "taslink" | "tas_connect" | "tasconnect" => LiveCommand::TasLink {
             at_end: request.at_end.unwrap_or(false),
             record: request.record.unwrap_or(false),
         },
+        "tas_reload_game" | "tasreloadgame" | "tas_reload" | "tasreload" => {
+            LiveCommand::TasReloadGame
+        }
         "tas_record_frame" | "tasrecordframe" | "tas_record_one" | "tasrecordone" => {
-            LiveCommand::TasRecordFrame
+            LiveCommand::TasRecordFrame {
+                mode: tas_record_mode(&request)?,
+            }
         }
         "tas_disconnect" | "tasdisconnect" => LiveCommand::TasDisconnect {
             keep: request.keep.unwrap_or(false),
@@ -198,6 +303,44 @@ pub(super) fn parse_wire_request(line: &str) -> Result<ParsedWireRequest, String
     })
 }
 
+fn tas_record_mode(request: &WireRequest) -> Result<TasRecordMode, String> {
+    match request.mode.as_deref().unwrap_or("replace") {
+        "replace" => Ok(TasRecordMode::Replace),
+        "insert" => Ok(TasRecordMode::Insert),
+        _ => Err("TAS record mode must be \"replace\" or \"insert\"".to_owned()),
+    }
+}
+
+fn required_tas_frame_count(request: &WireRequest) -> Result<u64, String> {
+    let count = request
+        .count
+        .ok_or_else(|| "missing required integer field: count".to_owned())?;
+    if (1..=crate::tas_project::MAX_PROJECT_FRAMES).contains(&count) {
+        Ok(count)
+    } else {
+        Err(format!(
+            "TAS frame count must be between 1 and {}",
+            crate::tas_project::MAX_PROJECT_FRAMES
+        ))
+    }
+}
+
+fn tas_recording_active(request: &WireRequest) -> Result<bool, String> {
+    match request.action.as_deref().unwrap_or("start") {
+        "start" => Ok(true),
+        "stop" => Ok(false),
+        _ => Err("TAS recording action must be \"start\" or \"stop\"".to_owned()),
+    }
+}
+
+fn tas_playback_active(request: &WireRequest) -> Result<bool, String> {
+    match request.action.as_deref().unwrap_or("start") {
+        "start" | "play" => Ok(true),
+        "pause" | "stop" => Ok(false),
+        _ => Err("TAS playback action must be \"start\" or \"pause\"".to_owned()),
+    }
+}
+
 fn required_slot(request: &WireRequest) -> Result<u8, String> {
     let slot = request
         .slot
@@ -216,6 +359,17 @@ fn optional_u32(value: &Option<Value>) -> Option<u32> {
         Value::String(text) => parse_u32_text(text).ok(),
         _ => None,
     }
+}
+
+fn required_u64_value(value: &Option<Value>, field: &str) -> Result<u64, String> {
+    value
+        .as_ref()
+        .and_then(|value| match value {
+            Value::Number(number) => number.as_u64(),
+            Value::String(text) => text.trim().parse().ok(),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing or invalid non-negative integer field: {field}"))
 }
 
 fn optional_u16(value: &Option<Value>) -> Option<u16> {
@@ -262,6 +416,55 @@ fn required_button(request: &WireRequest) -> Result<HostButton, String> {
         .as_deref()
         .ok_or_else(|| "missing required field: button".to_string())?;
     HostButton::from_name(button).ok_or_else(|| format!("unknown button: {button}"))
+}
+
+fn required_tas_digital_input(request: &WireRequest) -> Result<TasDigitalInput, String> {
+    let control = request
+        .control
+        .as_deref()
+        .or(request.button.as_deref())
+        .ok_or_else(|| "missing required field: control".to_owned())?;
+    let normalized = normalized_name(control);
+    let input = match normalized.as_str() {
+        "right" | "dpadright" => TasDigitalInput::Dpad(1 << 0),
+        "left" | "dpadleft" => TasDigitalInput::Dpad(1 << 1),
+        "up" | "dpadup" => TasDigitalInput::Dpad(1 << 2),
+        "down" | "dpaddown" => TasDigitalInput::Dpad(1 << 3),
+        "a" | "buttona" | "i" => TasDigitalInput::Buttons(1 << 0),
+        "b" | "buttonb" | "ii" => TasDigitalInput::Buttons(1 << 1),
+        "select" | "sel" => TasDigitalInput::Buttons(1 << 2),
+        "start" | "st" | "run" => TasDigitalInput::Buttons(1 << 3),
+        "l" | "buttonl" | "iii" => TasDigitalInput::Buttons(1 << 4),
+        "r" | "buttonr" | "iv" => TasDigitalInput::Buttons(1 << 5),
+        "v" => TasDigitalInput::Buttons(1 << 6),
+        "vi" => TasDigitalInput::Buttons(1 << 7),
+        name => parse_raw_tas_digital_input(name)
+            .ok_or_else(|| format!("unknown TAS digital control: {control}"))?,
+    };
+    Ok(input)
+}
+
+fn parse_raw_tas_digital_input(name: &str) -> Option<TasDigitalInput> {
+    let (field, bit) = if let Some(bit) = name.strip_prefix("dpad") {
+        (DigitalInputField::Dpad, bit)
+    } else if let Some(bit) = name.strip_prefix('d') {
+        (DigitalInputField::Dpad, bit)
+    } else if let Some(bit) = name.strip_prefix("button") {
+        (DigitalInputField::Buttons, bit)
+    } else {
+        (DigitalInputField::Buttons, name.strip_prefix('b')?)
+    };
+    let bit = bit.parse::<u8>().ok()?;
+    let mask = 1_u8.checked_shl(u32::from(bit))?;
+    match field {
+        DigitalInputField::Buttons => Some(TasDigitalInput::Buttons(mask)),
+        DigitalInputField::Dpad => Some(TasDigitalInput::Dpad(mask)),
+    }
+}
+
+enum DigitalInputField {
+    Buttons,
+    Dpad,
 }
 
 fn required_coleco_keypad(request: &WireRequest) -> Result<u8, String> {

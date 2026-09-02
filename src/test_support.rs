@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -52,6 +52,18 @@ pub(crate) fn test_file(label: &str) -> io::Result<TestFile> {
     .map(|path| TestFile { path })
 }
 
+#[allow(dead_code)]
+pub(crate) fn write_zip(path: &Path, files: &[(&str, &[u8])]) -> anyhow::Result<Vec<u8>> {
+    let file = std::fs::File::create(path)?;
+    let mut writer = zip::ZipWriter::new(file);
+    for (name, bytes) in files {
+        writer.start_file(name, zip::write::SimpleFileOptions::default())?;
+        writer.write_all(bytes)?;
+    }
+    writer.finish()?;
+    Ok(std::fs::read(path)?)
+}
+
 fn reserve_test_path(
     label: &str,
     reserve: impl Fn(&Path) -> io::Result<()>,
@@ -90,6 +102,33 @@ pub(crate) fn build_nes_test_rom() -> Vec<u8> {
     rom[prg + 0x3FFC] = 0x00;
     rom[prg + 0x3FFD] = 0x80;
     rom
+}
+
+#[allow(dead_code)]
+pub(crate) fn build_nes_battery_test_rom() -> Vec<u8> {
+    let mut rom = vec![0; 16 + 2 * 0x4000 + 0x2000];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 2;
+    rom[5] = 1;
+    rom[6] = 0x52;
+    rom[16..19].copy_from_slice(&[0x4C, 0x00, 0x80]);
+    rom[16 + 0x7FFC] = 0x00;
+    rom[16 + 0x7FFD] = 0x80;
+    rom
+}
+
+#[allow(dead_code)]
+pub(crate) fn nes_battery_test_bytes(rom: &[u8], value: u8) -> Vec<u8> {
+    let emulator =
+        zeff_nes_core::emulator::Emulator::new(rom, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)
+            .expect("battery fixture must load");
+    vec![
+        value;
+        emulator
+            .dump_battery_sram()
+            .expect("battery fixture must expose SRAM")
+            .len()
+    ]
 }
 
 #[cfg(test)]

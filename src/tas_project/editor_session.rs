@@ -13,11 +13,16 @@ use super::{
     TasProject, TasProjectEdit, TasProjectLoadSource, TasSeekStateCache,
 };
 
+#[path = "editor_session/frame_range.rs"]
+mod frame_range;
 #[path = "editor_session/live_frame.rs"]
 mod live_frame;
+#[path = "editor_session/replay_conversion.rs"]
+mod replay_conversion;
 
+pub use frame_range::TasFrameRange;
 use live_frame::TasLiveFrameHistoryGroup;
-pub use live_frame::TasPreparedLiveFrame;
+pub use live_frame::{TasLiveRecordingMode, TasPreparedLiveFrame};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TasEditorSessionSource {

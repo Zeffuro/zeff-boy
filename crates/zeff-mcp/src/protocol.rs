@@ -214,6 +214,18 @@ pub(crate) fn tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "zeff_tas_create",
+            "description": "Create and open a .ztas project from the game currently loaded in Zeff Boy. Existing files require explicit replacement confirmation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "replace_existing": { "type": "boolean", "default": false }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
             "name": "zeff_tas_open",
             "description": "Open a local .ztas project in the running Zeff Boy instance without a file dialog.",
             "inputSchema": {
@@ -226,12 +238,145 @@ pub(crate) fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "zeff_tas_status",
-            "description": "Read TAS project, selected cursor, frame count, and live-link state.",
+            "description": "Read TAS readiness, branch routes, selected boundary/row/range, settled execution boundary, transactional repair state, recording state, and current terminal failure.",
             "inputSchema": empty_schema()
         }),
         json!({
+            "name": "zeff_tas_select",
+            "description": "Select a TAS timeline boundary without moving the running emulator. Boundary N is before input row N; the end boundary is the next append position.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "boundary": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["boundary"]
+            }
+        }),
+        json!({
+            "name": "zeff_tas_select_range",
+            "description": "Select a contiguous half-open TAS input-row range [start, end) without moving the running emulator.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "start": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 999999999
+                    },
+                    "end": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000000000
+                    }
+                },
+                "required": ["start", "end"]
+            }
+        }),
+        json!({
+            "name": "zeff_tas_delete_selected_frames",
+            "description": "Delete the currently selected TAS input-row range through the same editor transaction as Delete Frames.",
+            "inputSchema": empty_schema()
+        }),
+        json!({
+            "name": "zeff_tas_insert_neutral_frames",
+            "description": "Insert neutral TAS input rows at a timeline boundary through the same editor transaction as Insert Neutral Frames.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "boundary": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                    },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000000000
+                    }
+                },
+                "required": ["boundary", "count"]
+            }
+        }),
+        json!({
+            "name": "zeff_tas_set_input",
+            "description": "Set one TAS digital control to an absolute pressed or released state. Repeating the same request is a no-op. A paused linked game reconstructs once to show the edited frame result.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "frame": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 999999999
+                    },
+                    "player": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                        "default": 1
+                    },
+                    "control": {
+                        "type": "string",
+                        "enum": [
+                            "right", "left", "up", "down",
+                            "a", "b", "select", "start", "l", "r",
+                            "i", "ii", "iii", "iv", "v", "vi", "run",
+                            "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
+                            "b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7"
+                        ]
+                    },
+                    "pressed": { "type": "boolean" }
+                },
+                "required": ["frame", "control", "pressed"]
+            }
+        }),
+        json!({
+            "name": "zeff_tas_go_to_selection",
+            "description": "Move the linked game to the already-selected TAS timeline boundary through the same TAS session coordinator as the editor's Go to Selection action.",
+            "inputSchema": empty_schema()
+        }),
+        json!({
+            "name": "zeff_tas_fork_branch",
+            "description": "Create and select a branch at the current settled linked TAS boundary. The selected boundary must already match the linked game position.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" }
+                },
+                "required": ["id"]
+            }
+        }),
+        json!({
+            "name": "zeff_tas_recording",
+            "description": "Start or stop real-time live TAS recording through the editor's existing recording path. Status reports whether it is waiting for game-input focus.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["start", "stop"],
+                        "default": "start"
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "zeff_tas_playback",
+            "description": "Play or pause stored TAS movie input at nominal speed through the linked worker lease. Playback never samples host controls or edits the project; Pause settles at the next frame boundary.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["start", "pause"],
+                        "default": "start"
+                    }
+                }
+            }
+        }),
+        json!({
             "name": "zeff_tas_link",
-            "description": "Link the loaded game to the selected TAS cursor or the branch end. Recording is available only for compatible direct NES projects.",
+            "description": "Link the loaded game to the selected TAS cursor or the branch end. Recording is available for compatible direct cartridge profiles.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -241,8 +386,24 @@ pub(crate) fn tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "zeff_tas_connect",
+            "description": "Connect the loaded game through the same TAS session coordinator used by the editor. This is an alias for zeff_tas_link with user-facing terminology.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "at_end": { "type": "boolean", "default": false },
+                    "record": { "type": "boolean", "default": false }
+                }
+            }
+        }),
+        json!({
+            "name": "zeff_tas_reload_game",
+            "description": "Transactionally park the current game, load a matching TAS worker, and connect it. Use when TAS readiness requires a reload. Disconnect with keep=false restores the exact parked game; keep=true keeps the repaired TAS position and discards the parked game.",
+            "inputSchema": empty_schema()
+        }),
+        json!({
             "name": "zeff_tas_disconnect",
-            "description": "Disconnect TAS live control, either restoring the pre-link game state or keeping the linked position.",
+            "description": "Disconnect TAS live control, either restoring the pre-connect checkpoint or keeping the linked position. After zeff_tas_reload_game, restore returns to the exact parked pre-reload game and keep discards it.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -252,8 +413,17 @@ pub(crate) fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "zeff_tas_record_frame",
-            "description": "Record exactly one frame from the current live controller state into a linked direct NES TAS project.",
-            "inputSchema": empty_schema()
+            "description": "Record exactly one frame from the current live controller state into a compatible linked TAS project. Replace overwrites an existing movie row; insert shifts existing input forward.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "insert"],
+                        "default": "replace"
+                    }
+                }
+            }
         }),
         json!({
             "name": "zeff_link",

@@ -6,6 +6,14 @@ pub struct Keypad {
     ab_start: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KeypadSaveState {
+    pub select: u8,
+    pub x_buttons: u8,
+    pub y_buttons: u8,
+    pub ab_start: u8,
+}
+
 impl Default for Keypad {
     fn default() -> Self {
         Self::new()
@@ -50,6 +58,30 @@ impl Keypad {
 
     pub fn write(&mut self, value: u8) {
         self.select = value & 0x70;
+    }
+
+    pub(crate) fn save_state(&self) -> KeypadSaveState {
+        KeypadSaveState {
+            select: self.select,
+            x_buttons: self.x_buttons,
+            y_buttons: self.y_buttons,
+            ab_start: self.ab_start,
+        }
+    }
+
+    pub(crate) fn load_state(&mut self, state: KeypadSaveState) -> anyhow::Result<()> {
+        if state.select & !0x70 != 0
+            || state.x_buttons & !0x0F != 0
+            || state.y_buttons & !0x0F != 0
+            || state.ab_start & !0x0F != 0
+        {
+            anyhow::bail!("invalid WonderSwan keypad state");
+        }
+        self.select = state.select;
+        self.x_buttons = state.x_buttons;
+        self.y_buttons = state.y_buttons;
+        self.ab_start = state.ab_start;
+        Ok(())
     }
 }
 

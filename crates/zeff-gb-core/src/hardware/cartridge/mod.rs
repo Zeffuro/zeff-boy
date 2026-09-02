@@ -14,6 +14,8 @@ mod pocket_camera;
 mod rom_only;
 mod rtc;
 
+pub use rtc::Mbc3RtcState;
+
 use huc1::HuC1;
 use huc3::HuC3;
 use mbc1::Mbc1;
@@ -213,6 +215,27 @@ impl Cartridge {
         }
     }
 
+    pub fn dump_sram_at_time(&self, now: u64) -> Vec<u8> {
+        match self {
+            Cartridge::Mbc3(c) => c.dump_sram_at_time(now),
+            _ => dispatch_cart!(self, c => c.ram_bytes().to_vec()),
+        }
+    }
+
+    pub fn dump_sram_with_rtc_subsecond_at_time(&self, now: u64) -> Vec<u8> {
+        match self {
+            Cartridge::Mbc3(c) => c.dump_sram_with_rtc_subsecond_at_time(now),
+            _ => dispatch_cart!(self, c => c.ram_bytes().to_vec()),
+        }
+    }
+
+    pub fn dump_sram_with_rtc_subsecond(&self) -> Vec<u8> {
+        match self {
+            Cartridge::Mbc3(c) => c.dump_sram_with_rtc_subsecond(),
+            _ => dispatch_cart!(self, c => c.ram_bytes().to_vec()),
+        }
+    }
+
     pub fn load_sram(&mut self, bytes: &[u8]) {
         match self {
             Cartridge::RomOnly(c) => c.load_ram_bytes(bytes),
@@ -224,6 +247,20 @@ impl Cartridge {
             Cartridge::HuC1(c) => c.load_ram_bytes(bytes),
             Cartridge::HuC3(c) => c.load_sram(bytes),
             Cartridge::PocketCamera(c) => c.load_ram_bytes(bytes),
+        }
+    }
+
+    pub fn load_sram_at_time(&mut self, bytes: &[u8], now: u64) {
+        match self {
+            Cartridge::Mbc3(c) => c.load_sram_at_time(bytes, now),
+            _ => self.load_sram(bytes),
+        }
+    }
+
+    pub fn mbc3_rtc_state(&self) -> Option<Mbc3RtcState> {
+        match self {
+            Cartridge::Mbc3(c) => c.rtc_state(),
+            _ => None,
         }
     }
 

@@ -119,7 +119,7 @@ pub(super) fn draw_recording_strip(
                     actions.push(TasEditorAction::StartRecordingAtEnd);
                 }
                 ui.small(
-                    "For cell-by-cell entry at the movie end. Live controls use Record from here.",
+                    "For cell-by-cell entry at the movie end. Live TAS recording uses Record.",
                 );
             }
         });

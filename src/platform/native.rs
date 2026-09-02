@@ -46,18 +46,6 @@ impl FileDialog {
     }
 }
 
-pub(crate) fn confirm_warning(title: &str, description: impl Into<String>) -> bool {
-    matches!(
-        rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title(title)
-            .set_description(description)
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show(),
-        rfd::MessageDialogResult::Yes
-    )
-}
-
 pub(crate) fn screenshots_dir() -> PathBuf {
     if let Some(config_dir) = config_dir_path() {
         return config_dir.join("screenshots");

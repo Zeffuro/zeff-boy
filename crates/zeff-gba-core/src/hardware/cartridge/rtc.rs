@@ -12,6 +12,8 @@ const SIO: u8 = 0x02;
 const CS: u8 = 0x04;
 const CONTROL_HOUR_24: u8 = 0x40;
 
+pub(super) mod persistence;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RtcDateTime {
     year: u8,
@@ -21,6 +23,27 @@ pub struct RtcDateTime {
     hour: u8,
     minute: u8,
     second: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RtcState {
+    pub data_latch: u8,
+    pub pin_state: u8,
+    pub direction: u8,
+    pub read_write: bool,
+    pub transfer_step: u8,
+    pub last_sck: bool,
+    pub read_bit_sampled: bool,
+    pub bits_read: u8,
+    pub bits: u8,
+    pub command: Option<u8>,
+    pub command_reading: bool,
+    pub bytes_remaining: u8,
+    pub transfer_bytes: [u8; 7],
+    pub transfer_index: u8,
+    pub control: u8,
+    pub date_time: RtcDateTime,
+    pub subsecond_cycles: u32,
 }
 
 impl RtcDateTime {
@@ -170,7 +193,7 @@ impl Calendar {
             return;
         }
         self.month = 1;
-        self.year = self.year.wrapping_add(1);
+        self.year = (self.year + 1) % 100;
     }
 
     fn date_time_bytes(self, control: u8) -> [u8; 7] {
@@ -287,6 +310,28 @@ impl Default for RtcGpio {
 }
 
 impl RtcGpio {
+    pub(super) fn state(&self) -> RtcState {
+        RtcState {
+            data_latch: self.data_latch,
+            pin_state: self.pin_state,
+            direction: self.direction,
+            read_write: self.read_write,
+            transfer_step: self.transfer_step,
+            last_sck: self.last_sck,
+            read_bit_sampled: self.read_bit_sampled,
+            bits_read: self.bits_read,
+            bits: self.bits,
+            command: self.command.map(Command::bits),
+            command_reading: self.command_reading,
+            bytes_remaining: self.bytes_remaining,
+            transfer_bytes: self.transfer_bytes,
+            transfer_index: self.transfer_index,
+            control: self.control,
+            date_time: self.date_time(),
+            subsecond_cycles: self.subsecond_cycles,
+        }
+    }
+
     pub(super) fn date_time(&self) -> RtcDateTime {
         RtcDateTime {
             year: self.calendar.year,
@@ -423,6 +468,7 @@ impl RtcGpio {
             || bits_read > 7
             || bytes_remaining > 7
             || transfer_index > 7
+            || calendar.year > 99
             || !(1..=12).contains(&calendar.month)
             || !(1..=days_in_month(calendar.year, calendar.month)).contains(&calendar.day)
             || calendar.weekday > 6
@@ -819,3 +865,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tas_tests;

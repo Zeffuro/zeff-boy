@@ -213,6 +213,7 @@ impl App {
                     zapper,
                     host_tilt,
                     camera_frame,
+                    coleco: Default::default(),
                 };
                 frames_to_step
             ];

@@ -90,6 +90,14 @@ impl Emulator {
         self.effective_cycles
     }
 
+    pub const fn bios_hash(&self) -> [u8; 32] {
+        self.bios_hash
+    }
+
+    pub const fn cartridge_hash(&self) -> [u8; 32] {
+        self.cartridge_hash
+    }
+
     pub fn cpu_cycles(&self) -> u64 {
         self.cpu.cycles()
     }

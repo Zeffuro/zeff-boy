@@ -4,24 +4,26 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use zeff_emu_common::replay::{
-    ReplayCheckpoint, ReplayFirmwareManifest, ReplayJoypadFrame, ReplayLoadLimits, ReplayMetadata,
-    ReplayPlayer, ReplayRecorder, ReplayStartMetadata, ReplayZapperFrame,
+    ReplayCheckpoint, ReplayColecoControllerFrame, ReplayFirmwareManifest, ReplayJoypadFrame,
+    ReplayLoadLimits, ReplayMetadata, ReplayPlayer, ReplayRecorder, ReplayStartMetadata,
+    ReplayZapperFrame,
 };
 
 use super::model::{
     MAX_CAMERA_ASSET_BYTES, MAX_PROJECT_FRAMES, MAX_START_STATE_BYTES, MAX_TOTAL_ASSET_BYTES,
-    TasBranch, TasCameraInput, TasControllerInput, TasDigest, TasExternalIdentity,
-    TasFirmwareIdentity, TasInputFrame, TasInputSpan, TasProject, TasProjectIdentity,
-    TasVerificationCheckpoint, TasVerificationProvenance, TasZapperInput,
+    TasBranch, TasCameraInput, TasColecoControllerInput, TasControllerInput, TasDigest,
+    TasExternalIdentity, TasFirmwareIdentity, TasInputFrame, TasInputSpan, TasProject,
+    TasProjectIdentity, TasVerificationCheckpoint, TasVerificationProvenance, TasZapperInput,
 };
 
 const ZRPL_MAGIC: &[u8; 4] = b"ZRPL";
-const CURRENT_ZRPL_VERSION: u32 = 2;
+const CURRENT_ZRPL_VERSION: u32 = 3;
 const MAX_ZRPL_FILE_BYTES: u64 = 96 * 1024 * 1024;
 const CURRENT_ZRPL_METADATA_VERSION: u32 = 3;
 const MAX_ZRPL_METADATA_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ZRPL_CONVERSION_FRAMES: u64 = 1_000_000;
-const ZRPL_FRAME_FIXED_BYTES: usize = 24;
+const ZRPL_V2_FRAME_FIXED_BYTES: usize = 24;
+const ZRPL_FRAME_FIXED_BYTES: usize = 27;
 const ZRPL_CAMERA_REPEAT_SENTINEL: u32 = u32::MAX;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,12 +35,32 @@ pub struct TasZrplImportWitness {
 impl TasProject {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn import_zrpl(path: &Path, witness: TasZrplImportWitness) -> Result<Self> {
+        Self::import_zrpl_with_witness(path, |_| Ok(witness))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn import_zrpl_with_witness(
+        path: &Path,
+        witness: impl FnOnce(&[u8]) -> Result<TasZrplImportWitness>,
+    ) -> Result<Self> {
         require_zrpl_path(path)?;
         let source_bytes = read_zrpl_bounded(path)?;
         preflight_current_zrpl(&source_bytes)?;
         let mut player = ReplayPlayer::decode_bounded(&source_bytes, zrpl_load_limits())
             .with_context(|| format!("failed to decode replay {}", path.display()))?;
         let metadata = player.metadata().clone();
+        let witness = witness(player.save_state())?;
+        require_zrpl_representable_identity(&witness.identity)?;
+        let coleco_topology = uses_coleco_controller_topology(&witness.identity);
+        if coleco_topology && player.version() != 3 {
+            bail!("ColecoVision TAS import requires ZRPL v3 controller input records");
+        }
+        if player.version() == 3 && !coleco_topology {
+            bail!("ZRPL v3 controller input records require the ColecoVision TAS topology");
+        }
+        if player.uses_coleco_input() && !coleco_topology {
+            bail!("replay contains ColecoVision controller input for an incompatible TAS topology");
+        }
         validate_import_witness(&witness.identity, player.save_state(), &metadata)?;
 
         let frame_count = u64::try_from(player.total_frames())
@@ -179,9 +201,19 @@ impl TasProject {
         verification: Option<&TasVerificationProvenance>,
     ) -> Result<(Vec<u8>, CompiledReplay)> {
         self.validate()?;
+        require_zrpl_representable_identity(&self.identity)?;
         let branch = self
             .branch(branch_id)
             .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))?;
+        let coleco_topology = uses_coleco_controller_topology(&self.identity);
+        if !coleco_topology
+            && branch
+                .input_spans()
+                .iter()
+                .any(|span| span.input.coleco != [TasColecoControllerInput::default(); 2])
+        {
+            bail!("TAS branch contains ColecoVision controller input for an incompatible topology");
+        }
         if branch.frame_count > MAX_ZRPL_CONVERSION_FRAMES {
             bail!("TAS replay conversion exceeds the {MAX_ZRPL_CONVERSION_FRAMES}-frame limit");
         }
@@ -262,6 +294,9 @@ impl TasProject {
         };
         let mut recorder =
             ReplayRecorder::new_with_metadata(PathBuf::new(), self.start_state.clone(), metadata);
+        if coleco_topology {
+            recorder.enable_coleco_input_format();
+        }
         for frame in frames {
             recorder.record_joypad_frame(frame);
         }
@@ -269,6 +304,22 @@ impl TasProject {
         preflight_current_zrpl(&bytes)?;
         Ok((bytes, expected))
     }
+}
+
+fn require_zrpl_representable_identity(identity: &TasProjectIdentity) -> Result<()> {
+    if identity.system == "coleco" && !uses_coleco_controller_topology(identity) {
+        bail!("ColecoVision TAS replay requires two standard controller/keypad devices");
+    }
+    Ok(())
+}
+
+fn uses_coleco_controller_topology(identity: &TasProjectIdentity) -> bool {
+    identity.system == "coleco"
+        && identity.devices.len() == 2
+        && identity.devices.iter().enumerate().all(|(index, device)| {
+            device.port == format!("p{}", index + 1)
+                && device.device == "coleco-standard-controller-keypad"
+        })
 }
 
 fn read_zrpl_bounded(path: &Path) -> Result<Vec<u8>> {
@@ -322,7 +373,7 @@ fn preflight_current_zrpl(bytes: &[u8]) -> Result<()> {
         bail!("not a valid replay file");
     }
     let version = u32::from_le_bytes(header[4..8].try_into().expect("version is four bytes"));
-    if version != CURRENT_ZRPL_VERSION {
+    if !matches!(version, 2 | CURRENT_ZRPL_VERSION) {
         bail!("TAS import requires canonical ZRPL v{CURRENT_ZRPL_VERSION}, found v{version}");
     }
 
@@ -355,7 +406,12 @@ fn preflight_current_zrpl(bytes: &[u8]) -> Result<()> {
     let mut previous_camera_len = None;
     let mut decoded_camera_bytes = 0usize;
     for frame in 0..frame_count {
-        read_zrpl_bytes(bytes, &mut offset, ZRPL_FRAME_FIXED_BYTES, "input frame")?;
+        let fixed_bytes = if version == CURRENT_ZRPL_VERSION {
+            ZRPL_FRAME_FIXED_BYTES
+        } else {
+            ZRPL_V2_FRAME_FIXED_BYTES
+        };
+        read_zrpl_bytes(bytes, &mut offset, fixed_bytes, "input frame")?;
         let camera_len = read_zrpl_u32(bytes, &mut offset, "camera length")?;
         let decoded_len = match camera_len {
             0 => 0,
@@ -583,6 +639,7 @@ fn import_input_frame(
                 dpad: frame.dpad_p5,
             },
         ],
+        coleco: frame.coleco.map(import_coleco_controller),
         zapper: TasZapperInput {
             enabled: frame.zapper.enabled,
             trigger: frame.zapper.trigger,
@@ -633,7 +690,61 @@ fn export_input_frame(
             f32::from_bits(frame.tilt_y_bits),
         ),
         camera_frame,
+        coleco: frame.coleco.map(export_coleco_controller),
     })
+}
+
+fn import_coleco_controller(frame: ReplayColecoControllerFrame) -> TasColecoControllerInput {
+    TasColecoControllerInput {
+        up: frame.up,
+        right: frame.right,
+        down: frame.down,
+        left: frame.left,
+        left_button: frame.left_button,
+        right_button: frame.right_button,
+        keypad: match frame.keypad {
+            0 => crate::tas_project::TasColecoKeypadKey::None,
+            1 => crate::tas_project::TasColecoKeypadKey::Zero,
+            2 => crate::tas_project::TasColecoKeypadKey::One,
+            3 => crate::tas_project::TasColecoKeypadKey::Two,
+            4 => crate::tas_project::TasColecoKeypadKey::Three,
+            5 => crate::tas_project::TasColecoKeypadKey::Four,
+            6 => crate::tas_project::TasColecoKeypadKey::Five,
+            7 => crate::tas_project::TasColecoKeypadKey::Six,
+            8 => crate::tas_project::TasColecoKeypadKey::Seven,
+            9 => crate::tas_project::TasColecoKeypadKey::Eight,
+            10 => crate::tas_project::TasColecoKeypadKey::Nine,
+            11 => crate::tas_project::TasColecoKeypadKey::Star,
+            12 => crate::tas_project::TasColecoKeypadKey::Pound,
+            _ => unreachable!("replay keypad values are validated while decoding"),
+        },
+    }
+}
+
+fn export_coleco_controller(frame: TasColecoControllerInput) -> ReplayColecoControllerFrame {
+    ReplayColecoControllerFrame {
+        up: frame.up,
+        right: frame.right,
+        down: frame.down,
+        left: frame.left,
+        left_button: frame.left_button,
+        right_button: frame.right_button,
+        keypad: match frame.keypad {
+            crate::tas_project::TasColecoKeypadKey::None => 0,
+            crate::tas_project::TasColecoKeypadKey::Zero => 1,
+            crate::tas_project::TasColecoKeypadKey::One => 2,
+            crate::tas_project::TasColecoKeypadKey::Two => 3,
+            crate::tas_project::TasColecoKeypadKey::Three => 4,
+            crate::tas_project::TasColecoKeypadKey::Four => 5,
+            crate::tas_project::TasColecoKeypadKey::Five => 6,
+            crate::tas_project::TasColecoKeypadKey::Six => 7,
+            crate::tas_project::TasColecoKeypadKey::Seven => 8,
+            crate::tas_project::TasColecoKeypadKey::Eight => 9,
+            crate::tas_project::TasColecoKeypadKey::Nine => 10,
+            crate::tas_project::TasColecoKeypadKey::Star => 11,
+            crate::tas_project::TasColecoKeypadKey::Pound => 12,
+        },
+    }
 }
 
 pub(super) fn validate_compiled_replay(

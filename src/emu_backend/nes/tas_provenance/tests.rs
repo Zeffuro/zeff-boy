@@ -12,17 +12,6 @@ fn load_preloaded(rom: Vec<u8>, path: &Path, config: BackendLoadConfig) -> EmuBa
         .backend
 }
 
-fn battery_rom() -> Vec<u8> {
-    let mut rom = vec![0; 16 + 2 * 0x4000 + 0x2000];
-    rom[0..4].copy_from_slice(b"NES\x1A");
-    rom[4] = 2;
-    rom[5] = 1;
-    rom[6] = 0x52;
-    rom[16 + 0x7FFC] = 0x00;
-    rom[16 + 0x7FFD] = 0x80;
-    rom
-}
-
 #[test]
 fn direct_clean_load_captures_neutral_provenance() {
     let root = test_directory("nes-tas-provenance-direct").unwrap();
@@ -98,7 +87,7 @@ fn modded_effective_media_keeps_raw_identity_and_mod_facts() {
             ..NesTasLoadSetup::default()
         },
     )
-    .finish(NesPersistentLoadOutcome::Absent);
+    .finish(NesPersistentLoadOutcome::Absent, false);
     let backend = EmuBackend::Nes(Box::new(super::super::NesBackend::with_load_provenance(
         emu,
         PathBuf::from("modded.nes"),
@@ -117,7 +106,7 @@ fn modded_effective_media_keeps_raw_identity_and_mod_facts() {
 fn battery_save_load_is_recorded_as_loaded() {
     let root = test_directory("nes-tas-provenance-loaded").unwrap();
     let rom_path = root.path().join("battery.nes");
-    let rom = battery_rom();
+    let rom = crate::test_support::build_nes_battery_test_rom();
     let seed = zeff_nes_core::emulator::Emulator::new(&rom, 48_000.0).unwrap();
     let persistent_len = seed.dump_persistent_data().unwrap().len();
     std::fs::write(root.path().join("battery.sav"), vec![0xA5; persistent_len]).unwrap();
@@ -140,7 +129,11 @@ fn battery_save_read_failure_is_recorded_as_unknown() {
     let rom_path = root.path().join("battery.nes");
     std::fs::create_dir(root.path().join("battery.sav")).unwrap();
 
-    let backend = load_preloaded(battery_rom(), &rom_path, BackendLoadConfig::default());
+    let backend = load_preloaded(
+        crate::test_support::build_nes_battery_test_rom(),
+        &rom_path,
+        BackendLoadConfig::default(),
+    );
 
     assert_eq!(
         backend

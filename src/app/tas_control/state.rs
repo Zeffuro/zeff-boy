@@ -21,6 +21,7 @@ pub(super) enum TasControlState {
         proof: TasControlHeldProof,
         project: TasEditorControlSnapshot,
         total_input_frames: u64,
+        predecessor_source_cursors: Vec<u64>,
     },
     ExecutionReplayReady {
         worker_generation: u64,
@@ -63,6 +64,18 @@ pub(super) enum TasControlState {
         candidate_state_sha256: TasDigest,
     },
     FrameAdvancePending {
+        worker_generation: u64,
+        lease_id: u64,
+        run_id: u64,
+        advance_id: u64,
+        next_advance_id: u64,
+        segment_id: u64,
+        expected_segment_frame_count: u64,
+        expected_executed_project_frames: u64,
+        proof: TasControlHeldProof,
+        project: TasEditorControlSnapshot,
+    },
+    PlaybackPending {
         worker_generation: u64,
         lease_id: u64,
         run_id: u64,
@@ -122,9 +135,15 @@ impl TasControlCoordinator {
         Self {
             state: TasControlState::Detached,
             next_request_id: 1,
+            next_readiness_request_id: 1,
+            pending_readiness_request: None,
+            readiness_key: None,
+            readiness_report: None,
             next_run_id: 1,
+            worker_cache_cursors: Vec::new(),
             pending_live_frame: None,
             realtime_recording_active: false,
+            playback_active: false,
             start_mode: super::TasControlStartMode::Preview,
             pending_error: None,
             framebuffer_refresh_pending: false,
@@ -133,6 +152,10 @@ impl TasControlCoordinator {
 
     pub(in crate::app) fn gameplay_commands_allowed(&self) -> bool {
         self.state == TasControlState::Detached
+    }
+
+    pub(super) fn terminal(&self) -> bool {
+        matches!(self.state, TasControlState::Terminal { .. })
     }
 
     pub(super) fn live_status(&self) -> crate::debug::TasEditorLiveStatus {
@@ -145,6 +168,17 @@ impl TasControlCoordinator {
             )
         {
             return crate::debug::TasEditorLiveStatus::Recording;
+        }
+        if self.playback_active
+            && let TasControlState::AwaitingDecision {
+                candidate_executed_project_frames,
+                ..
+            } = &self.state
+        {
+            return crate::debug::TasEditorLiveStatus::Playing {
+                cursor: *candidate_executed_project_frames,
+                pause_pending: false,
+            };
         }
         match &self.state {
             TasControlState::Detached => crate::debug::TasEditorLiveStatus::Ready {
@@ -181,13 +215,21 @@ impl TasControlCoordinator {
                 ..
             } => crate::debug::TasEditorLiveStatus::Linked {
                 cursor: *candidate_executed_project_frames,
-                recording_available: project.profile
-                    == crate::emu_thread::TasExecutionProfile::DirectNesCartridge,
+                recording_available: super::profile_supports_live_input_recording(project.profile),
             },
             TasControlState::FrameAdvancePending { .. }
             | TasControlState::FrameRecordCommitPending { .. } => {
                 crate::debug::TasEditorLiveStatus::AdvancingFrame
             }
+            TasControlState::PlaybackPending {
+                project,
+                expected_executed_project_frames,
+                ..
+            } => crate::debug::TasEditorLiveStatus::Playing {
+                cursor: project.cursor,
+                pause_pending: !self.playback_active
+                    && *expected_executed_project_frames > project.cursor,
+            },
             TasControlState::RollbackPending { .. } => crate::debug::TasEditorLiveStatus::Returning,
             TasControlState::CommitPending { .. } => crate::debug::TasEditorLiveStatus::Keeping,
             TasControlState::Terminal { reason, .. } => {
@@ -202,6 +244,31 @@ impl TasControlCoordinator {
 
     pub(super) fn take_framebuffer_refresh(&mut self) -> bool {
         std::mem::take(&mut self.framebuffer_refresh_pending)
+    }
+
+    pub(super) fn captures_frame_snapshot(&self) -> bool {
+        matches!(
+            self.state,
+            TasControlState::FrameAdvancePending { .. } | TasControlState::PlaybackPending { .. }
+        )
+    }
+
+    pub(super) fn linked_cache_candidate_cursors(&self) -> &[u64] {
+        &self.worker_cache_cursors
+    }
+
+    pub(super) fn remember_worker_cache_cursor(&mut self, cursor: u64) {
+        if let Some(index) = self
+            .worker_cache_cursors
+            .iter()
+            .position(|candidate| *candidate == cursor)
+        {
+            self.worker_cache_cursors.remove(index);
+        }
+        self.worker_cache_cursors.push(cursor);
+        if self.worker_cache_cursors.len() > 16 {
+            self.worker_cache_cursors.remove(0);
+        }
     }
 }
 

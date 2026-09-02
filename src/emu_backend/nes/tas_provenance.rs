@@ -20,6 +20,7 @@ pub(crate) struct NesTasInitialInput {
 pub(crate) struct NesTasLoadProvenance {
     pub(crate) raw_source_media_sha256: [u8; 32],
     pub(crate) direct_nes_file: bool,
+    pub(crate) sync_config_sha256: [u8; 32],
     pub(crate) any_mod_enabled: bool,
     pub(crate) any_mod_applied: bool,
     pub(crate) persistent_load: NesPersistentLoadOutcome,
@@ -32,6 +33,8 @@ pub(crate) struct NesTasLoadProvenance {
 pub(crate) struct NesTasLoadProvenanceSeed {
     raw_source_media_sha256: [u8; 32],
     direct_nes_file: bool,
+    sync_config_sha256: [u8; 32],
+    battery_sync_config_sha256: [u8; 32],
     any_mod_enabled: bool,
     any_mod_applied: bool,
     initial_input: NesTasInitialInput,
@@ -46,6 +49,9 @@ pub(crate) struct NesTasLoadSetup {
     pub(crate) any_mod_applied: bool,
     pub(crate) initial_input: Option<(u8, u8)>,
     pub(crate) configured_sample_rate: Option<u32>,
+    pub(crate) tas_source_media_sha256: Option<[u8; 32]>,
+    pub(crate) tas_sync_config_sha256: Option<[u8; 32]>,
+    pub(crate) tas_battery_sync_config_sha256: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -67,9 +73,13 @@ impl NesTasLoadProvenanceSeed {
             .unwrap_or(zeff_nes_core::hardware::constants::NES_DEFAULT_HOST_SAMPLE_RATE_HZ);
         let (buttons, dpad) = setup.initial_input.unwrap_or_default();
         Self {
-            raw_source_media_sha256,
+            raw_source_media_sha256: setup
+                .tas_source_media_sha256
+                .unwrap_or(raw_source_media_sha256),
             direct_nes_file: setup.loaded_from_source_path
                 && direct_nes_file(source_path, rom_path),
+            sync_config_sha256: setup.tas_sync_config_sha256.unwrap_or([0; 32]),
+            battery_sync_config_sha256: setup.tas_battery_sync_config_sha256.unwrap_or([0; 32]),
             any_mod_enabled: setup.any_mod_enabled,
             any_mod_applied: setup.any_mod_applied,
             initial_input: NesTasInitialInput { buttons, dpad },
@@ -78,10 +88,19 @@ impl NesTasLoadProvenanceSeed {
         }
     }
 
-    pub(crate) fn finish(self, persistent_load: NesPersistentLoadOutcome) -> NesTasLoadProvenance {
+    pub(crate) fn finish(
+        self,
+        persistent_load: NesPersistentLoadOutcome,
+        battery_backed: bool,
+    ) -> NesTasLoadProvenance {
         NesTasLoadProvenance {
             raw_source_media_sha256: self.raw_source_media_sha256,
             direct_nes_file: self.direct_nes_file,
+            sync_config_sha256: if battery_backed {
+                self.battery_sync_config_sha256
+            } else {
+                self.sync_config_sha256
+            },
             any_mod_enabled: self.any_mod_enabled,
             any_mod_applied: self.any_mod_applied,
             persistent_load,
@@ -108,6 +127,7 @@ impl NesBackend {
             sram_recovery,
             tas_load_provenance: Some(provenance),
             current_sample_rate: Some(current_sample_rate),
+            host_persistence_enabled: true,
         }
     }
 
