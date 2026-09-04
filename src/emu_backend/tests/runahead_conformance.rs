@@ -163,7 +163,7 @@ fn every_core_family_has_a_disabled_local_conformance_result() {
 }
 
 #[test]
-fn game_boy_v13_observes_all_local_conformance_gates() {
+fn game_boy_current_state_observes_all_local_conformance_gates() {
     let case = core_cases()
         .iter()
         .find(|case| case.eligibility.core_family == CoreFamily::GameBoy)

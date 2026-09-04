@@ -186,8 +186,8 @@ impl ToolWindow {
             self.egui
                 .render_to_pass(&mut pass, &paint_jobs, &screen_desc);
         }
-        self.egui.cleanup(&output);
-        self.gpu.queue.submit(Some(encoder.finish()));
+        self.egui
+            .submit_and_cleanup(&self.gpu.queue, encoder, &output);
         frame.present();
         Ok(())
     }

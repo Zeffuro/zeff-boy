@@ -11,10 +11,10 @@ repository = "https://github.com/zeffuro/zeff-boy"
 anyhow = "1.0.104"
 log = "0.4.33"
 lz4_flex = "0.14.0"
+sha2 = "0.11.0"
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 
 [dev-dependencies]
-sha2 = "0.11.0"
 
 [features]
 serde = ["dep:serde"]

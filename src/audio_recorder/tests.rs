@@ -4,6 +4,7 @@ use crate::audio_tooling::{
     AudioChannelId, AudioSemanticFrame, AudioVoiceClass, AudioVoiceState, GB_TEMPO_US_PER_BEAT,
     NTSC_60_TEMPO_US_PER_BEAT,
 };
+use crate::test_support::{test_directory, test_file};
 
 fn voice_frame(
     frame: u64,
@@ -244,8 +245,8 @@ fn finish_midi_produces_valid_smf_header() {
         ),
     ];
 
-    let dir = std::env::temp_dir();
-    let path = dir.join("test_midi_output.mid");
+    let output = test_file("midi-output").unwrap();
+    let path = output.path().to_owned();
     let result = finish_midi(path.clone(), &frames);
     assert!(result.is_ok());
 
@@ -255,13 +256,12 @@ fn finish_midi_produces_valid_smf_header() {
     assert_eq!(midi_header_track_count(&data), 2);
     assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
     assert_eq!(&data[14..18], b"MTrk");
-
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
 fn finish_empty_midi_produces_valid_single_track_smf() {
-    let path = std::env::temp_dir().join("test_empty_midi_output.mid");
+    let output = test_file("midi-empty-output").unwrap();
+    let path = output.path().to_owned();
     finish_midi(path.clone(), &[]).unwrap();
 
     let data = std::fs::read(&path).unwrap();
@@ -269,8 +269,6 @@ fn finish_empty_midi_produces_valid_single_track_smf() {
     assert_eq!(midi_header_track_count(&data), 1);
     assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
     assert_eq!(midi_tempo_us_per_beat(&data), NTSC_60_TEMPO_US_PER_BEAT);
-
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -297,15 +295,13 @@ fn finish_midi_uses_semantic_frame_tempo() {
         frame.tempo_us_per_beat = GB_TEMPO_US_PER_BEAT;
     }
 
-    let dir = std::env::temp_dir();
-    let path = dir.join("test_midi_timing_output.mid");
+    let output = test_file("midi-timing-output").unwrap();
+    let path = output.path().to_owned();
     finish_midi(path.clone(), &frames).unwrap();
 
     let data = std::fs::read(&path).unwrap();
     assert_eq!(midi_header_division(&data), MIDI_TICKS_PER_QUARTER);
     assert_eq!(midi_tempo_us_per_beat(&data), GB_TEMPO_US_PER_BEAT);
-
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -615,12 +611,12 @@ fn midi_discovers_a_pitched_voice_after_the_first_frame() {
             (Some(440.0), 1.0),
         ),
     ];
-    let path = std::env::temp_dir().join("test_midi_late_voice.mid");
+    let output = test_file("midi-late-voice").unwrap();
+    let path = output.path().to_owned();
     finish_midi(path.clone(), &frames).unwrap();
 
     let data = std::fs::read(&path).unwrap();
     assert_eq!(midi_header_track_count(&data), 2);
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -640,8 +636,8 @@ fn midi_rejects_more_voices_than_independent_bend_channels() {
         tempo_us_per_beat: NTSC_60_TEMPO_US_PER_BEAT,
         voices,
     }];
-    let path = std::env::temp_dir().join("test_midi_too_many_voices.mid");
-    let _ = std::fs::remove_file(&path);
+    let temp = test_directory("midi-too-many-voices").unwrap();
+    let path = temp.path().join("output.mid");
     let error = finish_midi(path.clone(), &frames).unwrap_err();
 
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
@@ -735,8 +731,8 @@ fn midi_new_note_after_one_silent_frame_uses_delta_one() {
 fn midi_omits_noise_tracks_by_default() {
     let frames = vec![mixed_frame(0, 440.0, true), mixed_frame(1, 494.0, true)];
 
-    let dir = std::env::temp_dir();
-    let path = dir.join("test_midi_noise_omit.mid");
+    let output = test_file("midi-noise-omit").unwrap();
+    let path = output.path().to_owned();
     finish_midi(path.clone(), &frames).unwrap();
 
     let data = std::fs::read(&path).unwrap();
@@ -745,8 +741,6 @@ fn midi_omits_noise_tracks_by_default() {
         2,
         "tempo + one pitched tone; noise semantic voice is not projected to fake drums"
     );
-
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -756,8 +750,8 @@ fn midi_omits_pcm_tracks_by_default() {
         mixed_frame_with_pcm(1, 494.0),
     ];
 
-    let dir = std::env::temp_dir();
-    let path = dir.join("test_midi_pcm_omit.mid");
+    let output = test_file("midi-pcm-omit").unwrap();
+    let path = output.path().to_owned();
     finish_midi(path.clone(), &frames).unwrap();
 
     let data = std::fs::read(&path).unwrap();
@@ -766,8 +760,6 @@ fn midi_omits_pcm_tracks_by_default() {
         2,
         "tempo + one pitched PSG voice; PCM semantic voice is not projected to fake pitched MIDI"
     );
-
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

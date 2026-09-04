@@ -83,7 +83,10 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     fn is_suspended(&self) -> bool;
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>>;
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>>;
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()>;
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome>;
     #[inline]
     fn state_restores_framebuffer(&self) -> bool {
         false

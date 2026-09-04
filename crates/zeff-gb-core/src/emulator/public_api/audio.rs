@@ -13,6 +13,10 @@ impl Emulator {
         self.bus.set_apu_sample_rate(rate);
     }
 
+    pub fn sample_rate(&self) -> u32 {
+        self.bus.apu_sample_rate()
+    }
+
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
         self.bus.set_apu_sample_generation_enabled(enabled);
     }

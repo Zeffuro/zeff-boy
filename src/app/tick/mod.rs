@@ -38,6 +38,25 @@ fn reconcile_audio_sample_rate(
     }
 }
 
+fn commit_pending_after_send(pending: &mut bool, sent: bool) {
+    if sent {
+        *pending = true;
+    }
+}
+
+fn clear_dirty_after_send(dirty: &mut bool, sent: bool) {
+    if sent {
+        *dirty = false;
+    }
+}
+
+fn commit_frame_send(frames_in_flight: &mut usize, sent: bool) -> bool {
+    if sent {
+        *frames_in_flight += 1;
+    }
+    sent
+}
+
 impl App {
     pub(super) fn update_debug_cache_edges(&mut self) {
         if is_tab_open(&self.debug_dock, DebugTab::TileViewer)
@@ -66,22 +85,34 @@ impl App {
         {
             self.release_pce_mouse(false);
         }
-        self.sync_speed_setting();
-        match reconcile_audio_sample_rate(
-            self.last_audio_output_sample_rate,
-            &mut self.settings.audio.output_sample_rate,
-            self.recording.audio_recorder.is_some(),
-        ) {
-            AudioSampleRateChange::Rejected => {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.fence_tas_control_gameplay();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let gameplay_commands_allowed = self.worker_gameplay_commands_allowed();
+        #[cfg(target_arch = "wasm32")]
+        let gameplay_commands_allowed = true;
+        if gameplay_commands_allowed {
+            self.sync_speed_setting();
+        }
+        match gameplay_commands_allowed.then(|| {
+            reconcile_audio_sample_rate(
+                self.last_audio_output_sample_rate,
+                &mut self.settings.audio.output_sample_rate,
+                self.recording.audio_recorder.is_some(),
+            )
+        }) {
+            Some(AudioSampleRateChange::Rejected) => {
                 self.toast_manager
                     .error("Stop audio recording before changing output sample rate");
             }
-            AudioSampleRateChange::Applied => {
+            Some(AudioSampleRateChange::Applied) => {
                 self.last_audio_output_sample_rate = self.settings.audio.output_sample_rate;
                 self.reset_audio_output();
                 self.settings.save();
             }
-            AudioSampleRateChange::Unchanged => {}
+            Some(AudioSampleRateChange::Unchanged) | None => {}
         }
         self.poll_gamepad();
         #[cfg(not(target_arch = "wasm32"))]
@@ -90,6 +121,14 @@ impl App {
         let host_tilt = self.update_host_tilt_and_stick_mode();
 
         self.drain_emu_responses();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pump_pending_tas_repair_activation();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.begin_queued_tas_control_acquire();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pump_realtime_tas_recording();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pump_linked_tas_playback();
         let supports_rewind = self.core_supports_rewind();
         let rewind_available = supports_rewind && !self.recording.is_replay_active();
         if !rewind_available {
@@ -102,19 +141,22 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_replay_save_worker();
 
-        // Handle backstep: pop one rewind snapshot and pause
-        if std::mem::take(&mut self.debug_requests.backstep)
+        if gameplay_commands_allowed
+            && std::mem::take(&mut self.debug_requests.backstep)
             && rewind_available
             && self.settings.rewind.enabled
             && !self.rewind.pending
             && !self.rewind.backstep_pending
-            && let Some(thread) = &self.emu_thread
         {
-            thread.send(EmuCommand::Rewind(1));
-            self.rewind.backstep_pending = true;
+            let sent = self.send_emu_command_checked(EmuCommand::Rewind(1)).is_ok();
+            commit_pending_after_send(&mut self.rewind.backstep_pending, sent);
         }
 
-        if self.rewind.held && rewind_available && self.settings.rewind.enabled {
+        if gameplay_commands_allowed
+            && self.rewind.held
+            && rewind_available
+            && self.settings.rewind.enabled
+        {
             let now = Instant::now();
             if self.rewind.active_mode != Some(self.settings.rewind.mode) {
                 self.rewind.reset_pacing();
@@ -125,22 +167,23 @@ impl App {
             }
             if !self.rewind.pending && !self.rewind.backstep_pending {
                 let steps = match self.settings.rewind.mode {
-                    crate::settings::RewindMode::RealTime if self.rewind.pacer.ready() => {
+                    crate::settings::RewindMode::RealTime if self.rewind.pacer.ready() => 1,
+                    crate::settings::RewindMode::RealTime => 0,
+                    crate::settings::RewindMode::Fast => self.settings.rewind.speed.max(1),
+                };
+                if steps > 0
+                    && self
+                        .send_emu_command_checked(EmuCommand::Rewind(steps))
+                        .is_ok()
+                {
+                    if self.settings.rewind.mode == crate::settings::RewindMode::RealTime {
                         let frames = self.settings.rewind.capture_interval() as u64;
                         self.rewind
                             .pacer
                             .schedule(self.nominal_frame_duration_ns(), frames);
                         self.rewind.scheduled_frames = frames;
-                        1
                     }
-                    crate::settings::RewindMode::RealTime => 0,
-                    crate::settings::RewindMode::Fast => self.settings.rewind.speed.max(1),
-                };
-                if steps > 0
-                    && let Some(thread) = &self.emu_thread
-                {
-                    thread.send(EmuCommand::Rewind(steps));
-                    self.rewind.pending = true;
+                    commit_pending_after_send(&mut self.rewind.pending, true);
                 }
             }
         } else {
@@ -155,7 +198,7 @@ impl App {
                 MAX_IN_FLIGHT
             };
 
-            if self.frames_in_flight < max_in_flight {
+            if gameplay_commands_allowed && self.frames_in_flight < max_in_flight {
                 let now = Instant::now();
                 let next_frame_requested = std::mem::take(&mut self.debug_requests.next_frame);
                 let mut frames_to_step = if self.speed.paused {
@@ -230,7 +273,13 @@ impl App {
                     );
                 }
 
-                if frames_to_step > 0 || has_pending {
+                if (frames_to_step > 0 || has_pending)
+                    && self
+                        .preflight_emu_command_kind(
+                            crate::emu_thread::TasControlCommandKind::FrameExecution,
+                        )
+                        .is_ok()
+                {
                     let throttle_viewers = self.active_debug_presentation
                         == crate::settings::DebugPresentation::GameAndDebugger
                         || matches!(
@@ -410,31 +459,47 @@ impl App {
                         rewind_seconds: self.settings.rewind.seconds,
                     };
 
-                    if let Some(thread) = &self.emu_thread {
-                        if self.debug_windows.cheat.cheats_dirty
-                            && self.recording.allows_cheat_updates()
+                    let mut command_send_allowed = true;
+                    if self.debug_windows.cheat.cheats_dirty
+                        && self.recording.allows_cheat_updates()
+                        && supports_cheats
+                    {
+                        if self
+                            .preflight_emu_command_kind(
+                                crate::emu_thread::TasControlCommandKind::CheatConfiguration,
+                            )
+                            .is_err()
                         {
-                            self.debug_windows.cheat.cheats_dirty = false;
-                            if supports_cheats {
-                                thread.send(EmuCommand::UpdateCheats(
-                                    crate::cheats::collect_enabled_patches(
-                                        &self.debug_windows.cheat.user_codes,
-                                        &self.debug_windows.cheat.libretro_codes,
-                                    ),
+                            command_send_allowed = false;
+                        } else {
+                            let command =
+                                EmuCommand::UpdateCheats(crate::cheats::collect_enabled_patches(
+                                    &self.debug_windows.cheat.user_codes,
+                                    &self.debug_windows.cheat.libretro_codes,
                                 ));
+                            let sent = self.send_emu_command_checked(command).is_ok();
+                            clear_dirty_after_send(
+                                &mut self.debug_windows.cheat.cheats_dirty,
+                                sent,
+                            );
+                            if !sent {
+                                command_send_allowed = false;
                             }
                         }
-                        thread.send(EmuCommand::StepFrames(Box::new(input)));
-                        self.frames_in_flight += 1;
                     }
+                    let frame_sent = command_send_allowed
+                        && self
+                            .send_emu_command_checked(EmuCommand::StepFrames(Box::new(input)))
+                            .is_ok();
+                    if commit_frame_send(&mut self.frames_in_flight, frame_sent) {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if frames_to_step > 0 {
+                            self.advance_live_button_releases(frames_to_step);
+                        }
 
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if self.emu_thread.is_some() && frames_to_step > 0 {
-                        self.advance_live_button_releases(frames_to_step);
-                    }
-
-                    if frames_to_step > 0 {
-                        self.fps_tracker.tick_n(frames_to_step);
+                        if frames_to_step > 0 {
+                            self.fps_tracker.tick_n(frames_to_step);
+                        }
                     }
                 }
             }
@@ -591,6 +656,22 @@ impl App {
             self.render_printer_frame();
             self.last_printer_render = now;
         }
+
+        let tas_editor_visible = self.debug_windows.tas_editor.open
+            && self.debug_windows.tas_editor.presentation()
+                == crate::debug::TasEditorPresentation::SeparateWindow
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::tas_editor_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+        if tas_editor_visible
+            && now.duration_since(self.debug_windows.tas_editor.last_host_render())
+                >= VIEWER_UPDATE_INTERVAL
+        {
+            self.render_tas_editor_frame();
+            self.debug_windows.tas_editor.mark_host_rendered();
+        }
     }
 }
 
@@ -639,5 +720,26 @@ mod tests {
             core_rate
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn command_side_effects_commit_only_after_send() {
+        let mut pending = false;
+        let mut dirty = true;
+        let mut in_flight = 2;
+
+        commit_pending_after_send(&mut pending, false);
+        clear_dirty_after_send(&mut dirty, false);
+        assert!(!commit_frame_send(&mut in_flight, false));
+        assert!(!pending);
+        assert!(dirty);
+        assert_eq!(in_flight, 2);
+
+        commit_pending_after_send(&mut pending, true);
+        clear_dirty_after_send(&mut dirty, true);
+        assert!(commit_frame_send(&mut in_flight, true));
+        assert!(pending);
+        assert!(!dirty);
+        assert_eq!(in_flight, 3);
     }
 }

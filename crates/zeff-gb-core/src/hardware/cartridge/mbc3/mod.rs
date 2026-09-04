@@ -1,5 +1,5 @@
 use super::CartridgeDebugInfo;
-use super::rtc::{RTC_REG_COUNT, Rtc, sanitize_rtc_register};
+use super::rtc::{Mbc3RtcState, RTC_REG_COUNT, Rtc, sanitize_rtc_register};
 use super::{
     MAX_SAVE_RAM, build_debug_info, is_ram_enable, load_ram_into, read_banked_ram, read_banked_rom,
     read_fixed_rom, rom_offset_for_bank, write_banked_ram,
@@ -135,6 +135,10 @@ impl Mbc3 {
 
     pub(super) fn ram_bytes(&self) -> &[u8] {
         &self.ram
+    }
+
+    pub(super) fn rtc_state(&self) -> Option<Mbc3RtcState> {
+        self.has_rtc.then(|| Mbc3RtcState::from(&self.rtc))
     }
 
     pub(super) fn write_state(&self, writer: &mut StateWriter) {

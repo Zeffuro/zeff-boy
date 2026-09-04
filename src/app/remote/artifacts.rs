@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
-use crate::app::App;
-use crate::emu_thread::{EmuCommand, EmuResponse};
+use crate::app::{App, command_gate::after_emu_command_preflight};
+use crate::emu_thread::{EmuCommand, EmuResponse, TasControlCommandKind};
 
 impl App {
     pub(super) fn write_live_screenshot(
@@ -33,20 +33,17 @@ impl App {
         &mut self,
         requested_path: Option<std::path::PathBuf>,
     ) -> anyhow::Result<Value> {
-        anyhow::ensure!(self.emu_thread.is_some(), "no ROM is running");
         anyhow::ensure!(
             self.core_supports_save_states(),
             "the active core does not support save states"
         );
-
+        self.preflight_emu_command_kind(TasControlCommandKind::StateOrRecovery)?;
         let path = resolve_state_path(requested_path)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        if let Some(thread) = &self.emu_thread {
-            thread.send(EmuCommand::SaveStateToPath(path.clone()));
-        }
+        let command = EmuCommand::SaveStateToPath(path.clone());
+        after_emu_command_preflight(self.preflight_emu_command(&command), || {
+            path.parent().map(std::fs::create_dir_all).transpose()
+        })??;
+        self.send_emu_command_checked(command)?;
 
         match self.recv_cold_response() {
             Some(EmuResponse::SaveStateOk {
@@ -69,25 +66,25 @@ impl App {
         &mut self,
         requested_path: std::path::PathBuf,
     ) -> anyhow::Result<Value> {
-        anyhow::ensure!(self.emu_thread.is_some(), "no ROM is running");
         anyhow::ensure!(
             self.core_supports_save_states(),
             "the active core does not support save states"
         );
-
+        self.preflight_emu_command_kind(TasControlCommandKind::StateOrRecovery)?;
         let path = resolve_state_path(Some(requested_path))?;
-        if let Some(thread) = &self.emu_thread {
-            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
-            thread.send(EmuCommand::LoadStateFromPath {
-                path: path.clone(),
-                buttons_pressed,
-                dpad_pressed,
-            });
-        }
+        let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
+        let command = EmuCommand::LoadStateFromPath {
+            path: path.clone(),
+            buttons_pressed,
+            dpad_pressed,
+        };
+        self.preflight_emu_command(&command)?;
+        self.send_emu_command_checked(command)?;
 
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path: loaded,
+                warning,
                 media_slot_snapshot,
                 game_boy_serial_device,
             }) => {
@@ -102,6 +99,7 @@ impl App {
                 self.remote_graphics_frames_remaining = 3;
                 Ok(json!({
                     "path": loaded,
+                    "warning": warning.map(crate::emu_thread::LoadStateWarning::message),
                     "status": self.live_status_json(),
                 }))
             }

@@ -16,6 +16,7 @@ pub struct ReplayRecorder {
     save_state: Vec<u8>,
     frames: Vec<ReplayJoypadFrame>,
     metadata: ReplayMetadata,
+    coleco_input_format: bool,
 }
 
 impl ReplayRecorder {
@@ -25,6 +26,7 @@ impl ReplayRecorder {
             save_state,
             frames: Vec::with_capacity(3600),
             metadata: ReplayMetadata::default(),
+            coleco_input_format: false,
         }
     }
 
@@ -34,6 +36,7 @@ impl ReplayRecorder {
             save_state,
             frames: Vec::with_capacity(3600),
             metadata,
+            coleco_input_format: false,
         }
     }
 
@@ -43,6 +46,10 @@ impl ReplayRecorder {
 
     pub fn record_joypad_frame(&mut self, frame: ReplayJoypadFrame) {
         self.frames.push(frame);
+    }
+
+    pub fn enable_coleco_input_format(&mut self) {
+        self.coleco_input_format = true;
     }
 
     pub fn record_event(&mut self, event: ReplayEvent) {
@@ -85,7 +92,7 @@ impl ReplayRecorder {
     pub fn into_bytes(mut self) -> Result<Vec<u8>> {
         let metadata = self.prepare_encoding()?;
         let mut bytes = Vec::new();
-        self.encode_to(&mut bytes, &metadata)?;
+        self.encode_to(&mut bytes, &metadata, self.version())?;
         Ok(bytes)
     }
 
@@ -94,7 +101,7 @@ impl ReplayRecorder {
         let raw_file = File::create(&self.path)
             .with_context(|| format!("failed to create replay file: {}", self.path.display()))?;
         let mut file = BufWriter::new(raw_file);
-        self.encode_to(&mut file, &metadata)?;
+        self.encode_to(&mut file, &metadata, self.version())?;
         file.flush()?;
         file.get_ref().sync_all()?;
         log::info!(
@@ -112,6 +119,11 @@ impl ReplayRecorder {
         u32::try_from(self.save_state.len()).context("replay save state is too large")?;
         u32::try_from(self.frames.len()).context("replay contains too many frames")?;
         for frame in &self.frames {
+            for controller in frame.coleco {
+                if controller.keypad > 12 {
+                    bail!("invalid Coleco replay keypad value: {}", controller.keypad);
+                }
+            }
             if let Some(camera_frame) = &frame.camera_frame {
                 let camera_len = u32::try_from(camera_frame.len())
                     .context("replay camera frame is too large")?;
@@ -123,7 +135,16 @@ impl ReplayRecorder {
         Ok(metadata)
     }
 
-    fn encode_to(&self, writer: &mut impl Write, metadata: &[u8]) -> Result<()> {
+    fn version(&self) -> u32 {
+        if self.coleco_input_format || self.frames.iter().any(ReplayJoypadFrame::uses_coleco_input)
+        {
+            VERSION
+        } else {
+            super::V2_VERSION
+        }
+    }
+
+    fn encode_to(&self, writer: &mut impl Write, metadata: &[u8], version: u32) -> Result<()> {
         let metadata_len = u32::try_from(metadata.len()).context("replay metadata is too large")?;
         let state_len =
             u32::try_from(self.save_state.len()).context("replay save state is too large")?;
@@ -131,7 +152,7 @@ impl ReplayRecorder {
             u32::try_from(self.frames.len()).context("replay contains too many frames")?;
 
         writer.write_all(MAGIC)?;
-        writer.write_all(&VERSION.to_le_bytes())?;
+        writer.write_all(&version.to_le_bytes())?;
         writer.write_all(&metadata_len.to_le_bytes())?;
         writer.write_all(metadata)?;
         writer.write_all(&state_len.to_le_bytes())?;
@@ -158,6 +179,12 @@ impl ReplayRecorder {
             writer.write_all(&frame.host_tilt.0.to_le_bytes())?;
             writer.write_all(&frame.host_tilt.1.to_le_bytes())?;
             writer.write_all(&[0])?;
+            if version == VERSION {
+                let first = frame.coleco[0].packed();
+                let second = frame.coleco[1].packed();
+                let packed = u32::from(first) | (u32::from(second) << 10);
+                writer.write_all(&packed.to_le_bytes()[..3])?;
+            }
             match frame.camera_frame.as_deref() {
                 None => {
                     writer.write_all(&0u32.to_le_bytes())?;

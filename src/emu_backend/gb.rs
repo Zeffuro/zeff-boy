@@ -14,6 +14,12 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
+mod tas_provenance;
+pub(crate) use tas_provenance::{
+    GbPersistentLoadOutcome, GbTasLoadProvenance, GbTasLoadProvenanceView, GbTasLoadSetup,
+};
+pub(crate) use tas_provenance::{GbTasLoadProvenanceSeed, persistent_load_outcome};
+
 const GB_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
         id: AudioChannelId(0),
@@ -123,6 +129,7 @@ pub(crate) struct GbBackend {
     pub(crate) emu: GbEmulator,
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
+    tas_load_provenance: Option<GbTasLoadProvenance>,
 }
 
 impl GbBackend {
@@ -133,6 +140,84 @@ impl GbBackend {
             .unwrap_or_default()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn persisted_rtc_battery_receipt(
+        &self,
+    ) -> anyhow::Result<Option<crate::save_paths::recovery_state::BatteryPublicationReceipt>> {
+        if !self.emu.header().cartridge_type.is_mbc3_with_rtc() {
+            return Ok(None);
+        }
+        let Some(bytes) = crate::platform::read_save_data(&crate::save_paths::sram_path_for_rom(
+            self.paths.rom_path(),
+        ))?
+        else {
+            return Ok(Some(
+                crate::save_paths::recovery_state::BatteryPublicationReceipt::from_components(&[]),
+            ));
+        };
+        rtc_battery_receipt(&self.emu, &bytes)
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("persisted Game Boy RTC sidecar layout is invalid"))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_bytes(&self) -> Option<Vec<u8>> {
+        self.emu.dump_battery_sram()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_baseline(
+        &self,
+    ) -> anyhow::Result<crate::save_paths::SaveTargetBaseline> {
+        crate::save_paths::battery_sram_baseline(self.paths.rom_path())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn publish_tas_battery_if_unchanged(
+        &mut self,
+        expected: crate::save_paths::SaveTargetBaseline,
+    ) -> Option<(String, crate::save_paths::SavePublicationOutcome)> {
+        let bytes = self.emu.dump_battery_sram()?;
+        Some(crate::save_paths::publish_battery_sram_if_unchanged(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            crate::emu_backend::ActiveSystem::Gb.storage_subdir(),
+            self.emu.rom_hash(),
+            expected,
+            &bytes,
+        ))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn publish_tas_rtc_battery_if_unchanged(
+        &mut self,
+        expected: crate::save_paths::SaveTargetBaseline,
+    ) -> Option<(
+        String,
+        crate::save_paths::SavePublicationOutcome,
+        crate::save_paths::recovery_state::BatteryPublicationReceipt,
+    )> {
+        let bytes = self.emu.dump_battery_sram_with_rtc_subsecond()?;
+        let ram_len = self.emu.header().ram_size.size_bytes();
+        if bytes.len() != ram_len + 64 {
+            return None;
+        }
+        let receipt = rtc_battery_receipt(&self.emu, &bytes)?;
+        Some(crate::save_paths::publish_battery_aggregate_if_unchanged(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            crate::save_paths::SaveRecoveryIdentity {
+                system_subdir: crate::emu_backend::ActiveSystem::Gb.storage_subdir(),
+                media_identity: self.emu.rom_hash(),
+                component: crate::save_paths::SRAM_COMPONENT,
+            },
+            expected,
+            &bytes,
+            receipt,
+        ))
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn new(emu: GbEmulator, rom_path: PathBuf) -> Self {
         let sram_recovery = crate::save_paths::battery_sram_session(
             &rom_path,
@@ -143,23 +228,7 @@ impl GbBackend {
             emu,
             paths: BackendPaths::new(rom_path),
             sram_recovery,
-        }
-    }
-
-    pub(crate) fn with_source_path(
-        emu: GbEmulator,
-        rom_path: PathBuf,
-        source_path: PathBuf,
-    ) -> Self {
-        let sram_recovery = crate::save_paths::battery_sram_session(
-            &rom_path,
-            crate::emu_backend::ActiveSystem::Gb.storage_subdir(),
-            emu.rom_hash(),
-        );
-        Self {
-            emu,
-            paths: BackendPaths::with_source_path(rom_path, source_path),
-            sram_recovery,
+            tas_load_provenance: None,
         }
     }
 
@@ -228,7 +297,10 @@ impl EmulatorCore for GbBackend {
         self.emu.encode_state_bytes()
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
         self.emu.load_state_from_bytes(bytes)
     }
 
@@ -452,10 +524,38 @@ pub(crate) fn try_load_battery_sram(
     emu: &mut GbEmulator,
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
+    try_load_battery_sram_at_time(emu, rom_path, None)
+}
+
+fn rtc_battery_receipt(
+    emu: &GbEmulator,
+    bytes: &[u8],
+) -> Option<crate::save_paths::recovery_state::BatteryPublicationReceipt> {
+    let ram_len = emu.header().ram_size.size_bytes();
+    if !matches!(bytes.len().checked_sub(ram_len), Some(44 | 48 | 64)) {
+        return None;
+    }
+    crate::save_paths::aggregate_battery_receipt(
+        bytes,
+        ram_len,
+        crate::save_paths::SRAM_COMPONENT,
+        crate::save_paths::GB_RTC_COMPONENT,
+    )
+}
+
+pub(crate) fn try_load_battery_sram_at_time(
+    emu: &mut GbEmulator,
+    rom_path: &Path,
+    rtc_time_override: Option<u64>,
+) -> anyhow::Result<Option<String>> {
     #[cfg(not(target_arch = "wasm32"))]
     let result =
         crate::save_paths::try_load_battery_sram(rom_path, "GB", emu.has_battery(), |bytes| {
-            emu.load_battery_sram(bytes)
+            if let Some(unix_seconds) = rtc_time_override {
+                emu.load_battery_sram_at_time(bytes, unix_seconds)
+            } else {
+                emu.load_battery_sram(bytes)
+            }
         });
     #[cfg(target_arch = "wasm32")]
     let result = crate::save_paths::try_load_browser_battery_sram(
@@ -467,7 +567,13 @@ pub(crate) fn try_load_battery_sram(
             system_label: "GB",
             has_battery: emu.has_battery(),
         },
-        |bytes| emu.load_battery_sram(bytes),
+        |bytes| {
+            if let Some(unix_seconds) = rtc_time_override {
+                emu.load_battery_sram_at_time(bytes, unix_seconds)
+            } else {
+                emu.load_battery_sram(bytes)
+            }
+        },
     );
     result
 }

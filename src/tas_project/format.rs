@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use zeff_emu_common::replay::{
     decode_replay_event_stream, decode_replay_start_metadata, encode_replay_event_stream,
     encode_replay_start_metadata,
@@ -33,6 +34,12 @@ const MAX_EVENT_STREAM_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_REPLAY_START_BYTES: u64 = 64 * 1024;
 const MAX_ENTRIES: usize = MAX_PROJECT_ASSETS + MAX_PROJECT_BRANCHES + 4;
 const MAX_COMPRESSION_RATIO: u64 = 10_000;
+
+fn update_hash(hash: &mut Sha256, bytes: &[u8]) {
+    hash.update((bytes.len() as u64).to_le_bytes());
+    hash.update(bytes);
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -88,42 +95,7 @@ impl TasProject {
 
     pub fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
-        let branches = self.branches.iter().collect::<Vec<_>>();
-
-        let manifest = Manifest {
-            format: "zeff-tas-project".to_owned(),
-            version: FORMAT_VERSION,
-            project_id: self.project_id.clone(),
-            source_replay_sha256: self.source_replay_sha256,
-            identity: self.canonical_identity(),
-            start_state_size: self.start_state.len() as u64,
-            edit_generation: self.edit_generation,
-            rerecord_count: self.rerecord_count,
-            active_branch_id: self.active_branch_id.clone(),
-            project_comment: self.project_comment.clone(),
-            branches: branches
-                .iter()
-                .map(|branch| ManifestBranch {
-                    id: branch.id.clone(),
-                    name: branch.name.clone(),
-                    comment: branch.comment.clone(),
-                    parent: branch.parent.clone(),
-                    frame_count: branch.frame_count,
-                    input_spans: branch.input_spans.clone(),
-                    verification: branch.verification.clone(),
-                })
-                .collect(),
-            markers: self.markers.clone(),
-            annotations: self.annotations.clone(),
-            assets: self
-                .assets
-                .iter()
-                .map(|(sha256, bytes)| ManifestAsset {
-                    sha256: *sha256,
-                    size: bytes.len() as u64,
-                })
-                .collect(),
-        };
+        let manifest = self.manifest();
 
         let mut entries = BTreeMap::new();
         let mut uncompressed_size = 0u64;
@@ -137,7 +109,7 @@ impl TasProject {
             &mut entries,
             &mut uncompressed_size,
             START_STATE_ENTRY.to_owned(),
-            self.start_state.clone(),
+            self.start_state.to_vec(),
         )?;
         insert_encoded_entry(
             &mut entries,
@@ -145,7 +117,7 @@ impl TasProject {
             REPLAY_START_ENTRY.to_owned(),
             encode_replay_start_metadata(&self.replay_start)?,
         )?;
-        for branch in branches {
+        for branch in &self.branches {
             insert_encoded_entry(
                 &mut entries,
                 &mut uncompressed_size,
@@ -202,6 +174,60 @@ impl TasProject {
             bail!("encoded TAS project changed project semantics");
         }
         Ok(bytes)
+    }
+
+    pub(super) fn editor_content_sha256(&self) -> Result<TasDigest> {
+        self.validate_editor_state()?;
+        let mut hash = Sha256::new();
+        hash.update(b"ZTAS-EDITOR-CONTENT-1\0");
+        update_hash(&mut hash, &serde_json::to_vec(&self.manifest())?);
+        update_hash(
+            &mut hash,
+            &encode_replay_start_metadata(&self.replay_start)?,
+        );
+        for branch in &self.branches {
+            update_hash(&mut hash, branch.id.as_bytes());
+            update_hash(&mut hash, &encode_replay_event_stream(&branch.events)?);
+        }
+        Ok(TasDigest(hash.finalize().into()))
+    }
+
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            format: "zeff-tas-project".to_owned(),
+            version: FORMAT_VERSION,
+            project_id: self.project_id.clone(),
+            source_replay_sha256: self.source_replay_sha256,
+            identity: self.canonical_identity(),
+            start_state_size: self.start_state.len() as u64,
+            edit_generation: self.edit_generation,
+            rerecord_count: self.rerecord_count,
+            active_branch_id: self.active_branch_id.clone(),
+            project_comment: self.project_comment.clone(),
+            branches: self
+                .branches
+                .iter()
+                .map(|branch| ManifestBranch {
+                    id: branch.id.clone(),
+                    name: branch.name.clone(),
+                    comment: branch.comment.clone(),
+                    parent: branch.parent.clone(),
+                    frame_count: branch.frame_count,
+                    input_spans: branch.input_spans.clone(),
+                    verification: branch.verification.clone(),
+                })
+                .collect(),
+            markers: self.markers.clone(),
+            annotations: self.annotations.clone(),
+            assets: self
+                .assets
+                .iter()
+                .map(|(sha256, bytes)| ManifestAsset {
+                    sha256: *sha256,
+                    size: bytes.len() as u64,
+                })
+                .collect(),
+        }
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
@@ -303,7 +329,7 @@ impl TasProject {
             project_id: manifest.project_id,
             source_replay_sha256: manifest.source_replay_sha256,
             identity: manifest.identity,
-            start_state,
+            start_state: start_state.into(),
             replay_start,
             edit_generation: manifest.edit_generation,
             rerecord_count: manifest.rerecord_count,

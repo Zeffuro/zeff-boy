@@ -10,8 +10,8 @@ use super::super::paired_lease::{
     PairedGameBoyFrameLease, PairedGameBoyFrameLeaseOutcome, PairedGameBoyPointRelation,
 };
 use super::super::paired_plan::{LocatedEvent, Side};
-use super::super::validation::validate_replay_checkpoint;
 use super::{DirectCoordinatorError, core_action, located_event, passive_completion_deadline};
+use crate::replay_execution::validate_replay_checkpoint;
 
 pub(super) struct DirectSide {
     pub(super) side: Side,

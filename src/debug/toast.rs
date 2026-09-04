@@ -4,6 +4,7 @@ use crate::platform::Instant;
 pub(crate) enum ToastKind {
     Info,
     Success,
+    Warning,
     Error,
 }
 
@@ -70,6 +71,10 @@ impl ToastManager {
         self.push(msg.into(), ToastKind::Success);
     }
 
+    pub(crate) fn warning(&mut self, msg: impl Into<String>) {
+        self.push(msg.into(), ToastKind::Warning);
+    }
+
     pub(crate) fn error(&mut self, msg: impl Into<String>) {
         self.push(msg.into(), ToastKind::Error);
     }
@@ -114,7 +119,7 @@ impl ToastManager {
         self.set_persistent(
             "recording",
             active,
-            "🔴 Recording",
+            "TAS Recording",
             egui::Color32::from_rgba_unmultiplied(140, 30, 30, 220),
             true,
         );
@@ -195,6 +200,12 @@ impl ToastManager {
                         ToastKind::Success => {
                             egui::Color32::from_rgba_unmultiplied(30, 80, 30, (alpha * 230.0) as u8)
                         }
+                        ToastKind::Warning => egui::Color32::from_rgba_unmultiplied(
+                            120,
+                            85,
+                            20,
+                            (alpha * 230.0) as u8,
+                        ),
                         ToastKind::Error => egui::Color32::from_rgba_unmultiplied(
                             120,
                             30,

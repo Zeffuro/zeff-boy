@@ -9,15 +9,22 @@ use zeff_pce_core::hardware::{CdDisc, CdSourceError, CdTrack, CdTrackMode, CdTra
 
 use super::pce_cd::{
     CONTENT_ID_DOMAIN, CueSheet, LoadedPceCd, PCE_CD_DATA_BYTES_LIMIT, PceCdLoadError,
-    resolve_direct_file_reference,
+    cue_track_layout, resolve_direct_file_reference,
 };
 use super::pce_cd_overlay::{
-    PatchOverlayBuilder, PatchOverlayStack, apply_ppf_stack, log_ppf_overlay, slice_source,
+    PatchOverlayBuilder, PatchOverlayStack, apply_ppf_byte_slices_stack, apply_ppf_bytes_stack,
+    apply_ppf_stack, log_ppf_overlay, slice_source,
 };
 
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
 #[cfg(windows)]
 const WINDOWS_REPARSE_POINT: u32 = 0x400;
+
+mod archive_ppf;
+mod source_identity;
+pub(super) use archive_ppf::try_load_cached_cue_ppf_overlay_byte_slices;
+pub(crate) use source_identity::direct_file_sha256;
+use source_identity::disc_payload_len;
 
 struct FileBackedCueFile {
     path: PathBuf,
@@ -66,7 +73,18 @@ pub(super) fn try_load_direct_cue_ppf_overlay(
     mods: &[crate::mods::ModEntry],
 ) -> Result<Option<CdDisc>, PceCdLoadError> {
     let files = open_files(cue_path, sheet)?;
-    try_build_ppf_overlay_disc(sheet, &files, dir, mods)
+    try_build_ppf_overlay_disc(sheet, &files, |builder| apply_ppf_stack(builder, dir, mods))
+}
+
+pub(super) fn try_load_direct_cue_ppf_overlay_bytes(
+    cue_path: &Path,
+    sheet: &CueSheet,
+    patches: &[(String, Vec<u8>)],
+) -> Result<Option<CdDisc>, PceCdLoadError> {
+    let files = open_files(cue_path, sheet)?;
+    try_build_ppf_overlay_disc(sheet, &files, |builder| {
+        apply_ppf_bytes_stack(builder, patches)
+    })
 }
 
 pub(super) fn try_load_cached_cue_ppf_overlay(
@@ -76,7 +94,7 @@ pub(super) fn try_load_cached_cue_ppf_overlay(
     mods: &[crate::mods::ModEntry],
 ) -> Result<Option<CdDisc>, PceCdLoadError> {
     let files = cached_files(sources)?;
-    try_build_ppf_overlay_disc(sheet, &files, dir, mods)
+    try_build_ppf_overlay_disc(sheet, &files, |builder| apply_ppf_stack(builder, dir, mods))
 }
 
 fn cached_files(sources: Vec<CueFileSource>) -> Result<Vec<FileBackedCueFile>, PceCdLoadError> {
@@ -112,7 +130,10 @@ fn load_cue_file_backed(
     let (content_sha256, content_crc32) = content_identity(cue_bytes, sheet, &files, progress)?;
     let disc = build_disc(sheet, &files)?;
     let source_disc_sha256 = disc.content_hash();
+    let raw_source_media_len = disc_payload_len(&disc)?;
     Ok(LoadedPceCd {
+        raw_source_media_sha256: source_disc_sha256,
+        raw_source_media_len,
         disc,
         content_sha256,
         content_crc32,
@@ -124,14 +145,13 @@ fn load_cue_file_backed(
 fn try_build_ppf_overlay_disc(
     sheet: &CueSheet,
     files: &[FileBackedCueFile],
-    dir: &Path,
-    mods: &[crate::mods::ModEntry],
+    apply: impl FnOnce(&mut PatchOverlayBuilder) -> PatchOverlayStack,
 ) -> Result<Option<CdDisc>, PceCdLoadError> {
     let sources = full_file_sources(sheet, files)?;
     let Some(mut builder) = PatchOverlayBuilder::for_tracks(&sources) else {
         return Ok(None);
     };
-    let PatchOverlayStack::Applied(applied) = apply_ppf_stack(&mut builder, dir, mods) else {
+    let PatchOverlayStack::Applied(applied) = apply(&mut builder) else {
         return Ok(None);
     };
     let Some(sources) = builder.finish_tracks(sources) else {
@@ -283,91 +303,17 @@ fn build_disc_with_raw_sources(
     if raw_sources.is_some_and(|sources| sources.len() != files.len()) {
         return Err(PceCdLoadError::MissingFile);
     }
-    let mut cursor = 0_u32;
+    let file_bytes = files.iter().map(|file| file.bytes).collect::<Vec<_>>();
+    let layout = cue_track_layout(sheet, &file_bytes)?;
     let mut normalized = Vec::with_capacity(sheet.tracks.len());
-    for (file_index, (cue_file, file)) in sheet.files.iter().zip(files).enumerate() {
-        let file_tracks = cue_file
-            .track_indices
-            .iter()
-            .map(|index| &sheet.tracks[*index])
-            .collect::<Vec<_>>();
-        let first_mode = file_tracks[0].mode;
-        if file_tracks
-            .iter()
-            .any(|track| sector_bytes(track.mode) != sector_bytes(first_mode))
-        {
-            return Err(PceCdLoadError::MixedSectorSizes);
-        }
-        let sector_bytes = sector_bytes(first_mode);
-        if !file.bytes.is_multiple_of(sector_bytes) {
-            return Err(PceCdLoadError::MisalignedBin {
-                bytes: file.bytes,
-                sector_bytes,
-            });
-        }
-        let total_sectors = u32::try_from(file.bytes / sector_bytes)
-            .map_err(|_| PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
-        let anchor = if file_index == 0 {
-            file_tracks[0]
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        } else {
-            file_tracks[0]
-                .index0
-                .or(file_tracks[0].index1)
-                .ok_or(PceCdLoadError::MissingIndex1(file_tracks[0].number))?
-        };
-        if anchor >= total_sectors {
-            return Err(PceCdLoadError::TrackOutsideBin(file_tracks[0].number));
-        }
-        let base = cursor;
-        let mut virtual_offset = 0_u32;
-        for (track_offset, track) in file_tracks.iter().enumerate() {
-            debug_assert_eq!(track.file_index, file_index);
-            let raw_index1 = track
-                .index1
-                .ok_or(PceCdLoadError::MissingIndex1(track.number))?;
-            if track.index0.is_some_and(|index0| index0 > raw_index1) {
-                return Err(PceCdLoadError::InvalidIndexOrder(track.number));
-            }
-            let end = file_tracks
-                .get(track_offset + 1)
-                .map(|next| next.index0.unwrap_or(next.index1.unwrap_or(u32::MAX)))
-                .unwrap_or(total_sectors);
-            if raw_index1 >= end || end > total_sectors {
-                return Err(PceCdLoadError::TrackOutsideBin(track.number));
-            }
-            let virtual_pregap = track.pregap.unwrap_or(0);
-            let index1 = raw_index1
-                .checked_sub(anchor)
-                .and_then(|index| base.checked_add(index))
-                .and_then(|index| index.checked_add(virtual_offset))
-                .and_then(|index| index.checked_add(virtual_pregap))
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
-            let index0 = if virtual_pregap != 0 {
-                Some(
-                    index1
-                        .checked_sub(virtual_pregap)
-                        .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-                )
-            } else {
-                track
-                    .index0
-                    .and_then(|index| index.checked_sub(anchor))
-                    .map(|index| {
-                        base.checked_add(index)
-                            .and_then(|index| index.checked_add(virtual_offset))
-                            .ok_or(PceCdLoadError::InvalidTrackOrder)
-                    })
-                    .transpose()?
-            };
-            let raw_stored_start = if virtual_pregap == 0 {
-                index0.and(track.index0).unwrap_or(raw_index1)
-            } else {
-                raw_index1
-            };
-            let start = raw_stored_start as usize * sector_bytes;
-            let bytes = end as usize * sector_bytes - start;
+    for file_layout in layout {
+        for track_layout in file_layout {
+            let track = track_layout.track;
+            let file_index = track.file_index;
+            let file = &files[file_index];
+            let start = track_layout.source_bytes.start;
+            let bytes = track_layout.source_bytes.len();
+            let sector_bytes = sector_bytes(track.mode);
             let source: Arc<dyn CdTrackSource> = if let Some(sources) = raw_sources {
                 slice_source(sources[file_index].clone(), start, bytes)
                     .ok_or(PceCdLoadError::TrackOutsideBin(track.number))?
@@ -381,27 +327,22 @@ fn build_disc_with_raw_sources(
                     file.reject_reparse,
                 )?
             };
-            let control = if track.mode == CdTrackMode::Audio {
-                0
-            } else {
-                4
-            };
-            let track = if virtual_pregap != 0 {
+            let track = if track_layout.virtual_pregap {
                 if raw_sources.is_some() {
                     CdTrack::from_index1_unverified_source(
                         track.number,
-                        control,
-                        index0,
-                        index1,
+                        track_layout.control(),
+                        track_layout.index0,
+                        track_layout.index1,
                         track.mode,
                         source,
                     )
                 } else {
                     CdTrack::from_index1_source(
                         track.number,
-                        control,
-                        index0,
-                        index1,
+                        track_layout.control(),
+                        track_layout.index0,
+                        track_layout.index1,
                         track.mode,
                         source,
                     )
@@ -409,36 +350,25 @@ fn build_disc_with_raw_sources(
             } else if raw_sources.is_some() {
                 CdTrack::from_stored_unverified_source(
                     track.number,
-                    control,
-                    index0,
-                    index1,
+                    track_layout.control(),
+                    track_layout.index0,
+                    track_layout.index1,
                     track.mode,
                     source,
                 )
             } else {
                 CdTrack::from_stored_source(
                     track.number,
-                    control,
-                    index0,
-                    index1,
+                    track_layout.control(),
+                    track_layout.index0,
+                    track_layout.index1,
                     track.mode,
                     source,
                 )
             }
             .map_err(|error| PceCdLoadError::Disc(error.to_string()))?;
             normalized.push(track);
-            virtual_offset = virtual_offset
-                .checked_add(virtual_pregap)
-                .ok_or(PceCdLoadError::InvalidTrackOrder)?;
         }
-        cursor = cursor
-            .checked_add(
-                total_sectors
-                    .checked_sub(anchor)
-                    .ok_or(PceCdLoadError::InvalidTrackOrder)?,
-            )
-            .and_then(|cursor| cursor.checked_add(virtual_offset))
-            .ok_or(PceCdLoadError::TrackOutsideBin(file_tracks[0].number))?;
     }
     CdDisc::new(normalized).map_err(|error| PceCdLoadError::Disc(error.to_string()))
 }
@@ -646,6 +576,38 @@ impl CdTrackSource for FileSliceSource {
         }
         Ok(())
     }
+
+    fn visit_payload(
+        &self,
+        sector_bytes: usize,
+        visitor: &mut dyn FnMut(&[u8]),
+    ) -> Result<(), CdSourceError> {
+        if sector_bytes != self.sector_bytes || !self.bytes.is_multiple_of(sector_bytes) {
+            return Err(CdSourceError::ReadFailed);
+        }
+        let mut reader = self.reader.lock().map_err(|_| CdSourceError::ReadFailed)?;
+        self.verify_identity(&reader)?;
+        reader.cached_sector = None;
+        let start = reader.start;
+        reader
+            .file
+            .seek(SeekFrom::Start(start))
+            .map_err(|_| CdSourceError::ReadFailed)?;
+
+        let chunk_bytes = (HASH_BUFFER_BYTES / sector_bytes).max(1) * sector_bytes;
+        let mut buffer = vec![0; chunk_bytes.min(self.bytes)];
+        let mut remaining = self.bytes;
+        while remaining != 0 {
+            let count = remaining.min(buffer.len());
+            reader
+                .file
+                .read_exact(&mut buffer[..count])
+                .map_err(|_| CdSourceError::ReadFailed)?;
+            visitor(&buffer[..count]);
+            remaining -= count;
+        }
+        self.verify_identity(&reader)
+    }
 }
 
 impl FileIdentity {
@@ -701,231 +663,4 @@ fn metadata_is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::emu_backend::pce_cd::{build_disc, parse_cue_bytes};
-    use crate::patching::apply_ppf_patch_segments;
-
-    fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "zeff-pce-cd-file-{}-{name}.bin",
-            std::process::id()
-        ));
-        std::fs::write(&path, bytes).unwrap();
-        path
-    }
-
-    fn ppf1(records: &[(u32, &[u8])]) -> Vec<u8> {
-        let mut patch = b"PPF10\0".to_vec();
-        patch.resize(56, 0);
-        for (offset, bytes) in records {
-            patch.extend_from_slice(&offset.to_le_bytes());
-            patch.push(bytes.len() as u8);
-            patch.extend_from_slice(bytes);
-        }
-        patch
-    }
-
-    fn ppf3(records: &[(u64, &[u8])], block: &[u8]) -> Vec<u8> {
-        let mut patch = b"PPF30\x02".to_vec();
-        patch.resize(56, 0);
-        patch.extend_from_slice(&[0, 1, 0, 0]);
-        patch.extend_from_slice(block);
-        for (offset, bytes) in records {
-            patch.extend_from_slice(&offset.to_le_bytes());
-            patch.push(bytes.len() as u8);
-            patch.extend_from_slice(bytes);
-        }
-        patch
-    }
-
-    #[test]
-    fn audio_samples_share_one_file_sector_read() {
-        let mut audio = vec![0; 2 * 2_352];
-        for sample in 0..588 {
-            let offset = sample * 4;
-            audio[offset..offset + 2].copy_from_slice(&(sample as i16).to_le_bytes());
-        }
-        let path = temp_file("audio", &audio);
-        let metadata = std::fs::metadata(&path).unwrap();
-        let source = FileSliceSource::open(
-            &path,
-            FileIdentity::from_metadata(&metadata),
-            0,
-            audio.len(),
-            2_352,
-            false,
-        )
-        .unwrap();
-        let track_source: Arc<dyn CdTrackSource> = source.clone();
-        let disc = CdDisc::new(vec![
-            CdTrack::from_index1_source(1, 0, None, 0, CdTrackMode::Audio, track_source).unwrap(),
-        ])
-        .unwrap();
-        source.reset_cache_for_test();
-        for sample in 0..588 {
-            assert_eq!(disc.read_audio_sample(0, sample).unwrap().0, sample as i16);
-        }
-        assert_eq!(source.read_count(), 1);
-    }
-
-    #[test]
-    fn direct_cue_file_sources_preserve_owned_identity_and_bytes() {
-        let root =
-            std::env::temp_dir().join(format!("zeff-pce-cd-file-{}-identity", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let mut raw = vec![0; 3 * 2_352];
-        raw[16] = 0x11;
-        raw[2_352 + 16] = 0x22;
-        raw[2 * 2_352..2 * 2_352 + 2].copy_from_slice(&0x3456_i16.to_le_bytes());
-        let cue = b"FILE \"DISC.BIN\" BINARY\nTRACK 01 MODE1/2352\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nINDEX 01 00:00:02\n";
-        let cue_path = root.join("disc.cue");
-        std::fs::write(&cue_path, cue).unwrap();
-        std::fs::write(root.join("disc.bin"), &raw).unwrap();
-        let sheet = parse_cue_bytes(cue).unwrap();
-        let owned = build_disc(cue.to_vec(), &sheet, vec![raw]).unwrap();
-        let file_backed = load_direct_cue_file_backed(&cue_path, cue, &sheet).unwrap();
-        assert_eq!(file_backed.disc, owned.disc);
-        assert_eq!(file_backed.content_sha256, owned.content_sha256);
-        assert_eq!(file_backed.content_crc32, owned.content_crc32);
-        assert_eq!(file_backed.source_disc_sha256, owned.source_disc_sha256);
-        assert_eq!(file_backed.disc.read_user_sector(0).unwrap()[0], 0x11);
-        assert_eq!(file_backed.disc.read_user_sector(1).unwrap()[0], 0x22);
-        assert_eq!(file_backed.disc.read_audio_sample(2, 0).unwrap().0, 0x3456);
-    }
-
-    #[test]
-    fn multifile_pregap_sources_match_owned_disc() {
-        let root =
-            std::env::temp_dir().join(format!("zeff-pce-cd-file-{}-multifile", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let mut first = vec![0; 2 * 2_048];
-        first[0] = 0x10;
-        let mut raw = vec![0; 3 * 2_352];
-        raw[16] = 0x20;
-        raw[2_352 + 16] = 0x21;
-        let mut audio = vec![0; 2 * 2_352];
-        audio[..2].copy_from_slice(&0x4567_i16.to_le_bytes());
-        let cue = b"FILE \"first.iso\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nFILE \"raw.bin\" BINARY\nTRACK 02 MODE1/2352\nINDEX 00 00:00:00\nINDEX 01 00:00:01\nFILE \"audio.bin\" BINARY\nTRACK 03 AUDIO\nPREGAP 00:00:01\nINDEX 01 00:00:00\n";
-        let cue_path = root.join("disc.cue");
-        std::fs::write(&cue_path, cue).unwrap();
-        std::fs::write(root.join("FIRST.ISO"), &first).unwrap();
-        std::fs::write(root.join("RAW.BIN"), &raw).unwrap();
-        std::fs::write(root.join("AUDIO.BIN"), &audio).unwrap();
-        let sheet = parse_cue_bytes(cue).unwrap();
-        let owned = build_disc(cue.to_vec(), &sheet, vec![first, raw, audio]).unwrap();
-        let file_backed = load_direct_cue_file_backed(&cue_path, cue, &sheet).unwrap();
-        assert_eq!(file_backed.disc, owned.disc);
-        assert_eq!(file_backed.content_sha256, owned.content_sha256);
-        assert_eq!(file_backed.content_crc32, owned.content_crc32);
-        assert_eq!(file_backed.source_disc_sha256, owned.source_disc_sha256);
-        assert_eq!(file_backed.disc.read_user_sector(0).unwrap()[0], 0x10);
-        assert_eq!(file_backed.disc.read_user_sector(2).unwrap()[0], 0x20);
-        assert_eq!(file_backed.disc.read_user_sector(3).unwrap()[0], 0x21);
-        assert!(file_backed.disc.read_audio_sample(5, 0).is_err());
-        assert_eq!(file_backed.disc.read_audio_sample(6, 0).unwrap().0, 0x4567);
-    }
-
-    #[test]
-    fn direct_and_cached_ppf_overlays_match_owned_raw_file_domain() {
-        let root =
-            std::env::temp_dir().join(format!("zeff-pce-cd-file-{}-overlay", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let first = (0..13 * 2_048)
-            .map(|index| (index as u8).wrapping_mul(7).wrapping_add(3))
-            .collect::<Vec<_>>();
-        let second = (0..5 * 2_352)
-            .map(|index| (index as u8).wrapping_mul(11).wrapping_add(5))
-            .collect::<Vec<_>>();
-        let third = (0..2 * 2_352)
-            .map(|index| (index as u8).wrapping_mul(13).wrapping_add(9))
-            .collect::<Vec<_>>();
-        let cue = b"FILE \"first.iso\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nFILE \"second.bin\" BINARY\nTRACK 02 MODE1/2352\nINDEX 00 00:00:00\nINDEX 01 00:00:01\nFILE \"third.bin\" BINARY\nTRACK 03 AUDIO\nPREGAP 00:00:01\nINDEX 01 00:00:00\n";
-        let cue_path = root.join("disc.cue");
-        std::fs::write(&cue_path, cue).unwrap();
-        let paths = [
-            root.join("first.iso"),
-            root.join("second.bin"),
-            root.join("third.bin"),
-        ];
-        for (path, bytes) in paths.iter().zip([&first, &second, &third]) {
-            std::fs::write(path, bytes).unwrap();
-        }
-        let first_boundary = first.len();
-        let second_boundary = first.len() + second.len();
-        assert!((0x9320..0x9320 + 1024).contains(&second_boundary));
-        let first_patch = ppf1(&[(0x9324, &[0xA5])]);
-        let mut joined = [&first[..], &second[..], &third[..]].concat();
-        crate::patching::apply_ppf_patch(&mut joined, &first_patch).unwrap();
-        let second_patch = ppf3(
-            &[(
-                first_boundary as u64 - 2,
-                &[0x10, 0x20, 0x30, 0x40, 0x50, 0x60],
-            )],
-            &joined[0x9320..0x9320 + 1024],
-        );
-        std::fs::write(root.join("first.ppf"), &first_patch).unwrap();
-        std::fs::write(root.join("second.ppf"), &second_patch).unwrap();
-        let mods = [
-            crate::mods::ModEntry {
-                filename: "first.ppf".to_owned(),
-                enabled: true,
-                target: None,
-            },
-            crate::mods::ModEntry {
-                filename: "second.ppf".to_owned(),
-                enabled: true,
-                target: None,
-            },
-        ];
-        let sheet = parse_cue_bytes(cue).unwrap();
-        let direct = try_load_direct_cue_ppf_overlay(&cue_path, &sheet, &root, &mods)
-            .unwrap()
-            .unwrap();
-
-        let mut owned_files = vec![first, second, third];
-        apply_ppf_patch_segments(&mut owned_files, &first_patch).unwrap();
-        apply_ppf_patch_segments(&mut owned_files, &second_patch).unwrap();
-        let owned = build_disc(cue.to_vec(), &sheet, owned_files).unwrap().disc;
-        assert_eq!(direct, owned);
-
-        let cached_sources = paths
-            .iter()
-            .map(|path| {
-                let bytes = std::fs::read(path).unwrap();
-                CueFileSource {
-                    path: path.clone(),
-                    bytes: bytes.len() as u64,
-                    sha256: Sha256::digest(bytes).into(),
-                }
-            })
-            .collect();
-        let cached = try_load_cached_cue_ppf_overlay(&sheet, cached_sources, &root, &mods)
-            .unwrap()
-            .unwrap();
-        assert_eq!(cached, owned);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn file_source_rejects_external_length_changes() {
-        let path = temp_file("changed", &[0; 2_352]);
-        let metadata = std::fs::metadata(&path).unwrap();
-        let source = FileSliceSource::open(
-            &path,
-            FileIdentity::from_metadata(&metadata),
-            0,
-            2_352,
-            2_352,
-            false,
-        )
-        .unwrap();
-        let mut bytes = [0; 4];
-        source.read_exact_at(0, &mut bytes).unwrap();
-        std::fs::write(&path, [0; 2 * 2_352]).unwrap();
-        assert_eq!(
-            source.read_exact_at(0, &mut bytes),
-            Err(CdSourceError::ReadFailed)
-        );
-    }
-}
+mod tests;

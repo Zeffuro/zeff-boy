@@ -4,7 +4,7 @@ use crate::debug::dock::TabDataRequirements;
 use crate::emu_thread::{RenderSettings, ReusableBuffers, SnapshotRequest};
 
 impl App {
-    pub(super) fn build_snapshot_request(
+    pub(in crate::app) fn build_snapshot_request(
         &mut self,
         reqs: &TabDataRequirements,
         want_viewer_update: bool,
@@ -82,7 +82,7 @@ impl App {
         }
     }
 
-    pub(super) fn take_reusable_buffers(&mut self) -> ReusableBuffers {
+    pub(in crate::app) fn take_reusable_buffers(&mut self) -> ReusableBuffers {
         ReusableBuffers {
             audio: self.recycled.audio.take(),
             vram: self.recycled.vram.take(),

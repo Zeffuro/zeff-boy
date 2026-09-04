@@ -47,6 +47,45 @@ pub(crate) struct BatteryGenerationRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BatteryComponentReceipt {
+    pub(crate) name: String,
+    pub(crate) byte_len: u64,
+    pub(crate) sha256: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BatteryPublicationReceipt {
+    pub(crate) components: Vec<BatteryComponentReceipt>,
+    pub(crate) component_sha256: [u8; 32],
+}
+
+impl BatteryPublicationReceipt {
+    pub(crate) fn from_components(components: &[(&str, &[u8])]) -> Self {
+        let mut components = components
+            .iter()
+            .map(|(name, bytes)| BatteryComponentReceipt {
+                name: (*name).to_owned(),
+                byte_len: bytes.len() as u64,
+                sha256: zeff_firmware::sha256_bytes(bytes),
+            })
+            .collect::<Vec<_>>();
+        components.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+        let component_sha256 = canonical_battery_receipt_hash(&components);
+        Self {
+            components,
+            component_sha256,
+        }
+    }
+
+    pub(crate) fn is_consistent(&self) -> bool {
+        self.components
+            .windows(2)
+            .all(|pair| pair[0].name < pair[1].name)
+            && canonical_battery_receipt_hash(&self.components) == self.component_sha256
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RecoveryStateError {
     InvalidMagic,
     UnsupportedVersion(u16),
@@ -119,16 +158,19 @@ pub(crate) fn classify_recovery_freshness(
     }
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) fn canonical_battery_component_hash(components: &[(&str, &[u8])]) -> [u8; 32] {
-    let mut components = components.to_vec();
-    components.sort_unstable_by_key(|(name, _)| *name);
+    BatteryPublicationReceipt::from_components(components).component_sha256
+}
+
+fn canonical_battery_receipt_hash(components: &[BatteryComponentReceipt]) -> [u8; 32] {
     let mut canonical = Vec::new();
     canonical.extend_from_slice(&(components.len() as u32).to_le_bytes());
-    for (name, bytes) in components {
-        canonical.extend_from_slice(&(name.len() as u32).to_le_bytes());
-        canonical.extend_from_slice(name.as_bytes());
-        canonical.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-        canonical.extend_from_slice(&zeff_firmware::sha256_bytes(bytes));
+    for component in components {
+        canonical.extend_from_slice(&(component.name.len() as u32).to_le_bytes());
+        canonical.extend_from_slice(component.name.as_bytes());
+        canonical.extend_from_slice(&component.byte_len.to_le_bytes());
+        canonical.extend_from_slice(&component.sha256);
     }
     zeff_firmware::sha256_bytes(&canonical)
 }
@@ -563,6 +605,31 @@ mod tests {
 
         assert_eq!(left, reordered);
         assert_ne!(left, changed);
+    }
+
+    #[test]
+    fn publication_receipt_preserves_each_exact_component_identity() {
+        let mut rtc = [0u8; 64];
+        rtc[40..48].copy_from_slice(&1_725_000_000u64.to_le_bytes());
+        rtc[48..56].copy_from_slice(b"ZBRTC001");
+        rtc[56..64].copy_from_slice(&2_097_151u64.to_le_bytes());
+        let receipt = BatteryPublicationReceipt::from_components(&[
+            ("rtc", rtc.as_slice()),
+            ("sram", b"project ram"),
+        ]);
+
+        assert!(receipt.is_consistent());
+        assert_eq!(receipt.components[0].name, "rtc");
+        assert_eq!(receipt.components[0].byte_len, 64);
+        assert_eq!(
+            receipt.components[0].sha256,
+            zeff_firmware::sha256_bytes(&rtc)
+        );
+        assert_eq!(receipt.components[1].name, "sram");
+        assert_eq!(
+            receipt.component_sha256,
+            canonical_battery_component_hash(&[("sram", b"project ram"), ("rtc", &rtc)])
+        );
     }
 
     #[test]

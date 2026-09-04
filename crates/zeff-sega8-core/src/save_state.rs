@@ -1,21 +1,102 @@
 use anyhow::bail;
+use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use crate::emulator::Emulator;
+use crate::hardware::cartridge::{Sega8MapperKind, Sega8System};
 use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 
-const MAGIC: &[u8; 8] = b"ZBSEGA8\0";
-const VERSION: u32 = 12;
+mod game_gear_tas;
+mod sg1000_tas;
+
+pub use game_gear_tas::{
+    CurrentNativeGameGearTasStateInspection, CurrentNativeGameGearTasStateProjection,
+    GAME_GEAR_TAS_DETERMINISM_ABI_ID, inspect_current_native_game_gear_tas_state,
+    validate_and_load_current_native_game_gear_tas_state,
+};
+pub use sg1000_tas::{
+    CurrentNativeSg1000TasStateInspection, CurrentNativeSg1000TasStateProjection,
+    SG1000_TAS_DETERMINISM_ABI_ID, inspect_current_native_sg1000_tas_state,
+    validate_and_load_current_native_sg1000_tas_state,
+};
+
+pub const SAVE_STATE_MAGIC: [u8; 8] = *b"ZBSEGA8\0";
+pub const SAVE_STATE_FORMAT_VERSION: u32 = 12;
+pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-sms-determinism-v1";
+pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-sega8-native-state-v12";
 const MIN_SUPPORTED_VERSION: u32 = 1;
 const VERSION_WITH_VIDEO_STANDARD: u32 = 3;
 const VERSION_WITH_CONSOLE_REGION: u32 = 4;
 const MAX_FRAMEBUFFER_SIZE: usize = 256 * 192 * 4;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentNativeSmsTasStateProjection {
+    pub replay_state_bytes: Vec<u8>,
+    pub frame_count: u64,
+    pub framebuffer: Box<[u8]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentNativeSmsTasStateInspection {
+    pub projection: CurrentNativeSmsTasStateProjection,
+    pub rom_sha256: [u8; 32],
+    pub mapper_kind: Sega8MapperKind,
+    pub save_ram_kind: SaveRamKind,
+    pub video_standard: Sega8VideoStandard,
+    pub console_region: Sega8Region,
+    pub boot_rom_enabled: bool,
+}
+
+pub fn inspect_current_native_sms_tas_state(
+    emulator: &Emulator,
+    data: &[u8],
+) -> anyhow::Result<CurrentNativeSmsTasStateInspection> {
+    if data.len() < 12 || data[..8] != SAVE_STATE_MAGIC {
+        bail!("TAS requires a native Sega 8-bit save-state");
+    }
+    let version = u32::from_le_bytes(data[8..12].try_into().expect("length checked"));
+    if version != SAVE_STATE_FORMAT_VERSION {
+        bail!("TAS requires Sega 8-bit save-state format {SAVE_STATE_FORMAT_VERSION}");
+    }
+    if emulator.system() != Sega8System::MasterSystem {
+        bail!("TAS state requires a Master System emulator");
+    }
+
+    let mut candidate = emulator.clone();
+    decode_state(&mut candidate, data)?;
+    if candidate.system() != Sega8System::MasterSystem {
+        bail!("TAS state did not restore a Master System machine");
+    }
+
+    Ok(CurrentNativeSmsTasStateInspection {
+        projection: CurrentNativeSmsTasStateProjection {
+            replay_state_bytes: data.to_vec(),
+            frame_count: candidate.frame_count(),
+            framebuffer: candidate.framebuffer().into(),
+        },
+        rom_sha256: candidate.rom_hash(),
+        mapper_kind: candidate.bus().mapper().kind(),
+        save_ram_kind: candidate.save_ram_kind(),
+        video_standard: candidate.video_standard(),
+        console_region: candidate.console_region(),
+        boot_rom_enabled: candidate.bus().boot_rom_enabled(),
+    })
+}
+
+pub fn validate_and_load_current_native_sms_tas_state(
+    emulator: &mut Emulator,
+    data: &[u8],
+) -> anyhow::Result<CurrentNativeSmsTasStateProjection> {
+    let inspection = inspect_current_native_sms_tas_state(emulator, data)?;
+    emulator.load_state(data)?;
+    Ok(inspection.projection)
+}
+
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::with_capacity(0x20_000);
-    w.write_bytes(MAGIC);
-    w.write_u32(VERSION);
+    w.write_bytes(&SAVE_STATE_MAGIC);
+    w.write_u32(SAVE_STATE_FORMAT_VERSION);
     w.write_bytes(&emu.rom_hash);
     w.write_u64(emu.frame_count);
     w.write_u32(crate::emulator::DEFAULT_SAMPLE_RATE);
@@ -32,11 +113,11 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     let mut r = StateReader::new(data);
     let mut magic = [0; 8];
     r.read_exact(&mut magic)?;
-    if &magic != MAGIC {
+    if magic != SAVE_STATE_MAGIC {
         bail!("not a valid Sega 8-bit save-state");
     }
     let version = r.read_u32()?;
-    if !(MIN_SUPPORTED_VERSION..=VERSION).contains(&version) {
+    if !(MIN_SUPPORTED_VERSION..=SAVE_STATE_FORMAT_VERSION).contains(&version) {
         bail!("unsupported Sega 8-bit save-state version {version}");
     }
 
@@ -139,7 +220,7 @@ fn read_fixed_vec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulator::Sega8LoadConfig;
+    use crate::emulator::{DEFAULT_SAMPLE_RATE, Sega8LoadConfig};
     use crate::hardware::cartridge::{Sega8MapperKind, SystemHint};
     use crate::hardware::constants::{
         IO_OPEN_BUS_VALUE, IO_PORT_CONTROL, IO_PORT_CONTROLLER_2, IO_PORT_GG_START,
@@ -177,11 +258,12 @@ mod tests {
                 .pop()
                 .expect("current state should include boot-ROM overlay state");
         }
-        bytes[MAGIC.len()..MAGIC.len() + 4].copy_from_slice(&version.to_le_bytes());
+        bytes[SAVE_STATE_MAGIC.len()..SAVE_STATE_MAGIC.len() + 4]
+            .copy_from_slice(&version.to_le_bytes());
     }
 
     fn video_standard_offset() -> usize {
-        MAGIC.len() + 4 + 32 + 8 + 4
+        SAVE_STATE_MAGIC.len() + 4 + 32 + 8 + 4
     }
 
     fn console_region_offset() -> usize {
@@ -319,6 +401,105 @@ mod tests {
             restored.bus_mut().io_read(IO_PORT_CONTROLLER_2) & 0xC0,
             0xC0
         );
+    }
+
+    #[test]
+    fn current_native_sms_tas_contract_tracks_v12() {
+        assert_eq!(
+            TAS_STATE_FORMAT_COMPATIBILITY_ID,
+            format!("zeff-sega8-native-state-v{SAVE_STATE_FORMAT_VERSION}")
+        );
+        assert!(!TAS_DETERMINISM_ABI_ID.is_empty());
+    }
+
+    #[test]
+    fn current_native_sms_tas_state_restores_exact_output_and_continuation() {
+        let rom = banked_rom(4);
+        let config = Sega8LoadConfig::new(DEFAULT_SAMPLE_RATE)
+            .with_system_hint(SystemHint::MasterSystem)
+            .with_mapper_kind(Some(Sega8MapperKind::Korean));
+        let mut source = Emulator::new_with_config(&rom, config).unwrap();
+        source.set_console_region(Sega8Region::Japanese);
+        source.bus_mut().cpu_write(0xA000, 3);
+        for _ in 0..3 {
+            source.step_frame();
+        }
+        let state = encode_state(&source).unwrap();
+        let mut restored = Emulator::new_with_config(&rom, config).unwrap();
+
+        let inspection = inspect_current_native_sms_tas_state(&restored, &state).unwrap();
+        assert_eq!(inspection.rom_sha256, source.rom_hash());
+        assert_eq!(inspection.mapper_kind, Sega8MapperKind::Korean);
+        assert_eq!(inspection.save_ram_kind, SaveRamKind::None);
+        assert_eq!(inspection.video_standard, Sega8VideoStandard::Ntsc);
+        assert_eq!(inspection.console_region, Sega8Region::Japanese);
+        assert!(!inspection.boot_rom_enabled);
+        assert_eq!(restored.frame_count(), 0);
+
+        let projection =
+            validate_and_load_current_native_sms_tas_state(&mut restored, &state).unwrap();
+        assert_eq!(projection.replay_state_bytes, state);
+        assert_eq!(projection.frame_count, source.frame_count());
+        assert_eq!(projection.framebuffer.as_ref(), source.framebuffer());
+        assert_eq!(encode_state(&restored).unwrap(), state);
+
+        source.step_frame();
+        restored.step_frame();
+        assert_eq!(restored.framebuffer(), source.framebuffer());
+        assert_eq!(
+            encode_state(&restored).unwrap(),
+            encode_state(&source).unwrap()
+        );
+    }
+
+    #[test]
+    fn current_native_sms_tas_state_rejects_noncurrent_or_wrong_identity_atomically() {
+        let rom = banked_rom(4);
+        let config = Sega8LoadConfig::new(DEFAULT_SAMPLE_RATE)
+            .with_system_hint(SystemHint::MasterSystem)
+            .with_mapper_kind(Some(Sega8MapperKind::Korean));
+        let source = Emulator::new_with_config(&rom, config).unwrap();
+        let current = encode_state(&source).unwrap();
+        let mut target = Emulator::new_with_config(&rom, config).unwrap();
+        target.step_frame();
+        let before = encode_state(&target).unwrap();
+
+        let mut legacy = current.clone();
+        set_state_version(&mut legacy, SAVE_STATE_FORMAT_VERSION - 1);
+        let mut wrong_magic = current.clone();
+        wrong_magic[0] ^= 1;
+        let mut trailing = current.clone();
+        trailing.push(0);
+        let truncated = &current[..current.len() - 1];
+        for invalid in [&legacy[..], &wrong_magic, &trailing, truncated] {
+            assert!(validate_and_load_current_native_sms_tas_state(&mut target, invalid).is_err());
+            assert_eq!(encode_state(&target).unwrap(), before);
+        }
+
+        let wrong_mapper_state = encode_state(
+            &Emulator::new_with_hint(&rom, DEFAULT_SAMPLE_RATE, SystemHint::MasterSystem).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            validate_and_load_current_native_sms_tas_state(&mut target, &wrong_mapper_state)
+                .is_err()
+        );
+        assert_eq!(encode_state(&target).unwrap(), before);
+
+        let mut other_rom = rom.clone();
+        other_rom[0] ^= 0xFF;
+        let wrong_rom_state =
+            encode_state(&Emulator::new_with_config(&other_rom, config).unwrap()).unwrap();
+        assert!(
+            validate_and_load_current_native_sms_tas_state(&mut target, &wrong_rom_state).is_err()
+        );
+        assert_eq!(encode_state(&target).unwrap(), before);
+
+        let mut game_gear =
+            Emulator::new_with_hint(&rom, DEFAULT_SAMPLE_RATE, SystemHint::GameGear).unwrap();
+        let game_gear_before = encode_state(&game_gear).unwrap();
+        assert!(validate_and_load_current_native_sms_tas_state(&mut game_gear, &current).is_err());
+        assert_eq!(encode_state(&game_gear).unwrap(), game_gear_before);
     }
 
     #[test]

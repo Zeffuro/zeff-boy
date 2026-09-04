@@ -3,7 +3,7 @@ use crate::emu_thread::ZapperInput;
 use zeff_emu_common::system::{NES_SCREEN_SIZE, RGBA_BYTES_PER_PIXEL, rgba_framebuffer_len};
 
 impl App {
-    pub(super) fn nes_zapper_input(&self) -> ZapperInput {
+    pub(in crate::app) fn nes_zapper_input(&self) -> ZapperInput {
         if self.active_system != ActiveSystem::Nes {
             return ZapperInput::default();
         }

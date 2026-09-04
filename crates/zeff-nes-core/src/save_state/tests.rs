@@ -399,7 +399,7 @@ fn replay_projection_matches_independent_legacy_v10_nrom_bytes_and_hash() {
 
 #[test]
 fn replay_projection_matches_independent_legacy_v10_variable_fds_media() {
-    for side_count in [1, 2] {
+    for side_count in [1, 2, 4] {
         let mut emu = make_fds_emulator_with_sides(side_count);
         mutate_fds_media(&mut emu);
         emu.step_frame();

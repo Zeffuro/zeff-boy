@@ -1,6 +1,27 @@
 use super::*;
 use crate::input::HostButton;
-use crate::settings::WonderSwanButton;
+use crate::settings::{TiltBindingAction, WonderSwanButton};
+
+#[test]
+fn clearing_keyboard_preserves_gamepad_and_remote_sources() {
+    let mut state = HostInputState::new();
+    state.set_keyboard(HostButton::A, true);
+    state.set_keyboard_p2(HostButton::B, true);
+    state.set_gamepad(HostButton::Start, true);
+    state.set_remote_p2(HostButton::Up, true);
+    state.set_coleco_keyboard_keypad(1, 5, true);
+    state.set_tilt_keyboard(TiltBindingAction::Left, true);
+    state.set_ws_keyboard(WonderSwanButton::X1, true);
+
+    state.clear_keyboard();
+
+    assert_eq!(state.buttons_pressed(), 1 << 3);
+    assert_eq!(state.dpad_p2_pressed(), 1 << 2);
+    assert_eq!(state.buttons_p2_pressed(), 0);
+    assert_eq!(state.coleco_keypad_pressed(1), None);
+    assert_eq!(state.tilt_vector(), (0.0, 0.0));
+    assert_eq!(state.ws_dpad_pressed(false), 0);
+}
 
 #[test]
 fn keyboard_a_button_in_buttons_pressed() {
@@ -122,6 +143,65 @@ fn coleco_keypad_uses_the_unused_dpad_high_nibble_without_losing_directions() {
     state.set_coleco_remote_keypad(1, 3, true);
     assert_eq!(state.coleco_keypad_pressed(1), Some(3));
     assert_eq!(state.coleco_dpad_pressed(1), 0x44);
+}
+
+#[test]
+fn coleco_tas_sampling_preserves_two_semantic_controllers() {
+    use crate::tas_project::{TasColecoControllerInput, TasColecoKeypadKey};
+
+    let mut state = HostInputState::new();
+    state.set_keyboard(HostButton::Up, true);
+    state.set_keyboard(HostButton::Down, true);
+    state.set_keyboard(HostButton::A, true);
+    state.set_gamepad(HostButton::B, true);
+    state.set_coleco_keyboard_keypad(1, 10, true);
+    state.set_keyboard_p2(HostButton::Right, true);
+    state.set_remote_p2(HostButton::Left, true);
+    state.set_keyboard_p2(HostButton::B, true);
+    state.set_coleco_remote_keypad(2, 9, true);
+
+    assert_eq!(
+        state.coleco_tas_controllers().unwrap(),
+        [
+            TasColecoControllerInput {
+                up: true,
+                down: true,
+                left_button: true,
+                right_button: true,
+                keypad: TasColecoKeypadKey::Star,
+                ..Default::default()
+            },
+            TasColecoControllerInput {
+                right: true,
+                left: true,
+                right_button: true,
+                keypad: TasColecoKeypadKey::Nine,
+                ..Default::default()
+            },
+        ]
+    );
+}
+
+#[test]
+fn coleco_tas_sampling_rejects_ambiguous_or_unsupported_host_input() {
+    let mut multiple_keys = HostInputState::new();
+    multiple_keys.set_coleco_keyboard_keypad(1, 1, true);
+    multiple_keys.set_coleco_remote_keypad(1, 2, true);
+    assert!(multiple_keys.coleco_tas_controllers().is_err());
+
+    let mut explicit_and_fallback = HostInputState::new();
+    explicit_and_fallback.set_coleco_keyboard_keypad(1, 1, true);
+    explicit_and_fallback.set_keyboard(HostButton::Start, true);
+    assert!(explicit_and_fallback.coleco_tas_controllers().is_err());
+
+    let mut two_fallbacks = HostInputState::new();
+    two_fallbacks.set_keyboard(HostButton::Select, true);
+    two_fallbacks.set_keyboard(HostButton::Start, true);
+    assert!(two_fallbacks.coleco_tas_controllers().is_err());
+
+    let mut unsupported = HostInputState::new();
+    unsupported.set_keyboard(HostButton::L, true);
+    assert!(unsupported.coleco_tas_controllers().is_err());
 }
 
 #[test]

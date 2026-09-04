@@ -1,11 +1,5 @@
-# zeff-boy task runner
-# Install: cargo install just  (or: winget install Casey.Just)
-# Usage:   just <recipe>        (run `just --list` to see all recipes)
-
-# Use PowerShell on Windows
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
-# Default recipe: list available commands
 default:
     @just --list
 
@@ -262,6 +256,10 @@ lint-all: lint lint-minimal lint-wasm
 tooling-audit:
     cargo run -p zeff-romtest -- audit-tooling
 
+# Enforce the first-party Rust source-size ratchet.
+source-size-audit:
+    cargo run -p zeff-romtest -- audit-source-size
+
 # CI follows the latest stable Rust release.
 sync-ci-toolchain:
     rustup update stable
@@ -286,7 +284,7 @@ lint-platform-leaks:
     $hits = Get-ChildItem -Path src -Recurse -Filter *.rs | Where-Object { $_.FullName -notmatch '\\(platform|input\\native|audio\\native|audio\\tests|camera|cli|mods\\native|libretro_common)' -and $_.Name -ne 'native.rs' } | Select-String -Pattern 'rfd::|gilrs::|cpal::|dirs::|open::that|ureq::|pollster::block_on|nokhwa::' | Where-Object { $_.Line -notmatch '// platform-ok' }; if ($hits) { $hits; exit 1 } else { Write-Host 'No platform leaks found.' }
 
 # Run full CI pipeline locally (fmt + lint + platform check + test + deny)
-ci-local: sync-ci-toolchain ci-tools fmt-check lint-all lint-platform-leaks tooling-audit test-all deny
+ci-local: sync-ci-toolchain ci-tools fmt-check lint-all lint-platform-leaks tooling-audit source-size-audit test-all deny
 
 # Run WASM CI check locally (requires wasm32 target and Trunk)
 ci-local-wasm: sync-ci-toolchain lint-wasm check-wasm build-wasm-ghpages

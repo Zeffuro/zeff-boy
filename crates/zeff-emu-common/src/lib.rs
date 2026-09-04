@@ -12,3 +12,10 @@ pub mod save_ram;
 pub mod save_state;
 pub mod system;
 pub mod time;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateRestoreOutcome {
+    Exact,
+    BestEffortBess,
+    BestEffortPortable,
+}

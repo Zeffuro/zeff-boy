@@ -10,3 +10,8 @@ pub mod vdp;
 
 pub use emulator::Emulator;
 pub use input::{ControllerMux, ControllerPorts, KeypadKey, StandardController};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExpansionHardware {
+    Absent,
+}

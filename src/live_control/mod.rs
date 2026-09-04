@@ -12,6 +12,7 @@ mod tests;
 
 pub(crate) use types::{
     LiveCommand, LiveInput, LiveMemorySpace, LiveReply, LiveRequest, PendingButtonRelease,
+    TasDigitalInput, TasRecordMode,
 };
 
 const ENV_VAR: &str = "ZEFF_REMOTE_CONTROL";
@@ -46,6 +47,14 @@ impl LiveControl {
 
     pub(crate) fn addr(&self) -> Option<SocketAddr> {
         self.addr
+    }
+
+    #[cfg(test)]
+    pub(crate) fn disabled_for_test() -> Self {
+        Self {
+            rx: None,
+            addr: None,
+        }
     }
 }
 

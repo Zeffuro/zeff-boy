@@ -23,6 +23,8 @@ mod render_frame;
 #[cfg(not(target_arch = "wasm32"))]
 mod settings_window;
 #[cfg(not(target_arch = "wasm32"))]
+mod tas_editor_window;
+#[cfg(not(target_arch = "wasm32"))]
 mod tool_window;
 mod viewport;
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,6 +47,8 @@ pub(crate) use render_frame::PackageLoadView;
 pub(crate) use render_frame::{FrameError, RenderContext};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use settings_window::SettingsRenderContext;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas_editor_window::{TasEditorRenderContext, TasEditorRenderResult};
 pub(crate) use viewport::AspectRatioMode;
 
 use crate::settings::VsyncMode;
@@ -69,6 +73,8 @@ pub(crate) struct Graphics {
     cheats_window: Option<cheats_window::CheatsWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     printer_window: Option<printer_window::PrinterWindow>,
+    #[cfg(not(target_arch = "wasm32"))]
+    tas_editor_window: Option<tas_editor_window::TasEditorWindow>,
 }
 
 impl Graphics {
@@ -165,6 +171,8 @@ impl Graphics {
             cheats_window: None,
             #[cfg(not(target_arch = "wasm32"))]
             printer_window: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            tas_editor_window: None,
         })
     }
 
@@ -489,6 +497,65 @@ impl Graphics {
         ctx: PrinterRenderContext<'_>,
     ) -> Result<(), FrameError> {
         self.printer_window
+            .as_mut()
+            .ok_or(FrameError::Lost)?
+            .render(ctx)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_tas_editor_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+    ) -> Result<WindowId> {
+        if let Some(window) = self.tas_editor_window.as_ref() {
+            window.window().focus_window();
+            return Ok(window.id());
+        }
+        let window = tas_editor_window::TasEditorWindow::new(event_loop, &self.gpu)?;
+        let id = window.id();
+        self.tas_editor_window = Some(window);
+        Ok(id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_tas_editor_window(&mut self) {
+        self.tas_editor_window = None;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_editor_window_id(&self) -> Option<WindowId> {
+        self.tas_editor_window
+            .as_ref()
+            .map(tas_editor_window::TasEditorWindow::id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_editor_window(&self) -> Option<&Window> {
+        self.tas_editor_window
+            .as_ref()
+            .map(tas_editor_window::TasEditorWindow::window)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_editor_handles_event(&mut self, event: &WindowEvent) -> bool {
+        self.tas_editor_window
+            .as_mut()
+            .is_some_and(|window| window.handle_event(event))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resize_tas_editor_window(&mut self, width: u32, height: u32) {
+        if let Some(window) = self.tas_editor_window.as_mut() {
+            window.resize(width, height);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_tas_editor_window(
+        &mut self,
+        ctx: TasEditorRenderContext<'_>,
+    ) -> Result<TasEditorRenderResult, FrameError> {
+        self.tas_editor_window
             .as_mut()
             .ok_or(FrameError::Lost)?
             .render(ctx)

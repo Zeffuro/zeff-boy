@@ -4,7 +4,24 @@ use crate::emu_thread::{EmuResponse, FrameResult};
 use crate::platform::Instant;
 
 impl App {
+    pub(in crate::app) fn queue_emulator_audio(&mut self, samples: &[f32], playback_speed: usize) {
+        if let Some(audio) = &mut self.audio {
+            audio.queue_samples(
+                samples,
+                &crate::audio::AudioQueueConfig {
+                    master_volume: self.settings.audio.volume,
+                    playback_speed,
+                    mute_during_fast_forward: self.settings.audio.mute_during_fast_forward,
+                    low_pass_enabled: self.settings.audio.low_pass_enabled,
+                    low_pass_cutoff_hz: self.settings.audio.low_pass_cutoff_hz,
+                },
+            );
+        }
+    }
+
     pub(super) fn drain_emu_responses(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.reconcile_tas_control_project_binding();
         #[cfg(not(target_arch = "wasm32"))]
         if self.recording.is_replay_start_pending() {
             self.drain_emu_control_responses();
@@ -24,8 +41,32 @@ impl App {
         self.drain_emu_control_responses();
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::while_let_loop))]
     fn drain_emu_control_responses(&mut self) {
-        while let Some(resp) = self.emu_thread.as_ref().and_then(|t| t.try_recv_response()) {
+        loop {
+            #[cfg(not(target_arch = "wasm32"))]
+            let resp = match self.emu_thread.as_ref().map(|t| t.poll_response()) {
+                Some(crate::emu_thread::EmuResponsePoll::Response(response)) => *response,
+                Some(crate::emu_thread::EmuResponsePoll::Empty) | None => break,
+                Some(crate::emu_thread::EmuResponsePoll::Disconnected) => {
+                    self.terminalize_tas_control_response_loss();
+                    break;
+                }
+            };
+            #[cfg(target_arch = "wasm32")]
+            let resp = match self
+                .emu_thread
+                .as_ref()
+                .and_then(|thread| thread.try_recv_response())
+            {
+                Some(response) => response,
+                None => break,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let resp = match self.consume_tas_control_response(resp) {
+                Some(resp) => resp,
+                None => continue,
+            };
             if self.handle_link_response(&resp) {
                 continue;
             }
@@ -154,9 +195,8 @@ impl App {
                         }
                         if self.rewind.backstep_pending {
                             self.rewind.backstep_pending = false;
-                            self.speed.paused = true;
+                            self.set_user_paused(true);
                             self.timing.last_frame_time = Instant::now();
-                            self.toast_manager.set_paused(true);
                             self.toast_manager.info("⏮ Stepped back");
                         } else {
                             self.rewind.pending = false;
@@ -197,12 +237,16 @@ impl App {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
         if let Some(fault) = result.runtime_fault.take() {
             log::error!("Emulation stopped: {fault}");
-            self.speed.paused = true;
+            #[cfg(not(target_arch = "wasm32"))]
+            self.terminalize_tas_control_runtime_fault();
+            self.pause_state.latch_runtime_fault();
+            self.recompute_pause();
+            self.finish_audio_recording_for_teardown();
+            self.stop_replay_recording_for_teardown();
             self.rewind.held = false;
             if let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::SetUncapped(false));
             }
-            self.toast_manager.set_paused(true);
             self.toast_manager
                 .error(format!("Emulation stopped: {fault}"));
         }
@@ -219,12 +263,12 @@ impl App {
             self.toast_manager.error(format!("Replay stopped: {error}"));
         }
 
-        // Read the latest framebuffer from the lock-free shared buffer
         if let Some(thread) = &self.emu_thread {
             self.latest_frame = thread.shared_framebuffer().load_full();
         }
 
         self.rom_info.is_mbc7 = result.is_mbc7;
+        self.rom_info.is_gba_tilt = result.is_gba_tilt;
         self.rom_info.is_pocket_camera = result.is_pocket_camera;
         if let Some(device) = result.game_boy_serial_device {
             self.game_boy_serial_device = device;
@@ -253,18 +297,7 @@ impl App {
             gamepad.set_rumble(result.rumble);
         }
 
-        if let Some(audio) = &mut self.audio {
-            audio.queue_samples(
-                &result.audio_samples,
-                &crate::audio::AudioQueueConfig {
-                    master_volume: self.settings.audio.volume,
-                    playback_speed: result.audio_playback_speed,
-                    mute_during_fast_forward: self.settings.audio.mute_during_fast_forward,
-                    low_pass_enabled: self.settings.audio.low_pass_enabled,
-                    low_pass_cutoff_hz: self.settings.audio.low_pass_cutoff_hz,
-                },
-            );
-        }
+        self.queue_emulator_audio(&result.audio_samples, result.audio_playback_speed);
 
         if let Some(recorder) = &mut self.recording.audio_recorder {
             recorder.write_samples(&result.audio_samples);
@@ -279,7 +312,10 @@ impl App {
         reusable_audio.clear();
         self.recycled.audio = Some(reusable_audio);
 
-        let mut ui_data = result.ui_data;
+        self.process_ui_frame_data(result.ui_data);
+    }
+
+    pub(in crate::app) fn process_ui_frame_data(&mut self, mut ui_data: crate::ui::UiFrameData) {
         if let Some(batch) = ui_data.instruction_trace.take() {
             self.debug_windows
                 .execution_coverage

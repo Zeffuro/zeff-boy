@@ -153,7 +153,6 @@ impl RecordingState {
             || !self.pending_replay_checkpoint_hashes.is_empty()
     }
 
-    #[cfg(test)]
     pub(super) fn replay_timeline_active(&self) -> bool {
         self.is_replay_active()
             || self.queued_replay_playback_frames != 0
@@ -223,13 +222,6 @@ impl RecordingState {
         {
             false
         }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn allocate_replay_capture_id(&mut self) -> u64 {
-        let capture_id = self.next_replay_capture_id;
-        self.next_replay_capture_id = self.next_replay_capture_id.wrapping_add(1);
-        capture_id
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -358,6 +350,7 @@ impl DebugRequests {
 
 pub(super) struct CachedRomInfo {
     pub(super) is_mbc7: bool,
+    pub(super) is_gba_tilt: bool,
     pub(super) is_pocket_camera: bool,
     pub(super) rom_path: Option<PathBuf>,
     pub(super) source_path: Option<PathBuf>,
@@ -546,22 +539,6 @@ mod tests {
         assert!(!state.replay_timeline_active());
         state.pending_media_commands[0].replay_origin_frame = Some(7);
         assert!(state.replay_timeline_active());
-    }
-
-    #[test]
-    fn replay_capture_ids_do_not_match_an_older_pending_start() {
-        let mut state = recording_state();
-        let first = state.allocate_replay_capture_id();
-        let second = state.allocate_replay_capture_id();
-
-        state.pending_replay_start = Some(PendingReplayStart {
-            path: PathBuf::from("second.zrpl"),
-            capture_id: second,
-        });
-
-        assert_ne!(first, second);
-        assert!(!state.replay_start_matches(first));
-        assert!(state.replay_start_matches(second));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

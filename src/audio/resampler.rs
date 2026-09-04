@@ -125,6 +125,18 @@ mod tests {
     }
 
     #[test]
+    fn resampler_converts_emulator_rate_to_device_rate() {
+        let mut r = AudioResampler::new(48_000, 96_000).unwrap();
+        let input = vec![0.0; CHUNK_SIZE * 2];
+        let mut output_frames = 0;
+        for _ in 0..8 {
+            output_frames += r.process(&input, TARGET_FILL_RATIO).len() / 2;
+        }
+
+        assert!(output_frames > CHUNK_SIZE * 8 * 3 / 2);
+    }
+
+    #[test]
     fn resampler_processes_silence() {
         let mut r = AudioResampler::new(48000, 48000).unwrap();
         let input = vec![0.0f32; CHUNK_SIZE * 2];

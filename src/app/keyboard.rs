@@ -237,7 +237,15 @@ impl App {
         if !egui_kb && key_code == self.settings.rewind.key_code() {
             if self.core_supports_rewind() {
                 match key_event.state {
-                    ElementState::Pressed if !key_event.repeat => self.rewind.held = true,
+                    ElementState::Pressed if !key_event.repeat => {
+                        if let Err(error) = self.preflight_emu_command_kind(
+                            crate::emu_thread::TasControlCommandKind::Rewind,
+                        ) {
+                            self.toast_manager.error(error.to_string());
+                        } else {
+                            self.rewind.held = true;
+                        }
+                    }
                     ElementState::Released => self.rewind.held = false,
                     _ => {}
                 }
@@ -304,9 +312,14 @@ impl App {
         let bindings = &self.settings.shortcut_bindings;
 
         if key_code == bindings.get(ShortcutAction::Pause) || key_code == KeyCode::Pause {
+            #[cfg(not(target_arch = "wasm32"))]
+            if pressed && self.realtime_tas_recording_active() {
+                self.stop_realtime_tas_recording();
+                self.toast_manager.info("Stopped real-time TAS recording");
+                return true;
+            }
             if pressed {
-                self.speed.paused = !self.speed.paused;
-                self.toast_manager.set_paused(self.speed.paused);
+                self.toggle_user_paused();
             }
             return true;
         }
@@ -336,13 +349,15 @@ impl App {
         if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
             if pressed {
                 let enable_uncapped = !self.timing.uncapped_speed;
-                self.timing.uncapped_speed = enable_uncapped;
-                self.settings.emulation.uncapped_speed = self.timing.uncapped_speed;
-                self.settings.save();
-                if let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::SetUncapped(
-                        self.timing.uncapped_speed && self.recording.allows_uncapped_worker(),
-                    ));
+                if self
+                    .send_emu_command_checked(EmuCommand::SetUncapped(
+                        enable_uncapped && self.recording.allows_uncapped_worker(),
+                    ))
+                    .is_ok()
+                {
+                    self.timing.uncapped_speed = enable_uncapped;
+                    self.settings.emulation.uncapped_speed = enable_uncapped;
+                    self.settings.save();
                 }
             }
             return true;
@@ -378,9 +393,28 @@ impl App {
         }
 
         if key_code == bindings.get(ShortcutAction::FrameAdvance) {
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.realtime_tas_recording_active() {
+                return true;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if pressed && self.tas_control.can_record_live_input() {
+                if let Err(error) = self.record_current_tas_input_and_advance() {
+                    self.toast_manager
+                        .error(format!("Could not record live TAS input: {error:#}"));
+                }
+                return true;
+            }
             if pressed && self.speed.paused {
-                self.debug_requests.frame_advance = true;
-                self.toast_manager.info("▶ Frame +1");
+                match self.preflight_emu_command_kind(
+                    crate::emu_thread::TasControlCommandKind::FrameExecution,
+                ) {
+                    Ok(()) => {
+                        self.debug_requests.frame_advance = true;
+                        self.toast_manager.info("▶ Frame +1");
+                    }
+                    Err(error) => self.toast_manager.error(error.to_string()),
+                }
             }
             return true;
         }
@@ -428,14 +462,26 @@ impl App {
 
         if key_code == bindings.get(ShortcutAction::DebugContinue) {
             if pressed {
-                self.debug_requests.continue_ = true;
+                if let Err(error) = self.preflight_emu_command_kind(
+                    crate::emu_thread::TasControlCommandKind::DebuggerMutation,
+                ) {
+                    self.toast_manager.error(error.to_string());
+                } else {
+                    self.debug_requests.continue_ = true;
+                }
             }
             return true;
         }
 
         if key_code == bindings.get(ShortcutAction::DebugStep) {
             if pressed {
-                self.debug_requests.step = true;
+                if let Err(error) = self.preflight_emu_command_kind(
+                    crate::emu_thread::TasControlCommandKind::DebuggerMutation,
+                ) {
+                    self.toast_manager.error(error.to_string());
+                } else {
+                    self.debug_requests.step = true;
+                }
             }
             return true;
         }

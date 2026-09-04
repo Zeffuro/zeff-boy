@@ -1,5 +1,5 @@
 use crate::emulator::Emulator;
-use crate::hardware::cartridge::{BackupKind, RomHeader};
+use crate::hardware::cartridge::{BackupKind, RomHeader, SensorKind, TiltState};
 use crate::hardware::cpu::{CpuMode, CpuState, FetchedInstruction};
 use zeff_emu_common::time::{
     ClockRate, FrameLifecycle, MachineTiming, MasterTicks, Reset, TimingSnapshot,
@@ -85,8 +85,20 @@ impl Emulator {
         self.bus.cartridge.backup_kind()
     }
 
+    pub fn sensor_kind(&self) -> SensorKind {
+        self.bus.cartridge.sensor_kind()
+    }
+
+    pub fn tilt_state(&self) -> Option<TiltState> {
+        self.bus.cartridge.tilt_state()
+    }
+
     pub fn rom_hash(&self) -> [u8; 32] {
         self.rom_hash
+    }
+
+    pub fn has_external_bios(&self) -> bool {
+        self.bus.has_external_bios()
     }
 
     pub fn rom_offset_for_cpu_address(&self, address: u32) -> Option<usize> {

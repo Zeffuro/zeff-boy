@@ -39,11 +39,19 @@ fn same_config(a: &SupportedStreamConfig, b: &SupportedStreamConfig) -> bool {
         && a.sample_format() == b.sample_format()
 }
 
+pub(super) fn emulator_source_sample_rate(
+    preferred_sample_rate: Option<u32>,
+    output_sample_rate: u32,
+) -> u32 {
+    preferred_sample_rate.unwrap_or(output_sample_rate)
+}
+
 pub(crate) struct AudioOutput {
     _stream: cpal::Stream,
     producer: rtrb::Producer<QueuedAudioSample>,
     staged_samples: VecDeque<f32>,
-    sample_rate: u32,
+    source_sample_rate: u32,
+    output_sample_rate: u32,
     capacity: usize,
     low_pass_filter: OnePoleLowPass,
     resampler: Option<resampler::AudioResampler>,
@@ -167,14 +175,16 @@ impl AudioOutput {
 
         let mut last_err = None;
         for config in configs {
-            let sample_rate = config.sample_rate();
+            let output_sample_rate = config.sample_rate();
+            let source_sample_rate =
+                emulator_source_sample_rate(preferred_sample_rate, output_sample_rate);
             let channels = config.channels();
-            let capacity = ring_buffer_capacity(sample_rate);
+            let capacity = ring_buffer_capacity(output_sample_rate);
             let (producer, consumer) = rtrb::RingBuffer::new(capacity);
             let underruns = Arc::new(AtomicU64::new(0));
             let playback_generation = Arc::new(AtomicU64::new(0));
             let playback_preroll_samples = Arc::new(AtomicUsize::new(playback_preroll_samples(
-                sample_rate,
+                output_sample_rate,
                 NORMAL_QUEUE_MS,
             )));
             let playback_state = AudioPlaybackState::new(
@@ -186,27 +196,36 @@ impl AudioOutput {
             match Self::build_stream_for_config(&device, &config, consumer, playback_state) {
                 Ok(stream) => {
                     stream.play().context("failed to start audio playback")?;
-                    if let Some(target) = preferred_sample_rate
-                        && sample_rate != target
-                    {
+                    if source_sample_rate != output_sample_rate {
                         log::warn!(
-                            "requested audio sample rate {target} Hz not available; using {sample_rate} Hz ({:?}, {}ch)",
+                            "audio output stream is {output_sample_rate} Hz; resampling {source_sample_rate} Hz emulator audio ({:?}, {}ch)",
                             config.sample_format(),
                             channels
                         );
                     }
 
-                    let resampler = resampler::AudioResampler::new(sample_rate, sample_rate)
-                        .map_err(|e| {
-                            log::warn!("Audio resampler init failed: {e}; using passthrough")
-                        })
-                        .ok();
+                    let resampler = match resampler::AudioResampler::new(
+                        source_sample_rate,
+                        output_sample_rate,
+                    ) {
+                        Ok(resampler) => Some(resampler),
+                        Err(error) if source_sample_rate == output_sample_rate => {
+                            log::warn!("Audio resampler init failed: {error}; using passthrough");
+                            None
+                        }
+                        Err(error) => {
+                            return Err(error).context(format!(
+                                "failed to resample emulator audio from {source_sample_rate} Hz to device rate {output_sample_rate} Hz"
+                            ));
+                        }
+                    };
 
                     return Ok(Self {
                         _stream: stream,
                         producer,
                         staged_samples: VecDeque::new(),
-                        sample_rate,
+                        source_sample_rate,
+                        output_sample_rate,
                         capacity,
                         low_pass_filter: OnePoleLowPass::default(),
                         resampler,
@@ -222,7 +241,7 @@ impl AudioOutput {
                     log::warn!(
                         "audio output config failed: {:?} {} Hz ({}ch): {err}",
                         config.sample_format(),
-                        sample_rate,
+                        output_sample_rate,
                         channels
                     );
                     last_err = Some(err);
@@ -331,8 +350,8 @@ impl AudioOutput {
         }
     }
 
-    pub(crate) fn sample_rate(&self) -> u32 {
-        self.sample_rate
+    pub(crate) fn emulator_sample_rate(&self) -> u32 {
+        self.source_sample_rate
     }
 
     pub(crate) fn discard_queued_samples(&mut self) {
@@ -378,10 +397,10 @@ impl AudioOutput {
             NORMAL_QUEUE_MS
         };
         self.playback_preroll_samples.store(
-            playback_preroll_samples(self.sample_rate, queue_ms),
+            playback_preroll_samples(self.output_sample_rate, queue_ms),
             Ordering::Relaxed,
         );
-        let max_queued = (self.sample_rate as usize * 2 * queue_ms / 1000).max(2);
+        let max_queued = (self.output_sample_rate as usize * 2 * queue_ms / 1000).max(2);
 
         let occupied = self.capacity - self.producer.slots();
         if occupied > max_queued {
@@ -413,7 +432,7 @@ impl AudioOutput {
         if !config.low_pass_enabled {
             self.low_pass_filter.reset();
         }
-        let alpha = low_pass_alpha(self.sample_rate, config.low_pass_cutoff_hz);
+        let alpha = low_pass_alpha(self.output_sample_rate, config.low_pass_cutoff_hz);
 
         if fast_forward_active {
             let available = self.producer.slots().min(samples.len()) & !1;
@@ -431,7 +450,7 @@ impl AudioOutput {
             return;
         }
 
-        let max_staged = self.sample_rate as usize * 2 * MAX_STAGED_AUDIO_MS / 1000;
+        let max_staged = self.output_sample_rate as usize * 2 * MAX_STAGED_AUDIO_MS / 1000;
         let recovery = long_stall_recovery_range(
             occupied.saturating_add(self.staged_samples.len()),
             samples.len(),

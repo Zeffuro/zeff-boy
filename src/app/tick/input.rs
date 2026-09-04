@@ -111,8 +111,7 @@ impl App {
                         }
                         GamepadAction::Pause => {
                             if pressed {
-                                self.speed.paused = !self.speed.paused;
-                                self.toast_manager.set_paused(self.speed.paused);
+                                self.toggle_user_paused();
                             }
                         }
                         GamepadAction::Turbo => {
@@ -189,7 +188,7 @@ impl App {
             } else {
                 Default::default()
             };
-            let host_tilt = if self.rom_info.is_mbc7 {
+            let host_tilt = if self.rom_info.is_mbc7 || self.rom_info.is_gba_tilt {
                 host_tilt
             } else {
                 (0.0, 0.0)
@@ -214,6 +213,7 @@ impl App {
                     zapper,
                     host_tilt,
                     camera_frame,
+                    coleco: Default::default(),
                 };
                 frames_to_step
             ];

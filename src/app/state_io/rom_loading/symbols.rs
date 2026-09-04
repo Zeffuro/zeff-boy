@@ -103,7 +103,7 @@ impl App {
             self.toast_manager.error("Load a ROM first");
             return;
         };
-        let was_paused = self.pause_for_dialog();
+        self.pause_for_dialog();
         let path = crate::platform::FileDialog::new()
             .add_filter(
                 "Symbol files",
@@ -112,7 +112,7 @@ impl App {
             .add_filter("All files", &["*"])
             .set_title("Load Symbol File")
             .pick_file();
-        self.resume_after_dialog(was_paused);
+        self.resume_after_dialog();
         if let Some(path) = path {
             self.start_symbol_load_request(
                 self.active_system,

@@ -4,11 +4,27 @@ mod debug;
 mod queries;
 
 impl Emulator {
+    pub fn has_standard_console_hardware(&self) -> bool {
+        self.bus.cartridge.header().console_type == crate::hardware::cartridge::ConsoleType::Nes
+            && !self.bus.is_vs_system_mapper()
+    }
+
     pub fn has_standard_controller_topology(&self) -> bool {
         use crate::hardware::controller::{ControllerType, ExpansionDevice};
 
         self.bus.controller1.controller_type() == ControllerType::Standard
             && self.bus.controller2.controller_type() == ControllerType::Standard
+            && self.bus.expansion_device == ExpansionDevice::None
+    }
+
+    pub fn has_standard_or_zapper_controller_topology(&self) -> bool {
+        use crate::hardware::controller::{ControllerType, ExpansionDevice};
+
+        self.bus.controller1.controller_type() == ControllerType::Standard
+            && matches!(
+                self.bus.controller2.controller_type(),
+                ControllerType::Standard | ControllerType::Zapper { .. }
+            )
             && self.bus.expansion_device == ExpansionDevice::None
     }
 

@@ -27,6 +27,24 @@ impl Emulator {
         self.bus.cartridge.dump_battery_data()
     }
 
+    pub fn dump_rtc_persistence_state(&self) -> Option<Vec<u8>> {
+        self.bus.cartridge.dump_rtc_persistence_state()
+    }
+
+    pub fn dump_complete_rtc_persistence(&self) -> Option<Vec<u8>> {
+        self.bus.cartridge.dump_complete_rtc_persistence()
+    }
+
+    pub fn load_complete_rtc_persistence(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        let mut candidate = self.clone();
+        candidate
+            .bus
+            .cartridge
+            .load_complete_rtc_persistence(bytes)?;
+        *self = candidate;
+        Ok(())
+    }
+
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         self.bus.cartridge.load_battery_data(bytes)
     }

@@ -30,11 +30,13 @@ const SOURCE_READ_STAGING_BYTES: usize = 2_352;
 const CHD_LOGICAL_BYTES_LIMIT: u64 =
     (PCE_CD_DATA_BYTES_LIMIT as u64 / 2_048) * 2_448 + CHD_TRACK_LIMIT as u64 * 3 * 2_448;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct FileIdentity {
-    bytes: u64,
-    modified: Option<std::time::SystemTime>,
-}
+mod source_identity;
+use source_identity::{FileIdentity, apply_raw_source_media, hash_file};
+#[cfg(test)]
+#[path = "pce_cd_chd/test_fixture.rs"]
+mod test_fixture;
+#[cfg(test)]
+pub(crate) use test_fixture::write_synthetic_uncompressed_v5_chd;
 
 struct RawChdHeader {
     bytes: [u8; CHD_HEADER_BYTES],
@@ -96,6 +98,7 @@ pub(super) fn load_direct_chd_with_mods(
         return Err(PceCdLoadError::ChdUnreadable(path.into()));
     }
     let identity = FileIdentity::from_metadata(&metadata);
+    let raw_source_media_sha256 = hash_file(&mut file, identity.bytes, path)?;
     let raw = read_raw_header(&mut file, identity.bytes, path)?;
     let mut tracks = read_tracks(&mut file, &raw, identity.bytes, path)?;
     tracks.sort_by_key(|track| track.number);
@@ -117,6 +120,9 @@ pub(super) fn load_direct_chd_with_mods(
     let source_disc_sha256 = disc.content_hash();
     let mut loaded = LoadedPceCd {
         disc,
+        raw_source_media_sha256,
+        raw_source_media_len: usize::try_from(identity.bytes)
+            .map_err(|_| PceCdLoadError::DataTooLarge(identity.bytes))?,
         content_sha256: content_identity.0,
         content_crc32: content_identity.1,
         mod_crc32: crc32fast::hash(&source_disc_sha256),
@@ -138,16 +144,10 @@ pub(super) fn load_direct_chd_with_mods(
     }
     drop(loaded);
     let payloads = materialize_payloads(&tracks, image)?;
-    build_chd_disc_with_mods_and_identity(tracks, payloads, true, content_identity)
-}
-
-impl FileIdentity {
-    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
-        Self {
-            bytes: metadata.len(),
-            modified: metadata.modified().ok(),
-        }
-    }
+    let mut loaded =
+        build_chd_disc_with_mods_and_identity(tracks, payloads, true, content_identity)?;
+    apply_raw_source_media(&mut loaded, raw_source_media_sha256, identity.bytes)?;
+    Ok(loaded)
 }
 
 impl HunkDecoder for NativeHunkDecoder {

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
@@ -37,6 +38,26 @@ pub(crate) fn write_new_file_atomically_validated(
     validate: impl FnOnce(&mut File) -> Result<()>,
 ) -> Result<()> {
     write_file_atomically_with(path, bytes, validate, publish_new_file, |_| Ok(()))
+}
+
+pub(crate) fn write_new_file_atomically_validated_cancellable(
+    path: &Path,
+    bytes: &[u8],
+    validate: impl FnOnce(&mut File) -> Result<()>,
+    check_cancelled: impl FnMut() -> Result<()>,
+) -> Result<()> {
+    let check_cancelled = RefCell::new(check_cancelled);
+    write_file_atomically_with(
+        path,
+        bytes,
+        |file| {
+            (check_cancelled.borrow_mut())()?;
+            validate(file)?;
+            (check_cancelled.borrow_mut())()
+        },
+        publish_new_file,
+        |_| (check_cancelled.borrow_mut())(),
+    )
 }
 
 fn write_file_atomically_with(
@@ -133,9 +154,6 @@ fn create_sibling_temp(target: &Path) -> Result<(PathBuf, File)> {
 }
 
 fn validate_file_bytes(file: &mut File, expected: &[u8]) -> Result<()> {
-    // This catches validator/checkpoint mutation before publication. On Unix, a hostile process
-    // running as the same user can still rewrite this inode after the comparison, just as it can
-    // rewrite the published target; callers therefore require a trusted destination directory.
     file.rewind()?;
     let mut actual = Vec::new();
     file.take(
@@ -197,9 +215,7 @@ fn create_macos_publication_guard(
     source_file: &File,
     target: &Path,
 ) -> std::io::Result<(PathBuf, File)> {
-    // macOS rejects descriptor links through fdescfs /dev/fd with EPERM. Copying directly to
-    // the final path would expose a partial destination, so create a unique sibling guard from
-    // the held, already-validated descriptor and atomically rename that complete guard instead.
+    // macOS rejects descriptor links, so publish through a complete sibling guard.
     let file_name = target
         .file_name()
         .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
@@ -647,6 +663,23 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"concurrent output");
+        assert_no_staging_files(&root.0);
+    }
+
+    #[test]
+    fn canceled_new_publication_leaves_no_output_or_staging_file() {
+        let root = TestDir::new("canceled-create-new");
+        let path = root.0.join("replay.zrpl");
+
+        let result = write_new_file_atomically_validated_cancellable(
+            &path,
+            b"verified replay",
+            |_| Ok(()),
+            || bail!("canceled"),
+        );
+
+        assert!(result.is_err());
+        assert!(!path.exists());
         assert_no_staging_files(&root.0);
     }
 

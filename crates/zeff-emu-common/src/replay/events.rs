@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::media::{MediaEvent, MediaObjectId, MediaSlotId};
 use anyhow::{Result, bail};
 
@@ -116,6 +118,10 @@ pub enum ReplayWonderSwanLinkEvent {
 }
 
 impl ReplayEvent {
+    pub fn canonical_cmp(&self, other: &Self) -> Ordering {
+        self.sort_key().cmp(&other.sort_key())
+    }
+
     pub fn frame(&self) -> u64 {
         match self {
             Self::FdsDiskSide { frame, .. } => *frame,

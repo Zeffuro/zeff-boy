@@ -15,6 +15,19 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod tas_persistence;
+mod tas_provenance;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas_persistence::{
+    WsRtcPersistenceWitness, ws_rtc_persistence_witness, ws_tas_persistent_identity,
+    ws_tas_rtc_identity,
+};
+pub(crate) use tas_provenance::{
+    WsTasLoadProvenance, WsTasLoadProvenanceSeed, WsTasLoadSetup, WsTasPersistentLoadOutcome,
+    persistent_load_outcome,
+};
+
 const WS_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
         id: AudioChannelId(0),
@@ -138,6 +151,7 @@ pub(crate) struct WsBackend {
     pub(crate) emu: WsEmulator,
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
+    tas_load_provenance: Option<WsTasLoadProvenance>,
 }
 
 impl WsBackend {
@@ -148,6 +162,39 @@ impl WsBackend {
             .unwrap_or_default()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_bytes(&self) -> Option<Vec<u8>> {
+        self.emu.dump_battery_sram()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_save_kind(&self) -> zeff_ws_core::hardware::cartridge::SaveKind {
+        self.emu.footer().save_kind
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_baseline(
+        &self,
+    ) -> anyhow::Result<crate::save_paths::SaveTargetBaseline> {
+        crate::save_paths::battery_sram_baseline(self.paths.rom_path())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn publish_tas_battery_if_unchanged(
+        &mut self,
+        expected: crate::save_paths::SaveTargetBaseline,
+    ) -> Option<(String, crate::save_paths::SavePublicationOutcome)> {
+        let bytes = self.emu.dump_battery_sram()?;
+        Some(crate::save_paths::publish_battery_sram_if_unchanged(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            "ws",
+            self.emu.rom_hash(),
+            expected,
+            &bytes,
+        ))
+    }
+
     pub(crate) fn new(emu: WsEmulator, rom_path: PathBuf) -> Self {
         let sram_recovery =
             crate::save_paths::battery_sram_session(&rom_path, "ws", emu.rom_hash());
@@ -155,6 +202,7 @@ impl WsBackend {
             emu,
             paths: BackendPaths::new(rom_path),
             sram_recovery,
+            tas_load_provenance: None,
         }
     }
 
@@ -169,6 +217,7 @@ impl WsBackend {
             emu,
             paths: BackendPaths::with_source_path(rom_path, source_path),
             sram_recovery,
+            tas_load_provenance: None,
         }
     }
 
@@ -229,12 +278,17 @@ impl EmulatorCore for WsBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        let bytes = if self.tas_load_provenance.is_some() && self.emu.footer().rtc_present {
+            self.emu.dump_complete_rtc_persistence()
+        } else {
+            self.emu.dump_battery_sram()
+        };
         crate::save_paths::flush_battery_sram(
             &mut self.sram_recovery,
             self.paths.rom_path(),
             "ws",
             self.emu.rom_hash(),
-            self.emu.dump_battery_sram(),
+            bytes,
         )
     }
 
@@ -242,8 +296,12 @@ impl EmulatorCore for WsBackend {
         self.emu.encode_state()
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        self.emu.load_state_from_bytes(bytes)
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
+        self.emu.load_state_from_bytes(bytes)?;
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact)
     }
 
     fn state_restores_framebuffer(&self) -> bool {
@@ -512,10 +570,12 @@ pub(crate) fn try_load_battery_sram(
     rom_path: &Path,
 ) -> anyhow::Result<Option<String>> {
     #[cfg(not(target_arch = "wasm32"))]
-    let result =
-        crate::save_paths::try_load_battery_sram(rom_path, "WS", emu.has_battery(), |bytes| {
-            emu.load_battery_sram(bytes)
-        });
+    let result = crate::save_paths::try_load_battery_sram(
+        rom_path,
+        "WS",
+        emu.has_battery() || emu.footer().rtc_present,
+        |bytes| emu.load_battery_sram(bytes),
+    );
     #[cfg(target_arch = "wasm32")]
     let result = crate::save_paths::try_load_browser_battery_sram(
         crate::save_paths::BrowserBatterySramRequest {
@@ -524,7 +584,7 @@ pub(crate) fn try_load_battery_sram(
             media_identity: emu.rom_hash(),
             component: crate::save_paths::SRAM_COMPONENT,
             system_label: "WS",
-            has_battery: emu.has_battery(),
+            has_battery: emu.has_battery() || emu.footer().rtc_present,
         },
         |bytes| emu.load_battery_sram(bytes),
     );

@@ -7,9 +7,10 @@ use anyhow::{Context, Result, bail};
 use super::validation::pad_frames_to_metadata_events;
 use super::{
     CAMERA_REPEAT_SENTINEL, FRAME_FIXED_BYTES, LEGACY_GB_SAVE_STATE_MAGIC,
-    LEGACY_NES_SAVE_STATE_MAGIC, MAGIC, MAX_REPLAY_CAMERA_FRAME_BYTES, ReplayEvent,
-    ReplayGameBoyLinkEvent, ReplayJoypadFrame, ReplayMetadata, ReplayWonderSwanLinkEvent,
-    ReplayZapperFrame, V1_FRAME_FIXED_BYTES, VERSION,
+    LEGACY_NES_SAVE_STATE_MAGIC, MAGIC, MAX_REPLAY_CAMERA_FRAME_BYTES, ReplayColecoControllerFrame,
+    ReplayEvent, ReplayGameBoyLinkEvent, ReplayJoypadFrame, ReplayMetadata,
+    ReplayWonderSwanLinkEvent, ReplayZapperFrame, V1_FRAME_FIXED_BYTES, V2_FRAME_FIXED_BYTES,
+    V2_VERSION, VERSION,
 };
 
 pub struct ReplayPlayer {
@@ -18,6 +19,7 @@ pub struct ReplayPlayer {
     cursor: usize,
     metadata: ReplayMetadata,
     event_cursor: usize,
+    version: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -84,7 +86,7 @@ impl ReplayPlayer {
         let mut version_buf = [0u8; 4];
         file.read_exact(&mut version_buf)?;
         let version = u32::from_le_bytes(version_buf);
-        if !matches!(version, 1 | VERSION) {
+        if !matches!(version, 1 | V2_VERSION | VERSION) {
             bail!("unsupported replay version: {version}");
         }
 
@@ -120,6 +122,7 @@ impl ReplayPlayer {
                 cursor: 0,
                 metadata: ReplayMetadata::default(),
                 event_cursor: 0,
+                version: 1,
             });
         }
 
@@ -158,6 +161,7 @@ impl ReplayPlayer {
             cursor: 0,
             metadata,
             event_cursor: 0,
+            version,
         })
     }
 
@@ -171,6 +175,10 @@ impl ReplayPlayer {
 
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    pub fn version(&self) -> u32 {
+        self.version
     }
 
     pub fn take_events_at_cursor(&mut self) -> Vec<ReplayEvent> {
@@ -266,6 +274,16 @@ impl ReplayPlayer {
         self.frames.iter().any(ReplayJoypadFrame::uses_zapper_input)
     }
 
+    pub fn uses_coleco_input(&self) -> bool {
+        self.frames.iter().any(ReplayJoypadFrame::uses_coleco_input)
+    }
+
+    pub fn uses_non_coleco_input(&self) -> bool {
+        self.frames
+            .iter()
+            .any(ReplayJoypadFrame::uses_non_coleco_input)
+    }
+
     pub fn uses_game_boy_link_events(&self) -> bool {
         self.metadata.events.iter().any(|event| {
             matches!(
@@ -351,14 +369,14 @@ fn decode_input_frames(
     let mut previous_camera_frame: Option<Vec<u8>> = None;
     let mut decoded_camera_bytes = 0usize;
     for frame_index in 0..frame_count {
-        let fixed_len = if version == VERSION {
-            FRAME_FIXED_BYTES
-        } else {
-            V1_FRAME_FIXED_BYTES
+        let fixed_len = match version {
+            VERSION => FRAME_FIXED_BYTES,
+            V2_VERSION => V2_FRAME_FIXED_BYTES,
+            _ => V1_FRAME_FIXED_BYTES,
         };
         let chunk = read_replay_input_exact(input_data, &mut offset, fixed_len)
             .with_context(|| format!("truncated replay input frame {frame_index}"))?;
-        let player_offset = if version == VERSION { 6 } else { 0 };
+        let player_offset = if version >= V2_VERSION { 6 } else { 0 };
         if chunk[17 + player_offset] != 0 {
             bail!(
                 "invalid replay frame reserved byte: {:#04X}",
@@ -403,12 +421,12 @@ fn decode_input_frames(
             dpad: chunk[1],
             buttons_p2: chunk[2],
             dpad_p2: chunk[3],
-            buttons_p3: if version == VERSION { chunk[4] } else { 0 },
-            dpad_p3: if version == VERSION { chunk[5] } else { 0 },
-            buttons_p4: if version == VERSION { chunk[6] } else { 0 },
-            dpad_p4: if version == VERSION { chunk[7] } else { 0 },
-            buttons_p5: if version == VERSION { chunk[8] } else { 0 },
-            dpad_p5: if version == VERSION { chunk[9] } else { 0 },
+            buttons_p3: if version >= V2_VERSION { chunk[4] } else { 0 },
+            dpad_p3: if version >= V2_VERSION { chunk[5] } else { 0 },
+            buttons_p4: if version >= V2_VERSION { chunk[6] } else { 0 },
+            dpad_p4: if version >= V2_VERSION { chunk[7] } else { 0 },
+            buttons_p5: if version >= V2_VERSION { chunk[8] } else { 0 },
+            dpad_p5: if version >= V2_VERSION { chunk[9] } else { 0 },
             zapper: ReplayZapperFrame::from_parts(
                 chunk[4 + player_offset],
                 u16::from_le_bytes([chunk[5 + player_offset], chunk[6 + player_offset]]),
@@ -429,6 +447,15 @@ fn decode_input_frames(
                 ]),
             ),
             camera_frame,
+            coleco: if version == VERSION {
+                let packed = u32::from_le_bytes([chunk[24], chunk[25], chunk[26], 0]);
+                [
+                    ReplayColecoControllerFrame::from_packed((packed & 0x03FF) as u16)?,
+                    ReplayColecoControllerFrame::from_packed(((packed >> 10) & 0x03FF) as u16)?,
+                ]
+            } else {
+                [ReplayColecoControllerFrame::default(); 2]
+            },
         });
     }
     if offset != input_data.len() {

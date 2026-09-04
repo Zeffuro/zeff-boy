@@ -12,7 +12,7 @@ impl Emulator {
 
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
         self.has_battery()
-            .then(|| self.bus.cartridge_ram().to_vec())
+            .then(|| self.bus.cartridge_ram_visible().to_vec())
     }
 
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {

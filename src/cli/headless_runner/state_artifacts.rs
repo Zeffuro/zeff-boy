@@ -265,7 +265,7 @@ pub(super) fn write_new_state_file(path: &Path, bytes: &[u8]) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::headless_runner::test_support::{TestDirectory, test_directory};
+    use crate::test_support::{TestDirectory, test_directory};
 
     fn test_workspace(label: &str) -> TestDirectory {
         let workspace = test_directory(label).unwrap();

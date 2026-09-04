@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 use crate::hardware::cartridge::rtc::{
     RTC_DAY_HIGH, RTC_DAY_LOW, RTC_DH_CARRY_BIT, RTC_DH_DAY_HIGH_BIT, RTC_HOURS, RTC_MINUTES,
     RTC_SECONDS,
@@ -81,6 +81,77 @@ fn rtc_sram_footer_44_byte_format_is_loaded() {
     let rtc = &mbc3.rtc;
     assert_eq!(rtc.internal, [1, 2, 3, 4, 0x41]);
     assert_eq!(rtc.latched, [5, 6, 7, 8, 0x80]);
+}
+
+#[test]
+fn rtc_explicit_time_sidecar_io_is_deterministic() {
+    let epoch = 946_684_800u64;
+    let mut bytes = vec![0xAA, 0xBB];
+    for reg in [1u8, 2, 3, 4, 0, 5, 6, 7, 8, 0] {
+        bytes.extend_from_slice(&(reg as u32).to_le_bytes());
+    }
+    bytes.extend_from_slice(&(epoch - 5).to_le_bytes());
+
+    let mut first = Mbc3::new(vec![0; 0x8000], 2, true);
+    let mut second = Mbc3::new(vec![0; 0x8000], 2, true);
+    first.load_sram_at_time(&bytes, epoch);
+    second.load_sram_at_time(&bytes, epoch);
+
+    assert_eq!(first.rtc_state(), second.rtc_state());
+    assert_eq!(first.rtc.internal[RTC_SECONDS], 6);
+    assert_eq!(first.rtc.subsecond_cycles, 0);
+    let persisted = first.dump_sram_at_time(epoch);
+    assert_eq!(&persisted[persisted.len() - 8..], &epoch.to_le_bytes());
+}
+
+#[test]
+fn rtc_subsecond_extension_roundtrips_complete_clock_state() {
+    let epoch = 946_684_800u64;
+    let mut source = Mbc3::new(vec![0; 0x8000], 2, true);
+    source.ram.copy_from_slice(&[0xA5, 0x5A]);
+    source.rtc.internal = [17, 23, 5, 9, 0];
+    source.rtc.latched = [16, 22, 4, 8, 0];
+    source.step(GB_T_CYCLES_PER_SECOND / 3);
+    let expected = source.rtc_state();
+
+    let standard = source.dump_sram_at_time(epoch);
+    let extended = source.dump_sram_with_rtc_subsecond_at_time(epoch);
+    assert_eq!(standard.len(), source.ram.len() + 48);
+    assert_eq!(extended.len(), source.ram.len() + 64);
+
+    let mut restored = Mbc3::new(vec![0; 0x8000], 2, true);
+    restored.load_sram_at_time(&extended, epoch);
+    assert_eq!(restored.ram, source.ram);
+    assert_eq!(restored.rtc_state(), expected);
+
+    let mut caught_up = Mbc3::new(vec![0; 0x8000], 2, true);
+    caught_up.load_sram_at_time(&extended, epoch + 5);
+    assert_eq!(caught_up.rtc.internal[RTC_SECONDS], 22);
+    assert_eq!(caught_up.rtc.subsecond_cycles, source.rtc.subsecond_cycles);
+}
+
+#[test]
+fn rtc_subsecond_extension_rejects_an_out_of_range_phase() {
+    let epoch = 946_684_800u64;
+    let source = Mbc3::new(vec![0; 0x8000], 2, true);
+    let mut bytes = source.dump_sram_with_rtc_subsecond_at_time(epoch);
+    let end = bytes.len();
+    bytes[end - 8..].copy_from_slice(&GB_T_CYCLES_PER_SECOND.to_le_bytes());
+
+    let mut restored = Mbc3::new(vec![0; 0x8000], 2, true);
+    restored.rtc.internal[RTC_SECONDS] = 31;
+    restored.load_sram_at_time(&bytes, epoch);
+    assert_eq!(restored.ram, source.ram);
+    assert_eq!(restored.rtc.internal[RTC_SECONDS], 31);
+    assert_eq!(restored.rtc.subsecond_cycles, 0);
+}
+
+#[test]
+fn rtc_catchup_handles_a_zero_timestamp_without_per_second_work() {
+    let mut rtc = Rtc::new();
+    rtc.catchup_seconds(946_684_800);
+
+    assert_eq!(rtc.internal, [0, 0, 0, 205, RTC_DH_CARRY_BIT]);
 }
 
 #[test]

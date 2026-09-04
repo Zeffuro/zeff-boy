@@ -28,11 +28,14 @@ mod live_control;
 mod mods;
 mod patching;
 mod platform;
+mod replay_execution;
 mod rom_archive;
 mod save_paths;
 mod settings;
 mod symbols;
 pub mod tas_project;
+#[cfg(test)]
+mod test_support;
 mod ui;
 #[cfg(not(target_arch = "wasm32"))]
 mod update;

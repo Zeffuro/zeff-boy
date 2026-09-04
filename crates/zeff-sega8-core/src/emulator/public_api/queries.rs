@@ -39,6 +39,10 @@ impl Emulator {
         self.bus.cartridge.system()
     }
 
+    pub fn sg_type_b_ram_extension(&self) -> bool {
+        self.bus.sg_type_b_ram_extension
+    }
+
     pub fn bus(&self) -> &Bus {
         &self.bus
     }

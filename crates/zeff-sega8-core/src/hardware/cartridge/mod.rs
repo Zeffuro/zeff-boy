@@ -16,6 +16,77 @@ pub use header::{
     CodemastersHeader, HeaderLocation, Region, RomHeader, Sega8MapperKind, Sega8System, SystemHint,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameGearStandardMapperRam {
+    Absent,
+    BatteryBacked8KiB,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameGearStandardMapperRamIdentity {
+    identity: GameGearCartridgeIdentity,
+    ram: GameGearStandardMapperRam,
+}
+
+impl GameGearStandardMapperRamIdentity {
+    pub(crate) fn matches(self, identity: GameGearCartridgeIdentity) -> bool {
+        self.identity == identity
+    }
+
+    pub fn ram(self) -> GameGearStandardMapperRam {
+        self.ram
+    }
+}
+
+pub fn game_gear_standard_mapper_ram_identity_from_catalog_entry(
+    identity: GameGearCartridgeIdentity,
+    ram: GameGearStandardMapperRam,
+) -> GameGearStandardMapperRamIdentity {
+    GameGearStandardMapperRamIdentity { identity, ram }
+}
+
+impl GameGearStandardMapperRam {
+    fn save_ram_kind(self) -> SaveRamKind {
+        match self {
+            Self::Absent => SaveRamKind::none(),
+            Self::BatteryBacked8KiB => SaveRamKind::known_battery_backed(8 * 1024),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameGearCartridgeIdentity {
+    pub sha256: [u8; 32],
+    pub source_len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct GameGearBoardCatalogEntry {
+    identity: GameGearCartridgeIdentity,
+    ram: GameGearStandardMapperRam,
+}
+
+const GAME_GEAR_BOARD_CATALOG: &[GameGearBoardCatalogEntry] = &[];
+
+pub fn game_gear_standard_mapper_ram_for_identity(
+    identity: GameGearCartridgeIdentity,
+) -> Option<GameGearStandardMapperRamIdentity> {
+    game_gear_standard_mapper_ram_in_catalog(identity, GAME_GEAR_BOARD_CATALOG)
+}
+
+fn game_gear_standard_mapper_ram_in_catalog(
+    identity: GameGearCartridgeIdentity,
+    catalog: &[GameGearBoardCatalogEntry],
+) -> Option<GameGearStandardMapperRamIdentity> {
+    catalog
+        .iter()
+        .find(|entry| entry.identity == identity)
+        .map(|entry| GameGearStandardMapperRamIdentity {
+            identity: entry.identity,
+            ram: entry.ram,
+        })
+}
+
 #[derive(Clone, Debug)]
 pub struct Cartridge {
     rom: Vec<u8>,
@@ -25,6 +96,7 @@ pub struct Cartridge {
     codemasters_header: Option<CodemastersHeader>,
     system: Sega8System,
     mapper_kind: Sega8MapperKind,
+    game_gear_standard_mapper_ram: Option<GameGearStandardMapperRam>,
     normalized_crc32: u32,
 }
 
@@ -47,6 +119,15 @@ impl Cartridge {
         hint: SystemHint,
         mapper_kind_override: Option<Sega8MapperKind>,
     ) -> anyhow::Result<Self> {
+        Self::load_with_hint_mapper_and_game_gear_ram(rom_data, hint, mapper_kind_override, None)
+    }
+
+    pub(crate) fn load_with_hint_mapper_and_game_gear_ram(
+        rom_data: &[u8],
+        hint: SystemHint,
+        mapper_kind_override: Option<Sega8MapperKind>,
+        game_gear_standard_mapper_ram: Option<GameGearStandardMapperRam>,
+    ) -> anyhow::Result<Self> {
         if rom_data.is_empty() {
             bail!("Sega 8-bit ROM is empty");
         }
@@ -60,6 +141,11 @@ impl Cartridge {
         let mapper_kind = mapper_kind_override
             .or_else(|| compat::mapper_kind_for_crc32(normalized_crc32))
             .unwrap_or_else(|| detect_mapper_kind(codemasters_header.as_ref()));
+        if game_gear_standard_mapper_ram.is_some()
+            && (system != Sega8System::GameGear || mapper_kind != Sega8MapperKind::Sega)
+        {
+            bail!("Game Gear standard-mapper RAM identity requires a Game Gear Sega mapper");
+        }
 
         Ok(Self {
             rom,
@@ -69,6 +155,7 @@ impl Cartridge {
             codemasters_header,
             system,
             mapper_kind,
+            game_gear_standard_mapper_ram,
             normalized_crc32,
         })
     }
@@ -115,10 +202,16 @@ impl Cartridge {
     }
 
     pub fn save_ram_kind(&self) -> SaveRamKind {
+        if self.system == Sega8System::Sg1000 {
+            return SaveRamKind::none();
+        }
         match self.mapper_kind {
-            Sega8MapperKind::Sega => SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE),
+            Sega8MapperKind::Sega => self.game_gear_standard_mapper_ram.map_or_else(
+                || SaveRamKind::mapper_ram_unknown(SMS_CARTRIDGE_RAM_SIZE),
+                GameGearStandardMapperRam::save_ram_kind,
+            ),
             Sega8MapperKind::Codemasters => {
-                SaveRamKind::mapper_ram_unknown(CODEMASTERS_CARTRIDGE_RAM_SIZE)
+                SaveRamKind::known_volatile(CODEMASTERS_CARTRIDGE_RAM_SIZE)
             }
             Sega8MapperKind::Korean
             | Sega8MapperKind::Msx

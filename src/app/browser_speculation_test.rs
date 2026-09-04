@@ -219,7 +219,7 @@ pub(super) fn drive_app(app: &mut App, event_loop: &ActiveEventLoop) {
         return;
     }
 
-    app.speed.paused = true;
+    app.set_user_paused(true);
     app.settings.ui.show_fps = false;
     PROBE.with(|probe| probe.borrow_mut().phase = ProbePhase::SyncingLayerPolicy);
 }

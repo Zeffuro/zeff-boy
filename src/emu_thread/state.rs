@@ -13,7 +13,7 @@ impl EmuThread {
         resp_tx: &Sender<EmuResponse>,
         send_resp: &impl Fn(EmuResponse) -> bool,
     ) -> bool {
-        match Self::encode_current_state(backend) {
+        match backend.encode_external_state_bytes() {
             Ok(bytes) => {
                 let tx = resp_tx.clone();
                 std::thread::spawn(move || {

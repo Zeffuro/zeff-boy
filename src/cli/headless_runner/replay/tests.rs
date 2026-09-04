@@ -18,9 +18,9 @@ use super::endpoint::run_loaded_replay_headless;
 use super::endpoint::validate_game_boy_link_replay_result_for_test;
 #[cfg(not(target_arch = "wasm32"))]
 use super::paired_live::ensure_replay_metadata_has_expected_gb_link_events;
-#[cfg(not(target_arch = "wasm32"))]
-use super::timeline::{PairedGameBoyReplayTimeline, paired_game_boy_replay_timeline};
-use crate::cli::headless_runner::test_support::test_directory;
+use crate::test_support::{build_nes_test_rom, test_directory};
+
+mod gb_link;
 
 static TEST_FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =
     [0xFF; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE];
@@ -46,23 +46,6 @@ fn load_fds_test_backend(rom_path: &Path) -> anyhow::Result<EmuBackend> {
         },
     )?
     .backend)
-}
-
-fn build_nes_test_rom() -> Vec<u8> {
-    let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
-    rom[0..4].copy_from_slice(b"NES\x1A");
-    rom[4] = 1;
-    rom[5] = 1;
-    let prg = 16;
-    rom[prg] = 0xA9;
-    rom[prg + 1] = 0x42;
-    rom[prg + 2] = 0x85;
-    rom[prg + 3] = 0x00;
-    rom[prg + 4] = 0xEA;
-    rom[prg + 5] = 0xEA;
-    rom[prg + 0x3FFC] = 0x00;
-    rom[prg + 0x3FFD] = 0x80;
-    rom
 }
 
 fn load_nes_test_backend(rom_path: &Path, rom_data: Vec<u8>) -> anyhow::Result<EmuBackend> {
@@ -132,275 +115,6 @@ fn arm_pocket_camera_capture(backend: &mut EmuBackend) {
     gb.emu.write_byte(0xA002, 0x00);
     gb.emu.write_byte(0xA003, 0x01);
     gb.emu.write_byte(0xA000, 0x01);
-}
-
-fn replay_player_with_gb_events(
-    dir: &Path,
-    name: &str,
-    frames: usize,
-    events: Vec<ReplayEvent>,
-) -> anyhow::Result<ReplayPlayer> {
-    let path = dir.join(name);
-    let metadata = ReplayMetadata {
-        events,
-        ..ReplayMetadata::default()
-    };
-    let mut recorder = ReplayRecorder::new_with_metadata(path.clone(), Vec::new(), metadata);
-    for _ in 0..frames {
-        recorder.record_joypad_frame(ReplayJoypadFrame::default());
-    }
-    recorder.finish()?;
-    ReplayPlayer::load(&path)
-}
-
-#[test]
-fn paired_game_boy_replay_timeline_aligns_common_transfer_ids() -> anyhow::Result<()> {
-    let temp = test_directory("pair-timeline")?;
-    let left = replay_player_with_gb_events(
-        temp.path(),
-        "left.zrpl",
-        8_121,
-        vec![ReplayEvent::GameBoyLink {
-            frame: 1_333,
-            tick: 2_206_540_680,
-            event: ReplayGameBoyLinkEvent::LocalMasterStart {
-                transfer_id: 0x0100_0000_0000_0000,
-                clock_period_t_cycles: 4096,
-                out_byte: 0x01,
-                serial_generation: 9,
-            },
-        }],
-    )?;
-    let right = replay_player_with_gb_events(
-        temp.path(),
-        "right.zrpl",
-        10_148,
-        vec![ReplayEvent::GameBoyLink {
-            frame: 273,
-            tick: 2_147_632_556,
-            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
-                transfer_id: 0x0100_0000_0000_0000,
-                clock_period_t_cycles: 4096,
-                out_byte: 0x01,
-                serial_generation: 9,
-                local_reply: None,
-            },
-        }],
-    )?;
-
-    let timeline = paired_game_boy_replay_timeline(&left, &right, 5);
-
-    assert_eq!(
-        timeline,
-        PairedGameBoyReplayTimeline {
-            left_start_offset: 0,
-            right_start_offset: 1_060,
-            link_activation_frame: 1_333,
-            left_link_activation_frame: 1_333,
-            right_link_activation_frame: 1_333,
-            left_link_activation_tick: None,
-            right_link_activation_tick: None,
-            left_target_frames: 8_126,
-            right_target_frames: 10_153,
-            total_global_frames: 11_213,
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn paired_game_boy_replay_timeline_uses_recorded_link_state_frames() -> anyhow::Result<()> {
-    let temp = test_directory("pair-timeline-link-state")?;
-    let state = ReplayGameBoyLinkState {
-        peer_present: true,
-        pending_master_byte: None,
-        pending_master_response: None,
-        pending_master_completion_ready: false,
-        queued_master_action: None,
-        pending_passive_completion: None,
-        serial_generation: 0,
-    };
-    let left = replay_player_with_gb_events(
-        temp.path(),
-        "left.zrpl",
-        8_121,
-        vec![
-            ReplayEvent::GameBoyLinkState { frame: 100, state },
-            ReplayEvent::GameBoyLink {
-                frame: 1_333,
-                tick: 2_206_540_680,
-                event: ReplayGameBoyLinkEvent::LocalMasterStart {
-                    transfer_id: 0x0100_0000_0000_0000,
-                    clock_period_t_cycles: 4096,
-                    out_byte: 0x01,
-                    serial_generation: 9,
-                },
-            },
-        ],
-    )?;
-    let right = replay_player_with_gb_events(
-        temp.path(),
-        "right.zrpl",
-        10_148,
-        vec![
-            ReplayEvent::GameBoyLinkState { frame: 20, state },
-            ReplayEvent::GameBoyLink {
-                frame: 273,
-                tick: 2_147_632_556,
-                event: ReplayGameBoyLinkEvent::RemoteMasterStart {
-                    transfer_id: 0x0100_0000_0000_0000,
-                    clock_period_t_cycles: 4096,
-                    out_byte: 0x01,
-                    serial_generation: 9,
-                    local_reply: None,
-                },
-            },
-        ],
-    )?;
-
-    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
-
-    assert_eq!(timeline.left_link_activation_frame, 1_060);
-    assert_eq!(timeline.right_link_activation_frame, 1_080);
-    assert_eq!(timeline.left_link_activation_tick, None);
-    assert_eq!(timeline.right_link_activation_tick, None);
-    assert_eq!(timeline.link_activation_frame, 1_060);
-    Ok(())
-}
-
-#[test]
-fn paired_game_boy_replay_timeline_uses_recorded_link_state_ticks() -> anyhow::Result<()> {
-    let temp = test_directory("pair-timeline-link-state-ticks")?;
-    let state = ReplayGameBoyLinkState {
-        peer_present: true,
-        pending_master_byte: None,
-        pending_master_response: None,
-        pending_master_completion_ready: false,
-        queued_master_action: None,
-        pending_passive_completion: None,
-        serial_generation: 0,
-    };
-    let left = replay_player_with_gb_events(
-        temp.path(),
-        "left.zrpl",
-        10,
-        vec![ReplayEvent::GameBoyLinkStateAtTick {
-            frame: 4,
-            tick: 100,
-            state,
-        }],
-    )?;
-    let right = replay_player_with_gb_events(
-        temp.path(),
-        "right.zrpl",
-        10,
-        vec![ReplayEvent::GameBoyLinkStateAtTick {
-            frame: 7,
-            tick: 200,
-            state,
-        }],
-    )?;
-
-    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
-
-    assert_eq!(timeline.left_link_activation_frame, 4);
-    assert_eq!(timeline.right_link_activation_frame, 7);
-    assert_eq!(timeline.left_link_activation_tick, Some(100));
-    assert_eq!(timeline.right_link_activation_tick, Some(200));
-    Ok(())
-}
-
-#[test]
-fn paired_game_boy_replay_timeline_defaults_without_common_transfer_ids() -> anyhow::Result<()> {
-    let temp = test_directory("pair-timeline-no-common")?;
-    let left = replay_player_with_gb_events(
-        temp.path(),
-        "left.zrpl",
-        12,
-        vec![ReplayEvent::GameBoyLink {
-            frame: 4,
-            tick: 100,
-            event: ReplayGameBoyLinkEvent::LocalMasterStart {
-                transfer_id: 1,
-                clock_period_t_cycles: 4096,
-                out_byte: 0x01,
-                serial_generation: 0,
-            },
-        }],
-    )?;
-    let right = replay_player_with_gb_events(
-        temp.path(),
-        "right.zrpl",
-        10,
-        vec![ReplayEvent::GameBoyLink {
-            frame: 2,
-            tick: 50,
-            event: ReplayGameBoyLinkEvent::RemoteMasterStart {
-                transfer_id: 2,
-                clock_period_t_cycles: 4096,
-                out_byte: 0x01,
-                serial_generation: 0,
-                local_reply: None,
-            },
-        }],
-    )?;
-
-    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
-
-    assert_eq!(
-        timeline,
-        PairedGameBoyReplayTimeline {
-            left_start_offset: 0,
-            right_start_offset: 0,
-            link_activation_frame: 0,
-            left_link_activation_frame: 0,
-            right_link_activation_frame: 0,
-            left_link_activation_tick: None,
-            right_link_activation_tick: None,
-            left_target_frames: 12,
-            right_target_frames: 10,
-            total_global_frames: 12,
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn paired_game_boy_replay_timeline_ignores_same_role_transfer_ids() -> anyhow::Result<()> {
-    let temp = test_directory("pair-timeline-same-role")?;
-    let event = ReplayGameBoyLinkEvent::LocalMasterStart {
-        transfer_id: 0x0100_0000_0000_0007,
-        clock_period_t_cycles: 4096,
-        out_byte: 0x42,
-        serial_generation: 3,
-    };
-    let left = replay_player_with_gb_events(
-        temp.path(),
-        "left.zrpl",
-        12,
-        vec![ReplayEvent::GameBoyLink {
-            frame: 4,
-            tick: 100,
-            event,
-        }],
-    )?;
-    let right = replay_player_with_gb_events(
-        temp.path(),
-        "right.zrpl",
-        10,
-        vec![ReplayEvent::GameBoyLink {
-            frame: 2,
-            tick: 50,
-            event,
-        }],
-    )?;
-
-    let timeline = paired_game_boy_replay_timeline(&left, &right, 0);
-
-    assert_eq!(timeline.left_start_offset, 0);
-    assert_eq!(timeline.right_start_offset, 0);
-    assert_eq!(timeline.link_activation_frame, 0);
-    Ok(())
 }
 
 #[test]
@@ -582,7 +296,10 @@ fn loaded_replay_applies_pocket_camera_frames() -> anyhow::Result<()> {
     assert_eq!(summary.frames, 1);
     let raw_final_state = expected_backend.encode_state_bytes()?;
     let replay_hash_state = expected_backend.encode_replay_hash_state_bytes()?;
-    assert_eq!(u32::from_le_bytes(raw_final_state[8..12].try_into()?), 13);
+    assert_eq!(
+        u32::from_le_bytes(raw_final_state[8..12].try_into()?),
+        zeff_gb_core::save_state::SAVE_STATE_FORMAT_VERSION
+    );
     assert_eq!(u32::from_le_bytes(replay_hash_state[8..12].try_into()?), 12);
     assert_eq!(summary.final_state_hash, sha256_hex(&replay_hash_state));
 
@@ -767,9 +484,9 @@ fn loaded_replay_rejects_mbc7_tilt_input_for_non_mbc7_rom() -> anyhow::Result<()
 
     let player = ReplayPlayer::load(&replay_path)?;
     let err = run_loaded_replay_headless(backend, player, &HeadlessOptions::default())
-        .expect_err("MBC7 tilt replay payload should require MBC7 hardware");
+        .expect_err("tilt replay payload should require sensor hardware");
     assert!(
-        err.to_string().contains("MBC7 tilt input"),
+        err.to_string().contains("tilt input"),
         "unexpected error: {err}"
     );
 

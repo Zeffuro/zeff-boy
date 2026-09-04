@@ -26,6 +26,43 @@ fn external_bios_starts_at_reset_vector_and_can_enter_game_pak_rom() {
 }
 
 #[test]
+fn reset_restores_fresh_hardware_and_clears_queued_audio() {
+    let rom = minimal_rom();
+    let mut emu = Emulator::new(&rom, 48_000).unwrap();
+    emu.set_apu_channel_mutes([true, false, true, false, true, false]);
+    emu.set_apu_debug_capture_enabled(true);
+    emu.set_ppu_debug_flags(false, true, false);
+    emu.set_ppu_debug_bg_layers([true, false, true, false]);
+    emu.cpu_write32(0x0200_0000, 0xDEAD_BEEF);
+    emu.cpu_write16(0x0400_0102, 0x0080);
+    emu.step_frame();
+    assert_ne!(emu.apu_debug_snapshot().sample_buffer_len, 0);
+
+    emu.reset();
+
+    let mut fresh = Emulator::new(&rom, 48_000).unwrap();
+    fresh.set_apu_channel_mutes([true, false, true, false, true, false]);
+    fresh.set_apu_debug_capture_enabled(true);
+    fresh.set_ppu_debug_flags(false, true, false);
+    fresh.set_ppu_debug_bg_layers([true, false, true, false]);
+    assert_eq!(emu.apu_debug_snapshot().sample_buffer_len, 0);
+    assert_eq!(emu.encode_state().unwrap(), fresh.encode_state().unwrap());
+}
+
+#[test]
+fn reset_preserves_battery_data() {
+    let mut rom = minimal_rom();
+    rom.extend_from_slice(b"SRAM_V113");
+    let mut emu = Emulator::new(&rom, 48_000).unwrap();
+    let battery = vec![0x5A; crate::hardware::constants::SRAM_SIZE];
+    emu.load_battery_sram(&battery).unwrap();
+
+    emu.reset();
+
+    assert_eq!(emu.dump_battery_sram(), Some(battery));
+}
+
+#[test]
 fn external_bios_swi_uses_supervisor_vector() {
     let mut bios = vec![0; crate::hardware::constants::BIOS_SIZE];
     bios[8..12].copy_from_slice(&0xEAFF_FFFE_u32.to_le_bytes());
@@ -87,6 +124,24 @@ fn emerald_rom() -> Vec<u8> {
     rom
 }
 
+fn emerald_timer_only_rom() -> Vec<u8> {
+    let mut rom = minimal_rom();
+    rom[0xAC..0xB0].copy_from_slice(b"BPEE");
+    rom
+}
+
+fn begin_partial_rtc_command(emu: &mut Emulator) {
+    emu.cpu_write16(0x0800_00C8, 1);
+    emu.cpu_write16(0x0800_00C4, 1);
+    emu.cpu_write16(0x0800_00C4, 5);
+    emu.cpu_write16(0x0800_00C6, 7);
+    for bit in (5..=7).rev() {
+        let bit = (0x65 >> bit) & 1;
+        emu.cpu_write16(0x0800_00C4, 4 | (bit << 1));
+        emu.cpu_write16(0x0800_00C4, 5 | (bit << 1));
+    }
+}
+
 #[test]
 fn rtc_seed_survives_reset_and_state_restore_is_authoritative() {
     use crate::hardware::cartridge::RtcDateTime;
@@ -109,6 +164,60 @@ fn rtc_seed_survives_reset_and_state_restore_is_authoritative() {
         emu.dump_battery_sram().unwrap().len(),
         crate::hardware::constants::FLASH_1M_SIZE
     );
+}
+
+#[test]
+fn complete_rtc_persistence_roundtrips_backup_gpio_and_subsecond_state() {
+    use crate::hardware::cartridge::RtcDateTime;
+
+    let mut source = Emulator::new(&emerald_rom(), 48_000).unwrap();
+    let backup = vec![0xA5; crate::hardware::constants::FLASH_1M_SIZE];
+    source.load_battery_sram(&backup).unwrap();
+    assert!(source.set_rtc_date_time(RtcDateTime::new(2044, 6, 7, 2, [12, 34, 56]).unwrap()));
+    source.step_frame();
+    begin_partial_rtc_command(&mut source);
+
+    let complete = source.dump_complete_rtc_persistence().unwrap();
+    let rtc_state = source.dump_rtc_persistence_state().unwrap();
+    assert_eq!(rtc_state.len(), 32);
+    assert_eq!(complete.len(), backup.len() + 40);
+    assert_eq!(&complete[backup.len()..backup.len() + 8], b"ZBGARTC1");
+    assert_eq!(&complete[backup.len() + 8..], rtc_state);
+
+    let mut restored = Emulator::new(&emerald_rom(), 48_000).unwrap();
+    restored.load_complete_rtc_persistence(&complete).unwrap();
+    assert_eq!(
+        restored.dump_complete_rtc_persistence(),
+        Some(complete.clone())
+    );
+
+    let later = RtcDateTime::new(2051, 8, 9, 3, [1, 2, 3]).unwrap();
+    assert!(restored.set_rtc_date_time(later));
+    restored.load_battery_sram(&complete).unwrap();
+    assert_eq!(restored.dump_battery_sram(), Some(backup));
+    assert_eq!(restored.rtc_date_time(), Some(later));
+
+    let before = restored.dump_complete_rtc_persistence();
+    let mut malformed = complete;
+    let magic_offset = malformed.len() - 40;
+    malformed[magic_offset] ^= 1;
+    assert!(restored.load_complete_rtc_persistence(&malformed).is_err());
+    assert_eq!(restored.dump_complete_rtc_persistence(), before);
+}
+
+#[test]
+fn timer_only_rtc_persistence_has_one_exact_component() {
+    let mut source = Emulator::new(&emerald_timer_only_rom(), 48_000).unwrap();
+    source.step_frame();
+    begin_partial_rtc_command(&mut source);
+    let complete = source.dump_complete_rtc_persistence().unwrap();
+    assert_eq!(complete.len(), 40);
+    assert_eq!(&complete[..8], b"ZBGARTC1");
+    assert_eq!(source.dump_battery_sram(), None);
+
+    let mut restored = Emulator::new(&emerald_timer_only_rom(), 48_000).unwrap();
+    restored.load_complete_rtc_persistence(&complete).unwrap();
+    assert_eq!(restored.dump_complete_rtc_persistence(), Some(complete));
 }
 
 #[test]

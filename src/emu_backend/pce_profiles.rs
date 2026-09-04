@@ -274,21 +274,145 @@ pub(crate) fn canonical_title_metadata(
 }
 
 pub(crate) fn automatic_controller_mode(content_hash: [u8; 32]) -> PceControllerMode {
+    #[cfg(test)]
+    if let Some((_, mode)) = TEST_CONTROLLER_CATALOG
+        .lock()
+        .expect("test controller catalogue lock poisoned")
+        .iter()
+        .find(|(hash, _)| *hash == content_hash)
+    {
+        return *mode;
+    }
     canonical_title_metadata(content_hash)
         .map(|profile| profile.controller_mode)
         .unwrap_or(PceControllerMode::TwoButton)
 }
 
+#[cfg(test)]
+static TEST_CONTROLLER_CATALOG: std::sync::Mutex<Vec<([u8; 32], PceControllerMode)>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) struct TestControllerCatalogGuard([u8; 32]);
+
+#[cfg(test)]
+pub(crate) fn register_test_controller_catalog_hash(
+    normalized_disc_sha256: [u8; 32],
+    mode: PceControllerMode,
+) -> TestControllerCatalogGuard {
+    TEST_CONTROLLER_CATALOG
+        .lock()
+        .expect("test controller catalogue lock poisoned")
+        .push((normalized_disc_sha256, mode));
+    TestControllerCatalogGuard(normalized_disc_sha256)
+}
+
+#[cfg(test)]
+impl Drop for TestControllerCatalogGuard {
+    fn drop(&mut self) {
+        let mut catalog = TEST_CONTROLLER_CATALOG
+            .lock()
+            .expect("test controller catalogue lock poisoned");
+        let index = catalog
+            .iter()
+            .position(|(hash, _)| *hash == self.0)
+            .expect("test controller catalogue entry was removed");
+        catalog.swap_remove(index);
+    }
+}
+
 pub(crate) fn automatic_memory_base_enabled(content_hash: Option<[u8; 32]>) -> bool {
-    content_hash
+    let catalogued = content_hash
         .and_then(canonical_title_metadata)
-        .is_some_and(|profile| profile.memory_base_128)
+        .is_some_and(|profile| profile.memory_base_128);
+    #[cfg(test)]
+    let catalogued = catalogued
+        || content_hash.is_some_and(|hash| {
+            TEST_MEMORY_BASE_CATALOG
+                .lock()
+                .expect("test Memory Base catalogue lock poisoned")
+                .contains(&hash)
+        });
+    catalogued
+}
+
+#[cfg(test)]
+static TEST_MEMORY_BASE_CATALOG: std::sync::Mutex<Vec<[u8; 32]>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) struct TestMemoryBaseCatalogGuard([u8; 32]);
+
+#[cfg(test)]
+pub(crate) fn register_test_memory_base_catalog_hash(
+    normalized_disc_sha256: [u8; 32],
+) -> TestMemoryBaseCatalogGuard {
+    TEST_MEMORY_BASE_CATALOG
+        .lock()
+        .expect("test Memory Base catalogue lock poisoned")
+        .push(normalized_disc_sha256);
+    TestMemoryBaseCatalogGuard(normalized_disc_sha256)
+}
+
+#[cfg(test)]
+impl Drop for TestMemoryBaseCatalogGuard {
+    fn drop(&mut self) {
+        let mut catalog = TEST_MEMORY_BASE_CATALOG
+            .lock()
+            .expect("test Memory Base catalogue lock poisoned");
+        let index = catalog
+            .iter()
+            .position(|hash| *hash == self.0)
+            .expect("test Memory Base catalogue entry was removed");
+        catalog.swap_remove(index);
+    }
 }
 
 pub(crate) fn automatic_arcade_card_enabled(content_hash: Option<[u8; 32]>) -> bool {
-    content_hash
+    let catalogued = content_hash
         .and_then(canonical_title_metadata)
-        .is_some_and(|profile| profile.arcade_card)
+        .is_some_and(|profile| profile.arcade_card);
+    #[cfg(test)]
+    let catalogued = catalogued
+        || content_hash.is_some_and(|hash| {
+            TEST_ARCADE_CARD_CATALOG
+                .lock()
+                .expect("test Arcade Card catalogue lock poisoned")
+                .contains(&hash)
+        });
+    catalogued
+}
+
+#[cfg(test)]
+static TEST_ARCADE_CARD_CATALOG: std::sync::Mutex<Vec<[u8; 32]>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) struct TestArcadeCardCatalogGuard([u8; 32]);
+
+#[cfg(test)]
+pub(crate) fn register_test_arcade_card_catalog_hash(
+    normalized_disc_sha256: [u8; 32],
+) -> TestArcadeCardCatalogGuard {
+    TEST_ARCADE_CARD_CATALOG
+        .lock()
+        .expect("test Arcade Card catalogue lock poisoned")
+        .push(normalized_disc_sha256);
+    TestArcadeCardCatalogGuard(normalized_disc_sha256)
+}
+
+#[cfg(test)]
+impl Drop for TestArcadeCardCatalogGuard {
+    fn drop(&mut self) {
+        let mut catalog = TEST_ARCADE_CARD_CATALOG
+            .lock()
+            .expect("test Arcade Card catalogue lock poisoned");
+        let index = catalog
+            .iter()
+            .position(|hash| *hash == self.0)
+            .expect("test Arcade Card catalogue entry was removed");
+        catalog.swap_remove(index);
+    }
 }
 
 #[cfg(test)]

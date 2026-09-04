@@ -34,11 +34,24 @@ if ($manifestStatus -ne 404) {
 }
 
 $prTitle = "Update: Zeffuro.ZeffBoy to $versionNumber"
-$query = [Uri]::EscapeDataString("repo:microsoft/winget-pkgs is:pr is:open in:title `"$prTitle`"")
-$headers = @{ Accept = "application/vnd.github+json"; "User-Agent" = "zeff-boy-winget" }
-$openPullRequests = Invoke-RestMethod "https://api.github.com/search/issues?q=$query" -Headers $headers
+$query = [Uri]::EscapeDataString(
+    'repo:microsoft/winget-pkgs is:pr is:open in:title "Zeffuro.ZeffBoy"'
+)
+$headers = @{
+    Accept = "application/vnd.github+json"
+    Authorization = "Bearer $env:WINGET_CREATE_GITHUB_TOKEN"
+    "User-Agent" = "zeff-boy-winget"
+}
+$openPullRequests = Invoke-RestMethod `
+    -Uri "https://api.github.com/search/issues?q=$query&per_page=1" `
+    -Headers $headers
 if ($openPullRequests.total_count -gt 0) {
-    Write-Host "An open WinGet pull request already exists for $versionNumber"
+    $existingPr = $openPullRequests.items[0]
+    Write-Host (
+        "An open WinGet pull request already exists for Zeffuro.ZeffBoy: " +
+        "#$($existingPr.number) $($existingPr.html_url)"
+    )
+    Write-Host "Skipping WinGet submission."
     exit 0
 }
 

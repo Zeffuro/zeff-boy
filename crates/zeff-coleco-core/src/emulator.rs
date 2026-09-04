@@ -6,6 +6,7 @@ use zeff_emu_common::time::{
 };
 use zeff_z80::{Cpu, CpuTrap, ResetState, Z80_RESET_PC};
 
+use crate::ExpansionHardware;
 use crate::bus::Bus;
 use crate::constants::{
     BIOS_SIZE, CPU_CLOCK_HZ, DEFAULT_SAMPLE_RATE, MAX_CARTRIDGE_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH,
@@ -90,6 +91,18 @@ impl Emulator {
         self.effective_cycles
     }
 
+    pub const fn bios_hash(&self) -> [u8; 32] {
+        self.bios_hash
+    }
+
+    pub const fn cartridge_hash(&self) -> [u8; 32] {
+        self.cartridge_hash
+    }
+
+    pub const fn expansion_hardware(&self) -> ExpansionHardware {
+        self.bus.expansion_hardware()
+    }
+
     pub fn cpu_cycles(&self) -> u64 {
         self.cpu.cycles()
     }
@@ -162,6 +175,17 @@ impl Emulator {
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
         crate::save_state::decode_state(self, data)
+    }
+
+    pub fn encode_external_state(&self) -> anyhow::Result<Vec<u8>> {
+        crate::save_state::encode_external_state(self)
+    }
+
+    pub fn load_external_state(
+        &mut self,
+        data: &[u8],
+    ) -> anyhow::Result<crate::save_state::ExternalStateRestoreOutcome> {
+        crate::save_state::load_external_state(self, data)
     }
 }
 

@@ -19,6 +19,138 @@ fn rom_with_reset_code(code: &[u8]) -> Vec<u8> {
     rom
 }
 
+fn rtc_persistence_rom(save_kind: u8) -> Vec<u8> {
+    let mut rom = rom_with_reset_code(&[0xF4]);
+    let footer = rom.len() - 10;
+    rom[footer + 5] = save_kind;
+    rom[footer + 7] = 1;
+    let checksum = compute_footer_checksum(&rom);
+    rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+    rom
+}
+
+fn exact_rtc_state() -> crate::hardware::bus::RtcSaveState {
+    crate::hardware::bus::RtcSaveState {
+        command: 0x15,
+        payload: [0x24, 0x12, 0x31, 0x02, 0x23, 0x59, 0x58],
+        payload_index: 3,
+        payload_len: 7,
+        ready_delay_reads: 1,
+        invalid_command: false,
+        subsecond_cycles: 1_234_567,
+    }
+}
+
+#[test]
+fn timer_only_complete_rtc_persistence_roundtrips_through_battery_loading() {
+    let rom = rtc_persistence_rom(0);
+    let mut source = Emulator::from_rom_data(&rom).unwrap();
+    source.bus.load_rtc_save_state(exact_rtc_state()).unwrap();
+
+    let complete = source.dump_complete_rtc_persistence().unwrap();
+    assert_eq!(complete.len(), 24);
+    assert_eq!(source.dump_rtc_persistence_state().unwrap().len(), 16);
+    assert_eq!(source.dump_battery_sram(), None);
+
+    let mut restored = Emulator::from_rom_data(&rom).unwrap();
+    restored.load_battery_sram(&complete).unwrap();
+    assert_eq!(
+        restored.dump_complete_rtc_persistence(),
+        Some(complete.clone())
+    );
+
+    let mut explicit = Emulator::from_rom_data(&rom).unwrap();
+    explicit.load_complete_rtc_persistence(&complete).unwrap();
+    assert_eq!(explicit.dump_complete_rtc_persistence(), Some(complete));
+}
+
+#[test]
+fn sram_and_eeprom_complete_rtc_persistence_roundtrip_exactly() {
+    for (save_kind, marker) in [(0x02, 0x3C), (0x10, 0xA7)] {
+        let rom = rtc_persistence_rom(save_kind);
+        let mut source = Emulator::from_rom_data(&rom).unwrap();
+        let backup = vec![marker; source.save_ram_kind().size()];
+        source.load_battery_sram(&backup).unwrap();
+        source.bus.load_rtc_save_state(exact_rtc_state()).unwrap();
+        let complete = source.dump_complete_rtc_persistence().unwrap();
+        assert_eq!(&complete[..backup.len()], backup.as_slice());
+
+        let mut restored = Emulator::from_rom_data(&rom).unwrap();
+        restored.load_battery_sram(&complete).unwrap();
+        assert_eq!(restored.dump_battery_sram(), Some(backup));
+        assert_eq!(restored.dump_complete_rtc_persistence(), Some(complete));
+    }
+}
+
+#[test]
+fn legacy_battery_data_preserves_rtc_and_non_rtc_behavior() {
+    for save_kind in [0x02, 0x10] {
+        let rom = rtc_persistence_rom(save_kind);
+        let mut emu = Emulator::from_rom_data(&rom).unwrap();
+        emu.bus.load_rtc_save_state(exact_rtc_state()).unwrap();
+        let rtc_before = emu.dump_rtc_persistence_state();
+        let backup = vec![0x6D; emu.save_ram_kind().size()];
+
+        emu.load_battery_sram(&backup).unwrap();
+
+        assert_eq!(emu.dump_battery_sram(), Some(backup));
+        assert_eq!(emu.dump_rtc_persistence_state(), rtc_before);
+    }
+
+    let mut timer_only = Emulator::from_rom_data(&rtc_persistence_rom(0)).unwrap();
+    timer_only
+        .bus
+        .load_rtc_save_state(exact_rtc_state())
+        .unwrap();
+    let timer_before = timer_only.dump_rtc_persistence_state();
+    timer_only.load_battery_sram(&[]).unwrap();
+    assert_eq!(timer_only.dump_rtc_persistence_state(), timer_before);
+
+    let mut non_rtc_rom = rtc_persistence_rom(0x02);
+    let footer = non_rtc_rom.len() - 10;
+    non_rtc_rom[footer + 7] = 0;
+    let checksum = compute_footer_checksum(&non_rtc_rom);
+    non_rtc_rom[footer + 8..footer + 10].copy_from_slice(&checksum.to_le_bytes());
+    let mut non_rtc = Emulator::from_rom_data(&non_rtc_rom).unwrap();
+    let backup = vec![0x91; non_rtc.save_ram_kind().size()];
+    non_rtc.load_battery_sram(&backup).unwrap();
+    assert_eq!(non_rtc.dump_battery_sram(), Some(backup));
+    assert_eq!(non_rtc.dump_complete_rtc_persistence(), None);
+}
+
+#[test]
+fn malformed_complete_rtc_persistence_is_transactional() {
+    for save_kind in [0, 0x02, 0x10] {
+        let rom = rtc_persistence_rom(save_kind);
+        let mut source = Emulator::from_rom_data(&rom).unwrap();
+        if source.save_ram_kind().size() != 0 {
+            source
+                .load_battery_sram(&vec![0x45; source.save_ram_kind().size()])
+                .unwrap();
+        }
+        source.bus.load_rtc_save_state(exact_rtc_state()).unwrap();
+        let complete = source.dump_complete_rtc_persistence().unwrap();
+
+        let mut target = Emulator::from_rom_data(&rom).unwrap();
+        let before = target.dump_complete_rtc_persistence();
+        let mut wrong_magic = complete.clone();
+        wrong_magic[source.save_ram_kind().size()] ^= 0xFF;
+        let mut trailing = complete.clone();
+        trailing.push(0);
+        let mut invalid_datetime = complete.clone();
+        invalid_datetime[source.save_ram_kind().size() + 10] = 0;
+        for malformed in [
+            &complete[..complete.len() - 1],
+            wrong_magic.as_slice(),
+            &trailing,
+            &invalid_datetime,
+        ] {
+            assert!(target.load_battery_sram(malformed).is_err());
+            assert_eq!(target.dump_complete_rtc_persistence(), before);
+        }
+    }
+}
+
 #[test]
 fn timing_snapshot_tracks_and_restores_cpu_cycles() {
     let rom = rom_with_reset_code(&[0x90, 0x90, 0xF4]);

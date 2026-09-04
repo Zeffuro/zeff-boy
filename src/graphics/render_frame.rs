@@ -81,6 +81,8 @@ pub(crate) struct RenderContext<'a> {
 pub(crate) struct RenderResult {
     pub(crate) actions: Vec<MenuAction>,
     pub(crate) debug_actions: DebugUiActions,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) tas_editor_host_request: Option<debug::TasEditorHostRequest>,
     pub(crate) archive_selection_action: Option<ArchiveSelectionAction>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) cancel_package_load: bool,
@@ -190,13 +192,13 @@ impl Graphics {
             .and_then(|name| name.to_str())
             .unwrap_or("archive");
 
-        egui::Window::new("Select ROM from archive")
+        egui::Window::new("Select content from archive")
             .collapsible(false)
             .resizable(true)
             .default_width(560.0)
             .show(ctx_egui, |ui| {
                 ui.label(format!(
-                    "{} contains multiple supported ROMs. Choose one to load:",
+                    "{} contains multiple supported entries. Choose one to load:",
                     archive_name
                 ));
                 ui.separator();
@@ -432,8 +434,8 @@ impl Graphics {
                 .render_to_pass(&mut render_pass, &paint_jobs, &screen_desc);
         }
 
-        self.egui.cleanup(full_output);
-        self.gpu.queue.submit(Some(encoder.finish()));
+        self.egui
+            .submit_and_cleanup(&self.gpu.queue, encoder, full_output);
     }
 
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
@@ -548,6 +550,10 @@ impl Graphics {
         ) {
             forwarded_actions.push(MenuAction::TriggerBarcodeBoyScan(digits));
         }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let tas_editor_host_request =
+            debug::draw_tas_editor_window(self.egui.context(), &mut ctx.debug_windows.tas_editor);
 
         let content_rect = root_ui.available_rect_before_wrap();
         let content_min = content_rect.min;
@@ -718,6 +724,8 @@ impl Graphics {
         Ok(RenderResult {
             actions: forwarded_actions,
             debug_actions,
+            #[cfg(not(target_arch = "wasm32"))]
+            tas_editor_host_request,
             archive_selection_action,
             #[cfg(not(target_arch = "wasm32"))]
             cancel_package_load,

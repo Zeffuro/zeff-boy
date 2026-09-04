@@ -2,6 +2,7 @@
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub enum SaveRamKind {
     None,
+    KnownVolatile { size: usize },
     KnownBatteryBacked { size: usize },
     MapperRamUnknown { size: usize },
 }
@@ -13,6 +14,10 @@ impl SaveRamKind {
 
     pub const fn known_battery_backed(size: usize) -> Self {
         Self::KnownBatteryBacked { size }
+    }
+
+    pub const fn known_volatile(size: usize) -> Self {
+        Self::KnownVolatile { size }
     }
 
     pub const fn mapper_ram_unknown(size: usize) -> Self {
@@ -30,7 +35,9 @@ impl SaveRamKind {
     pub const fn size(self) -> usize {
         match self {
             Self::None => 0,
-            Self::KnownBatteryBacked { size } | Self::MapperRamUnknown { size } => size,
+            Self::KnownVolatile { size }
+            | Self::KnownBatteryBacked { size }
+            | Self::MapperRamUnknown { size } => size,
         }
     }
 }

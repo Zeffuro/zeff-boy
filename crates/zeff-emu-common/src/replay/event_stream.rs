@@ -15,8 +15,21 @@ pub fn encode_replay_event_stream(events: &[ReplayEvent]) -> Result<Vec<u8>> {
     }
 
     let mut events = events.to_vec();
-    events.sort_by_key(ReplayEvent::sort_key);
+    events.sort_by(ReplayEvent::canonical_cmp);
+    encode_canonical_replay_event_stream(&events)
+}
+
+pub fn encode_canonical_replay_event_stream(events: &[ReplayEvent]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
+    if events.len() > MAX_EVENTS {
+        bail!("replay event stream exceeds {MAX_EVENTS} events");
+    }
+    if events
+        .windows(2)
+        .any(|pair| pair[0].canonical_cmp(&pair[1]).is_gt())
+    {
+        bail!("replay event stream is not in canonical order");
+    }
     out.extend_from_slice(MAGIC);
     write_u32(&mut out, VERSION);
     write_u32(&mut out, events.len() as u32);
@@ -72,7 +85,7 @@ pub fn decode_replay_event_stream(bytes: &[u8]) -> Result<Vec<ReplayEvent>> {
     cursor.finish()?;
 
     let mut canonical = events.clone();
-    canonical.sort_by_key(ReplayEvent::sort_key);
+    canonical.sort_by(ReplayEvent::canonical_cmp);
     if events != canonical {
         bail!("replay event stream is not in canonical order");
     }

@@ -41,9 +41,29 @@ enum InitialPrimary {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WriteKind {
     Primary,
+    PostPrimary,
     SessionStart,
     History,
     Prune,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SaveTargetBaseline {
+    Missing,
+    Present { byte_len: u64, sha256: [u8; 32] },
+}
+
+#[derive(Debug)]
+pub(crate) enum SavePublicationOutcome {
+    NotPublished(anyhow::Error),
+    PublishedDurable,
+    PublishedDurabilityUncertain(anyhow::Error),
+}
+
+pub(crate) struct SaveRecoveryIdentity<'a> {
+    pub(crate) system_subdir: &'a str,
+    pub(crate) media_identity: [u8; 32],
+    pub(crate) component: &'a str,
 }
 
 pub(crate) struct RecoverySession {
@@ -114,9 +134,32 @@ impl RecoverySession {
             return crate::platform::write_save_data(primary_path, bytes);
         }
         let directory = recovery_directory(system_subdir, media_identity, component)?;
-        self.write_with(primary_path, directory, bytes, |_| Ok(()))
+        match self.write_with_outcome(primary_path, directory, None, bytes, |_| Ok(())) {
+            SavePublicationOutcome::PublishedDurable => Ok(()),
+            SavePublicationOutcome::NotPublished(error)
+            | SavePublicationOutcome::PublishedDurabilityUncertain(error) => Err(error),
+        }
     }
 
+    pub(crate) fn write_if_unchanged(
+        &mut self,
+        primary_path: &Path,
+        identity: SaveRecoveryIdentity<'_>,
+        expected: SaveTargetBaseline,
+        bytes: &[u8],
+    ) -> SavePublicationOutcome {
+        let directory = match recovery_directory(
+            identity.system_subdir,
+            identity.media_identity,
+            identity.component,
+        ) {
+            Ok(directory) => directory,
+            Err(error) => return SavePublicationOutcome::NotPublished(error),
+        };
+        self.write_with_outcome(primary_path, directory, Some(expected), bytes, |_| Ok(()))
+    }
+
+    #[cfg(test)]
     fn write_with(
         &mut self,
         primary_path: &Path,
@@ -124,32 +167,97 @@ impl RecoverySession {
         bytes: &[u8],
         checkpoint: impl FnMut(WriteKind) -> Result<()>,
     ) -> Result<()> {
+        match self.write_with_outcome(primary_path, recovery_directory, None, bytes, checkpoint) {
+            SavePublicationOutcome::PublishedDurable => Ok(()),
+            SavePublicationOutcome::NotPublished(error)
+            | SavePublicationOutcome::PublishedDurabilityUncertain(error) => Err(error),
+        }
+    }
+
+    fn write_with_outcome(
+        &mut self,
+        primary_path: &Path,
+        recovery_directory: PathBuf,
+        expected: Option<SaveTargetBaseline>,
+        bytes: &[u8],
+        checkpoint: impl FnMut(WriteKind) -> Result<()>,
+    ) -> SavePublicationOutcome {
         let _guard = UPDATE_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.write_locked(primary_path, recovery_directory, bytes, checkpoint)
+        self.write_locked(
+            primary_path,
+            recovery_directory,
+            expected,
+            bytes,
+            checkpoint,
+        )
     }
 
     fn write_locked(
         &mut self,
         primary_path: &Path,
         recovery_directory: PathBuf,
+        expected: Option<SaveTargetBaseline>,
         bytes: &[u8],
         mut checkpoint: impl FnMut(WriteKind) -> Result<()>,
-    ) -> Result<()> {
+    ) -> SavePublicationOutcome {
         if bytes.len() as u64 > MAX_SRAM_BYTES {
-            bail!("save data exceeds the {MAX_SRAM_BYTES}-byte recovery limit");
+            return SavePublicationOutcome::NotPublished(anyhow::anyhow!(
+                "save data exceeds the {MAX_SRAM_BYTES}-byte recovery limit"
+            ));
         }
-        let mut primary = read_bounded(primary_path)
-            .with_context(|| format!("failed to read save data: {}", primary_path.display()))?;
+        let mut primary = match read_bounded(primary_path)
+            .with_context(|| format!("failed to read save data: {}", primary_path.display()))
+        {
+            Ok(primary) => primary,
+            Err(error) => return SavePublicationOutcome::NotPublished(error),
+        };
+        if let Some(expected) = expected
+            && baseline_for_bytes(primary.as_deref()) != expected
+        {
+            return SavePublicationOutcome::NotPublished(anyhow::anyhow!(
+                "save target changed after the TAS repair transaction began: {}",
+                primary_path.display()
+            ));
+        }
+        if !self.enabled {
+            if primary.as_deref() == Some(bytes) {
+                return SavePublicationOutcome::PublishedDurable;
+            }
+            if let Err(error) = checkpoint(WriteKind::Primary) {
+                return SavePublicationOutcome::NotPublished(error);
+            }
+            if let Err(error) = crate::platform::write_save_data(primary_path, bytes) {
+                return match read_bounded(primary_path) {
+                    Ok(Some(current)) if current == bytes => {
+                        SavePublicationOutcome::PublishedDurabilityUncertain(error)
+                    }
+                    Ok(_) => SavePublicationOutcome::NotPublished(error),
+                    Err(reconcile_error) => {
+                        SavePublicationOutcome::PublishedDurabilityUncertain(reconcile_error)
+                    }
+                };
+            }
+            return match checkpoint(WriteKind::PostPrimary) {
+                Ok(()) => SavePublicationOutcome::PublishedDurable,
+                Err(error) => SavePublicationOutcome::PublishedDurabilityUncertain(error),
+            };
+        }
         let key = RecoveryKey {
             directory: recovery_directory.clone(),
         };
         let entry = self.entries.entry(key).or_default();
         match &entry.initial_primary {
-            InitialPrimary::Uninitialized => bail!("save recovery session was not initialized"),
+            InitialPrimary::Uninitialized => {
+                return SavePublicationOutcome::NotPublished(anyhow::anyhow!(
+                    "save recovery session was not initialized"
+                ));
+            }
             InitialPrimary::Failed(error) => {
-                bail!("save recovery session could not read its initial primary: {error}")
+                return SavePublicationOutcome::NotPublished(anyhow::anyhow!(
+                    "save recovery session could not read its initial primary: {error}"
+                ));
             }
             InitialPrimary::Captured(_) => {}
         }
@@ -159,34 +267,44 @@ impl RecoverySession {
         }
 
         if primary.as_deref() == Some(bytes) {
-            return Ok(());
+            return SavePublicationOutcome::PublishedDurable;
         }
 
         let previous = primary.take();
-        checkpoint(WriteKind::Primary)?;
+        if let Err(error) = checkpoint(WriteKind::Primary) {
+            return SavePublicationOutcome::NotPublished(error);
+        }
         if let Err(error) = crate::platform::write_save_data(primary_path, bytes) {
-            let published = read_bounded(primary_path)
-                .with_context(|| {
-                    format!(
-                        "failed to reconcile save data after write error: {}",
-                        primary_path.display()
-                    )
-                })?
-                .is_some_and(|current| current == bytes);
+            let published = match read_bounded(primary_path).with_context(|| {
+                format!(
+                    "failed to reconcile save data after write error: {}",
+                    primary_path.display()
+                )
+            }) {
+                Ok(current) => current.is_some_and(|current| current == bytes),
+                Err(reconcile_error) => {
+                    return SavePublicationOutcome::PublishedDurabilityUncertain(reconcile_error);
+                }
+            };
             if !published {
-                return Err(error).with_context(|| {
-                    format!("failed to write save data: {}", primary_path.display())
-                });
+                return SavePublicationOutcome::NotPublished(error.context(format!(
+                    "failed to write save data: {}",
+                    primary_path.display()
+                )));
             }
             if let Some(previous) = previous {
                 push_pending(entry, previous);
             }
-            return Err(error).with_context(|| {
-                format!(
-                    "save data was published but final durability sync failed: {}",
-                    primary_path.display()
-                )
-            });
+            return SavePublicationOutcome::PublishedDurabilityUncertain(error.context(format!(
+                "save data was published but final durability sync failed: {}",
+                primary_path.display()
+            )));
+        }
+        if let Err(error) = checkpoint(WriteKind::PostPrimary) {
+            if let Some(previous) = previous {
+                push_pending(entry, previous);
+            }
+            return SavePublicationOutcome::PublishedDurabilityUncertain(error);
         }
 
         if let Some(previous) = previous {
@@ -195,7 +313,21 @@ impl RecoverySession {
                 log::warn!("save data committed, but passive recovery failed: {error:#}");
             }
         }
-        Ok(())
+        SavePublicationOutcome::PublishedDurable
+    }
+}
+
+pub(crate) fn capture_baseline(path: &Path) -> Result<SaveTargetBaseline> {
+    read_bounded(path).map(|bytes| baseline_for_bytes(bytes.as_deref()))
+}
+
+fn baseline_for_bytes(bytes: Option<&[u8]>) -> SaveTargetBaseline {
+    match bytes {
+        None => SaveTargetBaseline::Missing,
+        Some(bytes) => SaveTargetBaseline::Present {
+            byte_len: bytes.len() as u64,
+            sha256: zeff_firmware::sha256_bytes(bytes),
+        },
     }
 }
 
@@ -526,6 +658,54 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(std::fs::read(primary).unwrap(), b"old");
         assert!(!recovery.exists());
+    }
+
+    #[test]
+    fn compare_and_publish_rejects_a_changed_primary_before_writing() {
+        let root = TestDir::new("compare-conflict");
+        let primary = root.0.join("primary.sav");
+        let recovery = root.0.join("recovery");
+        let mut session = RecoverySession::default();
+        std::fs::write(&primary, b"baseline").unwrap();
+        session.begin_with(&primary, recovery.clone());
+        let baseline = capture_baseline(&primary).unwrap();
+        std::fs::write(&primary, b"external-change").unwrap();
+
+        let outcome = session.write_with_outcome(
+            &primary,
+            recovery,
+            Some(baseline),
+            b"candidate",
+            |_| Ok(()),
+        );
+
+        assert!(matches!(outcome, SavePublicationOutcome::NotPublished(_)));
+        assert_eq!(std::fs::read(primary).unwrap(), b"external-change");
+    }
+
+    #[test]
+    fn failure_after_primary_write_is_reported_as_uncertain() {
+        let root = TestDir::new("post-primary-uncertain");
+        let primary = root.0.join("primary.sav");
+        let recovery = root.0.join("recovery");
+        let mut session = RecoverySession::default();
+        std::fs::write(&primary, b"baseline").unwrap();
+        session.begin_with(&primary, recovery.clone());
+        let baseline = capture_baseline(&primary).unwrap();
+
+        let outcome =
+            session.write_with_outcome(&primary, recovery, Some(baseline), b"candidate", |kind| {
+                if kind == WriteKind::PostPrimary {
+                    bail!("injected post-publication failure");
+                }
+                Ok(())
+            });
+
+        assert!(matches!(
+            outcome,
+            SavePublicationOutcome::PublishedDurabilityUncertain(_)
+        ));
+        assert_eq!(std::fs::read(primary).unwrap(), b"candidate");
     }
 
     #[test]

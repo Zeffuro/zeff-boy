@@ -67,12 +67,73 @@ pub(crate) enum LiveCommand {
         addr: Option<String>,
     },
     DisconnectLink,
+    TasOpenProject {
+        path: PathBuf,
+    },
+    TasCreateProject {
+        path: PathBuf,
+        replace_existing: bool,
+    },
+    TasStatus,
+    TasSelectBoundary {
+        boundary: u64,
+    },
+    TasSelectRange {
+        start: u64,
+        end: u64,
+    },
+    TasDeleteSelectedFrames,
+    TasInsertNeutralFrames {
+        boundary: u64,
+        count: u64,
+    },
+    TasSetDigitalInput {
+        frame: u64,
+        player: u8,
+        input: TasDigitalInput,
+        pressed: bool,
+    },
+    TasGoToSelection,
+    TasForkBranch {
+        id: String,
+        name: Option<String>,
+    },
+    TasSetRealtimeRecording {
+        active: bool,
+    },
+    TasSetPlayback {
+        active: bool,
+    },
+    TasLink {
+        at_end: bool,
+        record: bool,
+    },
+    TasReloadGame,
+    TasRecordFrame {
+        mode: TasRecordMode,
+    },
+    TasDisconnect {
+        keep: bool,
+    },
     MemoryRead {
         space: LiveMemorySpace,
         start: u32,
         length: usize,
     },
     GraphicsInfo,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum TasRecordMode {
+    #[default]
+    Replace,
+    Insert,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TasDigitalInput {
+    Buttons(u8),
+    Dpad(u8),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

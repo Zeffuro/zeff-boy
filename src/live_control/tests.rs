@@ -4,7 +4,7 @@ use crate::input::HostButton;
 use serde_json::json;
 
 use super::parse::parse_wire_request;
-use super::types::{LiveCommand, LiveMemorySpace};
+use super::types::{LiveCommand, LiveMemorySpace, TasDigitalInput, TasRecordMode};
 
 #[test]
 fn parses_status_command() {
@@ -182,6 +182,173 @@ fn parses_link_control_commands() {
 
     let parsed = parse_wire_request(r#"{"command":"disconnect_link"}"#).unwrap();
     assert!(matches!(parsed.command, LiveCommand::DisconnectLink));
+}
+
+#[test]
+fn parses_tas_live_control_commands() {
+    let parsed = parse_wire_request(
+        r#"{"command":"tas_create","path":"movie.ztas","replace_existing":true}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasCreateProject { ref path, replace_existing: true }
+            if path == std::path::Path::new("movie.ztas")
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_open","path":"movie.ztas"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasOpenProject { ref path } if path == std::path::Path::new("movie.ztas")
+    ));
+    let parsed =
+        parse_wire_request(r#"{"command":"tas_link","at_end":true,"record":true}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasLink {
+            at_end: true,
+            record: true,
+        }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_record_frame"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasRecordFrame {
+            mode: TasRecordMode::Replace
+        }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_record_frame","mode":"insert"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasRecordFrame {
+            mode: TasRecordMode::Insert
+        }
+    ));
+    assert!(parse_wire_request(r#"{"command":"tas_record_frame","mode":"append"}"#).is_err());
+    let parsed = parse_wire_request(r#"{"command":"tas_select","boundary":12}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSelectBoundary { boundary: 12 }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_select_range","start":3,"end":8}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSelectRange { start: 3, end: 8 }
+    ));
+    assert!(parse_wire_request(r#"{"command":"tas_select_range","start":8,"end":8}"#).is_err());
+    assert!(parse_wire_request(r#"{"command":"tas_select_range","start":8,"end":3}"#).is_err());
+    let parsed = parse_wire_request(r#"{"command":"tas_delete_selected_frames"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasDeleteSelectedFrames
+    ));
+    let parsed =
+        parse_wire_request(r#"{"command":"tas_insert_neutral_frames","boundary":4,"count":12}"#)
+            .unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasInsertNeutralFrames {
+            boundary: 4,
+            count: 12,
+        }
+    ));
+    assert!(
+        parse_wire_request(r#"{"command":"tas_insert_neutral_frames","boundary":4,"count":0}"#)
+            .is_err()
+    );
+    assert!(
+        parse_wire_request(
+            r#"{"command":"tas_insert_neutral_frames","boundary":4,"count":1000000001}"#
+        )
+        .is_err()
+    );
+    let parsed = parse_wire_request(
+        r#"{"command":"tas_set_input","frame":7,"player":5,"control":"left","pressed":true}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSetDigitalInput {
+            frame: 7,
+            player: 5,
+            input: TasDigitalInput::Dpad(2),
+            pressed: true,
+        }
+    ));
+    let parsed = parse_wire_request(
+        r#"{"command":"tas_set_digital_input","frame":2,"button":"b7","pressed":false}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSetDigitalInput {
+            frame: 2,
+            player: 1,
+            input: TasDigitalInput::Buttons(128),
+            pressed: false,
+        }
+    ));
+    assert!(parse_wire_request(r#"{"command":"tas_set_input","frame":7,"control":"a"}"#).is_err());
+    assert!(
+        parse_wire_request(
+            r#"{"command":"tas_set_input","frame":7,"player":6,"control":"a","pressed":true}"#
+        )
+        .is_err()
+    );
+    assert!(
+        parse_wire_request(
+            r#"{"command":"tas_set_input","frame":7,"control":"unknown","pressed":true}"#
+        )
+        .is_err()
+    );
+    let parsed = parse_wire_request(r#"{"command":"tas_go_to_selection"}"#).unwrap();
+    assert!(matches!(parsed.command, LiveCommand::TasGoToSelection));
+    let parsed = parse_wire_request(
+        r#"{"command":"tas_fork_branch","branch_id":"alternate","name":"Alternate"}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasForkBranch { ref id, name: Some(ref name) }
+            if id == "alternate" && name == "Alternate"
+    ));
+    assert!(parse_wire_request(r#"{"command":"tas_fork_branch"}"#).is_err());
+    let parsed = parse_wire_request(r#"{"command":"tas_recording","action":"start"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSetRealtimeRecording { active: true }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_recording","action":"stop"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSetRealtimeRecording { active: false }
+    ));
+    assert!(parse_wire_request(r#"{"command":"tas_recording","action":"pause"}"#).is_err());
+
+    let parsed = parse_wire_request(r#"{"command":"tas_playback","action":"start"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSetPlayback { active: true }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_playback","action":"pause"}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasSetPlayback { active: false }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_reload_game"}"#).unwrap();
+    assert!(matches!(parsed.command, LiveCommand::TasReloadGame));
+    let parsed = parse_wire_request(r#"{"command":"tas_connect","at_end":true}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasLink {
+            at_end: true,
+            record: false,
+        }
+    ));
+    let parsed = parse_wire_request(r#"{"command":"tas_disconnect","keep":true}"#).unwrap();
+    assert!(matches!(
+        parsed.command,
+        LiveCommand::TasDisconnect { keep: true }
+    ));
 }
 
 #[test]

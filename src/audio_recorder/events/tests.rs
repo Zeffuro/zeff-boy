@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
 use serde_json::Value;
 use zeff_emu_common::system::System;
@@ -8,8 +7,7 @@ use zeff_emu_common::time::ClockRate;
 use super::*;
 use crate::audio_tooling::{AudioTopology, AudioVoiceState};
 use crate::settings::AudioRecordingFormat;
-
-static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
+use crate::test_support::test_directory;
 
 const CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
@@ -66,16 +64,6 @@ fn frame(frame: u64, pitch_hz: f64) -> AudioSemanticFrame {
     }
 }
 
-fn temp_root(label: &str) -> PathBuf {
-    let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "zeff-audio-events-{label}-{}-{id}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&path).unwrap();
-    path
-}
-
 fn records(path: &Path) -> Vec<Value> {
     std::fs::read_to_string(path)
         .unwrap()
@@ -86,8 +74,8 @@ fn records(path: &Path) -> Vec<Value> {
 
 #[test]
 fn writer_is_topology_first_diffed_epoch_aware_and_complete() {
-    let root = temp_root("complete");
-    let target = root.join("capture.zaudio");
+    let root = test_directory("audio-events-complete").unwrap();
+    let target = root.path().join("capture.zaudio");
     std::fs::write(&target, b"existing target").unwrap();
 
     let mut writer = ZeffAudioEventWriter::start(&target, context()).unwrap();
@@ -132,15 +120,13 @@ fn writer_is_topology_first_diffed_epoch_aware_and_complete() {
     assert_eq!(records[5]["state_events"], 4);
     assert_eq!(records[5]["last_epoch"], 1);
     assert_eq!(records[5]["last_frame"], 0);
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
-
-    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
 }
 
 #[test]
 fn empty_recording_is_valid_and_has_no_last_coordinate() {
-    let root = temp_root("empty");
-    let target = root.join("empty.zaudio");
+    let root = test_directory("audio-events-empty").unwrap();
+    let target = root.path().join("empty.zaudio");
     ZeffAudioEventWriter::start(&target, context())
         .unwrap()
         .finish()
@@ -154,14 +140,12 @@ fn empty_recording_is_valid_and_has_no_last_coordinate() {
     assert_eq!(records[2]["frames"], 0);
     assert!(records[2]["last_epoch"].is_null());
     assert!(records[2]["last_frame"].is_null());
-
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn invalid_frame_leaves_existing_target_untouched_and_cleans_temp() {
-    let root = temp_root("invalid");
-    let target = root.join("capture.zaudio");
+    let root = test_directory("audio-events-invalid").unwrap();
+    let target = root.path().join("capture.zaudio");
     std::fs::write(&target, b"keep me").unwrap();
 
     let mut writer = ZeffAudioEventWriter::start(&target, context()).unwrap();
@@ -170,14 +154,13 @@ fn invalid_frame_leaves_existing_target_untouched_and_cleans_temp() {
     drop(writer);
 
     assert_eq!(std::fs::read(&target).unwrap(), b"keep me");
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
-    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
 }
 
 #[test]
 fn recorder_integration_keeps_writer_errors_sticky_until_finish() {
-    let root = temp_root("recorder-error");
-    let target = root.join("capture.zaudio");
+    let root = test_directory("audio-events-recorder-error").unwrap();
+    let target = root.path().join("capture.zaudio");
     std::fs::write(&target, b"keep me").unwrap();
 
     let mut recorder = crate::audio_recorder::AudioRecorder::start(
@@ -191,15 +174,14 @@ fn recorder_integration_keeps_writer_errors_sticky_until_finish() {
     assert!(recorder.finish().is_err());
 
     assert_eq!(std::fs::read(&target).unwrap(), b"keep me");
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
-    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
 }
 
 #[test]
 fn write_failure_poisons_writer_and_never_replaces_target() {
-    let root = temp_root("poisoned");
-    let target = root.join("capture.zaudio");
-    let read_only_path = root.join("read-only-sink");
+    let root = test_directory("audio-events-poisoned").unwrap();
+    let target = root.path().join("capture.zaudio");
+    let read_only_path = root.path().join("read-only-sink");
     std::fs::write(&target, b"keep me").unwrap();
     std::fs::write(&read_only_path, b"sink").unwrap();
 
@@ -212,21 +194,20 @@ fn write_failure_poisons_writer_and_never_replaces_target() {
     assert!(writer.finish().is_err());
 
     assert_eq!(std::fs::read(&target).unwrap(), b"keep me");
-    assert!(std::fs::read_dir(&root).unwrap().all(|entry| {
+    assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
         !entry
             .unwrap()
             .file_name()
             .to_string_lossy()
             .contains(".tmp.")
     }));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn failed_epoch_write_does_not_advance_or_clear_epoch_state() {
-    let root = temp_root("epoch-write-failure");
-    let target = root.join("capture.zaudio");
-    let read_only_path = root.join("read-only-sink");
+    let root = test_directory("audio-events-epoch-write-failure").unwrap();
+    let target = root.path().join("capture.zaudio");
+    let read_only_path = root.path().join("read-only-sink");
     std::fs::write(&read_only_path, b"sink").unwrap();
 
     let mut writer = ZeffAudioEventWriter::start(&target, context()).unwrap();
@@ -247,20 +228,19 @@ fn failed_epoch_write_does_not_advance_or_clear_epoch_state() {
     drop(writer);
 
     assert!(!target.exists());
-    assert!(std::fs::read_dir(&root).unwrap().all(|entry| {
+    assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
         !entry
             .unwrap()
             .file_name()
             .to_string_lossy()
             .contains(".tmp.")
     }));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn frame_order_must_increase_within_each_epoch() {
-    let root = temp_root("order");
-    let target = root.join("capture.zaudio");
+    let root = test_directory("audio-events-order").unwrap();
+    let target = root.path().join("capture.zaudio");
     let mut writer = ZeffAudioEventWriter::start(&target, context()).unwrap();
     writer.write_frame(&frame(20, 440.0)).unwrap();
     assert_eq!(
@@ -272,13 +252,12 @@ fn frame_order_must_increase_within_each_epoch() {
         .unwrap();
     writer.write_frame(&frame(1, 442.0)).unwrap();
     writer.finish().unwrap();
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn negative_zero_is_normalized_and_does_not_create_a_diff() {
-    let root = temp_root("negative-zero");
-    let target = root.join("capture.zaudio");
+    let root = test_directory("audio-events-negative-zero").unwrap();
+    let target = root.path().join("capture.zaudio");
     let mut writer = ZeffAudioEventWriter::start(&target, context()).unwrap();
     let mut first = frame(7, -0.0);
     first.voices[0].level = Some(-0.0);
@@ -295,13 +274,12 @@ fn negative_zero_is_normalized_and_does_not_create_a_diff() {
     assert_eq!(records.len(), 4);
     assert_eq!(records[3]["record"], "end");
     assert_eq!(records[3]["last_frame"], 1);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn topology_identity_wins_and_diffs_have_deterministic_channel_order() {
-    let root = temp_root("topology-identity");
-    let target = root.join("capture.zaudio");
+    let root = test_directory("audio-events-topology-identity").unwrap();
+    let target = root.path().join("capture.zaudio");
     let mut writer = ZeffAudioEventWriter::start(&target, context()).unwrap();
     let mut first = frame(40, 440.0);
     first.voices.reverse();
@@ -331,5 +309,4 @@ fn topology_identity_wins_and_diffs_have_deterministic_channel_order() {
     assert_eq!(records[3]["voices"].as_array().unwrap().len(), 1);
     assert_eq!(records[3]["voices"][0]["channel"], 0);
     assert!(records[3]["voices"][0]["pitch_hz"].is_null());
-    std::fs::remove_dir_all(root).unwrap();
 }

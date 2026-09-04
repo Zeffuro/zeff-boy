@@ -2,12 +2,28 @@ use super::{App, SpeedMode, UI_RENDER_INTERVAL};
 use crate::audio::DEFAULT_AUDIO_SAMPLE_RATE;
 use crate::{
     audio::AudioOutput,
-    emu_thread::{EmuCommand, EmuThread},
+    emu_thread::{EmuCommand, TasControlCommandKind},
     graphics::Graphics,
     platform::Instant,
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::Fullscreen;
+
+pub(super) fn effective_debug_presentation(
+    presentation: crate::settings::DebugPresentation,
+) -> crate::settings::DebugPresentation {
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::live_control::automation_mode_enabled() {
+        return crate::settings::DebugPresentation::Floating;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    if presentation == crate::settings::DebugPresentation::GameAndDebugger {
+        return crate::settings::DebugPresentation::Floating;
+    }
+
+    presentation
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn restore_focus_and_redraw(window: &winit::window::Window) {
@@ -18,21 +34,31 @@ fn restore_focus_and_redraw(window: &winit::window::Window) {
 
 impl App {
     pub(super) fn reset_audio_output(&mut self) {
-        if std::env::var("ZEFF_MUTE_AUDIO").as_deref() == Ok("1") {
-            self.audio = None;
+        if let Err(error) =
+            self.preflight_emu_command_kind(TasControlCommandKind::AudioOrTimingConfiguration)
+        {
+            self.toast_manager.error(error.to_string());
+            return;
+        }
+        let audio = if std::env::var("ZEFF_MUTE_AUDIO").as_deref() == Ok("1") {
+            None
         } else {
             let preferred = self.settings.audio.output_sample_rate;
-            self.audio = AudioOutput::new(Some(preferred))
+            AudioOutput::new(Some(preferred))
                 .map_err(|e| log::warn!("Audio init failed: {e}"))
-                .ok();
-        }
-        let sample_rate = self
-            .audio
+                .ok()
+        };
+        let sample_rate = audio
             .as_ref()
-            .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::sample_rate);
-        if let Some(thread) = &self.emu_thread {
-            thread.send(EmuCommand::SetSampleRate(sample_rate));
+            .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::emulator_sample_rate);
+        if self.emu_thread.is_some()
+            && let Err(error) =
+                self.send_emu_command_checked(EmuCommand::SetSampleRate(sample_rate))
+        {
+            self.toast_manager.error(error.to_string());
+            return;
         }
+        self.audio = audio;
     }
 
     pub(super) fn ensure_emu_thread(&mut self) {
@@ -40,25 +66,7 @@ impl App {
             return;
         }
         if let Some(backend) = self.initial_backend.take() {
-            self.emu_thread = Some(EmuThread::spawn(
-                backend,
-                self.settings.emulation.save_recovery_state,
-            ));
-            super::state_io::queue_current_layer_policy(
-                &self.debug_windows,
-                &mut self.pending_debug_actions,
-            );
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::SetUncappedBatchSize(
-                    self.settings.emulation.uncapped_frames_per_tick,
-                ));
-            }
-            if self.timing.uncapped_speed
-                && self.recording.allows_uncapped_worker()
-                && let Some(thread) = &self.emu_thread
-            {
-                thread.send(EmuCommand::SetUncapped(true));
-            }
+            self.spawn_emu_thread(backend);
             self.inspect_recovery_after_normal_open();
         }
     }
@@ -84,12 +92,16 @@ impl App {
             self.load_rom(&path);
         }
 
-        if let Some(thread) = &self.emu_thread {
+        if self.emu_thread.is_some() {
             let sample_rate = self
                 .audio
                 .as_ref()
-                .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::sample_rate);
-            thread.send(EmuCommand::SetSampleRate(sample_rate));
+                .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::emulator_sample_rate);
+            if let Err(error) =
+                self.send_emu_command_checked(EmuCommand::SetSampleRate(sample_rate))
+            {
+                log::warn!("Could not synchronize emulator sample rate: {error}");
+            }
         }
 
         let window = match Graphics::create_window(event_loop) {
@@ -283,9 +295,7 @@ impl App {
 
         match self.speed_mode() {
             SpeedMode::Normal | SpeedMode::SlowMotion => {
-                // On WASM, Normal mode uses requestAnimationFrame (via request_redraw)
-                // instead of setTimeout (WaitUntil). rAF is vsync-aligned and jitter-free,
-                // while setTimeout has ≥4ms granularity that causes visible hitches.
+                // WASM uses vsync-aligned rAF because timer pacing visibly hitches.
                 #[cfg(target_arch = "wasm32")]
                 {
                     event_loop.set_control_flow(ControlFlow::Wait);
@@ -296,7 +306,13 @@ impl App {
                     let now = Instant::now();
                     let next_emu_frame_time = self.timing.last_frame_time + effective;
                     let next_ui_frame_time = self.timing.last_render_time + UI_RENDER_INTERVAL;
-                    let next_frame_time = next_emu_frame_time.max(next_ui_frame_time);
+                    let mut next_frame_time = next_emu_frame_time.max(next_ui_frame_time);
+                    if let Some(recording_wake) = self.realtime_tas_recording_next_wake(now) {
+                        next_frame_time = next_frame_time.min(recording_wake);
+                    }
+                    if let Some(playback_wake) = self.linked_tas_playback_next_wake(now) {
+                        next_frame_time = next_frame_time.min(playback_wake);
+                    }
                     if now >= next_frame_time {
                         event_loop.set_control_flow(ControlFlow::Poll);
                     } else {
@@ -314,7 +330,7 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn sync_debug_presentation(&mut self, event_loop: &ActiveEventLoop) {
-        let desired = super::effective_debug_presentation(self.settings.ui.debug_presentation);
+        let desired = effective_debug_presentation(self.settings.ui.debug_presentation);
         if self.activate_debug_presentation(desired) {
             if desired == crate::settings::DebugPresentation::GameAndDebugger {
                 self.settings.ui.debugger_window_open = true;

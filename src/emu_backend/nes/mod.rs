@@ -14,6 +14,14 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
+mod tas_provenance;
+#[cfg(test)]
+pub(crate) use tas_provenance::NesTasInitialInput;
+pub(crate) use tas_provenance::{
+    NesPersistentLoadOutcome, NesTasLoadProvenance, NesTasLoadProvenanceView, NesTasLoadSetup,
+};
+pub(crate) use tas_provenance::{NesTasLoadProvenanceSeed, persistent_load_outcome};
+
 const NES_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
         id: AudioChannelId(0),
@@ -131,9 +139,16 @@ pub(crate) struct NesBackend {
     pub(crate) emu: NesEmulator,
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
+    tas_load_provenance: Option<NesTasLoadProvenance>,
+    current_sample_rate: Option<u32>,
+    host_persistence_enabled: bool,
 }
 
 impl NesBackend {
+    pub(crate) fn has_standard_console_hardware(&self) -> bool {
+        self.emu.has_standard_console_hardware()
+    }
+
     pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
         self.emu
             .dump_persistent_data()
@@ -141,6 +156,35 @@ impl NesBackend {
             .unwrap_or_default()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_bytes(&self) -> Option<Vec<u8>> {
+        self.emu.dump_persistent_data()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tas_battery_baseline(
+        &self,
+    ) -> anyhow::Result<crate::save_paths::SaveTargetBaseline> {
+        crate::save_paths::battery_sram_baseline(self.paths.rom_path())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn publish_tas_battery_if_unchanged(
+        &mut self,
+        expected: crate::save_paths::SaveTargetBaseline,
+    ) -> Option<(String, crate::save_paths::SavePublicationOutcome)> {
+        let bytes = self.emu.dump_persistent_data()?;
+        Some(crate::save_paths::publish_battery_sram_if_unchanged(
+            &mut self.sram_recovery,
+            self.paths.rom_path(),
+            "nes",
+            self.emu.rom_hash(),
+            expected,
+            &bytes,
+        ))
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn new(emu: NesEmulator, rom_path: PathBuf) -> Self {
         let sram_recovery =
             crate::save_paths::battery_sram_session(&rom_path, "nes", emu.rom_hash());
@@ -148,20 +192,9 @@ impl NesBackend {
             emu,
             paths: BackendPaths::new(rom_path),
             sram_recovery,
-        }
-    }
-
-    pub(crate) fn with_source_path(
-        emu: NesEmulator,
-        rom_path: PathBuf,
-        source_path: PathBuf,
-    ) -> Self {
-        let sram_recovery =
-            crate::save_paths::battery_sram_session(&rom_path, "nes", emu.rom_hash());
-        Self {
-            emu,
-            paths: BackendPaths::with_source_path(rom_path, source_path),
-            sram_recovery,
+            tas_load_provenance: None,
+            current_sample_rate: None,
+            host_persistence_enabled: true,
         }
     }
 
@@ -197,6 +230,25 @@ impl NesBackend {
         self.emu.media_slot_snapshot()
     }
 
+    pub(crate) fn set_host_persistence_enabled(&mut self, enabled: bool) {
+        self.host_persistence_enabled = enabled;
+    }
+
+    pub(crate) fn host_persistence_enabled(&self) -> bool {
+        self.host_persistence_enabled
+    }
+
+    pub(crate) fn set_fds_tas_media_identity(
+        &mut self,
+        source_media_sha256: [u8; 32],
+        sync_config_sha256: [u8; 32],
+    ) {
+        if let Some(provenance) = &mut self.tas_load_provenance {
+            provenance.raw_source_media_sha256 = source_media_sha256;
+            provenance.sync_config_sha256 = sync_config_sha256;
+        }
+    }
+
     pub(crate) fn apply_media_event(
         &mut self,
         event: &zeff_emu_common::media::MediaEvent,
@@ -218,6 +270,9 @@ impl EmulatorCore for NesBackend {
 
     fn set_sample_rate(&mut self, rate: u32) {
         self.emu.set_sample_rate(rate);
+        if self.tas_load_provenance.is_some() {
+            self.current_sample_rate = Some(rate);
+        }
     }
 
     fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
@@ -251,6 +306,9 @@ impl EmulatorCore for NesBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        if !self.host_persistence_enabled {
+            return Ok(None);
+        }
         crate::save_paths::flush_battery_sram(
             &mut self.sram_recovery,
             self.paths.rom_path(),
@@ -264,8 +322,12 @@ impl EmulatorCore for NesBackend {
         self.emu.encode_state()
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        self.emu.load_state_from_bytes(bytes)
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
+        self.emu.load_state_from_bytes(bytes)?;
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact)
     }
 
     fn state_restores_framebuffer(&self) -> bool {

@@ -23,6 +23,8 @@ use super::vdp::{Mode4ColorMode, Vdp};
 pub use zeff_emu_common::debug::BusAccessEvent as CpuAccessTraceEvent;
 use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
+mod cartridge_ram;
+
 const SAVE_STATE_VERSION_WITH_GG_START: u32 = 2;
 const SAVE_STATE_VERSION_WITH_IO_CONTROL: u32 = 4;
 const SAVE_STATE_VERSION_WITH_GG_SERIAL: u32 = 6;
@@ -51,7 +53,7 @@ pub struct Bus {
     pub cartridge: Cartridge,
     boot_rom: Option<Box<[u8]>>,
     mapper: SegaMapper,
-    sg_type_b_ram_extension: bool,
+    pub(crate) sg_type_b_ram_extension: bool,
     work_ram: [u8; SMS_WORK_RAM_SIZE],
     cartridge_ram: [u8; SMS_CARTRIDGE_RAM_SIZE],
     vdp: Vdp,
@@ -200,26 +202,6 @@ impl Bus {
 
     pub fn work_ram(&self) -> &[u8] {
         &self.work_ram[..self.work_ram_size()]
-    }
-
-    pub fn cartridge_ram(&self) -> &[u8; SMS_CARTRIDGE_RAM_SIZE] {
-        &self.cartridge_ram
-    }
-
-    pub fn cartridge_ram_visible(&self) -> &[u8] {
-        &self.cartridge_ram[..self.cartridge.save_ram_kind().size()]
-    }
-
-    pub fn load_cartridge_ram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
-        if bytes.len() != self.cartridge_ram.len() {
-            anyhow::bail!(
-                "Sega 8-bit cartridge RAM size mismatch: got {} bytes, expected {}",
-                bytes.len(),
-                self.cartridge_ram.len()
-            );
-        }
-        self.cartridge_ram.copy_from_slice(bytes);
-        Ok(())
     }
 
     pub fn vdp(&self) -> &Vdp {
@@ -505,8 +487,8 @@ impl Bus {
                 .read_bank(self.mapper.slot1_bank(), addr.wrapping_sub(SLOT1_START)),
             SLOT2_START..=SLOT2_END => {
                 if self.mapper.slot2_cartridge_ram_enabled() {
-                    let offset = self.mapper.slot2_cartridge_ram_offset(addr);
-                    self.cartridge_ram[offset]
+                    self.sega_mapper_ram_offset(addr)
+                        .map_or(IO_OPEN_BUS_VALUE, |offset| self.cartridge_ram[offset])
                 } else if let Some(offset) = self.mapper.codemasters_cartridge_ram_offset(addr) {
                     self.cartridge_ram[offset]
                 } else {
@@ -607,8 +589,9 @@ impl Bus {
                 if self.cartridge_enabled_for_memory()
                     && self.mapper.slot2_cartridge_ram_enabled() =>
             {
-                let offset = self.mapper.slot2_cartridge_ram_offset(addr);
-                self.cartridge_ram[offset] = val;
+                if let Some(offset) = self.sega_mapper_ram_offset(addr) {
+                    self.cartridge_ram[offset] = val;
+                }
             }
             WORK_RAM_START..=WORK_RAM_END => {
                 if self.work_ram_enabled_for_memory() {

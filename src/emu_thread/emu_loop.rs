@@ -1,17 +1,12 @@
 use crossbeam_channel::{Receiver, Sender};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver as StdReceiver, TryRecvError};
-use std::thread;
 use std::time::Duration;
 
 use crate::cheats::CheatPatch;
 use crate::emu_backend::EmuBackend;
 use crate::link::transport::TcpLinkTransport;
-use crate::link::{
-    LinkConnectionState, LinkEndpointId, LinkSession, LinkSystemType, RemoteLink,
-    remote_link_system_for_active_system,
-};
+use crate::link::{LinkConnectionState, RemoteLink};
 
 use super::persistence::BatteryFlushSchedule;
 use super::recovery::{
@@ -20,17 +15,16 @@ use super::recovery::{
 use super::speculation::{SpeculationBoundary, TerminalPersistenceReady};
 use super::{
     AudioRecordingCapture, DEFAULT_REWIND_SECONDS, EmuCommand, EmuResponse, EmuThread, FrameResult,
-    REWIND_CAPTURE_INTERVAL_FRAMES, SharedFramebuffer, TcpLinkMode, WorkerRuntimeFault,
+    REWIND_CAPTURE_INTERVAL_FRAMES, SharedFramebuffer, WorkerRuntimeFault,
 };
+use tas_control::TasControl;
+use tcp_link::PendingTcpLink;
+
+pub(in crate::emu_thread) mod tas_control;
+mod tas_repair;
+mod tcp_link;
 
 const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
-struct PendingTcpLink {
-    label: String,
-    endpoint: LinkEndpointId,
-    system: LinkSystemType,
-    receiver: StdReceiver<Result<TcpLinkTransport, String>>,
-}
 
 pub(super) struct EmuLoop {
     pub(super) backend: EmuBackend,
@@ -56,6 +50,8 @@ pub(super) struct EmuLoop {
     recovery: RecoveryCoordinator,
     speculation: SpeculationBoundary,
     save_recovery_on_shutdown: bool,
+    tas_control: TasControl,
+    tas_repair: tas_repair::TasRepairWorkerState,
 }
 
 pub(super) struct EmuLoopConfig {
@@ -112,6 +108,8 @@ impl EmuLoop {
             recovery,
             speculation: SpeculationBoundary::default(),
             save_recovery_on_shutdown: config.save_recovery_on_shutdown,
+            tas_control: TasControl::new(),
+            tas_repair: tas_repair::TasRepairWorkerState::default(),
         }
     }
 
@@ -157,7 +155,7 @@ impl EmuLoop {
             if let Some(command) = command {
                 let is_shutdown = matches!(&command, EmuCommand::Shutdown);
                 if !self.handle_command(command) {
-                    if !is_shutdown {
+                    if !is_shutdown && !self.tas_repair.nonpersistent_exit_requested {
                         self.finish_shutdown();
                     }
                     break;
@@ -189,6 +187,10 @@ impl EmuLoop {
     }
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
+        let command = match self.dispatch_tas_authority(command) {
+            std::ops::ControlFlow::Continue(command) => command,
+            std::ops::ControlFlow::Break(keep_running) => return keep_running,
+        };
         self.speculation.invalidate();
         let command = match (super::commands::CommonCommandContext {
             backend: &mut self.backend,
@@ -342,9 +344,13 @@ impl EmuLoop {
                 dpad_pressed,
             } => {
                 let result = self.backend.load_state(slot);
-                let label = result.as_ref().ok().cloned().unwrap_or_default();
+                let label = result
+                    .as_ref()
+                    .ok()
+                    .map(|(path, _)| path.clone())
+                    .unwrap_or_default();
                 if !self.finalize_load_state(
-                    result.map(|_| ()),
+                    result.map(|(_, outcome)| outcome),
                     label,
                     buttons_pressed,
                     dpad_pressed,
@@ -447,7 +453,7 @@ impl EmuLoop {
                 };
                 let mut result = probe
                     .as_ref()
-                    .map(|_| ())
+                    .map(|_| zeff_emu_common::StateRestoreOutcome::Exact)
                     .map_err(|err| anyhow::anyhow!("{err:#}"));
                 if result.is_ok()
                     && let Some(expected_tick) = game_boy_link_start_tick
@@ -458,7 +464,9 @@ impl EmuLoop {
                         .and_then(|probe| probe.as_ref())
                         .and_then(|(_, tick, _)| *tick)
                     {
-                        Some(actual_tick) if actual_tick == expected_tick => Ok(()),
+                        Some(actual_tick) if actual_tick == expected_tick => {
+                            Ok(zeff_emu_common::StateRestoreOutcome::Exact)
+                        }
                         Some(actual_tick) => Err(anyhow::anyhow!(
                             "replay GB start tick mismatch: metadata={expected_tick}, state={actual_tick}"
                         )),
@@ -476,7 +484,9 @@ impl EmuLoop {
                         .and_then(|probe| probe.as_ref())
                         .and_then(|(_, _, tick)| *tick)
                     {
-                        Some(actual_tick) if actual_tick == expected_tick => Ok(()),
+                        Some(actual_tick) if actual_tick == expected_tick => {
+                            Ok(zeff_emu_common::StateRestoreOutcome::Exact)
+                        }
                         Some(actual_tick) => Err(anyhow::anyhow!(
                             "replay WonderSwan start tick mismatch: metadata={expected_tick}, state={actual_tick}"
                         )),
@@ -546,7 +556,16 @@ impl EmuLoop {
                     }
                 }
                 if result.is_ok() {
-                    result = self.backend.load_state_from_bytes(state_bytes);
+                    result = self
+                        .backend
+                        .load_state_from_bytes(state_bytes)
+                        .and_then(|outcome| {
+                            anyhow::ensure!(
+                                outcome == zeff_emu_common::StateRestoreOutcome::Exact,
+                                "replay restore requires an exact native save state"
+                            );
+                            Ok(outcome)
+                        });
                 }
                 let state_loaded = result.is_ok();
                 if state_loaded {
@@ -581,6 +600,20 @@ impl EmuLoop {
             EmuCommand::Shutdown => {
                 self.finish_shutdown();
                 return false;
+            }
+
+            EmuCommand::SuspendTasRepair { .. }
+            | EmuCommand::ResumeTasRepair { .. }
+            | EmuCommand::DiscardTasRepair { .. }
+            | EmuCommand::CommitRepairedTasWorker { .. }
+            | EmuCommand::DiscardRepairedTasWorker { .. }
+            | EmuCommand::InspectTasReadiness { .. }
+            | EmuCommand::AcquireTasControl { .. }
+            | EmuCommand::ExecuteTasControl(_)
+            | EmuCommand::AdvanceTasControl(_)
+            | EmuCommand::RollbackTasControl { .. }
+            | EmuCommand::CommitTasControl { .. } => {
+                unreachable!("TAS control command escaped authority dispatch")
             }
 
             EmuCommand::SetAudioRecordingCapture { .. }
@@ -619,49 +652,6 @@ impl EmuLoop {
         link.replay_coordinator_state(state).err()
     }
 
-    fn start_tcp_link(&mut self, mode: TcpLinkMode) {
-        let Some(system) = remote_link_system_for_active_system(self.backend.system()) else {
-            let _ = self.send_resp(EmuResponse::LinkFailed(
-                "TCP link currently supports GB/GBC and WonderSwan/WSC only".to_string(),
-            ));
-            return;
-        };
-
-        self.disconnect_tcp_link();
-        self.pending_tcp_link = None;
-
-        let (label, endpoint, receiver) = match mode {
-            TcpLinkMode::Host { bind_addr } => {
-                let label = format!("hosting on {bind_addr}");
-                let (sender, receiver) = mpsc::channel();
-                thread::spawn(move || {
-                    let result = TcpLinkTransport::host_once(bind_addr.as_str())
-                        .map_err(|err| format!("Host failed: {err}"));
-                    let _ = sender.send(result);
-                });
-                (label, LinkEndpointId(1), receiver)
-            }
-            TcpLinkMode::Join { connect_addr } => {
-                let label = format!("joining {connect_addr}");
-                let (sender, receiver) = mpsc::channel();
-                thread::spawn(move || {
-                    let result = TcpLinkTransport::connect(connect_addr.as_str())
-                        .map_err(|err| format!("Join failed: {err}"));
-                    let _ = sender.send(result);
-                });
-                (label, LinkEndpointId(2), receiver)
-            }
-        };
-
-        self.pending_tcp_link = Some(PendingTcpLink {
-            label: label.clone(),
-            endpoint,
-            system,
-            receiver,
-        });
-        let _ = self.send_resp(EmuResponse::LinkPending(label));
-    }
-
     fn capture_replay_metadata(&mut self) -> zeff_emu_common::replay::ReplayMetadata {
         let mut metadata = self.backend.replay_metadata();
         let has_connected_game_boy_link = matches!(
@@ -686,81 +676,9 @@ impl EmuLoop {
         metadata
     }
 
-    fn poll_tcp_link_connection(&mut self) {
-        let Some(pending) = self.pending_tcp_link.as_ref() else {
-            return;
-        };
-
-        let result = match pending.receiver.try_recv() {
-            Ok(result) => result,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err("link connection worker stopped".to_string()),
-        };
-
-        let pending = self
-            .pending_tcp_link
-            .take()
-            .expect("pending link should exist after polling it");
-        match result {
-            Ok(transport) => {
-                self.backend.set_link_peer_present(true);
-                let session = LinkSession::new(transport, pending.system, pending.endpoint);
-                self.tcp_link = Some(match pending.system {
-                    LinkSystemType::GameBoy => {
-                        RemoteLink::GameBoy(crate::link::gb::GameBoyRemoteLink::new(session))
-                    }
-                    LinkSystemType::WonderSwan => {
-                        RemoteLink::WonderSwan(crate::link::ws::WonderSwanRemoteLink::new(session))
-                    }
-                    LinkSystemType::GameGear => {
-                        self.backend.set_link_peer_present(false);
-                        let _ = self.send_resp(EmuResponse::LinkFailed(
-                            "TCP link does not support Game Gear yet".to_string(),
-                        ));
-                        return;
-                    }
-                });
-                let _ = self.send_resp(EmuResponse::LinkConnected {
-                    label: pending.label,
-                    frame_count: self.backend.frame_count(),
-                    game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
-                    game_boy_link_state: self.backend.game_boy_link_replay_state(),
-                });
-            }
-            Err(err) => {
-                self.backend.set_link_peer_present(false);
-                let _ = self.send_resp(EmuResponse::LinkFailed(err));
-            }
-        }
-    }
-
-    fn clear_disconnected_tcp_link(&mut self) {
-        let disconnected = self
-            .tcp_link
-            .as_ref()
-            .is_some_and(|link| link.state() == LinkConnectionState::Disconnected);
-        if disconnected {
-            self.tcp_link = None;
-            self.backend.set_link_peer_present(false);
-            let _ = self.send_resp(EmuResponse::LinkDisconnected {
-                frame_count: self.backend.frame_count(),
-                game_boy_cpu_cycles: self.backend.game_boy_cpu_cycles(),
-                game_boy_link_state: self.backend.game_boy_link_replay_state(),
-            });
-        }
-    }
-
-    fn disconnect_tcp_link(&mut self) {
-        self.pending_tcp_link = None;
-        if let Some(mut link) = self.tcp_link.take() {
-            link.disconnect();
-        }
-        self.backend.set_link_peer_present(false);
-    }
-
     fn finalize_load_state(
         &mut self,
-        result: anyhow::Result<()>,
+        result: anyhow::Result<zeff_emu_common::StateRestoreOutcome>,
         label: String,
         buttons_pressed: u8,
         dpad_pressed: u8,
@@ -815,7 +733,7 @@ impl EmuLoop {
                 native_payload,
                 path,
             } if should_load_recovery(freshness, resume) => {
-                let result = self.backend.load_state_from_bytes(native_payload);
+                let result = self.backend.load_external_state_from_bytes(native_payload);
                 self.finalize_load_state(
                     result,
                     path.display().to_string(),
@@ -846,32 +764,6 @@ impl EmuLoop {
         if self.resp_tx.send(EmuResponse::ShutdownComplete).is_err() {
             log::debug!("shutdown: completion response dropped (receiver closed)");
         }
-    }
-
-    fn finish_shutdown(&mut self) {
-        self.disconnect_tcp_link();
-        self.handle_shutdown();
-    }
-
-    fn command_wait_timeout(&self, now: std::time::Instant) -> Option<Duration> {
-        let link_timeout = self
-            .pending_tcp_link
-            .is_some()
-            .then_some(PENDING_LINK_POLL_INTERVAL);
-        let save_timeout = if self.periodic_battery_flush_blocked() {
-            None
-        } else {
-            self.battery_flush.wait_timeout(now)
-        };
-        match (link_timeout, save_timeout) {
-            (Some(left), Some(right)) => Some(left.min(right)),
-            (Some(timeout), None) | (None, Some(timeout)) => Some(timeout),
-            (None, None) => None,
-        }
-    }
-
-    fn periodic_battery_flush_blocked(&self) -> bool {
-        self.pending_tcp_link.is_some() || self.tcp_link.is_some()
     }
 
     fn flush_battery_sram_if_due(&mut self, now: std::time::Instant) {

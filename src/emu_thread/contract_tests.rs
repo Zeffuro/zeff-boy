@@ -39,6 +39,7 @@ pub(super) fn assert_frame_results_match(left: &FrameResult, right: &FrameResult
     assert_f32_equal("PCM", &left.audio_samples, &right.audio_samples);
     assert_eq!(left.audio_playback_speed, right.audio_playback_speed);
     assert_eq!(left.is_mbc7, right.is_mbc7);
+    assert_eq!(left.is_gba_tilt, right.is_gba_tilt);
     assert_eq!(left.is_pocket_camera, right.is_pocket_camera);
     assert_eq!(left.game_boy_serial_device, right.game_boy_serial_device);
     assert_eq!(

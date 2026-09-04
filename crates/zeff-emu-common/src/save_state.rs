@@ -1,4 +1,190 @@
 use anyhow::{Result, anyhow, bail};
+use sha2::{Digest, Sha256};
+
+pub const ZPST_FOOTER_MAGIC: [u8; 4] = *b"ZPST";
+pub const ZPST_AUTH_TAG: [u8; 4] = *b"AUTH";
+pub const ZPST_END_TAG: [u8; 4] = *b"END ";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZpstBlock<'a> {
+    pub tag: [u8; 4],
+    pub payload: &'a [u8],
+}
+
+#[derive(Debug)]
+pub struct ZpstEnvelope<'a> {
+    pub native_prefix: &'a [u8],
+    pub blocks: Vec<ZpstBlock<'a>>,
+}
+
+pub struct ZpstWriter {
+    native_prefix: Vec<u8>,
+    blocks: Vec<([u8; 4], Vec<u8>)>,
+    max_bytes: usize,
+    max_blocks: usize,
+}
+
+impl ZpstWriter {
+    pub fn new(native_prefix: Vec<u8>, max_bytes: usize, max_blocks: usize) -> Result<Self> {
+        if native_prefix.len() > max_bytes || max_blocks < 2 {
+            bail!("invalid ZPST envelope limits");
+        }
+        Ok(Self {
+            native_prefix,
+            blocks: Vec::new(),
+            max_bytes,
+            max_blocks,
+        })
+    }
+
+    pub fn push_block(&mut self, tag: [u8; 4], payload: Vec<u8>) -> Result<()> {
+        if tag == ZPST_AUTH_TAG || tag == ZPST_END_TAG {
+            bail!("ZPST reserves AUTH and END block tags");
+        }
+        if self
+            .blocks
+            .len()
+            .checked_add(3)
+            .ok_or_else(|| anyhow!("ZPST block overflow"))?
+            > self.max_blocks
+        {
+            bail!("ZPST block count exceeds maximum {}", self.max_blocks);
+        }
+        let encoded_len = self
+            .native_prefix
+            .len()
+            .checked_add(self.blocks.iter().try_fold(0usize, |sum, (_, block)| {
+                sum.checked_add(
+                    8usize
+                        .checked_add(block.len())
+                        .ok_or_else(|| anyhow!("ZPST block size overflow"))?,
+                )
+                .ok_or_else(|| anyhow!("ZPST size overflow"))
+            })?)
+            .and_then(|sum| sum.checked_add(8 + payload.len()))
+            .and_then(|sum| sum.checked_add(8 + 32 + 8 + 8))
+            .ok_or_else(|| anyhow!("ZPST size overflow"))?;
+        if encoded_len > self.max_bytes {
+            bail!("ZPST envelope exceeds maximum {} bytes", self.max_bytes);
+        }
+        self.blocks.push((tag, payload));
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<Vec<u8>> {
+        let first_block_offset = u32::try_from(self.native_prefix.len())
+            .map_err(|_| anyhow!("ZPST first-block offset exceeds u32"))?;
+        let mut output = self.native_prefix;
+        for (tag, payload) in self.blocks {
+            output.extend_from_slice(&tag);
+            output.extend_from_slice(
+                &u32::try_from(payload.len())
+                    .map_err(|_| anyhow!("ZPST block exceeds u32"))?
+                    .to_le_bytes(),
+            );
+            output.extend_from_slice(&payload);
+        }
+        let auth = Sha256::digest(&output[first_block_offset as usize..]);
+        output.extend_from_slice(&ZPST_AUTH_TAG);
+        output.extend_from_slice(&(32u32).to_le_bytes());
+        output.extend_from_slice(&auth);
+        output.extend_from_slice(&ZPST_END_TAG);
+        output.extend_from_slice(&0u32.to_le_bytes());
+        output.extend_from_slice(&first_block_offset.to_le_bytes());
+        output.extend_from_slice(&ZPST_FOOTER_MAGIC);
+        if output.len() > self.max_bytes {
+            bail!("ZPST envelope exceeds maximum {} bytes", self.max_bytes);
+        }
+        Ok(output)
+    }
+}
+
+pub fn parse_zpst_envelope(
+    bytes: &[u8],
+    max_bytes: usize,
+    max_blocks: usize,
+) -> Result<ZpstEnvelope<'_>> {
+    if bytes.len() > max_bytes || bytes.len() < 24 || max_blocks < 2 {
+        bail!("invalid or oversized ZPST envelope");
+    }
+    let footer_start = bytes.len() - 8;
+    if bytes[footer_start + 4..] != ZPST_FOOTER_MAGIC {
+        bail!("missing ZPST footer");
+    }
+    let first = u32::from_le_bytes(
+        bytes[footer_start..footer_start + 4]
+            .try_into()
+            .expect("footer length"),
+    ) as usize;
+    if first > footer_start {
+        bail!("ZPST first-block offset exceeds footer");
+    }
+    let native_prefix = &bytes[..first];
+    let mut blocks = Vec::new();
+    let mut offset = first;
+    let mut saw_auth = false;
+    let mut count = 0usize;
+    while offset < footer_start {
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("ZPST block count overflow"))?;
+        if count > max_blocks || footer_start - offset < 8 {
+            bail!("malformed ZPST block stream");
+        }
+        let tag: [u8; 4] = bytes[offset..offset + 4]
+            .try_into()
+            .expect("block tag length");
+        let len = u32::from_le_bytes(
+            bytes[offset + 4..offset + 8]
+                .try_into()
+                .expect("block length"),
+        ) as usize;
+        let payload_start = offset
+            .checked_add(8)
+            .ok_or_else(|| anyhow!("ZPST offset overflow"))?;
+        let end = payload_start
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("ZPST block length overflow"))?;
+        if end > footer_start {
+            bail!("truncated ZPST block");
+        }
+        if tag == ZPST_AUTH_TAG {
+            if saw_auth
+                || count == max_blocks
+                || len != 32
+                || end.checked_add(8) != Some(footer_start)
+                || bytes[end..footer_start] != [b'E', b'N', b'D', b' ', 0, 0, 0, 0]
+            {
+                bail!("ZPST AUTH must be the 32-byte block immediately before END");
+            }
+            let expected_auth = Sha256::digest(&bytes[first..offset]);
+            if bytes.get(payload_start..end) != Some(expected_auth.as_slice()) {
+                bail!("ZPST authentication failed");
+            }
+            saw_auth = true;
+            offset = footer_start;
+            break;
+        } else if tag == ZPST_END_TAG {
+            bail!("ZPST END must follow AUTH");
+        } else {
+            if saw_auth {
+                bail!("ZPST block follows AUTH");
+            }
+            blocks.push(ZpstBlock {
+                tag,
+                payload: &bytes[payload_start..end],
+            });
+        }
+        offset = end;
+    }
+    if !saw_auth || offset != footer_start {
+        bail!("ZPST stream is missing AUTH or END");
+    }
+    Ok(ZpstEnvelope {
+        native_prefix,
+        blocks,
+    })
+}
 
 pub struct StateWriter {
     bytes: Vec<u8>,
@@ -254,5 +440,29 @@ mod tests {
         direct.write_u8(0xCD);
 
         assert_eq!(direct.into_bytes(), buffered.into_bytes());
+    }
+
+    #[test]
+    fn zpst_roundtrip_authenticates_blocks() {
+        let mut writer = ZpstWriter::new(vec![1, 2, 3], 128, 4).unwrap();
+        writer.push_block(*b"ONE ", vec![4]).unwrap();
+        writer.push_block(*b"TWO ", vec![5, 6]).unwrap();
+        let bytes = writer.finish().unwrap();
+
+        let parsed = parse_zpst_envelope(&bytes, 128, 4).unwrap();
+        assert_eq!(parsed.native_prefix, [1, 2, 3]);
+        assert_eq!(parsed.blocks.len(), 2);
+        assert_eq!(parsed.blocks[0].tag, *b"ONE ");
+        assert_eq!(parsed.blocks[1].payload, [5, 6]);
+    }
+
+    #[test]
+    fn zpst_rejects_tampered_authentication() {
+        let mut writer = ZpstWriter::new(vec![1], 128, 3).unwrap();
+        writer.push_block(*b"DATA", vec![2]).unwrap();
+        let mut bytes = writer.finish().unwrap();
+        let auth_payload = bytes.len() - 8 - 8 - 32 + 8;
+        bytes[auth_payload] ^= 1;
+        assert!(parse_zpst_envelope(&bytes, 128, 3).is_err());
     }
 }

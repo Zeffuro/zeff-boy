@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 
 use super::App;
+use super::command_gate::EmuCommandSendError;
+#[cfg(test)]
 use crate::emu_backend::CoreCapabilities;
 use crate::emu_thread::EmuCommand;
 #[cfg(test)]
@@ -8,14 +10,29 @@ use crate::input::HostButton;
 use crate::live_control::{LiveCommand, LiveInput, LiveReply, PendingButtonRelease};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, MemoryRegionView};
 use zeff_emu_common::save_ram::SaveRamKind;
+#[cfg(test)]
 use zeff_emu_common::system::CoreFamily;
 
 mod artifacts;
+mod core_features;
 mod graphics;
 mod json_helpers;
 mod memory;
+#[cfg(not(target_arch = "wasm32"))]
+mod tas;
 
+use core_features::core_features_json;
 use json_helpers::{cpu_debug_json, live_speed_mode_name, live_system_name};
+
+fn replay_stop_live_reply(
+    outcome: Result<(), EmuCommandSendError>,
+    status: impl FnOnce() -> Value,
+) -> LiveReply {
+    match outcome {
+        Ok(()) => LiveReply::ok(status()),
+        Err(error) => LiveReply::error(error.to_string()),
+    }
+}
 
 impl App {
     pub(super) fn drain_live_control(&mut self) {
@@ -44,29 +61,26 @@ impl App {
                 LiveReply::ok(self.live_debug_json())
             }
             LiveCommand::Pause => {
-                self.speed.paused = true;
-                self.toast_manager.set_paused(true);
+                self.set_user_paused(true);
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::Resume => {
-                self.speed.paused = false;
-                self.timing.last_frame_time = crate::platform::Instant::now();
-                self.toast_manager.set_paused(false);
+                self.set_user_paused(false);
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::TogglePause => {
-                self.speed.paused = !self.speed.paused;
-                if !self.speed.paused {
-                    self.timing.last_frame_time = crate::platform::Instant::now();
-                }
-                self.toast_manager.set_paused(self.speed.paused);
+                self.toggle_user_paused();
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::FrameAdvance => {
-                self.speed.paused = true;
+                if let Err(error) = self.preflight_emu_command_kind(
+                    crate::emu_thread::TasControlCommandKind::FrameExecution,
+                ) {
+                    return LiveReply::error(error.to_string());
+                }
+                self.set_user_paused(true);
                 self.debug_requests.frame_advance = true;
                 self.remote_debug_frames_remaining = 3;
-                self.toast_manager.set_paused(true);
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::SetSlowMotion(enabled) => {
@@ -78,13 +92,13 @@ impl App {
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::SetUncapped(enabled) => {
+                if let Err(error) = self.send_emu_command_checked(EmuCommand::SetUncapped(
+                    enabled && self.recording.allows_uncapped_worker(),
+                )) {
+                    return LiveReply::error(error.to_string());
+                }
                 self.timing.uncapped_speed = enabled;
                 self.settings.emulation.uncapped_speed = enabled;
-                if let Some(thread) = &self.emu_thread {
-                    thread.send(EmuCommand::SetUncapped(
-                        enabled && self.recording.allows_uncapped_worker(),
-                    ));
-                }
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::Button {
@@ -232,19 +246,15 @@ impl App {
                 }
             }
             LiveCommand::StopReplayRecording => {
-                self.stop_replay_recording();
-                LiveReply::ok(self.live_status_json())
+                let outcome = self.stop_replay_recording();
+                replay_stop_live_reply(outcome, || self.live_status_json())
             }
             LiveCommand::HostLink { addr } => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    if let Some(addr) = addr {
-                        self.settings.emulation.tcp_link_addr = addr;
-                    }
-                    if self.host_tcp_link() {
-                        LiveReply::ok(self.live_status_json())
-                    } else {
-                        LiveReply::error("TCP link could not be hosted")
+                    match self.host_tcp_link(addr) {
+                        Ok(()) => LiveReply::ok(self.live_status_json()),
+                        Err(error) => LiveReply::error(error),
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -256,13 +266,9 @@ impl App {
             LiveCommand::JoinLink { addr } => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    if let Some(addr) = addr {
-                        self.settings.emulation.tcp_link_addr = addr;
-                    }
-                    if self.join_tcp_link() {
-                        LiveReply::ok(self.live_status_json())
-                    } else {
-                        LiveReply::error("TCP link could not be joined")
+                    match self.join_tcp_link(addr) {
+                        Ok(()) => LiveReply::ok(self.live_status_json()),
+                        Err(error) => LiveReply::error(error),
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -274,12 +280,238 @@ impl App {
             LiveCommand::DisconnectLink => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    self.disconnect_link();
-                    LiveReply::ok(self.live_status_json())
+                    match self.disconnect_link() {
+                        Ok(()) => LiveReply::ok(self.live_status_json()),
+                        Err(error) => LiveReply::error(error),
+                    }
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
                     LiveReply::error("TCP link is not available on web")
+                }
+            }
+            LiveCommand::TasOpenProject { path } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_open_tas_project(path) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = path;
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasCreateProject {
+                path,
+                replace_existing,
+            } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_create_tas_project(path, replace_existing) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (path, replace_existing);
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasStatus => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    LiveReply::ok(self.live_tas_status_json())
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasSelectBoundary { boundary } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_select_tas_boundary(boundary) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = boundary;
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasSelectRange { start, end } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_select_tas_range(start, end) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (start, end);
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasDeleteSelectedFrames => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_delete_selected_tas_frames() {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasInsertNeutralFrames { boundary, count } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_insert_neutral_tas_frames(boundary, count) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (boundary, count);
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasSetDigitalInput {
+                frame,
+                player,
+                input,
+                pressed,
+            } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_set_tas_digital_input(frame, player, input, pressed) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (frame, player, input, pressed);
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasGoToSelection => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_go_to_tas_selection() {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasForkBranch { id, name } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_fork_tas_branch(id, name) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (id, name);
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasSetRealtimeRecording { active } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_set_tas_realtime_recording(active) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = active;
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasSetPlayback { active } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_set_tas_playback(active) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = active;
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasLink { at_end, record } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_link_tas(at_end, record) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = (at_end, record);
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasReloadGame => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_reload_tas_game() {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasRecordFrame { mode } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_record_tas_frame(mode) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    LiveReply::error("live TAS control is not available on web")
+                }
+            }
+            LiveCommand::TasDisconnect { keep } => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match self.live_disconnect_tas(keep) {
+                        Ok(result) => LiveReply::ok(result),
+                        Err(error) => LiveReply::error(error.to_string()),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = keep;
+                    LiveReply::error("live TAS control is not available on web")
                 }
             }
             LiveCommand::MemoryRead {
@@ -289,6 +521,14 @@ impl App {
             } => LiveReply::ok(self.live_memory_json(&space, start, length)),
             LiveCommand::GraphicsInfo => LiveReply::ok(self.live_graphics_json()),
         }
+    }
+
+    #[cfg(test)]
+    pub(in crate::app) fn handle_live_command_for_test(
+        &mut self,
+        command: LiveCommand,
+    ) -> LiveReply {
+        self.handle_live_command(command)
     }
 
     fn live_status_json(&self) -> Value {
@@ -315,7 +555,7 @@ impl App {
             "tcp_link_active": tcp_link_active,
             "frames_in_flight": self.frames_in_flight,
             "window_focused": self.window_focused,
-            "paused_by_unfocus": self.paused_by_unfocus,
+            "paused_by_unfocus": self.pause_state.focus_paused(),
             "unfocus_pause_suppressed": self.suppress_unfocus_pause_until_focus,
             "replay": {
                 "starting": self.recording.is_replay_start_pending(),
@@ -413,61 +653,6 @@ impl App {
     }
 }
 
-fn core_features_json(features: &CoreCapabilities) -> Value {
-    json!({
-        "core_family": core_family_label(features.core_family),
-        "save_ram": save_ram_kind_json(features.save_ram_kind),
-        "has_battery": features.has_battery,
-        "system_ram_len": features.system_ram_len,
-        "video_ram_len": features.video_ram_len,
-        "memory_regions": features.memory_regions.iter().map(memory_region_json).collect::<Vec<_>>(),
-        "input": input_features_json(&features.input_features),
-        "cheats": cheat_features_json(&features.cheat_features),
-        "supports_save_states": features.supports_save_states,
-        "supports_state_capture": features.supports_state_capture,
-        "supports_rewind": features.supports_rewind,
-        "supports_replay": features.supports_replay,
-        "supports_audio": features.supports_audio,
-        "supports_cheats": features.supports_cheats,
-        "supports_guest_calls": features.supports_guest_calls,
-        "supports_debugger": features.supports_debugger,
-        "supports_execution_controls": features.supports_execution_controls,
-        "supports_opcode_history": features.supports_opcode_history,
-    })
-}
-
-fn input_features_json(features: &crate::emu_backend::InputCapabilities) -> Value {
-    json!({
-        "buttons": features.buttons.iter().map(|button| button.label()).collect::<Vec<_>>(),
-        "supports_player_two": features.max_players >= 2,
-        "max_players": features.max_players,
-        "supports_lightgun": features.supports_lightgun,
-        "supports_wonderswan_direct_buttons": features.supports_wonderswan_direct_buttons,
-    })
-}
-
-fn cheat_features_json(features: &crate::emu_backend::CheatCapabilities) -> Value {
-    json!({
-        "supports_user_cheats": features.supports_user_cheats,
-        "supports_libretro_database": features.supports_libretro_database,
-        "supports_ram_writes": features.supports_ram_writes,
-        "supports_rom_patches": features.supports_rom_patches,
-        "formats": features.formats,
-    })
-}
-
-fn core_family_label(family: CoreFamily) -> &'static str {
-    match family {
-        CoreFamily::GameBoy => "game_boy",
-        CoreFamily::GameBoyAdvance => "game_boy_advance",
-        CoreFamily::Nes => "nes",
-        CoreFamily::ColecoVision => "coleco_vision",
-        CoreFamily::PcEngine => "pc_engine",
-        CoreFamily::WonderSwan => "wonder_swan",
-        CoreFamily::Sega8 => "sega8",
-    }
-}
-
 fn memory_region_json(region: &MemoryRegionDescriptor) -> Value {
     json!({
         "id": region.id,
@@ -513,6 +698,10 @@ fn save_ram_kind_json(kind: SaveRamKind) -> Value {
         SaveRamKind::None => json!({
             "kind": "none",
             "size": 0,
+        }),
+        SaveRamKind::KnownVolatile { size } => json!({
+            "kind": "known_volatile",
+            "size": size,
         }),
         SaveRamKind::KnownBatteryBacked { size } => json!({
             "kind": "known_battery_backed",
@@ -628,6 +817,22 @@ mod tests {
             supports_debugger: true,
             supports_execution_controls: true,
             supports_opcode_history: true,
+            tas_execution_primitives: crate::emu_backend::capabilities::TasCoreCapabilityProbe {
+                system_identity_observed: true,
+                source_media_identity: None,
+                source_media_identity_observed: false,
+                effective_media_identity_observed: true,
+                firmware_identity_observed: false,
+                direct_runtime_profile_requirements_match: false,
+                supports_state_restore: true,
+                persistent_state:
+                    crate::emu_backend::capabilities::TasPersistentStateIdentity::Unknown {
+                        size: 0x8000,
+                    },
+                input_model: crate::emu_backend::capabilities::TasInputModel::StandardDigitalPads {
+                    max_players: 2,
+                },
+            },
         };
 
         let json = core_features_json(&features);
@@ -646,9 +851,33 @@ mod tests {
         assert_eq!(json["input"]["supports_player_two"], true);
         assert_eq!(json["input"]["supports_lightgun"], false);
         assert_eq!(json["input"]["buttons"][0], "Up");
+        assert_eq!(
+            json["tas_execution_primitives"]["persistent_state"]["kind"],
+            "unknown"
+        );
+        assert_eq!(
+            json["tas_execution_primitives"]["input_model"]["kind"],
+            "standard_digital_pads"
+        );
+        assert_eq!(
+            json["tas_execution_primitives"]["source_media_identity_observed"],
+            false
+        );
+        assert!(json["tas_execution_primitives"]["source_media_identity"].is_null());
         assert_eq!(json["cheats"]["supports_user_cheats"], true);
         assert_eq!(json["cheats"]["supports_rom_patches"], true);
         assert_eq!(json["cheats"]["formats"][1], "Action Replay");
+    }
+
+    #[test]
+    fn replay_stop_channel_failure_is_not_reported_as_success() {
+        let reply = replay_stop_live_reply(Err(EmuCommandSendError::ChannelClosed), || {
+            panic!("failure must not build a success status")
+        });
+        match reply {
+            LiveReply::Error(message) => assert!(message.contains("channel is closed")),
+            LiveReply::Ok(_) => panic!("channel failure was reported as success"),
+        }
     }
 
     #[test]

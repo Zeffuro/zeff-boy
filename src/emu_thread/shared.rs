@@ -324,7 +324,7 @@ impl EmuThread {
         backend: &EmuBackend,
         path: &std::path::Path,
     ) -> EmuResponse {
-        match backend.encode_state_bytes() {
+        match backend.encode_external_state_bytes() {
             Ok(bytes) => {
                 match crate::save_paths::write_state_bytes_to_file_with_backup(path, &bytes) {
                     Ok(backup_created) => EmuResponse::SaveStateOk {
@@ -374,18 +374,27 @@ impl EmuThread {
 
     pub(crate) fn respond_load_state(
         backend: &mut EmuBackend,
-        result: anyhow::Result<()>,
+        result: anyhow::Result<zeff_emu_common::StateRestoreOutcome>,
         path_label: String,
         buttons_pressed: u8,
         dpad_pressed: u8,
         shared_fb: &SharedFramebuffer,
     ) -> EmuResponse {
         match result {
-            Ok(()) => {
+            Ok(outcome) => {
                 backend.set_input(buttons_pressed, dpad_pressed);
                 publish_framebuffer(shared_fb, backend.framebuffer());
                 EmuResponse::LoadStateOk {
                     path: path_label,
+                    warning: match outcome {
+                        zeff_emu_common::StateRestoreOutcome::Exact => None,
+                        zeff_emu_common::StateRestoreOutcome::BestEffortBess => {
+                            Some(super::LoadStateWarning::BestEffortBess)
+                        }
+                        zeff_emu_common::StateRestoreOutcome::BestEffortPortable => {
+                            Some(super::LoadStateWarning::BestEffortPortable)
+                        }
+                    },
                     media_slot_snapshot: backend.media_slot_snapshot(),
                     game_boy_serial_device: backend.game_boy_serial_device(),
                 }
@@ -417,7 +426,7 @@ impl EmuThread {
         }
         if let Some(rewind_frame) = rewind_buffer.pop_steps(steps.max(1)) {
             match backend.load_state_from_bytes(rewind_frame.state_bytes) {
-                Ok(()) => {
+                Ok(_) => {
                     let fb = if rewind_frame.framebuffer.is_empty() {
                         backend.framebuffer().to_vec()
                     } else {
@@ -783,6 +792,7 @@ impl EmuThread {
         audio_samples.clear();
         backend.drain_audio_samples_into(&mut audio_samples);
         let is_mbc7 = backend.is_mbc7();
+        let is_gba_tilt = backend.is_gba_tilt();
         let is_pocket_camera = backend.is_pocket_camera();
         let game_boy_serial_device = backend.game_boy_serial_device();
         let game_boy_printer_jobs = Self::take_game_boy_printer_jobs(backend);
@@ -801,6 +811,7 @@ impl EmuThread {
             audio_playback_speed,
             ui_data,
             is_mbc7,
+            is_gba_tilt,
             is_pocket_camera,
             game_boy_serial_device,
             game_boy_printer_jobs,

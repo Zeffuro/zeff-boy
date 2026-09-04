@@ -1,6 +1,6 @@
 use super::App;
 use crate::emu_backend::{ActiveSystem, system_specs};
-use crate::emu_thread::{EmuCommand, EmuResponse};
+use crate::emu_thread::{EmuCommand, EmuResponse, TasControlCommandKind};
 use std::path::PathBuf;
 
 fn all_state_file_extensions() -> Vec<&'static str> {
@@ -13,7 +13,32 @@ fn all_state_file_extensions() -> Vec<&'static str> {
     extensions
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn restore_native_save_backup(path: &std::path::Path) -> anyhow::Result<()> {
+    crate::save_paths::restore_state_file_backup(path)
+}
+
 impl App {
+    fn preflight_state_command(&mut self) -> bool {
+        match self.preflight_emu_command_kind(TasControlCommandKind::StateOrRecovery) {
+            Ok(()) => true,
+            Err(error) => {
+                self.toast_manager.error(error.to_string());
+                false
+            }
+        }
+    }
+
+    fn send_state_command(&mut self, command: EmuCommand) -> bool {
+        match self.send_emu_command_checked(command) {
+            Ok(()) => true,
+            Err(error) => {
+                self.toast_manager.error(error.to_string());
+                false
+            }
+        }
+    }
+
     pub(in crate::app) fn update_undo_save_path(&mut self, path: PathBuf, backup_created: bool) {
         self.undo_save_state_path = backup_created.then_some(path);
     }
@@ -24,14 +49,27 @@ impl App {
         }
     }
 
+    fn show_load_state_result(
+        &mut self,
+        exact_message: impl Into<String>,
+        warning: Option<crate::emu_thread::LoadStateWarning>,
+    ) {
+        match warning {
+            Some(warning) => self.toast_manager.warning(warning.message()),
+            None => self.toast_manager.success(exact_message),
+        }
+    }
+
     fn capture_current_state_for_undo(&mut self) -> Option<Vec<u8>> {
         if !self.core_supports_state_capture() {
             return None;
         }
-        let Some(thread) = &self.emu_thread else {
+        if !self.preflight_state_command() {
             return None;
-        };
-        thread.send(EmuCommand::CaptureStateBytes);
+        }
+        if !self.send_state_command(EmuCommand::CaptureStateBytes) {
+            return None;
+        }
         match self.recv_cold_response() {
             Some(EmuResponse::StateCaptured(bytes)) => Some(bytes),
             Some(EmuResponse::StateCaptureFailed(err)) => {
@@ -47,6 +85,9 @@ impl App {
             self.undo_load_state = None;
             return;
         }
+        if !self.preflight_state_command() {
+            return;
+        }
         let Some(state_bytes) = self.undo_load_state.take() else {
             self.toast_manager.info("No loaded state to undo");
             return;
@@ -58,22 +99,24 @@ impl App {
 
         let redo_state = self.capture_current_state_for_undo();
         let state_bytes_for_retry = state_bytes.clone();
-        if let Some(thread) = &self.emu_thread {
-            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
-            thread.send(EmuCommand::LoadStateBytes {
-                state_bytes,
-                buttons_pressed,
-                dpad_pressed,
-                replay_events: None,
-                game_boy_link_start_state: None,
-                game_boy_link_coordinator_start_state: None,
-                game_boy_link_start_tick: None,
-                wonder_swan_link_start_tick: None,
-            });
+        let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
+        if !self.send_state_command(EmuCommand::LoadStateBytes {
+            state_bytes,
+            buttons_pressed,
+            dpad_pressed,
+            replay_events: None,
+            game_boy_link_start_state: None,
+            game_boy_link_coordinator_start_state: None,
+            game_boy_link_start_tick: None,
+            wonder_swan_link_start_tick: None,
+        }) {
+            self.undo_load_state = Some(state_bytes_for_retry);
+            return;
         }
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path,
+                warning: _,
                 media_slot_snapshot,
                 game_boy_serial_device,
             }) => {
@@ -105,9 +148,7 @@ impl App {
                 self.toast_manager.info("No saved state to undo");
                 return;
             };
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::RestoreStateBackup(path));
-            }
+            self.send_state_command(EmuCommand::RestoreStateBackup(path));
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -117,7 +158,7 @@ impl App {
         };
 
         #[cfg(not(target_arch = "wasm32"))]
-        match crate::save_paths::restore_state_file_backup(&path) {
+        match restore_native_save_backup(&path) {
             Ok(()) => {
                 log::info!("Undid saved state at {}", path.display());
                 self.undo_save_state_path = Some(path);
@@ -135,8 +176,10 @@ impl App {
         if !self.core_supports_save_states() {
             return;
         }
-        if let Some(thread) = &self.emu_thread {
-            thread.send(EmuCommand::SaveStateSlot(slot));
+        if !self.preflight_state_command()
+            || !self.send_state_command(EmuCommand::SaveStateSlot(slot))
+        {
+            return;
         }
         match self.recv_cold_response() {
             Some(EmuResponse::SaveStateOk {
@@ -160,18 +203,22 @@ impl App {
         if !self.core_supports_save_states() {
             return;
         }
+        if !self.preflight_state_command() {
+            return;
+        }
         let undo_state = self.capture_current_state_for_undo();
-        if let Some(thread) = &self.emu_thread {
-            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
-            thread.send(EmuCommand::LoadStateSlot {
-                slot,
-                buttons_pressed,
-                dpad_pressed,
-            });
+        let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
+        if !self.send_state_command(EmuCommand::LoadStateSlot {
+            slot,
+            buttons_pressed,
+            dpad_pressed,
+        }) {
+            return;
         }
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path,
+                warning,
                 media_slot_snapshot,
                 game_boy_serial_device,
             }) => {
@@ -182,7 +229,7 @@ impl App {
                 self.refresh_framebuffer_after_load();
                 log::info!("Loaded state from {}", path);
                 self.undo_load_state = undo_state;
-                self.toast_manager.success(format!("Loaded slot {slot}"));
+                self.show_load_state_result(format!("Loaded slot {slot}"), warning);
             }
             Some(EmuResponse::LoadStateFailed(err)) => {
                 log::error!("Failed to load state from slot {}: {}", slot, err);
@@ -235,7 +282,10 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let was_paused = self.pause_for_dialog();
+            if !self.preflight_state_command() {
+                return;
+            }
+            self.pause_for_dialog();
             let state_extensions = all_state_file_extensions();
             let file = crate::platform::FileDialog::new()
                 .set_title("Save State As")
@@ -244,16 +294,15 @@ impl App {
                 .set_file_name(&self.default_state_file_name())
                 .save_file();
 
-            self.resume_after_dialog(was_paused);
+            self.resume_after_dialog();
             let Some(path) = file else {
                 return;
             };
 
-            self.last_state_dir = path.parent().map(|p| p.to_path_buf());
-
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::SaveStateToPath(path.clone()));
+            if !self.send_state_command(EmuCommand::SaveStateToPath(path.clone())) {
+                return;
             }
+            self.last_state_dir = path.parent().map(|p| p.to_path_buf());
             match self.recv_cold_response() {
                 Some(EmuResponse::SaveStateOk {
                     path,
@@ -273,8 +322,8 @@ impl App {
 
         #[cfg(target_arch = "wasm32")]
         {
-            if let Some(thread) = &self.emu_thread {
-                thread.send(EmuCommand::CaptureStateBytes);
+            if !self.send_state_command(EmuCommand::CaptureExternalStateBytes) {
+                return;
             }
             match self.recv_cold_response() {
                 Some(EmuResponse::StateCaptured(bytes)) => {
@@ -298,7 +347,10 @@ impl App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let was_paused = self.pause_for_dialog();
+            if !self.preflight_state_command() {
+                return;
+            }
+            self.pause_for_dialog();
             let state_extensions = all_state_file_extensions();
             let file = crate::platform::FileDialog::new()
                 .set_title("Load State")
@@ -306,25 +358,26 @@ impl App {
                 .add_filter("Zeff Boy Save State", &state_extensions)
                 .pick_file();
 
-            self.resume_after_dialog(was_paused);
+            self.resume_after_dialog();
             let Some(path) = file else {
                 return;
             };
 
-            self.last_state_dir = path.parent().map(|p| p.to_path_buf());
             let undo_state = self.capture_current_state_for_undo();
 
-            if let Some(thread) = &self.emu_thread {
-                let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
-                thread.send(EmuCommand::LoadStateFromPath {
-                    path: path.clone(),
-                    buttons_pressed,
-                    dpad_pressed,
-                });
+            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
+            if !self.send_state_command(EmuCommand::LoadStateFromPath {
+                path: path.clone(),
+                buttons_pressed,
+                dpad_pressed,
+            }) {
+                return;
             }
+            self.last_state_dir = path.parent().map(|p| p.to_path_buf());
             match self.recv_cold_response() {
                 Some(EmuResponse::LoadStateOk {
                     path: p,
+                    warning,
                     media_slot_snapshot,
                     game_boy_serial_device,
                 }) => {
@@ -335,7 +388,7 @@ impl App {
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from {}", p);
                     self.undo_load_state = undo_state;
-                    self.toast_manager.success("State loaded from file");
+                    self.show_load_state_result("State loaded from file", warning);
                 }
                 Some(EmuResponse::LoadStateFailed(err)) => {
                     log::error!("Failed to load state from {}: {}", path.display(), err);
@@ -355,7 +408,6 @@ impl App {
         }
     }
 
-    /// Check the WASM pending-state-load slot and apply the state if data arrived.
     #[cfg(target_arch = "wasm32")]
     pub(in crate::app) fn check_pending_state_load(&mut self) {
         let data = self.pending_state_load.borrow_mut().take();
@@ -366,22 +418,18 @@ impl App {
                 return;
             }
             let undo_state = self.capture_current_state_for_undo();
-            if let Some(thread) = &self.emu_thread {
-                let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
-                thread.send(EmuCommand::LoadStateBytes {
-                    state_bytes: bytes,
-                    buttons_pressed,
-                    dpad_pressed,
-                    replay_events: None,
-                    game_boy_link_start_state: None,
-                    game_boy_link_coordinator_start_state: None,
-                    game_boy_link_start_tick: None,
-                    wonder_swan_link_start_tick: None,
-                });
+            let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
+            if !self.send_state_command(EmuCommand::LoadExternalStateBytes {
+                state_bytes: bytes,
+                buttons_pressed,
+                dpad_pressed,
+            }) {
+                return;
             }
             match self.recv_cold_response() {
                 Some(EmuResponse::LoadStateOk {
                     path,
+                    warning,
                     media_slot_snapshot,
                     game_boy_serial_device,
                 }) => {
@@ -392,8 +440,7 @@ impl App {
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from file: {name}");
                     self.undo_load_state = undo_state;
-                    self.toast_manager
-                        .success(format!("State loaded from {name}"));
+                    self.show_load_state_result(format!("State loaded from {name}"), warning);
                 }
                 Some(EmuResponse::LoadStateFailed(err)) => {
                     log::error!("Failed to load state from {name}: {err}");

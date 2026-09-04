@@ -80,6 +80,17 @@ pub(super) fn draw(
         toggle_dock_tab(dock_state, DebugTab::Mods);
         ui.close();
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.menu_button("TAS Editor", |ui| {
+        if ui.button("Open embedded").clicked() {
+            debug_windows.tas_editor.open_embedded();
+            ui.close();
+        }
+        if ui.button("Open separate window").clicked() {
+            debug_windows.tas_editor.open_separate_window();
+            ui.close();
+        }
+    });
     if let Some(snapshot) = media_slot_snapshot {
         ui.separator();
         ui.add_enabled_ui(media_event_change_allowed, |ui| {

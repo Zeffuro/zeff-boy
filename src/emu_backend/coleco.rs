@@ -11,8 +11,13 @@ use crate::audio_tooling::{
     AudioVoiceClass, AudioVoiceState, NTSC_60_TEMPO_US_PER_BEAT,
 };
 use crate::cheats::CheatPatch;
+use crate::emu_backend::capabilities::TasSourceMediaIdentity;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{DebuggableEmulator, EmulatorCore, copy_slice_to_vec};
+use crate::tas_project::{TasColecoControllerInput, TasColecoKeypadKey};
+
+mod tas_provenance;
+pub(crate) use tas_provenance::{ColecoTasLoadProvenanceSeed, ColecoTasLoadSetup};
 
 const COLECO_AUDIO_CHANNELS: &[AudioChannelDescriptor] = &[
     AudioChannelDescriptor {
@@ -137,9 +142,16 @@ pub(crate) struct ColecoBackend {
     pub(crate) emu: zeff_coleco_core::Emulator,
     paths: BackendPaths,
     rom_hash: [u8; 32],
+    tas_load_provenance: Option<tas_provenance::ColecoTasLoadProvenance>,
 }
 
 impl ColecoBackend {
+    pub(crate) fn set_tas_controllers(&mut self, inputs: [TasColecoControllerInput; 2]) {
+        for (player, input) in inputs.into_iter().enumerate() {
+            self.emu.set_controller(player, input.into());
+        }
+    }
+
     pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
         Vec::new()
     }
@@ -153,6 +165,7 @@ impl ColecoBackend {
             emu,
             paths: BackendPaths::new(rom_path),
             rom_hash,
+            tas_load_provenance: None,
         }
     }
 
@@ -166,7 +179,22 @@ impl ColecoBackend {
             emu,
             paths: BackendPaths::with_source_path(rom_path, source_path),
             rom_hash,
+            tas_load_provenance: None,
         }
+    }
+
+    pub(crate) fn tas_source_media_identity(&self) -> Option<TasSourceMediaIdentity> {
+        let provenance = self.tas_load_provenance()?;
+        Some(TasSourceMediaIdentity::new(
+            provenance.load.raw_source_media_sha256,
+            provenance.load.raw_source_media_len,
+        ))
+    }
+
+    pub(crate) fn tas_load_provenance(
+        &self,
+    ) -> Option<tas_provenance::ColecoTasLoadProvenanceView<'_>> {
+        tas_provenance::view(self)
     }
 
     pub(crate) fn source_path(&self) -> &Path {
@@ -233,8 +261,12 @@ impl EmulatorCore for ColecoBackend {
         self.emu.save_state()
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        self.emu.load_state(&bytes)
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
+        self.emu.load_state(&bytes)?;
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact)
     }
 
     fn state_restores_framebuffer(&self) -> bool {
@@ -385,43 +417,80 @@ fn controller_from_input(
     buttons_pressed: u8,
     dpad_pressed: u8,
 ) -> zeff_coleco_core::StandardController {
-    use zeff_coleco_core::KeypadKey;
+    tas_controller_from_host_input(
+        buttons_pressed,
+        dpad_pressed,
+        tas_keypad_from_dpad(dpad_pressed),
+    )
+    .into()
+}
 
-    zeff_coleco_core::StandardController {
+pub(crate) fn tas_controller_from_host_input(
+    buttons_pressed: u8,
+    dpad_pressed: u8,
+    keypad: Option<TasColecoKeypadKey>,
+) -> TasColecoControllerInput {
+    TasColecoControllerInput {
         right: dpad_pressed & (1 << 0) != 0,
         left: dpad_pressed & (1 << 1) != 0,
         up: dpad_pressed & (1 << 2) != 0,
         down: dpad_pressed & (1 << 3) != 0,
         left_button: buttons_pressed & (1 << 0) != 0,
         right_button: buttons_pressed & (1 << 1) != 0,
-        keypad: keypad_from_dpad(dpad_pressed).or({
+        keypad: keypad.unwrap_or({
             if buttons_pressed & (1 << 3) != 0 {
-                Some(KeypadKey::Two)
+                TasColecoKeypadKey::Two
             } else if buttons_pressed & (1 << 2) != 0 {
-                Some(KeypadKey::One)
+                TasColecoKeypadKey::One
             } else {
-                None
+                TasColecoKeypadKey::None
             }
         }),
     }
 }
 
-fn keypad_from_dpad(dpad_pressed: u8) -> Option<zeff_coleco_core::KeypadKey> {
-    use zeff_coleco_core::KeypadKey;
+impl From<TasColecoControllerInput> for zeff_coleco_core::StandardController {
+    fn from(input: TasColecoControllerInput) -> Self {
+        Self {
+            up: input.up,
+            right: input.right,
+            down: input.down,
+            left: input.left,
+            left_button: input.left_button,
+            right_button: input.right_button,
+            keypad: match input.keypad {
+                TasColecoKeypadKey::None => None,
+                TasColecoKeypadKey::Zero => Some(zeff_coleco_core::KeypadKey::Zero),
+                TasColecoKeypadKey::One => Some(zeff_coleco_core::KeypadKey::One),
+                TasColecoKeypadKey::Two => Some(zeff_coleco_core::KeypadKey::Two),
+                TasColecoKeypadKey::Three => Some(zeff_coleco_core::KeypadKey::Three),
+                TasColecoKeypadKey::Four => Some(zeff_coleco_core::KeypadKey::Four),
+                TasColecoKeypadKey::Five => Some(zeff_coleco_core::KeypadKey::Five),
+                TasColecoKeypadKey::Six => Some(zeff_coleco_core::KeypadKey::Six),
+                TasColecoKeypadKey::Seven => Some(zeff_coleco_core::KeypadKey::Seven),
+                TasColecoKeypadKey::Eight => Some(zeff_coleco_core::KeypadKey::Eight),
+                TasColecoKeypadKey::Nine => Some(zeff_coleco_core::KeypadKey::Nine),
+                TasColecoKeypadKey::Star => Some(zeff_coleco_core::KeypadKey::Star),
+                TasColecoKeypadKey::Pound => Some(zeff_coleco_core::KeypadKey::Pound),
+            },
+        }
+    }
+}
 
+fn tas_keypad_from_dpad(dpad_pressed: u8) -> Option<TasColecoKeypadKey> {
     match dpad_pressed >> 4 {
-        1 => Some(KeypadKey::Zero),
-        2 => Some(KeypadKey::One),
-        3 => Some(KeypadKey::Two),
-        4 => Some(KeypadKey::Three),
-        5 => Some(KeypadKey::Four),
-        6 => Some(KeypadKey::Five),
-        7 => Some(KeypadKey::Six),
-        8 => Some(KeypadKey::Seven),
-        9 => Some(KeypadKey::Eight),
-        10 => Some(KeypadKey::Nine),
-        11 => Some(KeypadKey::Star),
-        12 => Some(KeypadKey::Pound),
+        1 => Some(TasColecoKeypadKey::Zero),
+        2 => Some(TasColecoKeypadKey::One),
+        3 => Some(TasColecoKeypadKey::Two),
+        4 => Some(TasColecoKeypadKey::Three),
+        5 => Some(TasColecoKeypadKey::Four),
+        6 => Some(TasColecoKeypadKey::Five),
+        7 => Some(TasColecoKeypadKey::Six),
+        8 => Some(TasColecoKeypadKey::Seven),
+        9 => Some(TasColecoKeypadKey::Eight),
+        10 => Some(TasColecoKeypadKey::Nine),
+        11 => Some(TasColecoKeypadKey::Star),
+        12 => Some(TasColecoKeypadKey::Pound),
         _ => None,
     }
 }
@@ -429,6 +498,7 @@ fn keypad_from_dpad(dpad_pressed: u8) -> Option<zeff_coleco_core::KeypadKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tas_project::{TasColecoControllerInput, TasColecoKeypadKey};
     use zeff_coleco_core::KeypadKey;
 
     #[test]
@@ -453,5 +523,72 @@ mod tests {
             assert!(controller.right);
             assert!(controller.up);
         }
+    }
+
+    #[test]
+    fn tas_controller_translation_preserves_each_semantic_control() {
+        let keys = [
+            (TasColecoKeypadKey::Zero, KeypadKey::Zero),
+            (TasColecoKeypadKey::One, KeypadKey::One),
+            (TasColecoKeypadKey::Two, KeypadKey::Two),
+            (TasColecoKeypadKey::Three, KeypadKey::Three),
+            (TasColecoKeypadKey::Four, KeypadKey::Four),
+            (TasColecoKeypadKey::Five, KeypadKey::Five),
+            (TasColecoKeypadKey::Six, KeypadKey::Six),
+            (TasColecoKeypadKey::Seven, KeypadKey::Seven),
+            (TasColecoKeypadKey::Eight, KeypadKey::Eight),
+            (TasColecoKeypadKey::Nine, KeypadKey::Nine),
+            (TasColecoKeypadKey::Star, KeypadKey::Star),
+            (TasColecoKeypadKey::Pound, KeypadKey::Pound),
+        ];
+        for (keypad, expected_key) in keys {
+            let controller = zeff_coleco_core::StandardController::from(TasColecoControllerInput {
+                up: true,
+                right: true,
+                down: true,
+                left: true,
+                left_button: true,
+                right_button: true,
+                keypad,
+            });
+            assert_eq!(controller.keypad, Some(expected_key));
+            assert!(controller.up && controller.right && controller.down && controller.left);
+            assert!(controller.left_button && controller.right_button);
+        }
+        assert_eq!(
+            zeff_coleco_core::StandardController::from(TasColecoControllerInput::default()).keypad,
+            None
+        );
+    }
+
+    #[test]
+    fn worker_controller_application_preserves_both_semantic_ports() {
+        let bios = vec![0; zeff_coleco_core::constants::BIOS_SIZE];
+        let mut cartridge = vec![0; 8 * 1024];
+        cartridge[..2].copy_from_slice(&[0xAA, 0x55]);
+        let first = TasColecoControllerInput {
+            left: true,
+            left_button: true,
+            keypad: TasColecoKeypadKey::Star,
+            ..TasColecoControllerInput::default()
+        };
+        let second = TasColecoControllerInput {
+            right: true,
+            right_button: true,
+            keypad: TasColecoKeypadKey::Pound,
+            ..TasColecoControllerInput::default()
+        };
+        let emu = zeff_coleco_core::Emulator::new(&cartridge, &bios, 48_000).unwrap();
+        let mut backend = ColecoBackend::new(emu, PathBuf::from("game.col"), [0; 32]);
+        backend.set_tas_controllers([first, second]);
+
+        let mut expected = zeff_coleco_core::Emulator::new(&cartridge, &bios, 48_000).unwrap();
+        expected.set_controller(0, first.into());
+        expected.set_controller(1, second.into());
+
+        assert_eq!(
+            backend.emu.save_state().unwrap(),
+            expected.save_state().unwrap()
+        );
     }
 }

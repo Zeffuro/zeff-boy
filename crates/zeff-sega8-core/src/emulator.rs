@@ -4,7 +4,10 @@ use sha2::{Digest, Sha256};
 use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 
 use crate::hardware::bus::Bus;
-use crate::hardware::cartridge::{Cartridge, Sega8MapperKind, Sega8System, SystemHint};
+use crate::hardware::cartridge::{
+    Cartridge, GameGearCartridgeIdentity, GameGearStandardMapperRamIdentity, Sega8MapperKind,
+    Sega8System, SystemHint, game_gear_standard_mapper_ram_for_identity,
+};
 use crate::hardware::constants::{
     GG_SCREEN_H, GG_SCREEN_W, RGBA_CHANNELS, SEGA8_DEFAULT_HOST_SAMPLE_RATE_HZ, SMS_SCREEN_H,
     SMS_SCREEN_W,
@@ -43,6 +46,7 @@ pub struct Sega8LoadConfig {
     pub video_standard: Option<Sega8VideoStandard>,
     pub console_region: Option<Sega8Region>,
     pub console_region_fallback: Option<Sega8Region>,
+    pub game_gear_standard_mapper_ram_identity: Option<GameGearStandardMapperRamIdentity>,
 }
 
 impl Default for Sega8LoadConfig {
@@ -54,6 +58,7 @@ impl Default for Sega8LoadConfig {
             video_standard: None,
             console_region: None,
             console_region_fallback: None,
+            game_gear_standard_mapper_ram_identity: None,
         }
     }
 }
@@ -102,6 +107,14 @@ impl Sega8LoadConfig {
         console_region_fallback: Option<Sega8Region>,
     ) -> Self {
         self.console_region_fallback = console_region_fallback;
+        self
+    }
+
+    pub fn with_game_gear_standard_mapper_ram_identity(
+        mut self,
+        identity: GameGearStandardMapperRamIdentity,
+    ) -> Self {
+        self.game_gear_standard_mapper_ram_identity = Some(identity);
         self
     }
 }
@@ -216,11 +229,39 @@ impl Emulator {
             config.sample_rate
         };
         let video_standard = config.video_standard.unwrap_or_default();
-        let cartridge = Cartridge::load_with_hint_and_mapper_kind(
+        let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
+        let base_cartridge = Cartridge::load_with_hint_and_mapper_kind(
             rom_data,
             config.system_hint,
             config.mapper_kind,
         )?;
+        let cartridge_identity = GameGearCartridgeIdentity {
+            sha256: rom_hash,
+            source_len: rom_data.len(),
+        };
+        let catalog_ram_identity = (base_cartridge.system() == Sega8System::GameGear
+            && base_cartridge.mapper_kind() == Sega8MapperKind::Sega)
+            .then(|| game_gear_standard_mapper_ram_for_identity(cartridge_identity))
+            .flatten();
+        let game_gear_standard_mapper_ram_identity = config
+            .game_gear_standard_mapper_ram_identity
+            .or(catalog_ram_identity);
+        if let Some(identity) = game_gear_standard_mapper_ram_identity {
+            anyhow::ensure!(
+                identity.matches(cartridge_identity),
+                "Game Gear board identity does not match the loaded media"
+            );
+        }
+        let cartridge = if let Some(identity) = game_gear_standard_mapper_ram_identity {
+            Cartridge::load_with_hint_mapper_and_game_gear_ram(
+                rom_data,
+                config.system_hint,
+                config.mapper_kind,
+                Some(identity.ram()),
+            )?
+        } else {
+            base_cartridge
+        };
         let console_region = config
             .console_region
             .or_else(|| {
@@ -243,7 +284,6 @@ impl Emulator {
                 boot_rom.len()
             );
         }
-        let rom_hash: [u8; 32] = Sha256::digest(rom_data).into();
         let framebuffer = vec![0; framebuffer_len(cartridge.system())];
         let mut bus = Bus::new_with_sample_rate_video_standard_and_region(
             cartridge,

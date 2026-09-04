@@ -1,6 +1,8 @@
 use crate::save_state::{StateReader, StateWriter};
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use std::fmt;
+
+const MULTI_PACKET_CAPACITY: usize = 16 * 7;
 
 #[derive(Clone, Debug)]
 pub(super) enum SgbEvent {
@@ -246,24 +248,109 @@ impl SgbState {
         writer.write_u8(self.packets_remaining);
     }
 
-    pub(super) fn read_state(reader: &mut StateReader<'_>) -> Result<Self> {
+    pub(super) fn write_native_continuation(&self, writer: &mut StateWriter) {
+        writer.write_u8(self.multi_packet_command);
+        writer.write_u8(self.multi_packet_data.len() as u8);
+        writer.write_bytes(&self.multi_packet_data);
+        writer.write_bytes(&[0; MULTI_PACKET_CAPACITY][self.multi_packet_data.len()..]);
+    }
+
+    pub(super) fn read_state(reader: &mut StateReader<'_>, format_version: u32) -> Result<Self> {
         let collecting = reader.read_bool()?;
         let bit_count = reader.read_u8()?;
         let current_byte = reader.read_u8()?;
         let mut packet = [0u8; 16];
         reader.read_exact(&mut packet)?;
-        let packet_pos = reader.read_u64()? as usize;
-        let packets_remaining = reader.read_u8().unwrap_or(0);
+        let packet_pos_raw = reader.read_u64()?;
+        let packet_pos = if format_version >= 14 {
+            usize::try_from(packet_pos_raw)
+                .map_err(|_| anyhow::anyhow!("invalid SGB packet byte position"))?
+        } else {
+            (packet_pos_raw as usize).min(16)
+        };
+        let packets_remaining = if format_version >= 14 {
+            reader.read_u8()?
+        } else {
+            reader.read_u8().unwrap_or(0)
+        };
         Ok(Self {
             collecting,
             bit_count,
             current_byte,
             packet,
-            packet_pos: packet_pos.min(16),
+            packet_pos,
             packets_remaining,
             multi_packet_data: Vec::new(),
             multi_packet_command: 0,
         })
+    }
+
+    pub(super) fn read_native_continuation(&mut self, reader: &mut StateReader<'_>) -> Result<()> {
+        self.multi_packet_command = reader.read_u8()?;
+        let data_len = usize::from(reader.read_u8()?);
+        let mut data = [0; MULTI_PACKET_CAPACITY];
+        reader.read_exact(&mut data)?;
+        ensure!(
+            data_len <= data.len(),
+            "invalid SGB multi-packet data length"
+        );
+        ensure!(
+            data[data_len..].iter().all(|&byte| byte == 0),
+            "non-zero SGB multi-packet padding"
+        );
+        self.multi_packet_data = data[..data_len].to_vec();
+        self.validate_native_continuation()
+    }
+
+    fn validate_native_continuation(&self) -> Result<()> {
+        ensure!(self.bit_count <= 7, "invalid SGB packet bit count");
+        ensure!(self.packet_pos <= 16, "invalid SGB packet byte position");
+        ensure!(
+            !self.collecting || self.packet_pos < 16,
+            "invalid completed SGB packet collection"
+        );
+        ensure!(
+            self.collecting || self.bit_count == 0 && self.current_byte == 0,
+            "inactive SGB packet collection has partial byte state"
+        );
+        ensure!(
+            self.current_byte >> self.bit_count == 0,
+            "invalid SGB partial packet byte"
+        );
+        ensure!(
+            self.packets_remaining <= 6,
+            "invalid SGB remaining packet count"
+        );
+
+        if self.multi_packet_data.is_empty() {
+            ensure!(
+                self.multi_packet_command == 0,
+                "SGB multi-packet command has no accumulated data"
+            );
+            return Ok(());
+        }
+
+        ensure!(
+            needs_multi_packet(self.multi_packet_command),
+            "invalid SGB multi-packet command"
+        );
+        ensure!(
+            self.multi_packet_data.len().is_multiple_of(16),
+            "invalid SGB multi-packet data length"
+        );
+        ensure!(
+            self.packets_remaining > 0,
+            "completed SGB multi-packet data was not dispatched"
+        );
+        let packet_count = self.multi_packet_data.len() / 16 + usize::from(self.packets_remaining);
+        ensure!(packet_count <= 7, "invalid SGB multi-packet total");
+        let header = self.multi_packet_data[0];
+        let header_count = usize::from((header & 0x07).max(1));
+        ensure!(
+            header >> 3 == self.multi_packet_command && header_count == packet_count,
+            "SGB multi-packet header does not match continuation state"
+        );
+        Ok(())
     }
 }
 

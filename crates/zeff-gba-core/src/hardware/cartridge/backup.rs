@@ -1,5 +1,12 @@
 use super::{BackupKind, Cartridge, EEPROM_WRITE_BUSY_CYCLES};
 use crate::hardware::constants::SRAM_SIZE;
+use anyhow::{Result, bail, ensure};
+use zeff_emu_common::save_state::{StateReader, StateWriter};
+
+#[cfg(test)]
+pub(crate) const BACKUP_EXECUTION_STATE_SIZE: usize = 160;
+const MAX_EEPROM_COMMAND_BITS: usize = 81;
+const MAX_EEPROM_READ_BITS: usize = 68;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum FlashCommandState {
@@ -12,6 +19,35 @@ enum FlashCommandState {
     EraseUnlock1,
     EraseUnlock2,
     BankSwitch,
+}
+
+impl FlashCommandState {
+    fn tag(self) -> u8 {
+        match self {
+            Self::Ready => 0,
+            Self::Unlock1 => 1,
+            Self::Unlock2 => 2,
+            Self::Program => 3,
+            Self::EraseSetup => 4,
+            Self::EraseUnlock1 => 5,
+            Self::EraseUnlock2 => 6,
+            Self::BankSwitch => 7,
+        }
+    }
+
+    fn from_tag(tag: u8) -> Result<Self> {
+        Ok(match tag {
+            0 => Self::Ready,
+            1 => Self::Unlock1,
+            2 => Self::Unlock2,
+            3 => Self::Program,
+            4 => Self::EraseSetup,
+            5 => Self::EraseUnlock1,
+            6 => Self::EraseUnlock2,
+            7 => Self::BankSwitch,
+            _ => bail!("invalid GBA Flash command state"),
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -30,7 +66,72 @@ pub(super) struct EepromState {
 }
 
 impl Cartridge {
+    pub(crate) fn write_backup_execution_state(&self, writer: &mut StateWriter) {
+        writer.write_u8(backup_kind_tag(self.backup_kind));
+        writer.write_u8(self.flash.command.tag());
+        writer.write_bool(self.flash.id_mode);
+        writer.write_u8(self.flash.bank as u8);
+        let eeprom = self.eeprom.borrow();
+        write_fixed_bits::<MAX_EEPROM_COMMAND_BITS>(writer, &eeprom.command_bits);
+        write_fixed_bits::<MAX_EEPROM_READ_BITS>(writer, &eeprom.read_bits);
+        writer.write_u8(eeprom.read_index as u8);
+        writer.write_u32(eeprom.busy_cycles_remaining);
+    }
+
+    pub(crate) fn read_backup_execution_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<()> {
+        ensure!(
+            read_backup_kind(reader.read_u8()?)? == self.backup_kind,
+            "GBA backup execution state does not match the cartridge"
+        );
+        let flash = FlashState {
+            command: FlashCommandState::from_tag(reader.read_u8()?)?,
+            id_mode: reader.read_bool()?,
+            bank: usize::from(reader.read_u8()?),
+        };
+        let eeprom = EepromState {
+            command_bits: read_fixed_bits::<MAX_EEPROM_COMMAND_BITS>(reader)?,
+            read_bits: read_fixed_bits::<MAX_EEPROM_READ_BITS>(reader)?,
+            read_index: usize::from(reader.read_u8()?),
+            busy_cycles_remaining: reader.read_u32()?,
+        };
+        ensure!(
+            eeprom.read_index <= eeprom.read_bits.len()
+                && eeprom.busy_cycles_remaining <= EEPROM_WRITE_BUSY_CYCLES,
+            "invalid GBA EEPROM execution state"
+        );
+        let flash_valid = match self.backup_kind {
+            BackupKind::Flash512 => {
+                flash.bank == 0 && flash.command != FlashCommandState::BankSwitch
+            }
+            BackupKind::Flash1M => flash.bank <= 1,
+            _ => flash == FlashState::default(),
+        };
+        let eeprom_valid = self.backup_kind == BackupKind::Eeprom
+            || (eeprom.command_bits.is_empty()
+                && eeprom.read_bits.is_empty()
+                && eeprom.read_index == 0
+                && eeprom.busy_cycles_remaining == 0);
+        ensure!(
+            flash_valid && eeprom_valid,
+            "GBA backup execution state is incompatible with the cartridge"
+        );
+        self.flash = flash;
+        *self.eeprom.get_mut() = eeprom;
+        Ok(())
+    }
+
+    pub(crate) fn reset_backup_execution_state(&mut self) {
+        self.flash = FlashState::default();
+        *self.eeprom.get_mut() = EepromState::default();
+    }
+
     pub fn backup_read8(&self, addr: u32) -> u8 {
+        if let Some(value) = self.tilt.as_ref().and_then(|tilt| tilt.read8(addr)) {
+            return value;
+        }
         if self.backup.is_empty() {
             return 0xFF;
         }
@@ -44,6 +145,13 @@ impl Cartridge {
     }
 
     pub fn backup_write8(&mut self, addr: u32, value: u8) {
+        if self
+            .tilt
+            .as_mut()
+            .is_some_and(|tilt| tilt.write8(addr, value))
+        {
+            return;
+        }
         if self.backup.is_empty() {
             return;
         }
@@ -202,6 +310,48 @@ impl Cartridge {
     }
 }
 
+fn write_fixed_bits<const N: usize>(writer: &mut StateWriter, bits: &[u8]) {
+    assert!(bits.len() <= N);
+    writer.write_u8(bits.len() as u8);
+    for index in 0..N {
+        writer.write_u8(bits.get(index).copied().unwrap_or(0));
+    }
+}
+
+fn read_fixed_bits<const N: usize>(reader: &mut StateReader<'_>) -> Result<Vec<u8>> {
+    let len = usize::from(reader.read_u8()?);
+    ensure!(len <= N, "invalid GBA EEPROM bit count");
+    let mut stored = vec![0; N];
+    reader.read_exact(&mut stored)?;
+    ensure!(
+        stored[..len].iter().all(|bit| *bit <= 1) && stored[len..].iter().all(|bit| *bit == 0),
+        "invalid GBA EEPROM bit state"
+    );
+    stored.truncate(len);
+    Ok(stored)
+}
+
+const fn backup_kind_tag(kind: BackupKind) -> u8 {
+    match kind {
+        BackupKind::None => 0,
+        BackupKind::Sram => 1,
+        BackupKind::Flash512 => 2,
+        BackupKind::Flash1M => 3,
+        BackupKind::Eeprom => 4,
+    }
+}
+
+fn read_backup_kind(tag: u8) -> Result<BackupKind> {
+    Ok(match tag {
+        0 => BackupKind::None,
+        1 => BackupKind::Sram,
+        2 => BackupKind::Flash512,
+        3 => BackupKind::Flash1M,
+        4 => BackupKind::Eeprom,
+        _ => bail!("invalid GBA backup kind"),
+    })
+}
+
 impl EepromState {
     fn read16(&mut self, backup: &[u8]) -> u16 {
         if backup.is_empty() {
@@ -329,6 +479,9 @@ fn eeprom_write_page(backup: &mut [u8], page: usize, bits: &[u8]) {
         *byte = value;
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 pub(super) fn detect_backup_kind(rom: &[u8]) -> BackupKind {
     let haystack = rom.windows(8);

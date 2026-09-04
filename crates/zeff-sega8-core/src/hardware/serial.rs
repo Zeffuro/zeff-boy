@@ -34,6 +34,7 @@ pub struct GameGearSerialDebugSnapshot {
     pub baud_bps: u32,
     pub tx_cycles_remaining: u32,
     pub rx_nmi_pending: bool,
+    pub peer_present: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,6 +255,7 @@ impl GameGearSerial {
             baud_bps: self.baud_bps(),
             tx_cycles_remaining: self.tx_cycles_remaining,
             rx_nmi_pending: self.rx_nmi_pending(),
+            peer_present: self.peer_present,
         }
     }
 
@@ -417,6 +419,8 @@ mod tests {
         left.write_tx_data(0x5A);
         left.exchange_with_peer(&mut right, TEST_CLOCK_HZ);
 
+        assert!(left.debug_snapshot().peer_present);
+        assert!(right.debug_snapshot().peer_present);
         assert_ne!(left.read_status() & SERIAL_STATUS_TX_FULL, 0);
         assert_eq!(right.read_status() & SERIAL_STATUS_RX_READY, 0);
 

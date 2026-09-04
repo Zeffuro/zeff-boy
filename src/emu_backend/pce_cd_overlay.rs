@@ -9,6 +9,9 @@ use zeff_pce_core::hardware::{CD_RAW_SECTOR_BYTES, CdSourceError, CdTrackSource}
 
 use crate::patching::{PpfPlanFallback, PpfPlanLimits, PpfPlanOutcome, plan_ppf_patch};
 
+mod stack;
+pub(crate) use stack::{apply_ppf_byte_slices_stack, apply_ppf_bytes_stack, apply_ppf_stack};
+
 pub(crate) const PATCH_BYTES_LIMIT: usize = 16 * 1024 * 1024;
 const PATCH_RECORDS_LIMIT: usize = 131_072;
 const REPLACEMENT_BYTES_LIMIT: usize = 64 * 1024 * 1024;
@@ -275,43 +278,6 @@ impl PatchOverlayBuilder {
     fn read_current(&self, offset: usize, output: &mut [u8]) -> Result<(), CdSourceError> {
         read_overlay(&self.base, self.spans.values(), offset, output)
     }
-}
-
-pub(crate) fn apply_ppf_stack(
-    builder: &mut PatchOverlayBuilder,
-    dir: &Path,
-    mods: &[crate::mods::ModEntry],
-) -> PatchOverlayStack {
-    let enabled = mods
-        .iter()
-        .filter(|entry| entry.enabled)
-        .collect::<Vec<_>>();
-    if enabled.iter().any(|entry| {
-        !Path::new(&entry.filename)
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("ppf"))
-    }) {
-        return PatchOverlayStack::Fallback;
-    }
-
-    let mut applied = Vec::with_capacity(enabled.len());
-    for entry in enabled {
-        let Some(patch) = read_patch(&dir.join(&entry.filename)) else {
-            return PatchOverlayStack::Fallback;
-        };
-        let Ok(result) = builder.apply_ppf(&patch) else {
-            return PatchOverlayStack::Fallback;
-        };
-        if !matches!(result, PatchOverlayApply::Applied) {
-            return PatchOverlayStack::Fallback;
-        }
-        applied.push((
-            entry.filename.clone(),
-            !crate::patching::ppf_has_source_validation(&patch),
-        ));
-    }
-    PatchOverlayStack::Applied(applied)
 }
 
 pub(crate) fn log_ppf_overlay(applied: &[(String, bool)]) {

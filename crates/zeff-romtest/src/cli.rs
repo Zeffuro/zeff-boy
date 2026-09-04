@@ -46,6 +46,7 @@ impl Cli {
             Some("build-fixture") => CommandKind::BuildFixture,
             Some("build-nes-regional") => CommandKind::BuildNesRegional,
             Some("audit-tooling") => CommandKind::AuditTooling,
+            Some("audit-source-size") => CommandKind::AuditSourceSize,
             Some("run") => CommandKind::Run,
             Some("compare") => CommandKind::Compare,
             Some("generate-compat") => CommandKind::GenerateCompat,
@@ -208,6 +209,7 @@ pub(crate) enum CommandKind {
     BuildFixture,
     BuildNesRegional,
     AuditTooling,
+    AuditSourceSize,
     Run,
     Compare,
     GenerateCompat,
@@ -237,6 +239,7 @@ Commands:
   build-fixture        Build a platform-neutral generated ROM fixture
   build-nes-regional   Derive pinned PAL and Dendy NES acceptance ROMs
   audit-tooling        Enforce script ownership and fast/slow CI boundaries
+  audit-source-size    Enforce the first-party Rust source-size ratchet
   run                  Run selected tests through Zeff Boy headless CLI
   compare              Compare a run JSON report against a baseline JSON report
   generate-compat      Generate an ignored local game compatibility manifest

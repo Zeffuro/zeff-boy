@@ -1,13 +1,15 @@
 use crate::emu_backend::EmuBackend;
 use anyhow::Context;
-use zeff_emu_common::replay::{ReplayCheckpoint, ReplayEvent, ReplayPlayer};
+use zeff_emu_common::replay::{ReplayCheckpoint, ReplayPlayer};
 use zeff_firmware::{sha256_bytes, sha256_hex};
 
-use super::HeadlessOptions;
-use super::validation::{
-    validate_embedded_final_state_hash, validate_game_boy_replay_start_tick,
-    validate_replay_checkpoint, validate_replay_playback, validate_wonder_swan_replay_start_tick,
+use crate::replay_execution::{
+    apply_replay_events_at_cursor, validate_game_boy_replay_start_tick, validate_replay_checkpoint,
+    validate_replay_playback, validate_wonder_swan_replay_start_tick,
 };
+
+use super::HeadlessOptions;
+use super::validation::validate_embedded_final_state_hash;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ReplayHeadlessSummary {
@@ -107,11 +109,40 @@ fn run_loaded_replay(
     let mut stalled_slices = 0usize;
     let mut captured_checkpoints = Vec::new();
     while !player.is_finished() {
-        apply_replay_events_at_cursor(&mut backend, &mut player, &mut events_applied)?;
+        events_applied += apply_replay_events_at_cursor(&mut backend, &mut player)?;
         let Some(frame) = player.peek_joypad_frames(0, 1).into_iter().next() else {
             break;
         };
-        backend.apply_replay_input(&frame);
+        if backend.system() == crate::emu_backend::ActiveSystem::Coleco {
+            backend.apply_coleco_tas_input(frame.coleco.map(|controller| {
+                crate::tas_project::TasColecoControllerInput {
+                    up: controller.up,
+                    right: controller.right,
+                    down: controller.down,
+                    left: controller.left,
+                    left_button: controller.left_button,
+                    right_button: controller.right_button,
+                    keypad: match controller.keypad {
+                        0 => crate::tas_project::TasColecoKeypadKey::None,
+                        1 => crate::tas_project::TasColecoKeypadKey::Zero,
+                        2 => crate::tas_project::TasColecoKeypadKey::One,
+                        3 => crate::tas_project::TasColecoKeypadKey::Two,
+                        4 => crate::tas_project::TasColecoKeypadKey::Three,
+                        5 => crate::tas_project::TasColecoKeypadKey::Four,
+                        6 => crate::tas_project::TasColecoKeypadKey::Five,
+                        7 => crate::tas_project::TasColecoKeypadKey::Six,
+                        8 => crate::tas_project::TasColecoKeypadKey::Seven,
+                        9 => crate::tas_project::TasColecoKeypadKey::Eight,
+                        10 => crate::tas_project::TasColecoKeypadKey::Nine,
+                        11 => crate::tas_project::TasColecoKeypadKey::Star,
+                        12 => crate::tas_project::TasColecoKeypadKey::Pound,
+                        _ => unreachable!("replay keypad values are validated while decoding"),
+                    },
+                }
+            }))?;
+        } else {
+            backend.apply_replay_input(&frame);
+        }
         let frame_count_before = backend.frame_count();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(link) = game_boy_replay_link.as_mut() {
@@ -167,7 +198,7 @@ fn run_loaded_replay(
             }
         }
     }
-    apply_replay_events_at_cursor(&mut backend, &mut player, &mut events_applied)?;
+    events_applied += apply_replay_events_at_cursor(&mut backend, &mut player)?;
 
     #[cfg(not(target_arch = "wasm32"))]
     let game_boy_link_event_progress = if let Some(link) = game_boy_replay_link.as_ref() {
@@ -241,32 +272,4 @@ pub(super) fn validate_game_boy_link_replay_result_for_test(
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
     handle_game_boy_link_validation(result, true, opts.allow_gb_link_replay_divergence)
-}
-
-fn apply_replay_events_at_cursor(
-    backend: &mut EmuBackend,
-    player: &mut ReplayPlayer,
-    events_applied: &mut usize,
-) -> anyhow::Result<()> {
-    for event in player.take_events_at_cursor() {
-        match event {
-            ReplayEvent::FdsDiskSide { side, .. } => {
-                backend.set_fds_disk_side(side)?;
-                *events_applied += 1;
-            }
-            ReplayEvent::Media { event, .. } => {
-                backend.apply_media_event(&event)?;
-                *events_applied += 1;
-            }
-            ReplayEvent::GameBoyLinkState { state, .. } => {
-                if !backend.restore_game_boy_link_replay_state(state) {
-                    anyhow::bail!("replay contains an invalid Game Boy link state event");
-                }
-                *events_applied += 1;
-            }
-            ReplayEvent::GameBoyLinkStateAtTick { .. } => {}
-            ReplayEvent::GameBoyLink { .. } | ReplayEvent::WonderSwanLink { .. } => {}
-        }
-    }
-    Ok(())
 }

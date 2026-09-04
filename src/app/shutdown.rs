@@ -16,13 +16,21 @@ impl App {
                 crate::emu_thread::AudioRecordingCapture::default(),
             )
         {
-            self.recording.audio_recorder.take();
             self.toast_manager
-                .error("Audio recording aborted while stopping emulation");
+                .error("Audio capture could not be synchronized while stopping emulation");
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            self.stop_replay_recording_for_teardown();
             self.recording.pending_replay_start = None;
+            self.retire_tas_control_worker();
+            if !matches!(
+                self.tas_repair_state(),
+                crate::app::tas_control::repair::TasRepairState::Detached
+            ) && let Err(error) = self.keep_tas_repair()
+            {
+                log::error!("Could not discard the parked TAS repair worker: {error:#}");
+            }
         }
         if let Some(mut thread) = self.emu_thread.take() {
             thread.shutdown();
@@ -113,13 +121,16 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         self.cancel_pending_rom_preparation(false);
 
-        self.stop_audio_recording();
-        self.stop_replay_recording();
+        self.finish_audio_recording_for_teardown();
+        self.stop_replay_recording_for_teardown();
         #[cfg(not(target_arch = "wasm32"))]
         self.wait_for_replay_finalization_on_shutdown();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if let Err(error) = self.debug_windows.tas_editor.autosave_before_shutdown() {
+                log::error!("Failed to autosave the TAS project during shutdown: {error:#}");
+            }
             self.persist_debugger_window_geometry();
             self.persist_settings_window_geometry();
             self.persist_mods_window_geometry();

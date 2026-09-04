@@ -54,11 +54,7 @@ pub fn import_bess(bytes: &[u8], rom: &[u8], header: &RomHeader) -> Result<BessI
             if len != 0 {
                 bail!("BESS END block has non-zero length");
             }
-            // The BESS specification says END is the last block. SameBoy has
-            // nevertheless emitted fixed zero padding between END and the
-            // footer for SGB states with commands disabled. Keep portable
-            // import tolerant of that producer quirk; Zeff's own native-v13
-            // parser and exporter remain strict about END/footer adjacency.
+            // SameBoy SGB states can include fixed zero padding before the footer.
             break;
         }
 

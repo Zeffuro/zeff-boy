@@ -114,6 +114,7 @@ pub(super) struct ToolbarState<'a> {
     pub(super) ws_display_rotated: bool,
     pub(super) speed_mode_label: Option<&'a str>,
     pub(super) active_save_slot: u8,
+    pub(super) reserved_width: f32,
 }
 
 pub(super) fn draw(
@@ -123,13 +124,18 @@ pub(super) fn draw(
     state: ToolbarState<'_>,
 ) {
     let widths = measure(ui, settings, &state);
-    let layout = ToolbarLayout::select(ui.available_width(), widths, &state);
+    let layout = ToolbarLayout::select(
+        (ui.available_width() - state.reserved_width).max(0.0),
+        widths,
+        &state,
+    );
     let ToolbarState {
         is_paused,
         active_system,
         ws_display_rotated,
         speed_mode_label,
         active_save_slot,
+        reserved_width: _,
     } = state;
 
     if layout.slot {
@@ -247,6 +253,10 @@ pub(super) fn draw(
     }
 }
 
+pub(super) fn essential_width(ui: &egui::Ui, settings: &Settings, state: &ToolbarState<'_>) -> f32 {
+    measure(ui, settings, state).pause
+}
+
 fn measure(ui: &egui::Ui, settings: &Settings, state: &ToolbarState<'_>) -> ToolbarWidths {
     let small = egui::TextStyle::Small.resolve(ui.style());
     let button = egui::TextStyle::Button.resolve(ui.style());
@@ -295,6 +305,7 @@ mod tests {
             ws_display_rotated: false,
             speed_mode_label: Some("Normal"),
             active_save_slot: 1,
+            reserved_width: 0.0,
         }
     }
 
