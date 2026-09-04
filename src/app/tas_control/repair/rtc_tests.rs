@@ -4,7 +4,8 @@ use crate::emu_backend::loader::{
 };
 use crate::emu_thread::{
     EmuCommand, EmuResponse, RecoveryTestConfig, TasControlAcquireRejectedReason,
-    TasExecutionCacheProof, TasExecutionRequest, TasRepairActionRejectedReason,
+    TasExecutionCacheProof, TasExecutionRequest, TasFrameAdvanceRequest,
+    TasRepairActionRejectedReason,
 };
 use crate::save_paths::recovery_state::{BatteryPublicationReceipt, decode_battery_generation};
 use crate::test_support::write_zip;
@@ -129,6 +130,30 @@ fn recovery(case: &RtcCase, fail_generation_write: bool) -> RecoveryTestConfig {
         state_path: case.recovery_path.clone(),
         fail_generation_write,
     }
+}
+
+fn wait_for_next_capture_second() {
+    let capture_second = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        == capture_second
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_ne!(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        capture_second
+    );
 }
 
 const DMG_TIMER_DIRECT: RtcSpec = RtcSpec {
@@ -274,6 +299,77 @@ fn gb_rtc_app_prepare_worker_acquire_execute_and_rollback_are_exact() {
         ));
         worker.discard_repaired_for_tas_restore(identity).unwrap();
     }
+}
+
+#[test]
+fn gb_rtc_candidate_remains_valid_across_a_capture_second() {
+    let case = rtc_case("gb-rtc-candidate-second", DMG_TIMER_DIRECT);
+    let profile = case.identity.profile;
+    let prepared = case.loader.load_repair_backend(&case.project).unwrap();
+    let worker = EmuThread::try_spawn_repaired(prepared, case.identity).unwrap();
+    assert!(worker.send_checked(EmuCommand::AcquireTasControl {
+        request_id: 1,
+        profile,
+    }));
+    let (lease_id, witness) = match worker.recv_checked().unwrap() {
+        EmuResponse::TasControlAcquired {
+            lease_id, witness, ..
+        } => (lease_id, witness),
+        _ => panic!("unexpected RTC acquisition response"),
+    };
+    assert!(worker.send_checked(EmuCommand::ExecuteTasControl(Box::new(
+        TasExecutionRequest {
+            profile,
+            lease_id,
+            run_id: 1,
+            cache_proof: TasExecutionCacheProof {
+                sync_identity_sha256: case.project.identity().sync_config_sha256,
+                branch_prefix_sha256: TasDigest::from_bytes(&[]),
+                target_cursor: 0,
+            },
+            intermediate_cache_proofs: Vec::new(),
+            predecessor_window: None,
+            start_state_bytes: witness.current_state_bytes.clone(),
+            input_prefix: Vec::new(),
+        },
+    ))));
+    let (frame_count, state_sha256) = match worker.recv_checked().unwrap() {
+        EmuResponse::TasExecutionCompleted {
+            frame_count,
+            state_sha256,
+            ..
+        } => (frame_count, state_sha256),
+        _ => panic!("unexpected RTC execution response"),
+    };
+    wait_for_next_capture_second();
+    assert!(worker.send_checked(EmuCommand::AdvanceTasControl(Box::new(
+        TasFrameAdvanceRequest {
+            profile,
+            lease_id,
+            run_id: 1,
+            advance_id: 1,
+            segment_id: 1,
+            expected_segment_frame_count: 0,
+            expected_executed_project_frames: 0,
+            expected_frame_count: frame_count,
+            expected_state_sha256: state_sha256,
+            input: crate::emu_thread::TasInputFrame::default(),
+            snapshot: None,
+        },
+    ))));
+    assert!(matches!(
+        worker.recv_checked().unwrap(),
+        EmuResponse::TasFrameAdvanced { advance_id: 1, .. }
+    ));
+    wait_for_next_capture_second();
+    assert!(worker.send_checked(EmuCommand::CommitTasControl { lease_id }));
+    assert!(matches!(
+        worker.recv_checked().unwrap(),
+        EmuResponse::TasControlCommitted { .. }
+    ));
+    worker
+        .discard_repaired_for_tas_restore(case.identity)
+        .unwrap();
 }
 
 #[test]

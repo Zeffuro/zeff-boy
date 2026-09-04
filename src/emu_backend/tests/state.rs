@@ -1,5 +1,24 @@
 use super::*;
 
+fn future_coleco_external_state(external: &[u8]) -> Vec<u8> {
+    const MAX_BYTES: usize = 512 * 1024;
+    const MAX_BLOCKS: usize = 32;
+    let envelope =
+        zeff_emu_common::save_state::parse_zpst_envelope(external, MAX_BYTES, MAX_BLOCKS).unwrap();
+    let mut prefix = envelope.native_prefix.to_vec();
+    prefix[8..12].copy_from_slice(
+        &(zeff_coleco_core::save_state::SAVE_STATE_FORMAT_VERSION + 1).to_le_bytes(),
+    );
+    let mut writer =
+        zeff_emu_common::save_state::ZpstWriter::new(prefix, MAX_BYTES, MAX_BLOCKS).unwrap();
+    for block in envelope.blocks {
+        writer
+            .push_block(block.tag, block.payload.to_vec())
+            .unwrap();
+    }
+    writer.finish().unwrap()
+}
+
 #[test]
 fn gb_backend_smoke_roundtrip() {
     let mut backend = build_gb_backend();
@@ -280,6 +299,39 @@ fn sega8_backend_replays_save_state_deterministically() {
 #[test]
 fn coleco_backend_replays_save_state_deterministically() {
     assert_save_state_replay_is_deterministic(build_coleco_backend(), 1, 2);
+}
+
+#[test]
+fn coleco_external_state_wraps_native_while_internal_capture_stays_native() {
+    let backend = build_coleco_backend();
+    let native = backend.encode_state_bytes().unwrap();
+    let external = backend.encode_external_state_bytes().unwrap();
+
+    assert_eq!(&external[..native.len()], native);
+    assert!(external.len() > native.len());
+    assert_eq!(&external[external.len() - 4..], b"ZPST");
+    assert_eq!(
+        crate::emu_thread::EmuThread::encode_current_state(&backend).unwrap(),
+        native
+    );
+
+    let mut exact_target = build_coleco_backend();
+    assert_eq!(
+        exact_target
+            .load_external_state_from_bytes(external.clone())
+            .unwrap(),
+        zeff_emu_common::StateRestoreOutcome::Exact
+    );
+
+    let future = future_coleco_external_state(&external);
+    let mut future_target = build_coleco_backend();
+    assert_eq!(
+        future_target
+            .load_external_state_from_bytes(future)
+            .unwrap(),
+        zeff_emu_common::StateRestoreOutcome::BestEffortPortable
+    );
+    assert_eq!(future_target.encode_state_bytes().unwrap(), native);
 }
 
 #[test]

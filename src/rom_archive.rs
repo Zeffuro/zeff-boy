@@ -17,6 +17,9 @@ pub(crate) struct ArchiveRomEntry {
 
 impl ArchiveRomEntry {
     pub(crate) fn display_label(&self) -> String {
+        if self.uncompressed_size == 0 {
+            return format!("{}  ({})", self.name, system_label(self.system));
+        }
         format!(
             "{}  ({}, {})",
             self.name,

@@ -159,6 +159,13 @@ impl CommonCommandContext<'_> {
                     Err(error) => EmuResponse::StateCaptureFailed(error.to_string()),
                 });
             }
+            #[cfg(target_arch = "wasm32")]
+            EmuCommand::CaptureExternalStateBytes => {
+                effects.response = Some(match self.backend.encode_external_state_bytes() {
+                    Ok(bytes) => EmuResponse::StateCaptured(bytes),
+                    Err(error) => EmuResponse::StateCaptureFailed(error.to_string()),
+                });
+            }
             EmuCommand::ExecuteGuestCall(request) => {
                 let name = request.name.clone();
                 let response = match self.backend.execute_guest_call(&request) {
@@ -187,7 +194,7 @@ impl CommonCommandContext<'_> {
             EmuCommand::UndoGuestCall(state) => {
                 let response = if self.backend.supports_guest_calls() {
                     match self.backend.load_state_from_bytes(state) {
-                        Ok(()) => EmuResponse::GuestCallUndone,
+                        Ok(_) => EmuResponse::GuestCallUndone,
                         Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
                     }
                 } else {

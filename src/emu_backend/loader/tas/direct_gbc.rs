@@ -13,8 +13,9 @@ use super::direct_gb::{
     validate_strict_gb_start_state,
 };
 use super::gb_rtc::{
-    GB_TAS_RTC_EPOCH_UNIX_SECONDS, GbTasRtcHardware, gb_rtc_external_identities,
-    gb_rtc_profile_matches, gb_rtc_sync_config_sha256, validate_gb_rtc_runtime,
+    GB_TAS_RTC_EPOCH_UNIX_SECONDS, GbTasRtcHardware, canonicalize_gb_tas_start_state,
+    gb_rtc_external_identities, gb_rtc_profile_matches, gb_rtc_sync_config_sha256,
+    validate_gb_rtc_runtime,
 };
 use super::media::reject_embedded_zip_sram;
 use super::{
@@ -155,7 +156,7 @@ impl DirectGbcTasExecutionLoader {
 
     pub(crate) fn create_project(&self) -> Result<TasProject> {
         let (backend, media) = self.load_creation_backend()?;
-        let start_state = backend.encode_state_bytes()?;
+        let start_state = canonicalize_gb_tas_start_state(backend.encode_state_bytes()?);
         let identity = self.identity(&backend, media, &start_state)?;
         TasProject::new(
             format!("gbc-{}", identity.source_media_sha256.to_hex()),
@@ -345,7 +346,7 @@ impl DirectGbcTasExecutionLoader {
             },
         )?
         .backend;
-        let start_state = backend.encode_state_bytes()?;
+        let start_state = canonicalize_gb_tas_start_state(backend.encode_state_bytes()?);
         self.identity(&backend, media, &start_state)?;
         Ok((backend, media))
     }

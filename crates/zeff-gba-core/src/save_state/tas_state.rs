@@ -1,12 +1,14 @@
 use anyhow::{Result, ensure};
 use zeff_emu_common::save_ram::SaveRamKind;
 
-use super::{MAGIC, VERSION, decode_state, encode_state};
+use super::{MAGIC, TILT_VERSION, VERSION, decode_state, encode_state};
 use crate::emulator::Emulator;
-use crate::hardware::cartridge::{RtcDateTime, RtcState};
+use crate::hardware::cartridge::{RtcDateTime, RtcState, SensorKind, TiltState};
 
 pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tas-determinism-v2";
 pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v10";
+pub const TILT_TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tilt-tas-determinism-v1";
+pub const TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v11-tilt";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GbaTasKeypadState {
@@ -39,6 +41,8 @@ pub struct CurrentNativeGbaTasStateInspection {
     pub rtc_state: Option<RtcState>,
     pub rtc_persistence_state: Option<Vec<u8>>,
     pub complete_rtc_persistence: Option<Vec<u8>>,
+    pub sensor_kind: SensorKind,
+    pub tilt_state: Option<TiltState>,
     pub external_bios: bool,
     pub executing_in_bios: bool,
     pub sample_rate: u32,
@@ -49,14 +53,29 @@ pub fn inspect_current_native_gba_tas_state(
     emu: &Emulator,
     data: &[u8],
 ) -> Result<CurrentNativeGbaTasStateInspection> {
+    inspect_native_gba_tas_state(emu, data, VERSION)
+}
+
+pub fn inspect_current_native_gba_tilt_tas_state(
+    emu: &Emulator,
+    data: &[u8],
+) -> Result<CurrentNativeGbaTasStateInspection> {
+    inspect_native_gba_tas_state(emu, data, TILT_VERSION)
+}
+
+fn inspect_native_gba_tas_state(
+    emu: &Emulator,
+    data: &[u8],
+    expected_version: u32,
+) -> Result<CurrentNativeGbaTasStateInspection> {
     ensure!(
         data.len() >= 12 && data[..8] == *MAGIC,
         "GBA TAS requires a native save state"
     );
     let version = u32::from_le_bytes(data[8..12].try_into().expect("length checked"));
     ensure!(
-        version == VERSION,
-        "GBA TAS requires current native v{VERSION} state"
+        version == expected_version,
+        "GBA TAS requires current native v{expected_version} state"
     );
 
     let mut candidate = emu.clone();
@@ -86,6 +105,8 @@ pub fn inspect_current_native_gba_tas_state(
         rtc_state: candidate.bus.cartridge.rtc_state(),
         rtc_persistence_state: candidate.bus.cartridge.dump_rtc_persistence_state(),
         complete_rtc_persistence: candidate.bus.cartridge.dump_complete_rtc_persistence(),
+        sensor_kind: candidate.bus.cartridge.sensor_kind(),
+        tilt_state: candidate.bus.cartridge.tilt_state(),
         external_bios: candidate.bus.has_external_bios(),
         executing_in_bios: candidate.cpu.pc() <= 0x3FFF,
         sample_rate: candidate.bus.apu.sample_rate(),
@@ -101,7 +122,22 @@ pub fn restore_current_native_gba_tas_state(
     emu: &mut Emulator,
     data: &[u8],
 ) -> Result<CurrentNativeGbaTasStateInspection> {
-    let inspection = inspect_current_native_gba_tas_state(emu, data)?;
+    restore_native_gba_tas_state(emu, data, VERSION)
+}
+
+pub fn restore_current_native_gba_tilt_tas_state(
+    emu: &mut Emulator,
+    data: &[u8],
+) -> Result<CurrentNativeGbaTasStateInspection> {
+    restore_native_gba_tas_state(emu, data, TILT_VERSION)
+}
+
+fn restore_native_gba_tas_state(
+    emu: &mut Emulator,
+    data: &[u8],
+    expected_version: u32,
+) -> Result<CurrentNativeGbaTasStateInspection> {
+    let inspection = inspect_native_gba_tas_state(emu, data, expected_version)?;
     let mut candidate = emu.clone();
     decode_state(&mut candidate, data)?;
     candidate.bus.apu.clear_host_output_after_state_load();

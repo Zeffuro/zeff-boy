@@ -15,7 +15,9 @@ pub(crate) enum TasExecutionProfile {
     DirectWsCartridge,
     DirectPceHuCard,
     DirectPceSixButtonHuCard,
+    DirectPceMultitapHuCard,
     DirectPceCd,
+    DirectPceMultitapCd,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -414,8 +416,16 @@ pub(crate) struct TasInputFrame {
     pub(crate) p1_dpad: u8,
     pub(crate) p2_buttons: u8,
     pub(crate) p2_dpad: u8,
+    pub(crate) p3_buttons: u8,
+    pub(crate) p3_dpad: u8,
+    pub(crate) p4_buttons: u8,
+    pub(crate) p4_dpad: u8,
+    pub(crate) p5_buttons: u8,
+    pub(crate) p5_dpad: u8,
     pub(crate) coleco: [crate::tas_project::TasColecoControllerInput; 2],
     pub(crate) zapper: zeff_emu_common::replay::ReplayZapperFrame,
+    pub(crate) tilt_x_bits: u32,
+    pub(crate) tilt_y_bits: u32,
     pub(crate) fds_disk_side: Option<u8>,
     pub(crate) fds_write_protected: Option<bool>,
     pub(crate) fds_media_event: Option<TasFdsMediaEvent>,

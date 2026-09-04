@@ -43,13 +43,23 @@ impl TasProject {
         path: &Path,
         witness: impl FnOnce(&[u8]) -> Result<TasZrplImportWitness>,
     ) -> Result<Self> {
+        Self::import_zrpl_with_witness_and_assets(path, |start_state| {
+            Ok((witness(start_state)?, BTreeMap::new()))
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn import_zrpl_with_witness_and_assets(
+        path: &Path,
+        witness: impl FnOnce(&[u8]) -> Result<(TasZrplImportWitness, BTreeMap<TasDigest, Vec<u8>>)>,
+    ) -> Result<Self> {
         require_zrpl_path(path)?;
         let source_bytes = read_zrpl_bounded(path)?;
         preflight_current_zrpl(&source_bytes)?;
         let mut player = ReplayPlayer::decode_bounded(&source_bytes, zrpl_load_limits())
             .with_context(|| format!("failed to decode replay {}", path.display()))?;
         let metadata = player.metadata().clone();
-        let witness = witness(player.save_state())?;
+        let (witness, mut assets) = witness(player.save_state())?;
         require_zrpl_representable_identity(&witness.identity)?;
         let coleco_topology = uses_coleco_controller_topology(&witness.identity);
         if coleco_topology && player.version() != 3 {
@@ -72,7 +82,6 @@ impl TasProject {
             bail!("replay exceeds the {MAX_ZRPL_CONVERSION_FRAMES}-frame conversion limit");
         }
 
-        let mut assets = BTreeMap::new();
         let mut input_spans = Vec::new();
         let mut open_span: Option<TasInputSpan> = None;
         for frame in 0..frame_count {
@@ -131,7 +140,7 @@ impl TasProject {
             project_id: witness.project_id,
             source_replay_sha256: Some(TasDigest::from_bytes(&source_bytes)),
             identity: witness.identity,
-            start_state: player.save_state().to_vec(),
+            start_state: player.save_state().to_vec().into(),
             replay_start,
             edit_generation: 0,
             rerecord_count: 0,
@@ -161,6 +170,14 @@ impl TasProject {
             project.validate()?;
         }
         Ok(project)
+    }
+
+    pub(crate) fn read_zrpl_start_state(path: &Path) -> Result<Vec<u8>> {
+        let source_bytes = read_zrpl_bounded(path)?;
+        preflight_current_zrpl(&source_bytes)?;
+        let player = ReplayPlayer::decode_bounded(&source_bytes, zrpl_load_limits())
+            .with_context(|| format!("failed to decode replay {}", path.display()))?;
+        Ok(player.save_state().to_vec())
     }
 
     #[cfg(test)]
@@ -288,12 +305,12 @@ impl TasProject {
             frames.push(frame);
         }
         let expected = CompiledReplay {
-            start_state: self.start_state.clone(),
+            start_state: self.start_state.to_vec(),
             metadata: metadata.clone(),
             frames: frames.clone(),
         };
         let mut recorder =
-            ReplayRecorder::new_with_metadata(PathBuf::new(), self.start_state.clone(), metadata);
+            ReplayRecorder::new_with_metadata(PathBuf::new(), self.start_state.to_vec(), metadata);
         if coleco_topology {
             recorder.enable_coleco_input_format();
         }

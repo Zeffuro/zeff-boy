@@ -14,7 +14,14 @@ pub(super) fn restore_backend_checkpoint(
     match checkpoint.profile {
         TasExecutionProfile::DirectNesCartridge => backend
             .load_state_from_bytes(checkpoint.state_bytes.clone())
-            .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?,
+            .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)
+            .and_then(|outcome| match outcome {
+                zeff_emu_common::StateRestoreOutcome::Exact => Ok(()),
+                zeff_emu_common::StateRestoreOutcome::BestEffortBess
+                | zeff_emu_common::StateRestoreOutcome::BestEffortPortable => {
+                    Err(TasControlRollbackRejectedReason::RestoreFailed)
+                }
+            })?,
         TasExecutionProfile::DirectFdsDisk => {
             execution::fds::restore_direct_fds_state(backend, &checkpoint.state_bytes)
                 .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?;
@@ -52,7 +59,9 @@ pub(super) fn restore_backend_checkpoint(
             execution::ws::restore_direct_ws_state(backend, &checkpoint.state_bytes, persistence)
                 .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?;
         }
-        TasExecutionProfile::DirectPceHuCard | TasExecutionProfile::DirectPceSixButtonHuCard => {
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceSixButtonHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard => {
             execution::pce::restore_direct_pce_state(
                 backend,
                 checkpoint.profile,
@@ -60,18 +69,36 @@ pub(super) fn restore_backend_checkpoint(
             )
             .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?;
         }
-        TasExecutionProfile::DirectPceCd => {
-            execution::pce::restore_direct_pce_cd_state(backend, &checkpoint.state_bytes)
-                .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?;
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd => {
+            execution::pce::restore_direct_pce_state(
+                backend,
+                checkpoint.profile,
+                &checkpoint.state_bytes,
+            )
+            .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)?;
         }
     }
     let state_bytes = backend
         .encode_state_bytes()
         .map_err(|_| TasControlRollbackRejectedReason::StateVerificationUnavailable)?;
     Ok(TasRestoredCheckpoint {
-        state_sha256: TasDigest::from_bytes(&state_bytes),
+        state_sha256: restored_state_digest(checkpoint, &state_bytes),
         frame_count: backend.frame_count(),
     })
+}
+
+fn restored_state_digest(checkpoint: &TasControlCheckpoint, restored: &[u8]) -> TasDigest {
+    let restored_sha256 = TasDigest::from_bytes(restored);
+    if restored_sha256 == checkpoint.state_sha256 {
+        return restored_sha256;
+    }
+    if super::tas_state_digest(checkpoint.profile, restored)
+        == super::tas_state_digest(checkpoint.profile, &checkpoint.state_bytes)
+    {
+        checkpoint.state_sha256
+    } else {
+        restored_sha256
+    }
 }
 
 pub(super) fn verify_tas_execution_candidate(
@@ -83,7 +110,7 @@ pub(super) fn verify_tas_execution_candidate(
     let state_bytes = backend
         .encode_state_bytes()
         .map_err(|_| TasControlCommitRejectedReason::StateVerificationUnavailable)?;
-    if TasDigest::from_bytes(&state_bytes) != candidate.state_sha256 {
+    if super::tas_state_digest(candidate.profile, &state_bytes) != candidate.state_sha256 {
         return Err(TasControlCommitRejectedReason::CandidateStateDigestMismatch);
     }
     if backend.frame_count() != candidate.frame_count {
@@ -196,9 +223,15 @@ fn validate_runtime(
             execution::ws::validate_direct_ws_profile_runtime(backend, persistence)
                 .map_err(invalid)?;
         }
-        TasExecutionProfile::DirectPceHuCard | TasExecutionProfile::DirectPceSixButtonHuCard => {
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceSixButtonHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard => {
             if profile == TasExecutionProfile::DirectPceHuCard {
                 crate::emu_backend::loader::validate_direct_pce_tas_execution_runtime(
+                    backend, false,
+                )
+            } else if profile == TasExecutionProfile::DirectPceMultitapHuCard {
+                crate::emu_backend::loader::validate_direct_pce_multitap_tas_execution_runtime(
                     backend, false,
                 )
             } else {
@@ -208,16 +241,22 @@ fn validate_runtime(
             }
             .map_err(invalid)?;
         }
-        TasExecutionProfile::DirectPceCd => {
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd => {
             if !matches!(
                 persistence,
                 crate::emu_thread::TasPersistenceContract::Absent
             ) {
                 return Err(TasControlCommitRejectedReason::StateVerificationUnavailable);
             }
-            crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
-                backend, false,
-            )
+            if profile == TasExecutionProfile::DirectPceMultitapCd {
+                crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_execution_runtime(
+                    backend, false,
+                )
+            } else {
+                crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
+                    backend, false,
+                )
+            }
             .map_err(invalid)?;
         }
         TasExecutionProfile::DirectNesCartridge => {}
@@ -339,21 +378,34 @@ fn validate_state(
             execution::ws::validate_direct_ws_start_state(backend, state_bytes, persistence)
                 .map_err(|_| invalid())?;
         }
-        TasExecutionProfile::DirectPceHuCard | TasExecutionProfile::DirectPceSixButtonHuCard => {
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceSixButtonHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard => {
             let pce = backend.pce().ok_or_else(invalid)?;
             pce.inspect_current_native_tas_state(state_bytes)
                 .map_err(|_| invalid())?;
         }
-        TasExecutionProfile::DirectPceCd => {
-            let runtime = crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
-                backend, false,
-            )
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd => {
+            let runtime = if profile == TasExecutionProfile::DirectPceMultitapCd {
+                crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_execution_runtime(
+                    backend, false,
+                )
+            } else {
+                crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
+                    backend, false,
+                )
+            }
             .map_err(|_| invalid())?;
             let pce = backend.pce().ok_or_else(invalid)?;
-            pce.inspect_current_native_cd_tas_state_for_profile(
+            pce.inspect_current_native_cd_tas_state_for_profile_and_controller(
                 state_bytes,
                 runtime.arcade_card_enabled,
                 runtime.memory_base_enabled,
+                if profile == TasExecutionProfile::DirectPceMultitapCd {
+                    zeff_pce_core::hardware::PceControllerMode::Multitap
+                } else {
+                    zeff_pce_core::hardware::PceControllerMode::TwoButton
+                },
             )
             .map_err(|_| invalid())?;
         }
@@ -364,4 +416,46 @@ fn validate_state(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rtc_state(timestamp: u64) -> Vec<u8> {
+        let mut bytes = b"native-state-prefix".to_vec();
+        let first_block_offset = bytes.len() as u32;
+        bytes.extend_from_slice(b"RTC ");
+        bytes.extend_from_slice(&0x30u32.to_le_bytes());
+        bytes.extend_from_slice(&[0x31; 0x28]);
+        bytes.extend_from_slice(&timestamp.to_le_bytes());
+        bytes.extend_from_slice(b"END ");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&first_block_offset.to_le_bytes());
+        bytes.extend_from_slice(b"BESS");
+        bytes
+    }
+
+    #[test]
+    fn gb_rollback_digest_ignores_only_the_bess_rtc_capture_time() {
+        let state_bytes = rtc_state(100);
+        let checkpoint = TasControlCheckpoint {
+            profile: TasExecutionProfile::DirectGbCartridgeDmg,
+            state_sha256: TasDigest::from_bytes(&state_bytes),
+            state_bytes,
+            frame_count: 7,
+        };
+        let later = rtc_state(101);
+        assert_eq!(
+            restored_state_digest(&checkpoint, &later),
+            checkpoint.state_sha256
+        );
+
+        let mut changed_rtc = later;
+        changed_rtc[b"native-state-prefix".len() + 8] ^= 1;
+        assert_ne!(
+            restored_state_digest(&checkpoint, &changed_rtc),
+            checkpoint.state_sha256
+        );
+    }
 }

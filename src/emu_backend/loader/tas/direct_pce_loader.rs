@@ -23,7 +23,8 @@ use super::{
         direct_pce_tas_sync_config_sha256_for_profile, zip_pce_tas_identity,
         zip_pce_tas_sync_config_sha256_for_profile,
     },
-    has_extension, validate_direct_pce_six_button_tas_runtime, validate_direct_pce_tas_runtime,
+    has_extension, validate_direct_pce_multitap_tas_runtime,
+    validate_direct_pce_six_button_tas_runtime, validate_direct_pce_tas_runtime,
     validate_direct_pce_tas_state,
 };
 
@@ -77,12 +78,67 @@ impl DirectPceTasExecutionLoader {
         }
     }
 
+    pub(crate) fn new_multitap(source_path: PathBuf) -> Self {
+        Self {
+            source_path,
+            rom_path: None,
+            controller_mode: PceControllerMode::Multitap,
+        }
+    }
+
     pub(crate) fn new_zip_six_button(source_path: PathBuf, rom_path: Option<PathBuf>) -> Self {
         Self {
             source_path,
             rom_path,
             controller_mode: PceControllerMode::SixButton,
         }
+    }
+
+    pub(crate) fn new_zip_multitap(source_path: PathBuf, rom_path: Option<PathBuf>) -> Self {
+        Self {
+            source_path,
+            rom_path,
+            controller_mode: PceControllerMode::Multitap,
+        }
+    }
+
+    pub(crate) fn new_for_replay(
+        source_path: PathBuf,
+        rom_path: Option<PathBuf>,
+        start_state: &[u8],
+    ) -> Result<Self> {
+        let direct = has_extension(&source_path, "pce");
+        let zip = has_extension(&source_path, "zip");
+        ensure!(
+            direct || zip,
+            "PC Engine replay import requires a direct .pce file or selected ZIP member"
+        );
+
+        let mut matched = None;
+        for controller_mode in [
+            PceControllerMode::TwoButton,
+            PceControllerMode::SixButton,
+            PceControllerMode::Multitap,
+        ] {
+            let candidate = Self {
+                source_path: source_path.clone(),
+                rom_path: rom_path.clone(),
+                controller_mode,
+            };
+            if candidate.load_session(start_state).is_ok() {
+                ensure!(
+                    matched.is_none(),
+                    "PC Engine replay starting state matches multiple controller topologies"
+                );
+                matched = Some(candidate);
+            }
+        }
+
+        matched.ok_or_else(|| {
+            anyhow::anyhow!(
+                "PC Engine replay starting state does not match a supported exact HuCard controller topology"
+            )
+        })
     }
 
     pub(crate) fn new_zip_for_project(source_path: PathBuf, project: &TasProject) -> Result<Self> {
@@ -254,6 +310,9 @@ impl DirectPceTasExecutionLoader {
             PceControllerMode::SixButton => {
                 validate_direct_pce_six_button_tas_runtime(&backend, false)?;
             }
+            PceControllerMode::Multitap => {
+                validate_direct_pce_multitap_tas_runtime(&backend, false)?;
+            }
             _ => anyhow::bail!("PC Engine TAS execution requires a supported controller"),
         }
         Ok((backend, media))
@@ -307,11 +366,14 @@ impl DirectPceTasExecutionLoader {
     fn classify_hardware(&self, source_bytes: &[u8]) -> Result<PceTasHardwareProfile> {
         let mut profile = classify_direct_pce_tas_hardware(source_bytes)?;
         profile.controller_mode = self.controller_mode;
-        if profile.controller_mode == PceControllerMode::SixButton {
+        if matches!(
+            profile.controller_mode,
+            PceControllerMode::SixButton | PceControllerMode::Multitap
+        ) {
             ensure!(
                 profile.board == PceHuCardBoard::Plain
                     && profile.topology == PceHardwareTopology::Base,
-                "six-button PC Engine TAS requires a Base plain HuCard"
+                "alternate PC Engine TAS controller requires a Base plain HuCard"
             );
         }
         Ok(profile)
@@ -409,3 +471,6 @@ fn read_direct_pce_hucard(path: &Path) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod multitap;

@@ -306,8 +306,12 @@ impl EmulatorCore for Sega8Backend {
         self.emu.encode_state()
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        self.emu.load_state_from_bytes(bytes)
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
+        self.emu.load_state_from_bytes(bytes)?;
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact)
     }
 
     fn rom_path(&self) -> &Path {

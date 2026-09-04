@@ -179,6 +179,17 @@ impl Apu {
             .set_channel_mutes([mutes[0], mutes[1], mutes[2], mutes[3]]);
     }
 
+    pub(crate) fn reset_hardware(&mut self) {
+        let sample_rate = self.sample_rate;
+        let sample_generation_enabled = self.sample_generation_enabled;
+        let channel_mutes = self.channel_mutes;
+        let debug_capture_enabled = self.debug_capture_enabled;
+        *self = Self::new(sample_rate);
+        self.set_sample_generation_enabled(sample_generation_enabled);
+        self.set_channel_mutes(channel_mutes);
+        self.set_debug_capture_enabled(debug_capture_enabled);
+    }
+
     pub fn drain_samples_into(&mut self, buf: &mut Vec<f32>) {
         buf.clear();
         buf.append(&mut self.sample_buffer);

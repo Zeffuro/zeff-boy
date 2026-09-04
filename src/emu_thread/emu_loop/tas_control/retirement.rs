@@ -88,6 +88,7 @@ impl EmuLoop {
         self.pending_audio_discontinuities.clear();
         let response = EmuResponse::LoadStateOk {
             path: path.to_owned(),
+            warning: None,
             media_slot_snapshot: self.backend.media_slot_snapshot(),
             game_boy_serial_device: self.backend.game_boy_serial_device(),
         };

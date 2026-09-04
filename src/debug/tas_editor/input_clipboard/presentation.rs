@@ -6,7 +6,9 @@ use super::{
 };
 use crate::{
     debug::tas_editor::{
-        TasEditorAction, branch_diff_editor::raw_input_summary,
+        TasEditorAction,
+        branch_diff_editor::raw_input_summary,
+        event_editor::{can_author_fds_events, is_editable_event, project_media_id},
         timeline_selection::TasInputSelection,
     },
     tas_project::{MAX_PROJECT_FRAMES, TasEditorSession, TasInputPattern},
@@ -56,12 +58,13 @@ pub(super) fn draw_input_clipboard(
         };
         ui.separator();
         ui.small(format!(
-            "Source branch {} [{}] frames {}..{}; {} sparse spans",
+            "Source branch {} [{}] frames {}..{}; {} sparse spans; {} events",
             entry.source_branch_id,
             &entry.source_movie_sha256.to_hex()[..12],
             entry.start,
             entry.start.saturating_add(entry.pattern.length()),
-            entry.pattern.spans().len()
+            entry.pattern.spans().len(),
+            entry.events.len()
         ));
         draw_pattern_spans(ui, &entry.pattern);
         match session
@@ -113,9 +116,14 @@ pub(super) fn draw_input_clipboard(
                         }),
                     ));
                 }
-                let tile_fits = selection.is_some();
+                let tile_fits = selection.is_some() && entry.events.is_empty();
                 if ui
                     .add_enabled(tile_fits, egui::Button::new("Tile across selection"))
+                    .on_disabled_hover_text(if entry.events.is_empty() {
+                        "Select timeline frames to tile the copied input"
+                    } else {
+                        "Copied drive events cannot be repeated safely"
+                    })
                     .clicked()
                 {
                     actions.push(TasEditorAction::InputClipboard(
@@ -153,6 +161,23 @@ fn copy_selection_action(
         .project()
         .branch(&selection.branch_id)
         .ok_or_else(|| anyhow::anyhow!("input selection branch no longer exists"))?;
+    let events = source
+        .events()
+        .iter()
+        .filter(|event| event.frame() >= selection.start && event.frame() < selection.end)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !events.is_empty() {
+        let identity = session.project().identity();
+        let media_id = project_media_id(identity);
+        if !can_author_fds_events(identity)
+            || events
+                .iter()
+                .any(|event| !is_editable_event(event, &media_id))
+        {
+            bail!("this selection contains replay events that cannot be copied safely");
+        }
+    }
     Ok(TasInputClipboardAction::CopyPattern(
         TasInputClipboardCopyAction {
             expected_project_sha256: session.project_content_sha256(),
@@ -162,6 +187,8 @@ fn copy_selection_action(
                 .branch_movie_sha256(&selection.branch_id)?,
             start: selection.start,
             pattern: source.input_pattern(selection.start, length)?,
+            events,
+            include_events: true,
             expected_selection: Some(selection.clone()),
         },
     ))

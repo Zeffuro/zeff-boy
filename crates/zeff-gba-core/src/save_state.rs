@@ -18,11 +18,14 @@ mod tas_state;
 pub use tas_state::{
     CurrentNativeGbaTasStateInspection, CurrentNativeGbaTasStateProjection, GbaTasKeypadState,
     GbaTasStartup, TAS_DETERMINISM_ABI_ID, TAS_STATE_FORMAT_COMPATIBILITY_ID,
-    inspect_current_native_gba_tas_state, restore_current_native_gba_tas_state,
+    TILT_TAS_DETERMINISM_ABI_ID, TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID,
+    inspect_current_native_gba_tas_state, inspect_current_native_gba_tilt_tas_state,
+    restore_current_native_gba_tas_state, restore_current_native_gba_tilt_tas_state,
 };
 
 const MAGIC: &[u8; 8] = b"ZBGBAST\0";
 const VERSION: u32 = 10;
+const TILT_VERSION: u32 = 11;
 const MAX_BACKUP_SIZE: usize = 0x20_000;
 const MAX_FIFO_SIZE: usize = 32;
 #[cfg(test)]
@@ -34,11 +37,19 @@ const VERSION_9_ROM_HASH_SIZE: usize = 32;
 #[cfg(test)]
 const VERSION_10_BACKUP_EXECUTION_STATE_SIZE: usize =
     crate::hardware::cartridge::BACKUP_EXECUTION_STATE_SIZE;
+#[cfg(test)]
+const VERSION_11_TILT_EXECUTION_STATE_SIZE: usize = 14;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::with_capacity(0x80_000);
     w.write_bytes(MAGIC);
-    w.write_u32(VERSION);
+    let version = if emu.bus.cartridge.sensor_kind() == crate::hardware::cartridge::SensorKind::Tilt
+    {
+        TILT_VERSION
+    } else {
+        VERSION
+    };
+    w.write_u32(version);
 
     let mut cpu = emu.cpu.clone();
     cpu.sync_active_bank();
@@ -184,6 +195,9 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u32(execution.data_access_count);
     w.write_u32(execution.data_bus_phase_cycles);
     emu.bus.cartridge.write_backup_execution_state(&mut w);
+    if version >= TILT_VERSION {
+        emu.bus.cartridge.write_tilt_execution_state(&mut w);
+    }
     w.write_bytes(&emu.rom_hash);
 
     Ok(w.into_bytes())
@@ -197,7 +211,7 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         bail!("not a zeff GBA save state");
     }
     let version = r.read_u32()?;
-    if !(2..=VERSION).contains(&version) {
+    if !(2..=TILT_VERSION).contains(&version) {
         bail!("unsupported GBA save-state version {version}");
     }
 
@@ -450,6 +464,11 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     } else {
         emu.bus.cartridge.reset_backup_execution_state();
     }
+    if version >= TILT_VERSION {
+        emu.bus.cartridge.read_tilt_execution_state(&mut r)?;
+    } else {
+        emu.bus.cartridge.reset_tilt_execution_state();
+    }
     if version >= 9 {
         let mut state_rom_hash = [0; 32];
         r.read_exact(&mut state_rom_hash)?;
@@ -490,3 +509,5 @@ fn read_fixed_vec(
 mod backup_state_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tilt_state_tests;

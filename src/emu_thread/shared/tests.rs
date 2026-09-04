@@ -1,5 +1,6 @@
 use super::*;
 use crate::debug::DebugUiActions;
+use crate::emu_thread::LoadStateWarning;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::link::LinkSession;
 #[cfg(not(target_arch = "wasm32"))]
@@ -81,7 +82,7 @@ fn load_state_response_reports_authoritative_game_boy_serial_device() {
 
     let response = EmuThread::respond_load_state(
         &mut backend,
-        Ok(()),
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact),
         "test state".to_string(),
         0,
         0,
@@ -91,6 +92,7 @@ fn load_state_response_reports_authoritative_game_boy_serial_device() {
     assert!(matches!(
         response,
         EmuResponse::LoadStateOk {
+            warning: None,
             game_boy_serial_device: Some(
                 zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
             ),
@@ -108,7 +110,7 @@ fn load_state_response_has_no_game_boy_serial_device_for_other_systems() {
 
     let response = EmuThread::respond_load_state(
         &mut backend,
-        Ok(()),
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact),
         "test state".to_string(),
         0,
         0,
@@ -118,7 +120,59 @@ fn load_state_response_has_no_game_boy_serial_device_for_other_systems() {
     assert!(matches!(
         response,
         EmuResponse::LoadStateOk {
+            warning: None,
             game_boy_serial_device: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn load_state_response_carries_structured_best_effort_bess_warning() {
+    let mut backend = gb_backend();
+    let shared_fb: SharedFramebuffer = Default::default();
+
+    let response = EmuThread::respond_load_state(
+        &mut backend,
+        Ok(zeff_emu_common::StateRestoreOutcome::BestEffortBess),
+        "portable state".to_string(),
+        0,
+        0,
+        &shared_fb,
+    );
+
+    assert!(matches!(
+        response,
+        EmuResponse::LoadStateOk {
+            warning: Some(LoadStateWarning::BestEffortBess),
+            ..
+        }
+    ));
+    assert!(
+        LoadStateWarning::BestEffortBess
+            .message()
+            .contains("not be restored exactly")
+    );
+}
+
+#[test]
+fn load_state_response_carries_structured_best_effort_portable_warning() {
+    let mut backend = gb_backend();
+    let shared_fb: SharedFramebuffer = Default::default();
+
+    let response = EmuThread::respond_load_state(
+        &mut backend,
+        Ok(zeff_emu_common::StateRestoreOutcome::BestEffortPortable),
+        "portable state".to_string(),
+        0,
+        0,
+        &shared_fb,
+    );
+
+    assert!(matches!(
+        response,
+        EmuResponse::LoadStateOk {
+            warning: Some(LoadStateWarning::BestEffortPortable),
             ..
         }
     ));

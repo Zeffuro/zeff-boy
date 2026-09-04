@@ -7,6 +7,7 @@ use crate::save_state::{
     validate_compatibility,
 };
 use anyhow::{Result as AnyResult, bail};
+use zeff_emu_common::StateRestoreOutcome;
 use zeff_emu_common::save_ram::SaveRamKind;
 
 impl Emulator {
@@ -141,14 +142,19 @@ impl Emulator {
         self.encode_state_bytes()
     }
 
-    pub fn load_state(&mut self, bytes: &[u8]) -> AnyResult<()> {
+    pub fn load_state(&mut self, bytes: &[u8]) -> AnyResult<StateRestoreOutcome> {
         self.load_state_from_bytes(bytes.to_vec())
     }
 
-    pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> AnyResult<()> {
+    pub fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> AnyResult<StateRestoreOutcome> {
         let ppu_debug_flags = self.bus.ppu_debug_flags();
         if bytes.len() >= 8 && bytes[..8] == SAVE_STATE_MAGIC {
-            return match crate::save_state::decode_on_thread(bytes) {
+            let legacy_bess_fallback = bytes
+                .get(8..12)
+                .map(|version| u32::from_le_bytes(version.try_into().unwrap()) < 3)
+                .unwrap_or(false)
+                && has_bess_footer(&bytes);
+            match crate::save_state::decode_on_thread(bytes.clone()) {
                 Ok(state) => {
                     validate_compatibility(&state, self.rom_hash)?;
 
@@ -186,10 +192,11 @@ impl Emulator {
                     self.last_opcode_pc = state.last_opcode_pc;
 
                     self.reset_debug_state();
-                    Ok(())
+                    return Ok(StateRestoreOutcome::Exact);
                 }
-                Err(error) => Err(error),
-            };
+                Err(error) if !legacy_bess_fallback => return Err(error),
+                Err(_) => {}
+            }
         }
 
         if has_bess_footer(&bytes) {
@@ -219,7 +226,7 @@ impl Emulator {
             self.last_opcode_pc = self.cpu.pc;
 
             self.reset_debug_state();
-            return Ok(());
+            return Ok(StateRestoreOutcome::BestEffortBess);
         }
 
         bail!("unrecognized save state format")
@@ -285,6 +292,7 @@ mod tests {
     use crate::hardware::ppu::{SCREEN_H, SCREEN_W};
     use crate::hardware::types::CpuState;
     use crate::hardware::types::hardware_mode::HardwareModePreference;
+    use zeff_emu_common::StateRestoreOutcome;
 
     const LCD_FRAMEBUFFER_LEN: usize = SCREEN_W * SCREEN_H * 4;
 
@@ -338,14 +346,48 @@ mod tests {
         let mut target = emulator(false);
         target.set_ppu_debug_flags(false, true, false);
 
-        target.load_state(&native).unwrap();
+        assert_eq!(
+            target.load_state(&native).unwrap(),
+            StateRestoreOutcome::Exact
+        );
         assert_ppu_debug_flags(&target, (false, true, false));
 
         let mut bess = native;
         bess[0] ^= 0xFF;
         target.set_ppu_debug_flags(true, false, false);
-        target.load_state(&bess).unwrap();
+        assert_eq!(
+            target.load_state(&bess).unwrap(),
+            StateRestoreOutcome::BestEffortBess
+        );
         assert_ppu_debug_flags(&target, (true, false, false));
+    }
+
+    #[test]
+    fn legacy_v2_container_imports_its_bess_state() {
+        let mut source = emulator(false);
+        source.step_frame();
+        let mut state = source.encode_state_bytes().unwrap();
+        state[8..12].copy_from_slice(&2_u32.to_le_bytes());
+
+        let mut target = emulator(false);
+        assert_eq!(
+            target.load_state(&state).unwrap(),
+            StateRestoreOutcome::BestEffortBess
+        );
+
+        assert_eq!(target.hardware_mode(), source.hardware_mode());
+        assert_eq!(target.cpu.pc, source.cpu.pc);
+    }
+
+    #[test]
+    fn malformed_legacy_v2_container_without_bess_keeps_native_error() {
+        let mut state = emulator(false).encode_state_bytes().unwrap();
+        state[8..12].copy_from_slice(&2_u32.to_le_bytes());
+        state.truncate(state.len() - 8);
+
+        let error = emulator(false).load_state(&state).unwrap_err().to_string();
+
+        assert!(error.contains("unsupported save-state file format 2"));
     }
 
     fn assert_bytes_equal(label: &str, actual: &[u8], expected: &[u8]) {
@@ -403,7 +445,10 @@ mod tests {
         restored
             .bus
             .restore_ppu_lcd_framebuffer(patterned_framebuffer(0xA7));
-        restored.load_state(&state).unwrap();
+        assert_eq!(
+            restored.load_state(&state).unwrap(),
+            StateRestoreOutcome::Exact
+        );
 
         assert_eq!(restored.frame_count(), source.frame_count());
         assert_bytes_equal(
@@ -721,7 +766,10 @@ mod tests {
         bess[0] ^= 0xFF;
 
         let mut restored = emulator(false);
-        restored.load_state(&bess).unwrap();
+        assert_eq!(
+            restored.load_state(&bess).unwrap(),
+            StateRestoreOutcome::BestEffortBess
+        );
         assert_eq!(restored.cpu.pc, source.cpu.pc);
         assert!(restored.framebuffer().iter().all(|&pixel| pixel == 0));
         assert!(restored.framebuffer() != source.framebuffer());
@@ -741,7 +789,10 @@ mod tests {
         bess.splice(footer_start..footer_start, [0; 8 + 0x39]);
 
         let mut restored = emulator(true);
-        restored.load_state(&bess).unwrap();
+        assert_eq!(
+            restored.load_state(&bess).unwrap(),
+            StateRestoreOutcome::BestEffortBess
+        );
         assert_eq!(restored.cpu.pc, source.cpu.pc);
     }
 }

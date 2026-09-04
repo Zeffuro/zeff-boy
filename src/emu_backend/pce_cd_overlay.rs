@@ -10,7 +10,7 @@ use zeff_pce_core::hardware::{CD_RAW_SECTOR_BYTES, CdSourceError, CdTrackSource}
 use crate::patching::{PpfPlanFallback, PpfPlanLimits, PpfPlanOutcome, plan_ppf_patch};
 
 mod stack;
-pub(crate) use stack::{apply_ppf_bytes_stack, apply_ppf_stack};
+pub(crate) use stack::{apply_ppf_byte_slices_stack, apply_ppf_bytes_stack, apply_ppf_stack};
 
 pub(crate) const PATCH_BYTES_LIMIT: usize = 16 * 1024 * 1024;
 const PATCH_RECORDS_LIMIT: usize = 131_072;

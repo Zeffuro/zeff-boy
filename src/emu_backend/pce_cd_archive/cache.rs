@@ -1,4 +1,6 @@
+use super::ppf::patches_from_bytes;
 use super::*;
+use std::io::{Seek, SeekFrom};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct CachedArchive {
@@ -6,6 +8,7 @@ pub(super) struct CachedArchive {
     source_size: u64,
     source_modified_secs: u64,
     source_modified_nanos: u32,
+    source_sha256: [u8; 32],
     members: Vec<CachedMember>,
 }
 
@@ -22,11 +25,12 @@ pub(super) struct CacheEntry {
     extracted_bytes: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SourceFingerprint {
-    size: u64,
+    pub(super) size: u64,
     modified_secs: u64,
     modified_nanos: u32,
+    pub(super) sha256: [u8; 32],
 }
 
 #[derive(Clone, Copy)]
@@ -61,7 +65,7 @@ pub(super) fn pce_cd_cache_root() -> PathBuf {
 
 #[cfg(not(test))]
 pub(super) fn pce_cd_cache_root() -> PathBuf {
-    crate::platform::cache_dir().join("pce-cd-7z-v1")
+    crate::platform::cache_dir().join("pce-cd-7z-v2")
 }
 
 pub(super) fn validate_cacheable_manifest(
@@ -83,9 +87,48 @@ pub(super) fn validate_cacheable_manifest(
     Ok(())
 }
 
-pub(super) fn source_fingerprint(path: &Path) -> Result<SourceFingerprint, PceCdLoadError> {
-    let metadata = std::fs::metadata(path)
+pub(super) fn source_fingerprint(
+    source: &mut File,
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+) -> Result<SourceFingerprint, PceCdLoadError> {
+    source
+        .seek(SeekFrom::Start(0))
         .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    let metadata = source
+        .metadata()
+        .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; STREAM_BUFFER_BYTES];
+    progress.set_total_bytes(metadata.len());
+    progress.set_completed_bytes(0);
+    let mut completed = 0_u64;
+    loop {
+        check_cancelled(cancel)?;
+        let count = source
+            .read(&mut buffer)
+            .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+        completed = completed.saturating_add(count as u64);
+        progress.update_decode_progress(completed, cancel);
+    }
+    check_cancelled(cancel)?;
+    source
+        .seek(SeekFrom::Start(0))
+        .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    let final_metadata = source
+        .metadata()
+        .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    if completed != metadata.len()
+        || final_metadata.len() != metadata.len()
+        || final_metadata.modified().ok() != metadata.modified().ok()
+    {
+        return Err(PceCdLoadError::ArchiveChanged);
+    }
     let modified = metadata
         .modified()
         .unwrap_or(UNIX_EPOCH)
@@ -95,17 +138,19 @@ pub(super) fn source_fingerprint(path: &Path) -> Result<SourceFingerprint, PceCd
         size: metadata.len(),
         modified_secs: modified.as_secs(),
         modified_nanos: modified.subsec_nanos(),
+        sha256: hasher.finalize().into(),
     })
 }
 
 pub(super) fn cache_key(path: &Path, source: SourceFingerprint) -> String {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut hasher = Sha256::new();
-    hasher.update(b"zeff-boy:pce-cd-7z-cache:v1\0");
+    hasher.update(b"zeff-boy:pce-cd-7z-cache:v2\0");
     update_path_hash(&mut hasher, &canonical);
     hasher.update(source.size.to_le_bytes());
     hasher.update(source.modified_secs.to_le_bytes());
     hasher.update(source.modified_nanos.to_le_bytes());
+    hasher.update(source.sha256);
     const_hex::encode(hasher.finalize())
 }
 
@@ -290,6 +335,7 @@ pub(super) fn extract_cache(
         source_size: identity.source.size,
         source_modified_secs: identity.source.modified_secs,
         source_modified_nanos: identity.source.modified_nanos,
+        source_sha256: identity.source.sha256,
         members: cached,
     };
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(cache_io_error)?;
@@ -353,6 +399,7 @@ fn read_cache_manifest(
         || cached.source_size != source.size
         || cached.source_modified_secs != source.modified_secs
         || cached.source_modified_nanos != source.modified_nanos
+        || cached.source_sha256 != source.sha256
         || cached.members.len() > CACHE_ENTRY_MEMBER_LIMIT
     {
         return None;
@@ -488,6 +535,98 @@ pub(super) fn load_cached_disc(
     }
     check_cancelled(cancel).map_err(CachedDiscError::Load)?;
     build_disc_with_mods(cue_bytes, &sheet, files, true).map_err(CachedDiscError::Load)
+}
+
+pub(super) fn load_cached_archive_ppf_disc(
+    cache: &CacheEntry,
+    archive: &ArchiveManifest,
+    cue_name: &str,
+    patch_names: &[String],
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+) -> Result<(LoadedPceCd, Vec<PceCdArchivePpfPatch>), CachedDiscError> {
+    if patch_names.is_empty() {
+        return Err(CachedDiscError::Load(PceCdLoadError::NoArchivePpfStack));
+    }
+    check_cancelled(cancel).map_err(CachedDiscError::Load)?;
+    let cue = cache
+        .manifest
+        .members
+        .iter()
+        .find(|member| member.name == cue_name)
+        .ok_or(CachedDiscError::Corrupt)?;
+    progress.set_phase(PceCdPackageLoadPhase::ReadingCue);
+    progress.set_completed_bytes(cache.extracted_bytes);
+    let cue_bytes = read_cached_member(cache, cue, cancel, progress, cache.extracted_bytes)?;
+    let sheet = parse_cue_bytes(&cue_bytes).map_err(CachedDiscError::Load)?;
+    let mut data_total = 0_u64;
+    let mut sources = Vec::with_capacity(sheet.files.len());
+    for file in &sheet.files {
+        let name =
+            resolve_reference(archive, cue_name, &file.reference).map_err(CachedDiscError::Load)?;
+        let manifest_member = archive
+            .entries
+            .iter()
+            .find(|member| member.name == name)
+            .ok_or_else(|| {
+                CachedDiscError::Load(PceCdLoadError::ArchiveMemberMissing(name.clone()))
+            })?;
+        validate_data_member(manifest_member).map_err(CachedDiscError::Load)?;
+        data_total = data_total
+            .checked_add(manifest_member.size)
+            .ok_or(CachedDiscError::Load(PceCdLoadError::DataTooLarge(
+                u64::MAX,
+            )))?;
+        if data_total > PCE_CD_DATA_BYTES_LIMIT as u64 {
+            return Err(CachedDiscError::Load(PceCdLoadError::DataTooLarge(
+                data_total,
+            )));
+        }
+        let cached = cache
+            .manifest
+            .members
+            .iter()
+            .find(|member| member.name == name)
+            .ok_or(CachedDiscError::Corrupt)?;
+        sources.push(cached_file_source(cache, cached)?);
+    }
+    let base = cache.extracted_bytes.saturating_add(cue.size);
+    progress.set_phase(PceCdPackageLoadPhase::ReadingData);
+    progress.set_total_bytes(base.saturating_add(data_total));
+    let mut verified = 0_u64;
+    let mut loaded = load_cached_cue_file_backed(&cue_bytes, &sheet, sources.clone(), |count| {
+        check_cancelled(cancel)?;
+        verified = verified.saturating_add(count);
+        progress.update_decode_progress(base.saturating_add(verified), cancel);
+        check_cancelled(cancel)
+    })
+    .map_err(file_backed_cache_error)?;
+    let mut extracted = BTreeMap::new();
+    let mut completed = base.saturating_add(data_total);
+    for name in patch_names {
+        let member = cache
+            .manifest
+            .members
+            .iter()
+            .find(|member| member.name == name.as_str())
+            .ok_or(CachedDiscError::Corrupt)?;
+        let bytes = read_cached_member(cache, member, cancel, progress, completed)?;
+        completed = completed.saturating_add(member.size);
+        extracted.insert(name.clone(), bytes);
+    }
+    let patches = patches_from_bytes(patch_names, &mut extracted).map_err(CachedDiscError::Load)?;
+    let patch_bytes = patches
+        .iter()
+        .map(|patch| (patch.identity.member_path.as_str(), patch.bytes.as_slice()))
+        .collect::<Vec<_>>();
+    loaded.disc = try_load_cached_cue_ppf_overlay_byte_slices(&sheet, sources, &patch_bytes)
+        .map_err(file_backed_cache_error)?
+        .ok_or_else(|| {
+            CachedDiscError::Load(PceCdLoadError::Disc(
+                "PC Engine CD archive PPF plan requires an unsupported fallback".to_owned(),
+            ))
+        })?;
+    Ok((loaded, patches))
 }
 
 fn cached_file_source(

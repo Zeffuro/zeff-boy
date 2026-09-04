@@ -7,10 +7,11 @@ use super::{
     decode_state, psg_revision_to_tag, topology_to_tag, wiring_to_tag,
 };
 use crate::hardware::{
-    ControllerDevice, ControllerPort, PadButtons, PceCartridgeDescriptor, PceCartridgeHardware,
-    PceConsoleWiring, PceControllerMode, PceHardwareTopology, PceHuCardBoard, PceMachine,
-    PceVideoActiveBounds, PceVideoRowMetadata, PceVideoSignalBounds, PsgRevision,
-    SixButtonExtraButtons, SixButtonPhase, VceFrameLength,
+    ControllerDevice, ControllerPort, FivePortMultitap, MultitapDevice, MultitapPort, PadButtons,
+    PceCartridgeDescriptor, PceCartridgeHardware, PceConsoleWiring, PceControllerMode,
+    PceHardwareTopology, PceHuCardBoard, PceMachine, PceVideoActiveBounds, PceVideoRowMetadata,
+    PceVideoSignalBounds, PsgRevision, SixButtonExtraButtons, SixButtonPhase, TwoButtonPad,
+    VceFrameLength,
 };
 
 pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-pce-determinism-v1";
@@ -57,6 +58,15 @@ pub struct CurrentNativePceTasStateInspection {
     pub controller_buttons: PadButtons,
     pub controller_extra_buttons: SixButtonExtraButtons,
     pub controller_six_button_phase: Option<SixButtonPhase>,
+    pub controller_multitap: Option<CurrentNativePceTasMultitapState>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CurrentNativePceTasMultitapState {
+    pub buttons: [PadButtons; 5],
+    pub active_port: Option<MultitapPort>,
+    pub select_high: bool,
+    pub clear_high: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +79,7 @@ pub struct CurrentNativePceCdTasStateInspection {
     pub wiring: PceConsoleWiring,
     pub psg_revision: PsgRevision,
     pub controller_buttons: PadButtons,
+    pub controller_multitap: Option<CurrentNativePceTasMultitapState>,
     pub arcade_card_enabled: bool,
     pub memory_base_enabled: bool,
 }
@@ -78,11 +89,13 @@ pub use cd::{
     inspect_current_native_pce_cd_tas_state,
     inspect_current_native_pce_cd_tas_state_for_arcade_card,
     inspect_current_native_pce_cd_tas_state_for_profile,
+    inspect_current_native_pce_cd_tas_state_for_profile_and_controller,
     inspect_current_native_pce_cd_tas_state_identity,
     inspect_current_native_pce_cd_tas_state_identity_for_arcade_card,
     validate_and_load_current_native_pce_cd_tas_state,
     validate_and_load_current_native_pce_cd_tas_state_for_arcade_card,
     validate_and_load_current_native_pce_cd_tas_state_for_profile,
+    validate_and_load_current_native_pce_cd_tas_state_for_profile_and_controller,
 };
 
 pub fn inspect_current_native_direct_hucard_tas_state(
@@ -141,6 +154,7 @@ pub fn inspect_current_native_direct_hucard_tas_state_for_profile_and_controller
         match controller_mode {
             PceControllerMode::TwoButton => ControllerPort::two_button(),
             PceControllerMode::SixButton => ControllerPort::six_button(),
+            PceControllerMode::Multitap => multitap_controller(),
             _ => bail!("TAS state requires a supported controller"),
         },
     )?;
@@ -149,18 +163,52 @@ pub fn inspect_current_native_direct_hucard_tas_state_for_profile_and_controller
     ensure_direct_hucard_machine(&candidate, board, topology, controller_mode)?;
 
     let presented = candidate.presented_frame();
-    let (controller_buttons, controller_extra_buttons, controller_six_button_phase) =
-        match candidate.devices().controller().device() {
-            ControllerDevice::TwoButton(pad) => {
-                (pad.buttons(), SixButtonExtraButtons::empty(), None)
+    let (
+        controller_buttons,
+        controller_extra_buttons,
+        controller_six_button_phase,
+        controller_multitap,
+    ) = match candidate.devices().controller().device() {
+        ControllerDevice::TwoButton(pad) => {
+            (pad.buttons(), SixButtonExtraButtons::empty(), None, None)
+        }
+        ControllerDevice::SixButton(pad) => (
+            pad.standard_pad().buttons(),
+            pad.extra_buttons(),
+            Some(pad.phase()),
+            None,
+        ),
+        ControllerDevice::Multitap(multitap) => {
+            let mut buttons = [PadButtons::empty(); 5];
+            for (index, port) in [
+                MultitapPort::One,
+                MultitapPort::Two,
+                MultitapPort::Three,
+                MultitapPort::Four,
+                MultitapPort::Five,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let MultitapDevice::TwoButton(pad) = multitap.port(port) else {
+                    unreachable!("direct HuCard TAS state validation checked multitap topology")
+                };
+                buttons[index] = pad.buttons();
             }
-            ControllerDevice::SixButton(pad) => (
-                pad.standard_pad().buttons(),
-                pad.extra_buttons(),
-                Some(pad.phase()),
-            ),
-            _ => unreachable!("direct Plain HuCard state validation checked controller topology"),
-        };
+            (
+                PadButtons::empty(),
+                SixButtonExtraButtons::empty(),
+                None,
+                Some(CurrentNativePceTasMultitapState {
+                    buttons,
+                    active_port: multitap.active_port(),
+                    select_high: candidate.devices().controller().select_high(),
+                    clear_high: candidate.devices().controller().clear_high(),
+                }),
+            )
+        }
+        _ => unreachable!("direct Plain HuCard state validation checked controller topology"),
+    };
     Ok(CurrentNativePceTasStateInspection {
         projection: CurrentNativePceTasStateProjection {
             replay_state_bytes: data.to_vec(),
@@ -184,7 +232,18 @@ pub fn inspect_current_native_direct_hucard_tas_state_for_profile_and_controller
         controller_buttons,
         controller_extra_buttons,
         controller_six_button_phase,
+        controller_multitap,
     })
+}
+
+fn multitap_controller() -> ControllerPort {
+    ControllerPort::multitap(FivePortMultitap::new([
+        MultitapDevice::TwoButton(TwoButtonPad::new()),
+        MultitapDevice::TwoButton(TwoButtonPad::new()),
+        MultitapDevice::TwoButton(TwoButtonPad::new()),
+        MultitapDevice::TwoButton(TwoButtonPad::new()),
+        MultitapDevice::TwoButton(TwoButtonPad::new()),
+    ]))
 }
 
 pub fn inspect_current_native_direct_hucard_tas_state_identity(
@@ -353,14 +412,27 @@ fn ensure_direct_hucard_machine(
             && machine.devices().arcade_card().is_none(),
         "TAS state requires a direct supported Base HuCard machine"
     );
+    let controller_matches = match (controller_mode, machine.devices().controller().device()) {
+        (PceControllerMode::TwoButton, ControllerDevice::TwoButton(_))
+        | (PceControllerMode::SixButton, ControllerDevice::SixButton(_)) => true,
+        (PceControllerMode::Multitap, ControllerDevice::Multitap(multitap)) => [
+            MultitapPort::One,
+            MultitapPort::Two,
+            MultitapPort::Three,
+            MultitapPort::Four,
+            MultitapPort::Five,
+        ]
+        .into_iter()
+        .all(|port| matches!(multitap.port(port), MultitapDevice::TwoButton(_))),
+        _ => false,
+    };
     ensure!(
-        matches!(
-            (controller_mode, machine.devices().controller().device()),
-            (PceControllerMode::TwoButton, ControllerDevice::TwoButton(_))
-                | (PceControllerMode::SixButton, ControllerDevice::SixButton(_))
-        ) && (controller_mode != PceControllerMode::SixButton
-            || (board == PceHuCardBoard::Plain && topology == PceHardwareTopology::Base)),
-        "TAS state requires exactly one two-button controller"
+        controller_matches
+            && (!matches!(
+                controller_mode,
+                PceControllerMode::SixButton | PceControllerMode::Multitap
+            ) || (board == PceHuCardBoard::Plain && topology == PceHardwareTopology::Base)),
+        "TAS state requires its exact supported controller topology"
     );
     ensure!(
         !machine
@@ -381,6 +453,7 @@ fn ensure_pce_cd_machine(
     machine: &PceMachine,
     arcade_card: bool,
     memory_base: bool,
+    controller_mode: PceControllerMode,
 ) -> anyhow::Result<()> {
     ensure!(
         machine.hucard_board() == PceHuCardBoard::SystemCardV3
@@ -389,12 +462,22 @@ fn ensure_pce_cd_machine(
             && machine.devices().arcade_card().is_some() == arcade_card,
         "TAS state requires a Base PC Engine CD machine with Super System Card v3"
     );
+    let controller_matches = match (controller_mode, machine.devices().controller().device()) {
+        (PceControllerMode::TwoButton, ControllerDevice::TwoButton(_)) => true,
+        (PceControllerMode::Multitap, ControllerDevice::Multitap(multitap)) => [
+            MultitapPort::One,
+            MultitapPort::Two,
+            MultitapPort::Three,
+            MultitapPort::Four,
+            MultitapPort::Five,
+        ]
+        .into_iter()
+        .all(|port| matches!(multitap.port(port), MultitapDevice::TwoButton(_))),
+        _ => false,
+    };
     ensure!(
-        matches!(
-            machine.devices().controller().device(),
-            ControllerDevice::TwoButton(_)
-        ),
-        "TAS state requires exactly one two-button controller"
+        controller_matches,
+        "TAS state requires its exact supported controller topology"
     );
     ensure!(
         machine

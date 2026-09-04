@@ -43,7 +43,7 @@ impl TasProject {
         F: FnOnce(&mut TasProjectEdit<'_>) -> Result<()>,
     {
         self.validate()?;
-        let sync_identity = self.sync_identity_sha256()?;
+        let sync_identity = self.sync_identity_sha256_from_validated()?;
         let before_hashes = branch_hashes(self, sync_identity)?;
         let before_ids = before_hashes.keys().cloned().collect::<BTreeSet<_>>();
 
@@ -83,7 +83,7 @@ impl TasProject {
                 branch.verification = None;
             }
         }
-        candidate.validate()?;
+        candidate.validate_editor_state()?;
 
         if changed {
             candidate.edit_generation = candidate
@@ -97,7 +97,7 @@ impl TasProject {
                 .checked_add(1)
                 .ok_or_else(|| anyhow::anyhow!("TAS rerecord count overflow"))?;
         }
-        candidate.validate()?;
+        candidate.validate_editor_state()?;
 
         let mut branch_impacts = Vec::with_capacity(created_ids.len() + changed_existing_ids.len());
         for branch_id in after_ids {
@@ -419,6 +419,35 @@ impl TasProjectEdit<'_> {
     ) -> Result<()> {
         let branch = self.branch_mut(branch_id)?;
         replace_branch_input_pattern(branch, start, pattern)
+    }
+
+    pub fn insert_input_pattern_with_events(
+        &mut self,
+        branch_id: &str,
+        cursor: u64,
+        pattern: &TasInputPattern,
+        relative_events: &[ReplayEvent],
+    ) -> Result<()> {
+        for event in relative_events {
+            if event.frame() >= pattern.length() {
+                bail!("inserted TAS event is outside the copied frame range");
+            }
+        }
+        self.insert_frames(branch_id, cursor, pattern.length())?;
+        self.replace_input_pattern(branch_id, cursor, pattern)?;
+        let mut events = self.branch_mut(branch_id)?.events.clone();
+        for event in relative_events {
+            let mut event = event.clone();
+            let relative_frame = event.frame();
+            set_event_frame(
+                &mut event,
+                cursor
+                    .checked_add(relative_frame)
+                    .ok_or_else(|| anyhow::anyhow!("inserted TAS event frame overflows"))?,
+            );
+            events.push(event);
+        }
+        self.replace_branch_events(branch_id, events)
     }
 
     pub fn replace_branch_events(

@@ -16,6 +16,22 @@ fn worker_tas_input_preserves_zapper_state() {
 }
 
 #[test]
+fn worker_tas_input_preserves_tilt_bits() {
+    let input = TasInputFrame {
+        tilt_x_bits: 0x3E80_0000,
+        tilt_y_bits: 0xBF00_0000,
+        ..TasInputFrame::default()
+    };
+    assert_eq!(
+        replay_frame(input).host_tilt,
+        (
+            f32::from_bits(input.tilt_x_bits),
+            f32::from_bits(input.tilt_y_bits)
+        )
+    );
+}
+
+#[test]
 fn coleco_worker_input_rejects_generic_pad_authority() {
     let input = TasInputFrame {
         p1_buttons: 1,

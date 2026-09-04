@@ -188,7 +188,7 @@ impl App {
             } else {
                 Default::default()
             };
-            let host_tilt = if self.rom_info.is_mbc7 {
+            let host_tilt = if self.rom_info.is_mbc7 || self.rom_info.is_gba_tilt {
                 host_tilt
             } else {
                 (0.0, 0.0)

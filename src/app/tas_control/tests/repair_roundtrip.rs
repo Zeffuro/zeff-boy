@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use super::harness::{app_with_worker, live_ok};
 use crate::app::App;
+use crate::app::tas_control::TasControlState;
 use crate::app::tas_control::repair::{TasRepairResolution, TasRepairState};
 use crate::emu_backend::loader::{DirectGbTasExecutionLoader, DirectNesTasExecutionLoader};
 use crate::emu_backend::{
@@ -13,8 +14,9 @@ use crate::emu_backend::{
 use crate::emu_thread::{
     EmuCommand, EmuResponse, EmuThread, TasExecutionProfile, TasLoadedProfileObservation,
 };
-use crate::live_control::{LiveCommand, LiveReply};
-use crate::tas_project::TasDigest;
+use crate::input::HostButton;
+use crate::live_control::{LiveCommand, LiveReply, TasRecordMode};
+use crate::tas_project::{TasDigest, TasProject};
 use crate::test_support::write_zip;
 
 const ORIGINAL_GENERATION: u64 = 40;
@@ -375,7 +377,7 @@ impl BatteryRepairHarness {
         let save_path = source_path.with_extension("sav");
         let project_path = root.path().join("battery.ztas");
         let rom = gb_battery_test_rom();
-        let project_sram = vec![0x5A; 32 * 1024];
+        let project_sram = vec![0x5A; 8 * 1024];
         std::fs::write(&source_path, &rom).unwrap();
         std::fs::write(&save_path, &project_sram).unwrap();
         DirectGbTasExecutionLoader::new(source_path.clone(), Vec::new())
@@ -405,7 +407,7 @@ impl BatteryRepairHarness {
         let save_path = source_path.with_extension("sav");
         let project_path = root.path().join("battery.ztas");
         let rom = gb_battery_test_rom();
-        let project_sram = vec![0x96; 32 * 1024];
+        let project_sram = vec![0x96; 8 * 1024];
         write_zip(&source_path, &[(member_name, &rom)]).unwrap();
         std::fs::write(&save_path, &project_sram).unwrap();
         DirectGbTasExecutionLoader::new_zip(
@@ -477,7 +479,7 @@ impl BatteryRepairHarness {
         let opened = live_ok(
             &mut app,
             LiveCommand::TasOpenProject {
-                path: paths.project,
+                path: paths.project.clone(),
             },
         );
         assert_eq!(opened["project"]["frame_count"], 1);
@@ -542,7 +544,7 @@ impl BatteryRepairHarness {
         let opened = live_ok(
             &mut app,
             LiveCommand::TasOpenProject {
-                path: paths.project,
+                path: paths.project.clone(),
             },
         );
         assert_eq!(opened["project"]["frame_count"], 1);
@@ -636,6 +638,109 @@ fn zip_gb_battery_keep_publishes_to_the_archive_sidecar() {
         BatteryRepairHarness::gb_zip("tas-repair-gb-battery-zip-keep"),
         false,
     );
+}
+
+#[test]
+fn direct_gb_rom_ram_battery_repaired_session_records_input() {
+    record_battery_frame(
+        BatteryRepairHarness::gb_direct("tas-repair-gb-rom-ram-battery-record"),
+        true,
+    );
+}
+
+#[test]
+fn zip_cgb_rom_ram_battery_repaired_session_records_input() {
+    record_battery_frame(
+        BatteryRepairHarness::cgb_zip("tas-repair-cgb-rom-ram-battery-record"),
+        false,
+    );
+}
+
+fn record_battery_frame(mut harness: BatteryRepairHarness, keep: bool) {
+    harness.reload_and_link();
+    live_ok(
+        &mut harness.app,
+        LiveCommand::Button {
+            player: 1,
+            key: HostButton::A,
+            pressed: true,
+        },
+    );
+    live_ok(
+        &mut harness.app,
+        LiveCommand::TasSetRealtimeRecording { active: true },
+    );
+    live_ok(
+        &mut harness.app,
+        LiveCommand::TasRecordFrame {
+            mode: TasRecordMode::Replace,
+        },
+    );
+    live_ok(
+        &mut harness.app,
+        LiveCommand::TasSetRealtimeRecording { active: false },
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !matches!(
+        harness.app.tas_control.state,
+        TasControlState::AwaitingDecision {
+            candidate_executed_project_frames,
+            candidate_frame_count,
+            ..
+        } if candidate_executed_project_frames == 2 && candidate_frame_count == 2
+    ) && Instant::now() < deadline
+    {
+        harness.app.drain_emu_responses();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        matches!(
+            harness.app.tas_control.state,
+            TasControlState::AwaitingDecision {
+                candidate_executed_project_frames,
+                candidate_frame_count,
+                ..
+            } if candidate_executed_project_frames == 2 && candidate_frame_count == 2
+        ),
+        "unexpected TAS recording state: {:?}",
+        harness.app.tas_control.state
+    );
+    let session = harness
+        .app
+        .debug_windows
+        .tas_editor
+        .active_session()
+        .unwrap();
+    assert_eq!(session.selected_branch().frame_count(), 2);
+    assert_eq!(
+        session.selected_branch().input_at(1).players[0].buttons,
+        0x01
+    );
+    assert_eq!(session.selected_branch().input_at(1).players[0].dpad, 0);
+
+    live_ok(&mut harness.app, LiveCommand::TasDisconnect { keep });
+    wait_for_readiness(&mut harness.app, "reload_required");
+    if keep {
+        let (project_path, project) = {
+            let session = harness
+                .app
+                .debug_windows
+                .tas_editor
+                .active_session()
+                .unwrap();
+            (
+                session.manual_path().to_path_buf(),
+                session.project().clone(),
+            )
+        };
+        project.save_atomic(&project_path).unwrap();
+        let reopened = TasProject::load(&project_path).unwrap();
+        assert_eq!(reopened.branch("main").unwrap().frame_count(), 2);
+        assert_eq!(
+            reopened.branch("main").unwrap().input_at(1).players[0].buttons,
+            0x01
+        );
+    }
 }
 
 fn assert_battery_keep(mut harness: BatteryRepairHarness, verify_generation: bool) {
@@ -749,10 +854,9 @@ fn gb_battery_keep_conflict_preserves_restore_authority() {
 
 fn gb_battery_test_rom() -> Vec<u8> {
     let mut rom = crate::test_support::build_gb_test_rom();
-    rom.resize(256 * 1024, 0);
-    rom[0x147] = 0x03;
-    rom[0x148] = 0x03;
-    rom[0x149] = 0x03;
+    rom[0x147] = 0x09;
+    rom[0x148] = 0x00;
+    rom[0x149] = 0x02;
     rom
 }
 

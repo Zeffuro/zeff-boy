@@ -13,7 +13,7 @@ pub(super) fn label(status: &TasEditorLiveStatus) -> Option<String> {
             Some(format!("TAS · ▶ Playing · B({cursor})"))
         }
         TasEditorLiveStatus::AdvancingFrame => Some("TAS · Recording frame…".to_owned()),
-        TasEditorLiveStatus::Recording => Some("TAS · ● Recording".to_owned()),
+        TasEditorLiveStatus::Recording => Some("TAS · Recording".to_owned()),
         TasEditorLiveStatus::Returning => Some("TAS · Restoring game…".to_owned()),
         TasEditorLiveStatus::Keeping => Some("TAS · Keeping game…".to_owned()),
         TasEditorLiveStatus::Terminal(_) => Some("TAS · Needs attention".to_owned()),
@@ -95,7 +95,7 @@ mod tests {
         );
         assert_eq!(
             label(&TasEditorLiveStatus::Recording).as_deref(),
-            Some("TAS · ● Recording")
+            Some("TAS · Recording")
         );
         assert_eq!(
             label(&TasEditorLiveStatus::Returning).as_deref(),

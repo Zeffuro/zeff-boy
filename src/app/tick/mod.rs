@@ -122,6 +122,8 @@ impl App {
 
         self.drain_emu_responses();
         #[cfg(not(target_arch = "wasm32"))]
+        self.pump_pending_tas_repair_activation();
+        #[cfg(not(target_arch = "wasm32"))]
         self.begin_queued_tas_control_acquire();
         #[cfg(not(target_arch = "wasm32"))]
         self.pump_realtime_tas_recording();

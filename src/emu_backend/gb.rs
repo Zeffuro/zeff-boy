@@ -297,7 +297,10 @@ impl EmulatorCore for GbBackend {
         self.emu.encode_state_bytes()
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
         self.emu.load_state_from_bytes(bytes)
     }
 

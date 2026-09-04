@@ -30,13 +30,16 @@ pub(crate) use tas::{
     DirectNesTasExecutionLoader, DirectPceCdTasExecutionLoader, DirectPceTasExecutionLoader,
     DirectSg1000TasExecutionLoader, DirectSmsTasExecutionLoader, DirectWsTasExecutionLoader,
     GbRtcPersistenceWitness, PrivateTasExecutionLoader, classify_direct_tas_execution_profile,
-    gb_rtc_persistence_witness, select_private_tas_execution_attachment,
+    direct_pce_multitap_cd_ppf_tas_sync_config_sha256, gb_rtc_persistence_witness,
+    is_direct_pce_cd_archive_ppf_tas_sync_config_sha256, select_private_tas_execution_attachment,
     select_private_tas_execution_loader, select_private_tas_execution_loader_for_project,
+    select_private_tas_execution_loader_for_replay,
     select_private_tas_execution_loader_with_rom_path,
 };
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use tas::{
-    MAX_NES_CARTRIDGE_BYTES, direct_nes_tas_identity, read_nes_cartridge_bounded,
+    MAX_NES_CARTRIDGE_BYTES, direct_nes_tas_identity,
+    direct_pce_cd_archive_ppf_tas_sync_configs_for_test, read_nes_cartridge_bounded,
 };
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(unused_imports)]
@@ -53,7 +56,10 @@ pub(crate) use tas::{
     validate_direct_gbc_tas_runtime_with_project_rtc,
     validate_direct_gbc_tas_runtime_with_project_sram,
     validate_direct_pce_cd_tas_execution_runtime, validate_direct_pce_cd_tas_runtime,
-    validate_direct_pce_cd_tas_state, validate_direct_pce_six_button_tas_execution_runtime,
+    validate_direct_pce_cd_tas_state, validate_direct_pce_multitap_cd_tas_execution_runtime,
+    validate_direct_pce_multitap_cd_tas_runtime, validate_direct_pce_multitap_cd_tas_state,
+    validate_direct_pce_multitap_tas_execution_runtime, validate_direct_pce_multitap_tas_runtime,
+    validate_direct_pce_six_button_tas_execution_runtime,
     validate_direct_pce_six_button_tas_runtime, validate_direct_pce_tas_execution_runtime,
     validate_direct_pce_tas_runtime, validate_direct_pce_tas_state,
     validate_direct_sg1000_tas_execution_runtime, validate_direct_sg1000_tas_runtime,
@@ -83,6 +89,8 @@ pub(crate) use tas::{
     zip_gbc_battery_tas_sync_config_sha256, zip_gbc_tas_sync_config_sha256,
     zip_nes_battery_tas_sync_config_sha256, zip_nes_tas_sync_config_sha256,
 };
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub(crate) use tas::{register_test_pce_cd_ppf_stack, register_test_pce_cd_system_card};
 
 #[derive(Clone, Debug)]
 pub(crate) struct BackendLoadConfig {
@@ -105,6 +113,15 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) pce_hucard_board: Option<PceHuCardBoard>,
     pub(crate) pce_cartridge_hardware: Option<zeff_pce_core::hardware::PceCartridgeHardware>,
     pub(crate) pce_cd_tas_source_media: Option<([u8; 32], usize, [u8; 32])>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pce_cd_tas_archive_cue:
+        Option<crate::emu_backend::pce_cd_archive::PceCdArchiveCueIdentity>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pce_cd_tas_rar_cue:
+        Option<crate::emu_backend::pce_cd_archive::PceCdArchiveCueIdentity>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pce_cd_tas_zip_cue:
+        Option<crate::emu_backend::pce_cd_archive::PceCdArchiveCueIdentity>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) pce_cd_tas_ppf_stack: Option<crate::emu_backend::pce_cd::PceCdTasPpfStack>,
     pub(crate) pce_controller_mode: zeff_pce_core::hardware::PceControllerMode,
@@ -149,6 +166,12 @@ impl Default for BackendLoadConfig {
             pce_hucard_board: None,
             pce_cartridge_hardware: None,
             pce_cd_tas_source_media: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pce_cd_tas_archive_cue: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pce_cd_tas_rar_cue: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pce_cd_tas_zip_cue: None,
             #[cfg(not(target_arch = "wasm32"))]
             pce_cd_tas_ppf_stack: None,
             pce_controller_mode: zeff_pce_core::hardware::PceControllerMode::Automatic,

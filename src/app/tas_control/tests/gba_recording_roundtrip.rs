@@ -2,6 +2,7 @@ use super::harness::{app_with_worker, live_ok, wait_for_linked, wait_for_recorde
 use super::*;
 use crate::emu_backend::ActiveSystem;
 use crate::emu_backend::loader::DirectGbaTasExecutionLoader;
+use crate::emu_backend::{BackendLoadConfig, load_backend_from_rom_source};
 use crate::emu_thread::EmuThread;
 use crate::input::HostButton;
 use crate::live_control::{LiveCommand, TasRecordMode};
@@ -143,6 +144,78 @@ fn app_creates_direct_gba_projects_and_rejects_non_gba_media() {
             .is_err()
     );
     assert!(!rejected_path.exists());
+}
+
+#[test]
+fn new_battery_project_reloads_and_connects_automatically() {
+    let root = crate::test_support::test_directory("tas-gba-battery-project-connect").unwrap();
+    let archive_path = root.path().join("game.zip");
+    let rom_path = archive_path.join("games/game.gba");
+    let mut rom = gba_rom();
+    rom.extend_from_slice(b"SRAM_V113");
+    let save = vec![0xA5; zeff_gba_core::hardware::constants::SRAM_SIZE];
+    crate::test_support::write_zip(&archive_path, &[("games/game.gba", &rom)]).unwrap();
+    std::fs::write(archive_path.with_extension("sav"), save).unwrap();
+    let selected = crate::rom_archive::extract_bounded_zip_member(
+        &archive_path,
+        Some(&rom_path),
+        "gba",
+        128 * 1024 * 1024,
+        32 * 1024 * 1024,
+    )
+    .unwrap();
+    let backend = load_backend_from_rom_source(
+        ActiveSystem::GameBoyAdvance,
+        &archive_path,
+        &selected.rom_path,
+        Some(selected.bytes),
+        BackendLoadConfig {
+            sample_rate: Some(48_000),
+            apply_mods: false,
+            initial_input: Some((0, 0)),
+            gba_load_battery_sram: true,
+            gba_seed_rtc_from_host: false,
+            gba_use_external_bios: false,
+            ..BackendLoadConfig::default()
+        },
+    )
+    .unwrap()
+    .backend;
+    let worker = EmuThread::spawn(backend, false);
+    let mut app = app_with_worker(
+        worker,
+        91,
+        ActiveSystem::GameBoyAdvance,
+        archive_path.clone(),
+    );
+    app.rom_info.rom_path = Some(rom_path);
+
+    app.frames_in_flight = 1;
+    app.create_tas_project_for_live_control(root.path().join("movie.ztas"), false)
+        .unwrap();
+    assert_ne!(
+        app.debug_windows
+            .tas_editor
+            .active_session()
+            .unwrap()
+            .project()
+            .identity()
+            .persistent_state,
+        crate::tas_project::TasExternalIdentity::Absent
+    );
+    assert!(app.pending_tas_repair_activation.is_some());
+    assert!(!app.worker_gameplay_commands_allowed());
+    assert!(matches!(
+        app.tas_repair_state(),
+        crate::app::tas_control::repair::TasRepairState::Detached
+    ));
+    app.frames_in_flight = 0;
+    app.pump_pending_tas_repair_activation();
+    assert!(matches!(
+        app.tas_repair_state(),
+        crate::app::tas_control::repair::TasRepairState::RepairedDetached { .. }
+    ));
+    wait_for_linked(&mut app);
 }
 
 fn gba_rom() -> Vec<u8> {

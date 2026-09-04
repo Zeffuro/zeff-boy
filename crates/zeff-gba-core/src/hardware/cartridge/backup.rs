@@ -129,6 +129,9 @@ impl Cartridge {
     }
 
     pub fn backup_read8(&self, addr: u32) -> u8 {
+        if let Some(value) = self.tilt.as_ref().and_then(|tilt| tilt.read8(addr)) {
+            return value;
+        }
         if self.backup.is_empty() {
             return 0xFF;
         }
@@ -142,6 +145,13 @@ impl Cartridge {
     }
 
     pub fn backup_write8(&mut self, addr: u32, value: u8) {
+        if self
+            .tilt
+            .as_mut()
+            .is_some_and(|tilt| tilt.write8(addr, value))
+        {
+            return;
+        }
         if self.backup.is_empty() {
             return;
         }

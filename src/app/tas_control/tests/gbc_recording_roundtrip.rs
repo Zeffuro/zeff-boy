@@ -4,7 +4,7 @@ use super::harness::{app_with_worker, live_ok, wait_for_linked, wait_for_recorde
 use super::*;
 use crate::app::App;
 use crate::emu_backend::ActiveSystem;
-use crate::emu_backend::loader::DirectGbcTasExecutionLoader;
+use crate::emu_backend::loader::{DirectGbTasExecutionLoader, DirectGbcTasExecutionLoader};
 use crate::emu_thread::EmuThread;
 use crate::input::HostButton;
 use crate::live_control::{LiveCommand, TasRecordMode};
@@ -16,14 +16,57 @@ fn direct_gbc_app_creates_links_records_and_disconnects() {
     let rom_path = root.path().join("game.gbc");
     let mut rom = crate::test_support::build_gb_test_rom();
     rom[0x143] = 0xC0;
+    rom[0x147] = 0x08;
+    rom[0x149] = 0x02;
     std::fs::write(&rom_path, rom).unwrap();
     let loader = DirectGbcTasExecutionLoader::new(rom_path.clone(), Vec::new());
     let project = loader.create_project().unwrap();
     let mut expected = loader.load_editor_engine(&project).unwrap().into_backend();
     let backend = loader.load_editor_engine(&project).unwrap().into_backend();
-    let worker = EmuThread::spawn(backend, false);
-    let mut app = app_with_worker(worker, 91, ActiveSystem::GameBoy, rom_path);
     let project_path = root.path().join("movie.ztas");
+    record_live_input(
+        backend,
+        &mut expected,
+        91,
+        rom_path,
+        project_path,
+        TasExecutionProfile::DirectGbCartridgeCgb,
+    );
+}
+
+#[test]
+fn direct_gb_rom_ram_app_creates_links_records_and_disconnects() {
+    let root = crate::test_support::test_directory("tas-gb-rom-ram-live-record-roundtrip").unwrap();
+    let rom_path = root.path().join("game.gb");
+    let mut rom = crate::test_support::build_gb_test_rom();
+    rom[0x147] = 0x08;
+    rom[0x149] = 0x02;
+    std::fs::write(&rom_path, rom).unwrap();
+    let loader = DirectGbTasExecutionLoader::new(rom_path.clone(), Vec::new());
+    let project = loader.create_project().unwrap();
+    let mut expected = loader.load_editor_engine(&project).unwrap().into_backend();
+    let backend = loader.load_editor_engine(&project).unwrap().into_backend();
+    let project_path = root.path().join("movie.ztas");
+    record_live_input(
+        backend,
+        &mut expected,
+        92,
+        rom_path,
+        project_path,
+        TasExecutionProfile::DirectGbCartridgeDmg,
+    );
+}
+
+fn record_live_input(
+    backend: crate::emu_backend::EmuBackend,
+    expected: &mut crate::emu_backend::EmuBackend,
+    worker_id: u64,
+    rom_path: std::path::PathBuf,
+    project_path: std::path::PathBuf,
+    profile: TasExecutionProfile,
+) {
+    let worker = EmuThread::spawn(backend, false);
+    let mut app = app_with_worker(worker, worker_id, ActiveSystem::GameBoy, rom_path);
 
     app.create_tas_project_for_live_control(project_path.clone(), false)
         .unwrap();
@@ -40,9 +83,9 @@ fn direct_gbc_app_creates_links_records_and_disconnects() {
     let snapshot =
         TasEditorControlSnapshot::capture(app.debug_windows.tas_editor.active_session().unwrap())
             .unwrap();
-    assert_eq!(snapshot.profile, TasExecutionProfile::DirectGbCartridgeCgb);
+    assert_eq!(snapshot.profile, profile);
     app.tas_control
-        .queue_acquire(91, snapshot, TasControlStartMode::Preview)
+        .queue_acquire(worker_id, snapshot, TasControlStartMode::Preview)
         .unwrap();
     wait_for_linked(&mut app);
 

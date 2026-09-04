@@ -108,7 +108,8 @@ fn coleco_tas_identity(
         .coleco()
         .context("ColecoVision backend became unavailable")?;
     ensure!(
-        state_identity.bios_sha256 == coleco.emu.bios_hash()
+        state_identity.expansion_hardware == zeff_coleco_core::ExpansionHardware::Absent
+            && state_identity.bios_sha256 == coleco.emu.bios_hash()
             && state_identity.cartridge_sha256 == effective_media_sha256.0,
         "ColecoVision TAS start state identity differs from the loaded core"
     );
@@ -185,7 +186,8 @@ pub(crate) fn validate_direct_coleco_tas_project_identity(project: &TasProject) 
         project.start_state(),
     )?;
     ensure!(
-        TasDigest(state_identity.cartridge_sha256) == identity.effective_media_sha256
+        state_identity.expansion_hardware == zeff_coleco_core::ExpansionHardware::Absent
+            && TasDigest(state_identity.cartridge_sha256) == identity.effective_media_sha256
             && TasDigest::from_bytes(project.start_state()) == identity.start_state_sha256,
         "ColecoVision start state identity differs from the project"
     );
@@ -248,7 +250,8 @@ pub(crate) fn validate_direct_coleco_tas_project_witness(
         witness.current_state_bytes,
     )?;
     ensure!(
-        TasDigest(state_identity.cartridge_sha256) == identity.effective_media_sha256
+        state_identity.expansion_hardware == zeff_coleco_core::ExpansionHardware::Absent
+            && TasDigest(state_identity.cartridge_sha256) == identity.effective_media_sha256
             && matches!(
                 identity.firmware.as_slice(),
                 [TasFirmwareIdentity::External { sha256, .. }]
@@ -343,7 +346,8 @@ pub(crate) fn validate_direct_coleco_tas_execution_runtime(
         "direct ColecoVision TAS execution requires one exact BIOS identity"
     );
     ensure!(
-        coleco.emu.cartridge_hash() == effective_media_sha256,
+        coleco.emu.expansion_hardware() == zeff_coleco_core::ExpansionHardware::Absent
+            && coleco.emu.cartridge_hash() == effective_media_sha256,
         "ColecoVision core cartridge identity differs from the loaded media"
     );
     Ok(())
@@ -410,6 +414,10 @@ mod tests {
     fn direct_runtime_and_current_state_are_exactly_witnessed() {
         let mut backend = direct_backend();
         assert!(validate_direct_coleco_tas_runtime(&backend, false).is_ok());
+        assert_eq!(
+            backend.coleco().unwrap().emu.expansion_hardware(),
+            zeff_coleco_core::ExpansionHardware::Absent
+        );
         let state = backend.encode_state_bytes().unwrap();
         backend.step_frame();
 

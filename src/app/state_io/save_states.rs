@@ -49,6 +49,17 @@ impl App {
         }
     }
 
+    fn show_load_state_result(
+        &mut self,
+        exact_message: impl Into<String>,
+        warning: Option<crate::emu_thread::LoadStateWarning>,
+    ) {
+        match warning {
+            Some(warning) => self.toast_manager.warning(warning.message()),
+            None => self.toast_manager.success(exact_message),
+        }
+    }
+
     fn capture_current_state_for_undo(&mut self) -> Option<Vec<u8>> {
         if !self.core_supports_state_capture() {
             return None;
@@ -105,6 +116,7 @@ impl App {
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path,
+                warning: _,
                 media_slot_snapshot,
                 game_boy_serial_device,
             }) => {
@@ -206,6 +218,7 @@ impl App {
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path,
+                warning,
                 media_slot_snapshot,
                 game_boy_serial_device,
             }) => {
@@ -216,7 +229,7 @@ impl App {
                 self.refresh_framebuffer_after_load();
                 log::info!("Loaded state from {}", path);
                 self.undo_load_state = undo_state;
-                self.toast_manager.success(format!("Loaded slot {slot}"));
+                self.show_load_state_result(format!("Loaded slot {slot}"), warning);
             }
             Some(EmuResponse::LoadStateFailed(err)) => {
                 log::error!("Failed to load state from slot {}: {}", slot, err);
@@ -309,7 +322,7 @@ impl App {
 
         #[cfg(target_arch = "wasm32")]
         {
-            if !self.send_state_command(EmuCommand::CaptureStateBytes) {
+            if !self.send_state_command(EmuCommand::CaptureExternalStateBytes) {
                 return;
             }
             match self.recv_cold_response() {
@@ -364,6 +377,7 @@ impl App {
             match self.recv_cold_response() {
                 Some(EmuResponse::LoadStateOk {
                     path: p,
+                    warning,
                     media_slot_snapshot,
                     game_boy_serial_device,
                 }) => {
@@ -374,7 +388,7 @@ impl App {
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from {}", p);
                     self.undo_load_state = undo_state;
-                    self.toast_manager.success("State loaded from file");
+                    self.show_load_state_result("State loaded from file", warning);
                 }
                 Some(EmuResponse::LoadStateFailed(err)) => {
                     log::error!("Failed to load state from {}: {}", path.display(), err);
@@ -405,21 +419,17 @@ impl App {
             }
             let undo_state = self.capture_current_state_for_undo();
             let (buttons_pressed, dpad_pressed) = self.current_host_joypad_input();
-            if !self.send_state_command(EmuCommand::LoadStateBytes {
+            if !self.send_state_command(EmuCommand::LoadExternalStateBytes {
                 state_bytes: bytes,
                 buttons_pressed,
                 dpad_pressed,
-                replay_events: None,
-                game_boy_link_start_state: None,
-                game_boy_link_coordinator_start_state: None,
-                game_boy_link_start_tick: None,
-                wonder_swan_link_start_tick: None,
             }) {
                 return;
             }
             match self.recv_cold_response() {
                 Some(EmuResponse::LoadStateOk {
                     path,
+                    warning,
                     media_slot_snapshot,
                     game_boy_serial_device,
                 }) => {
@@ -430,8 +440,7 @@ impl App {
                     self.refresh_framebuffer_after_load();
                     log::info!("Loaded state from file: {name}");
                     self.undo_load_state = undo_state;
-                    self.toast_manager
-                        .success(format!("State loaded from {name}"));
+                    self.show_load_state_result(format!("State loaded from {name}"), warning);
                 }
                 Some(EmuResponse::LoadStateFailed(err)) => {
                     log::error!("Failed to load state from {name}: {err}");

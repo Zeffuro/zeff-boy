@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -132,7 +133,7 @@ pub struct TasProject {
     pub(super) project_id: String,
     pub(super) source_replay_sha256: Option<TasDigest>,
     pub(super) identity: TasProjectIdentity,
-    pub(super) start_state: Vec<u8>,
+    pub(super) start_state: Arc<[u8]>,
     pub(super) replay_start: ReplayStartMetadata,
     pub(super) edit_generation: u64,
     pub(super) rerecord_count: u64,
@@ -329,7 +330,7 @@ impl TasProject {
             project_id: project_id.into(),
             source_replay_sha256: None,
             identity,
-            start_state,
+            start_state: start_state.into(),
             replay_start,
             edit_generation: 0,
             rerecord_count: 0,
@@ -406,13 +407,18 @@ impl TasProject {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.validate_editor_state()?;
+        if TasDigest::from_bytes(&self.start_state) != self.identity.start_state_sha256 {
+            bail!("TAS starting state SHA-256 does not match project identity");
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_editor_state(&self) -> Result<()> {
         validate_id(&self.project_id, "project ID")?;
         validate_identity(&self.identity)?;
         if self.start_state.len() > MAX_START_STATE_BYTES {
             bail!("TAS starting state exceeds {MAX_START_STATE_BYTES} bytes");
-        }
-        if TasDigest::from_bytes(&self.start_state) != self.identity.start_state_sha256 {
-            bail!("TAS starting state SHA-256 does not match project identity");
         }
         encode_replay_start_metadata(&self.replay_start)?;
         if self.branches.is_empty() || self.branches.len() > MAX_PROJECT_BRANCHES {

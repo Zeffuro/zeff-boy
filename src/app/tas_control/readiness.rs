@@ -253,12 +253,26 @@ pub(in crate::app) fn evaluate(
         identity.effective_media_sha256,
         observation.effective_media_sha256,
     );
+    let unpatched_disc_witness = matches!(
+        identity.patches.as_slice(),
+        [patch] if patch.format == "pce-cd-unpatched-disc-v1"
+    );
+    let exact_ppf_profile = unpatched_disc_witness
+        && ((observation.profile == TasExecutionProfile::DirectPceMultitapCd
+            && identity.sync_config_sha256
+                == crate::emu_backend::loader::direct_pce_multitap_cd_ppf_tas_sync_config_sha256())
+            || (observation.profile == TasExecutionProfile::DirectPceCd
+                && crate::emu_backend::loader::is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
+                    identity.sync_config_sha256,
+                )));
     push_optional_boolean(
         &mut checks,
         worker_generation,
         TasReadinessCode::Mods,
         TasReadinessResource::LoadedProfile,
-        observation.mods_absent,
+        observation
+            .mods_absent
+            .map(|absent| absent || exact_ppf_profile),
         TasReadinessRepair::ResolveProfileMismatch,
     );
     push_optional_boolean(
@@ -316,7 +330,9 @@ pub(in crate::app) fn evaluate(
         }
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             observation.configured_at_load_sample_rate == Some(required_sample_rate)
         }
     };
@@ -352,7 +368,10 @@ pub(in crate::app) fn evaluate(
         },
     });
 
-    let removable_media_matches = if observation.profile == TasExecutionProfile::DirectPceCd {
+    let removable_media_matches = if matches!(
+        observation.profile,
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd
+    ) {
         !observation.removable_media_absent
     } else {
         observation.removable_media_absent
@@ -454,7 +473,9 @@ fn expected_system(profile: TasExecutionProfile) -> ActiveSystem {
         TasExecutionProfile::DirectWsCartridge => ActiveSystem::WonderSwan,
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => ActiveSystem::Pce,
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => ActiveSystem::Pce,
     }
 }
 
@@ -547,6 +568,8 @@ mod tests {
 
     use super::*;
     use crate::emu_backend::loader::DirectNesTasExecutionLoader;
+
+    mod archive_ppf;
 
     fn fixture() -> Result<(crate::tas_project::TasProject, TasLoadedProfileObservation)> {
         let directory = crate::test_support::test_directory("tas-readiness")?;

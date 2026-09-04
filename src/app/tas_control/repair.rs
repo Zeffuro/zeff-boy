@@ -515,12 +515,38 @@ impl TasRepairManager {
         self.transaction.is_some() && self.connect_pending
     }
 
+    pub(in crate::app) fn has_active_transaction(&self) -> bool {
+        self.transaction.is_some()
+    }
+
     pub(in crate::app) fn complete_pending_connect(&mut self) {
         self.connect_pending = false;
     }
 }
 
 impl App {
+    pub(in crate::app) fn queue_prepared_tas_repair(&mut self, prepared: TasPreparedRepair) {
+        self.pending_tas_repair_activation = Some(prepared);
+        self.recompute_pause();
+    }
+
+    pub(in crate::app) fn pump_pending_tas_repair_activation(&mut self) {
+        if self.frames_in_flight != 0 {
+            return;
+        }
+        let Some(prepared) = self.pending_tas_repair_activation.take() else {
+            return;
+        };
+        if let Err(error) = self.activate_prepared_tas_repair(prepared) {
+            log::error!("Could not activate TAS repair: {error:#}");
+            self.toast_manager
+                .error(format!("Could not reload and connect TAS: {error:#}"));
+        } else {
+            self.refresh_tas_control_readiness();
+        }
+        self.recompute_pause();
+    }
+
     pub(in crate::app) fn prepare_tas_repair(
         &mut self,
         target: TasRepairTarget,
@@ -770,7 +796,9 @@ fn validate_prepared_backend(
         }
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             observation.configured_at_load_sample_rate == Some(identity.required_sample_rate)
         }
     };

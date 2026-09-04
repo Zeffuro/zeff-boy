@@ -92,6 +92,7 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
+        self.bus.reset_hardware();
         if self.bus.has_external_bios() {
             self.cpu.reset_with_bios();
         } else {

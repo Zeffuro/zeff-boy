@@ -22,6 +22,8 @@ mod symbols;
 pub(crate) use detection::detect_and_extract_rom;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use detection::is_native_archive_path;
+#[cfg(not(target_arch = "wasm32"))]
+use detection::{ZipMediaRoute, zip_media_route};
 
 fn automatic_symbol_loading_available(backend: &EmuBackend) -> bool {
     backend.supports_symbol_loading()
@@ -109,6 +111,12 @@ impl App {
             pce_hucard_board: None,
             pce_cartridge_hardware: None,
             pce_cd_tas_source_media: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pce_cd_tas_archive_cue: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pce_cd_tas_rar_cue: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pce_cd_tas_zip_cue: None,
             #[cfg(not(target_arch = "wasm32"))]
             pce_cd_tas_ppf_stack: None,
             pce_controller_mode: self.settings.emulation.pce_controller.core_mode(),
@@ -320,6 +328,7 @@ impl App {
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path,
+                warning,
                 media_slot_snapshot,
                 game_boy_serial_device,
             }) => {
@@ -332,7 +341,10 @@ impl App {
                 }
                 log::info!("Resumed recovery state from {path}");
                 self.recovery_state_available = false;
-                self.toast_manager.success("Resumed recovery state");
+                match warning {
+                    Some(warning) => self.toast_manager.warning(warning.message()),
+                    None => self.toast_manager.success("Resumed recovery state"),
+                }
             }
             Some(EmuResponse::RecoveryAvailable(freshness)) => {
                 use crate::save_paths::recovery_state::RecoveryFreshness;
@@ -376,6 +388,29 @@ impl App {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
+        if is_zip_path(path) {
+            match zip_media_route(path, None) {
+                Ok(ZipMediaRoute::PceCd) => {
+                    self.begin_native_archive_preparation(path, None, None, auto_load_state);
+                    return;
+                }
+                Ok(ZipMediaRoute::SelectionRequired) => {
+                    if self.begin_archive_selection_if_needed(path) {
+                        return;
+                    }
+                    self.toast_manager
+                        .error("Choose a ZIP member before loading mixed PC Engine media");
+                    return;
+                }
+                Ok(ZipMediaRoute::Generic) => {}
+                Err(error) => {
+                    self.toast_manager
+                        .error(format!("Failed to inspect ZIP: {error}"));
+                    return;
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         self.cancel_pending_rom_preparation(false);
         let (rom_path, preloaded_data, system) = match detect_and_extract_rom(path) {
             Ok(result) => result,
@@ -402,6 +437,32 @@ impl App {
         entry_index: usize,
         auto_load_state: bool,
     ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_zip_path(archive_path) {
+            let selected_path =
+                match super::list_rom_entries_in_zip(archive_path)
+                    .ok()
+                    .and_then(|entries| {
+                        entries
+                            .into_iter()
+                            .find(|entry| entry.index == entry_index)
+                            .map(|entry| archive_path.join(entry.name))
+                    }) {
+                    Some(path) => path,
+                    None => {
+                        self.toast_manager.error(format!(
+                            "Selected ZIP member #{entry_index} is no longer available"
+                        ));
+                        return;
+                    }
+                };
+            self.load_archive_entry_path_with_options(
+                archive_path,
+                &selected_path,
+                auto_load_state,
+            );
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if is_native_archive_path(archive_path) {
             self.begin_native_archive_preparation(
@@ -451,6 +512,31 @@ impl App {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
+        if is_zip_path(archive_path) {
+            match zip_media_route(archive_path, Some(virtual_rom_path)) {
+                Ok(ZipMediaRoute::PceCd) => {
+                    self.begin_native_archive_preparation(
+                        archive_path,
+                        None,
+                        Some(virtual_rom_path.to_path_buf()),
+                        auto_load_state,
+                    );
+                    return;
+                }
+                Ok(ZipMediaRoute::Generic) => {}
+                Ok(ZipMediaRoute::SelectionRequired) => {
+                    self.toast_manager
+                        .error("Choose a ZIP member before loading mixed PC Engine media");
+                    return;
+                }
+                Err(error) => {
+                    self.toast_manager
+                        .error(format!("Failed to inspect ZIP: {error}"));
+                    return;
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         self.cancel_pending_rom_preparation(false);
         let (rom_path, preloaded_data, system) =
             match detect_and_extract_archive_entry_path(archive_path, virtual_rom_path) {
@@ -476,6 +562,14 @@ impl App {
         dismiss_archive_selection_for_new_load(&mut self.pending_archive_selection);
         #[cfg(not(target_arch = "wasm32"))]
         self.cancel_pending_rom_preparation(false);
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_zip_path(path)
+            && let Err(error) = zip_media_route(path, None)
+        {
+            self.toast_manager
+                .error(format!("Failed to inspect ZIP: {error}"));
+            return;
+        }
         if self.begin_archive_selection_if_needed(path) {
             return;
         }
@@ -490,6 +584,7 @@ impl App {
         source_path_buf: PathBuf,
     ) {
         self.rom_info.is_mbc7 = backend.is_mbc7();
+        self.rom_info.is_gba_tilt = backend.is_gba_tilt();
         self.rom_info.is_pocket_camera = backend.is_pocket_camera();
         self.rom_info.rom_path = Some(rom_path_buf);
         self.rom_info.source_path = Some(source_path_buf);

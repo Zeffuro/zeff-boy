@@ -295,7 +295,7 @@ pub fn canonicalize_replay_hash_bytes(bytes: &mut [u8]) {
     canonicalize_bess_rtc_timestamp(bytes);
 }
 
-fn canonicalize_bess_rtc_timestamp(bytes: &mut [u8]) {
+pub fn canonicalize_bess_rtc_timestamp(bytes: &mut [u8]) {
     let Some(footer_start) = bytes.len().checked_sub(8) else {
         return;
     };

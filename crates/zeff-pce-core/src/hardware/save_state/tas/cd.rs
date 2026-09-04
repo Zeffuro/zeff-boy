@@ -21,8 +21,24 @@ pub fn inspect_current_native_pce_cd_tas_state_for_profile(
     arcade_card: bool,
     memory_base: bool,
 ) -> anyhow::Result<CurrentNativePceCdTasStateInspection> {
+    inspect_current_native_pce_cd_tas_state_for_profile_and_controller(
+        machine,
+        data,
+        arcade_card,
+        memory_base,
+        PceControllerMode::TwoButton,
+    )
+}
+
+pub fn inspect_current_native_pce_cd_tas_state_for_profile_and_controller(
+    machine: &PceMachine,
+    data: &[u8],
+    arcade_card: bool,
+    memory_base: bool,
+    controller_mode: PceControllerMode,
+) -> anyhow::Result<CurrentNativePceCdTasStateInspection> {
     ensure_current_state(data)?;
-    ensure_pce_cd_machine(machine, arcade_card, memory_base)?;
+    ensure_pce_cd_machine(machine, arcade_card, memory_base, controller_mode)?;
     let system_card_sha256: [u8; 32] = Sha256::digest(machine.hucard_rom()).into();
     let disc = machine
         .devices()
@@ -36,7 +52,11 @@ pub fn inspect_current_native_pce_cd_tas_state_for_profile(
         machine.hucard_board(),
         disc,
         PceConsoleWiring::PcEngine,
-        ControllerPort::two_button(),
+        match controller_mode {
+            PceControllerMode::TwoButton => ControllerPort::two_button(),
+            PceControllerMode::Multitap => multitap_controller(),
+            _ => bail!("PC Engine CD TAS state requires a supported controller"),
+        },
         arcade_card,
     )?;
     candidate
@@ -47,10 +67,38 @@ pub fn inspect_current_native_pce_cd_tas_state_for_profile(
     candidate.set_sample_rate(psg.sample_rate);
     candidate.set_sample_generation_enabled(psg.sample_generation_enabled);
     decode_state(&mut candidate, data)?;
-    ensure_pce_cd_machine(&candidate, arcade_card, memory_base)?;
+    ensure_pce_cd_machine(&candidate, arcade_card, memory_base, controller_mode)?;
     let presented = candidate.presented_frame();
-    let controller_buttons = match candidate.devices().controller().device() {
-        ControllerDevice::TwoButton(pad) => pad.buttons(),
+    let (controller_buttons, controller_multitap) = match candidate.devices().controller().device()
+    {
+        ControllerDevice::TwoButton(pad) => (pad.buttons(), None),
+        ControllerDevice::Multitap(multitap) => {
+            let mut buttons = [PadButtons::empty(); 5];
+            for (index, port) in [
+                MultitapPort::One,
+                MultitapPort::Two,
+                MultitapPort::Three,
+                MultitapPort::Four,
+                MultitapPort::Five,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let MultitapDevice::TwoButton(pad) = multitap.port(port) else {
+                    unreachable!("PC Engine CD TAS state validation checked multitap topology")
+                };
+                buttons[index] = pad.buttons();
+            }
+            (
+                PadButtons::empty(),
+                Some(CurrentNativePceTasMultitapState {
+                    buttons,
+                    active_port: multitap.active_port(),
+                    select_high: candidate.devices().controller().select_high(),
+                    clear_high: candidate.devices().controller().clear_high(),
+                }),
+            )
+        }
         _ => unreachable!("PC Engine CD TAS state validation checked controller topology"),
     };
     Ok(CurrentNativePceCdTasStateInspection {
@@ -74,6 +122,7 @@ pub fn inspect_current_native_pce_cd_tas_state_for_profile(
         wiring: candidate.devices().console_wiring(),
         psg_revision: candidate.devices().psg().revision(),
         controller_buttons,
+        controller_multitap,
         arcade_card_enabled: arcade_card,
         memory_base_enabled: memory_base,
     })
@@ -141,11 +190,28 @@ pub fn validate_and_load_current_native_pce_cd_tas_state_for_profile(
     arcade_card: bool,
     memory_base: bool,
 ) -> anyhow::Result<CurrentNativePceTasStateProjection> {
-    let inspection = inspect_current_native_pce_cd_tas_state_for_profile(
+    validate_and_load_current_native_pce_cd_tas_state_for_profile_and_controller(
         machine,
         data,
         arcade_card,
         memory_base,
+        PceControllerMode::TwoButton,
+    )
+}
+
+pub fn validate_and_load_current_native_pce_cd_tas_state_for_profile_and_controller(
+    machine: &mut PceMachine,
+    data: &[u8],
+    arcade_card: bool,
+    memory_base: bool,
+    controller_mode: PceControllerMode,
+) -> anyhow::Result<CurrentNativePceTasStateProjection> {
+    let inspection = inspect_current_native_pce_cd_tas_state_for_profile_and_controller(
+        machine,
+        data,
+        arcade_card,
+        memory_base,
+        controller_mode,
     )?;
     decode_state(machine, data)?;
     Ok(inspection.projection)

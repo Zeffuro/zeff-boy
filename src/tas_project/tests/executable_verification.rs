@@ -383,7 +383,7 @@ fn executable_nes_project(
         project_id: "executable-nes".to_owned(),
         source_replay_sha256: None,
         identity,
-        start_state,
+        start_state: start_state.into(),
         replay_start: ReplayStartMetadata::default(),
         edit_generation: 7,
         rerecord_count: 3,

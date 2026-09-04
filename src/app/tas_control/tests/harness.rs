@@ -101,6 +101,7 @@ pub(super) fn app_with_worker(
         cached_ui_data: None,
         rom_info: CachedRomInfo {
             is_mbc7: false,
+            is_gba_tilt: false,
             is_pocket_camera: false,
             rom_path: Some(rom_path.clone()),
             source_path: Some(rom_path),
@@ -156,6 +157,7 @@ pub(super) fn app_with_worker(
         tcp_link_active: false,
         tas_control: TasControlCoordinator::new(),
         tas_repair: TasRepairManager::new(),
+        pending_tas_repair_activation: None,
         tas_realtime_recorder: TasRealtimeRecorder::default(),
         tas_playback_scheduler: TasPlaybackScheduler::default(),
         tas_verified_replay_export: None,

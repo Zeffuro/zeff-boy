@@ -67,7 +67,7 @@ fn project_with_firmware(
     .unwrap()
 }
 
-fn fds_state(
+pub(super) fn fds_state(
     frame_count: u64,
     events: Vec<ReplayEvent>,
 ) -> (crate::test_support::TestDirectory, TasEditorWindowState) {

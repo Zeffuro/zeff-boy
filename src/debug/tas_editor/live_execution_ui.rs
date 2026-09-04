@@ -63,7 +63,7 @@ impl TasEditorLiveStatus {
                 }
             }
             Self::AdvancingFrame => "Recording one frame…".to_owned(),
-            Self::Recording => "● Recording".to_owned(),
+            Self::Recording => "Recording".to_owned(),
             Self::Returning => "Restoring pre-TAS game…".to_owned(),
             Self::Keeping => "Disconnecting…".to_owned(),
             Self::Terminal(_) => "Live session needs attention".to_owned(),
@@ -261,7 +261,7 @@ pub(super) fn draw_live_execution_panel(
                 return_unchanged_button(ui, action);
             }
             TasEditorLiveStatus::Recording => {
-                ui.strong("● Recording");
+                ui.strong("Recording");
                 ui.small(match recording_mode {
                     TasLiveRecordingMode::ReplaceExistingInput => {
                         "Existing input is replaced as the game advances; recording appends after End. Neutral input is recorded."
@@ -461,10 +461,7 @@ mod tests {
             .primary_label(),
             "Connected · paused before input frame 42"
         );
-        assert_eq!(
-            TasEditorLiveStatus::Recording.primary_label(),
-            "● Recording"
-        );
+        assert_eq!(TasEditorLiveStatus::Recording.primary_label(), "Recording");
     }
 
     #[test]

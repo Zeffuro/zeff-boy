@@ -14,7 +14,7 @@ impl TasProject {
         self.sync_identity_sha256_from_validated()
     }
 
-    pub(super) fn sync_identity_sha256_from_validated(&self) -> Result<TasDigest> {
+    pub(crate) fn sync_identity_sha256_from_validated(&self) -> Result<TasDigest> {
         let identity = serde_json::to_vec(&self.canonical_identity())?;
         let replay_start = encode_replay_start_metadata(&self.replay_start)?;
         let mut hash = Sha256::new();
@@ -43,13 +43,26 @@ impl TasProject {
 
     pub fn branch_prefix_sha256(&self, branch_id: &str, cursor: u64) -> Result<TasDigest> {
         self.validate()?;
+        self.branch_prefix_sha256_from_validated(branch_id, cursor)
+    }
+
+    pub(crate) fn branch_prefix_sha256_from_validated(
+        &self,
+        branch_id: &str,
+        cursor: u64,
+    ) -> Result<TasDigest> {
         let branch = self
             .branch(branch_id)
             .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))?;
         if cursor > branch.frame_count {
             bail!("TAS cursor is past branch end");
         }
-        hash_branch(self.sync_identity_sha256()?, branch, cursor, false)
+        hash_branch(
+            self.sync_identity_sha256_from_validated()?,
+            branch,
+            cursor,
+            false,
+        )
     }
 
     pub fn seek_cache_identity(

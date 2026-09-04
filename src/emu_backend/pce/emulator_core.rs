@@ -147,7 +147,10 @@ impl EmulatorCore for PceBackend {
         Ok(writer.into_bytes())
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
         let mut reader = StateReader::new(&bytes);
         let mut magic = [0; 8];
         reader.read_exact(&mut magic)?;
@@ -203,7 +206,7 @@ impl EmulatorCore for PceBackend {
             .memory_base128()
             .is_connected();
         self.project_presented_frame();
-        Ok(())
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact)
     }
 
     fn rom_path(&self) -> &Path {

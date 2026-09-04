@@ -352,6 +352,7 @@ pub(super) fn semantic_result() -> FrameResult {
         audio_playback_speed: 1,
         ui_data: crate::ui::UiFrameData::default(),
         is_mbc7: false,
+        is_gba_tilt: false,
         is_pocket_camera: false,
         game_boy_serial_device: None,
         game_boy_printer_jobs: Vec::new(),

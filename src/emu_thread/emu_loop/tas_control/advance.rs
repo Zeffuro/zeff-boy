@@ -32,6 +32,18 @@ pub(super) fn advance_tas_frame(
     {
         return Err(Rejected::InvalidInput);
     }
+    if !matches!(
+        candidate.profile,
+        TasExecutionProfile::DirectPceMultitapHuCard | TasExecutionProfile::DirectPceMultitapCd
+    ) && (input.p3_buttons != 0
+        || input.p3_dpad != 0
+        || input.p4_buttons != 0
+        || input.p4_dpad != 0
+        || input.p5_buttons != 0
+        || input.p5_dpad != 0)
+    {
+        return Err(Rejected::InvalidInput);
+    }
     match candidate.profile {
         TasExecutionProfile::DirectNesCartridge => {
             advance_direct_nes_tas_frame(backend, runtime_fault, candidate, input, snapshot)
@@ -58,14 +70,9 @@ pub(super) fn advance_tas_frame(
         TasExecutionProfile::DirectGameGearCartridge => {
             advance_direct_game_gear_tas_frame(backend, runtime_fault, candidate, input, snapshot)
         }
-        TasExecutionProfile::DirectGbaCartridge => advance_direct_gba_tas_frame(
-            backend,
-            runtime_fault,
-            candidate,
-            input,
-            snapshot,
-            persistence,
-        ),
+        TasExecutionProfile::DirectGbaCartridge => {
+            advance_direct_gba_tas_frame(backend, runtime_fault, candidate, input, snapshot)
+        }
         TasExecutionProfile::DirectSg1000Cartridge => {
             advance_direct_sg1000_tas_frame(backend, runtime_fault, candidate, input, snapshot)
         }
@@ -79,7 +86,9 @@ pub(super) fn advance_tas_frame(
         ),
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             advance_direct_pce_tas_frame(backend, runtime_fault, candidate, input, snapshot)
         }
     }
@@ -169,7 +178,7 @@ fn advance_direct_gb_tas_frame(
     let state = backend
         .encode_state_bytes()
         .map_err(|_| Rejected::StateVerificationUnavailable)?;
-    if TasDigest::from_bytes(&state) != candidate.state_sha256 {
+    if super::tas_state_digest(candidate.profile, &state) != candidate.state_sha256 {
         return Err(Rejected::CandidateStateDigestMismatch);
     }
     if backend.frame_count() != candidate.frame_count {
@@ -381,7 +390,6 @@ fn advance_direct_gba_tas_frame(
     candidate: TasExecutionResult,
     input: TasInputFrame,
     snapshot: Option<TasFrameAdvanceSnapshot>,
-    persistence: TasPersistenceContract,
 ) -> Result<TasFrameAdvanceResult, Rejected> {
     super::execution::gba::validate_gba_input(input).map_err(|_| Rejected::InvalidInput)?;
     let state = backend
@@ -415,7 +423,7 @@ fn advance_direct_gba_tas_frame(
     }
     let mut audio_samples = Vec::new();
     backend.drain_audio_samples_into(&mut audio_samples);
-    super::execution::gba::capture_direct_gba_candidate(backend, expected_frame, persistence)
+    super::execution::gba::capture_direct_gba_advanced_candidate(backend, expected_frame)
         .map_err(|_| Rejected::StateCaptureFailed)
         .map(|(frame_count, state_sha256)| TasFrameAdvanceResult {
             frame_count,

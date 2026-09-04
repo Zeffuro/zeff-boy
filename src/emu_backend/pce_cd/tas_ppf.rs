@@ -13,6 +13,9 @@ const TAS_PPF_SOURCE_DOMAIN: &[u8] = b"zeff-tas-pce-cd-ppf-source:v1\0";
 #[derive(Clone, Debug)]
 pub(crate) struct PceCdTasPpfStack {
     patches: Vec<(String, Vec<u8>)>,
+    base_source_media_sha256: [u8; 32],
+    base_source_media_len: usize,
+    source_disc_sha256: [u8; 32],
     source_media_sha256: [u8; 32],
     source_media_len: usize,
 }
@@ -81,6 +84,9 @@ impl PceCdTasPpfStack {
         }
         Ok(Self {
             patches,
+            base_source_media_sha256: base.raw_source_media_sha256,
+            base_source_media_len: base.raw_source_media_len,
+            source_disc_sha256: base.source_disc_sha256,
             source_media_sha256: hasher.finalize().into(),
             source_media_len: source_len,
         })
@@ -101,6 +107,14 @@ impl PceCdTasPpfStack {
         let sheet = parse_cue_bytes(&cue_bytes)?;
         let mut loaded =
             super::super::pce_cd_file::load_direct_cue_file_backed(cue_path, &cue_bytes, &sheet)?;
+        if loaded.raw_source_media_sha256 != self.base_source_media_sha256
+            || loaded.raw_source_media_len != self.base_source_media_len
+            || loaded.source_disc_sha256 != self.source_disc_sha256
+        {
+            return Err(PceCdLoadError::Disc(
+                "PC Engine CD TAS PPF base media changed".to_owned(),
+            ));
+        }
         let disc = super::super::pce_cd_file::try_load_direct_cue_ppf_overlay_bytes(
             cue_path,
             &sheet,

@@ -2,7 +2,7 @@ use super::*;
 use crate::tas_project::{
     TasCameraInput, TasControllerInput, TasDigest, TasInputFrame, TasZapperInput,
 };
-use zeff_emu_common::replay::POCKET_CAMERA_FRAME_BYTES;
+use zeff_emu_common::replay::{POCKET_CAMERA_FRAME_BYTES, ReplayEvent};
 
 fn set_input(state: &mut TasEditorWindowState, start: u64, length: u64, input: TasInputFrame) {
     let session = state.session.as_mut().unwrap();
@@ -68,6 +68,46 @@ fn insert_at_cursor(state: &TasEditorWindowState) -> TasEditorAction {
         session.cursor(),
         state.input_clipboard.generation(),
     ))
+}
+
+fn copy_selected_frames(state: &mut TasEditorWindowState, start: u64, end: u64) {
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: start,
+            extend_selection: false,
+        })
+        .unwrap();
+    state
+        .reduce(TasEditorAction::SelectTimelineFrame {
+            frame: end - 1,
+            extend_selection: true,
+        })
+        .unwrap();
+    let session = state.session.as_ref().unwrap();
+    let branch = session.selected_branch();
+    let events = branch
+        .events()
+        .iter()
+        .filter(|event| event.frame() >= start && event.frame() < end)
+        .cloned()
+        .collect();
+    let action = input_clipboard::TasInputClipboardAction::copy_selection_with_events(
+        session.project_content_sha256(),
+        session
+            .project()
+            .branch_movie_sha256(session.selected_branch_id())
+            .unwrap(),
+        branch.input_pattern(start, end - start).unwrap(),
+        events,
+        timeline_selection::TasInputSelection {
+            branch_id: session.selected_branch_id().to_owned(),
+            start,
+            end,
+        },
+    );
+    state
+        .reduce(TasEditorAction::InputClipboard(action))
+        .unwrap();
 }
 
 fn selected_input_range(state: &mut TasEditorWindowState) -> Option<(u64, u64)> {
@@ -339,6 +379,56 @@ fn copied_frames_can_be_deleted_reinserted_and_undone_exactly() {
             .unwrap(),
         original_movie
     );
+}
+
+#[test]
+fn fixed_paste_replaces_fds_events_with_the_copied_relative_timeline() {
+    let original_events = vec![
+        ReplayEvent::FdsDiskSide { frame: 2, side: 2 },
+        ReplayEvent::FdsDiskSide { frame: 4, side: 0 },
+    ];
+    let (_root, mut state) = event_tests::fds_state(6, original_events.clone());
+    copy_selected_frames(&mut state, 1, 3);
+    state.reduce(TasEditorAction::SelectCursor(3)).unwrap();
+    state.reduce(paste_at_cursor(&state)).unwrap();
+    assert_eq!(
+        state.session.as_ref().unwrap().selected_branch().events(),
+        &[
+            ReplayEvent::FdsDiskSide { frame: 2, side: 2 },
+            ReplayEvent::FdsDiskSide { frame: 4, side: 2 },
+        ]
+    );
+    state.reduce(TasEditorAction::Undo).unwrap();
+    assert_eq!(
+        state.session.as_ref().unwrap().selected_branch().events(),
+        original_events
+    );
+}
+
+#[test]
+fn inserted_clipboard_frames_shift_existing_fds_events_and_add_copied_events() {
+    let original_events = vec![
+        ReplayEvent::FdsDiskSide { frame: 2, side: 2 },
+        ReplayEvent::FdsDiskSide { frame: 4, side: 0 },
+    ];
+    let (_root, mut state) = event_tests::fds_state(6, original_events.clone());
+    copy_selected_frames(&mut state, 1, 3);
+    state.reduce(TasEditorAction::SelectCursor(3)).unwrap();
+    state.reduce(insert_at_cursor(&state)).unwrap();
+    let branch = state.session.as_ref().unwrap().selected_branch();
+    assert_eq!(branch.frame_count(), 8);
+    assert_eq!(
+        branch.events(),
+        &[
+            ReplayEvent::FdsDiskSide { frame: 2, side: 2 },
+            ReplayEvent::FdsDiskSide { frame: 4, side: 2 },
+            ReplayEvent::FdsDiskSide { frame: 6, side: 0 },
+        ]
+    );
+    state.reduce(TasEditorAction::Undo).unwrap();
+    let branch = state.session.as_ref().unwrap().selected_branch();
+    assert_eq!(branch.frame_count(), 6);
+    assert_eq!(branch.events(), original_events);
 }
 
 #[test]

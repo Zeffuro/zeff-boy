@@ -3,19 +3,15 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
 
-use super::{App, VIEWER_UPDATE_INTERVAL};
+use super::App;
 use crate::debug::{
     TasEditorFileRequest, TasEditorHostRequest, TasEditorLiveAction, TasEditorLiveStatus,
-    TasEditorPresentation,
 };
-use crate::graphics;
-use crate::platform::Instant;
 
 mod conversion;
 mod selection;
+mod window;
 pub(super) use conversion::VerifiedReplayExportCoordinator;
 use selection::{
     has_coleco_extension, has_fds_extension, has_game_gear_extension, has_gb_extension,
@@ -160,7 +156,7 @@ impl App {
             },
             repaired_backend,
         )?;
-        self.activate_prepared_tas_repair(prepared)?;
+        self.queue_prepared_tas_repair(prepared);
         Ok(())
     }
 
@@ -258,7 +254,8 @@ impl App {
                         session.project(), session.selected_branch_id()).is_ok()
             }
             crate::emu_thread::TasExecutionProfile::DirectPceHuCard
-            | crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard => {
+            | crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard
+            | crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard => {
                 self.active_system == crate::emu_backend::ActiveSystem::Pce
                     && (source_path.is_some_and(has_pce_extension)
                         || (source_path.is_some_and(has_zip_extension)
@@ -272,7 +269,25 @@ impl App {
             }
             crate::emu_thread::TasExecutionProfile::DirectPceCd => {
                 self.active_system == crate::emu_backend::ActiveSystem::Pce
-                    && source_path.is_some_and(has_pce_cd_extension)
+                    && (source_path.is_some_and(has_pce_cd_extension)
+                        || (source_path.is_some_and(has_zip_extension)
+                            && self
+                                .rom_info
+                                .rom_path
+                                .as_deref()
+                                .is_some_and(has_cue_extension)))
+                    && crate::emu_backend::loader::DirectPceCdTasExecutionLoader::validate_project_branch_scope(
+                        session.project(), session.selected_branch_id()).is_ok()
+            }
+            crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => {
+                self.active_system == crate::emu_backend::ActiveSystem::Pce
+                    && (source_path.is_some_and(has_direct_multitap_cd_extension)
+                        || (source_path.is_some_and(has_pce_cd_archive_extension)
+                            && self
+                                .rom_info
+                                .rom_path
+                                .as_deref()
+                                .is_some_and(has_cue_extension)))
                     && crate::emu_backend::loader::DirectPceCdTasExecutionLoader::validate_project_branch_scope(
                         session.project(), session.selected_branch_id()).is_ok()
             }
@@ -324,6 +339,20 @@ impl App {
                 input.players[0].dpad = p1_dpad;
                 input.players[1].buttons = p2_buttons;
                 input.players[1].dpad = p2_dpad;
+            }
+            crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard
+            | crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => {
+                let players = [
+                    self.current_host_joypad_input(),
+                    self.current_host_joypad_p2_input(),
+                    self.current_host_joypad_p3_input(),
+                    self.current_host_joypad_p4_input(),
+                    self.current_host_joypad_p5_input(),
+                ];
+                for (player, (buttons, dpad)) in input.players.iter_mut().zip(players) {
+                    player.buttons = buttons;
+                    player.dpad = dpad;
+                }
             }
             crate::emu_thread::TasExecutionProfile::DirectWsCartridge => {
                 let (p1_buttons, p1_dpad) = self.current_host_joypad_input();
@@ -576,8 +605,51 @@ impl App {
                 ),
             )
         } else if self.active_system == crate::emu_backend::ActiveSystem::Pce
+            && self
+                .rom_info
+                .rom_path
+                .as_deref()
+                .is_some_and(has_direct_multitap_cd_extension)
+            && (self.settings.emulation.pce_controller.core_mode()
+                == zeff_pce_core::hardware::PceControllerMode::Multitap
+                || (self.settings.emulation.pce_controller.core_mode()
+                    == zeff_pce_core::hardware::PceControllerMode::Automatic
+                    && self
+                        .rom_info
+                        .pce_controller_profile_hash
+                        .is_some_and(|hash| {
+                            crate::emu_backend::pce_profiles::automatic_controller_mode(hash)
+                                == zeff_pce_core::hardware::PceControllerMode::Multitap
+                        })))
+        {
+            crate::emu_backend::loader::PrivateTasExecutionLoader::DirectPceCd(
+                crate::emu_backend::loader::DirectPceCdTasExecutionLoader::new_multitap_with_rom_path(
+                    source_path,
+                    self.rom_info.rom_path.clone(),
+                    self.settings.emulation.firmware_search_dirs(),
+                )?,
+            )
+        } else if self.active_system == crate::emu_backend::ActiveSystem::Pce
+            && self
+                .rom_info
+                .rom_path
+                .as_deref()
+                .is_some_and(has_direct_multitap_cd_extension)
+            && !matches!(
+                self.settings.emulation.pce_controller.core_mode(),
+                zeff_pce_core::hardware::PceControllerMode::Automatic
+                    | zeff_pce_core::hardware::PceControllerMode::TwoButton
+            )
+        {
+            anyhow::bail!("PC Engine CD TAS requires the supported two-button or Multitap profile");
+        } else if self.active_system == crate::emu_backend::ActiveSystem::Pce
             && self.settings.emulation.pce_controller.core_mode()
                 == zeff_pce_core::hardware::PceControllerMode::SixButton
+            && !self
+                .rom_info
+                .rom_path
+                .as_deref()
+                .is_some_and(has_direct_multitap_cd_extension)
         {
             let loader = if source_path
                 .extension()
@@ -598,6 +670,34 @@ impl App {
                 );
             };
             crate::emu_backend::loader::PrivateTasExecutionLoader::DirectPce(loader)
+        } else if self.active_system == crate::emu_backend::ActiveSystem::Pce
+            && self.settings.emulation.pce_controller.core_mode()
+                == zeff_pce_core::hardware::PceControllerMode::Multitap
+            && !self
+                .rom_info
+                .rom_path
+                .as_deref()
+                .is_some_and(has_direct_multitap_cd_extension)
+        {
+            let loader = if source_path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("pce"))
+            {
+                crate::emu_backend::loader::DirectPceTasExecutionLoader::new_multitap(source_path)
+            } else if source_path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+            {
+                crate::emu_backend::loader::DirectPceTasExecutionLoader::new_zip_multitap(
+                    source_path,
+                    self.rom_info.rom_path.clone(),
+                )
+            } else {
+                anyhow::bail!(
+                    "PC Engine TAS execution requires a direct .pce file or selected ZIP member"
+                );
+            };
+            crate::emu_backend::loader::PrivateTasExecutionLoader::DirectPce(loader)
         } else {
             crate::emu_backend::loader::select_private_tas_execution_loader_with_rom_path(
                 source_path,
@@ -607,154 +707,52 @@ impl App {
             )?
         };
 
-        if replace_existing {
+        let project = if replace_existing {
             loader.replace_project_file(&project_path)
         } else {
             loader.create_project_file(&project_path)
         }?;
+        let reload_for_persistence = project.identity().persistent_state
+            != crate::tas_project::TasExternalIdentity::Absent
+            || project.identity().rtc_state != crate::tas_project::TasExternalIdentity::Absent;
         self.cancel_tas_control();
         self.debug_windows
             .tas_editor
             .open_project(project_path)
             .context("created the TAS project but could not open it")?;
-        self.reevaluate_tas_execution_attachment();
+        if reload_for_persistence {
+            self.repair_loaded_game_and_connect_tas()?;
+        } else {
+            self.reevaluate_tas_execution_attachment();
+        }
         Ok(())
     }
+}
 
-    pub(super) fn sync_tas_editor(&mut self, event_loop: &ActiveEventLoop) {
-        self.poll_verified_replay_export();
-        self.debug_windows.tas_editor.tick_periodic_autosave();
-        let wants_window = self.debug_windows.tas_editor.open
-            && self.debug_windows.tas_editor.presentation()
-                == TasEditorPresentation::SeparateWindow;
-        let focus_requested = self.debug_windows.tas_editor.take_separate_focus_request();
-        let Some(gfx) = self.gfx.as_mut() else {
-            return;
-        };
-        let mut close_request = None;
-        if wants_window {
-            if gfx.tas_editor_window_id().is_none()
-                && let Err(error) = gfx.open_tas_editor_window(event_loop)
-            {
-                log::error!("Failed to open TAS Editor window: {error}");
-                self.debug_windows.tas_editor.close();
-                close_request = self.debug_windows.tas_editor.take_pending_host_request();
-                self.toast_manager.error("Failed to open TAS Editor window");
-            }
-            if focus_requested && let Some(window) = gfx.tas_editor_window() {
-                window.focus_window();
-                window.request_redraw();
-            }
-        } else if gfx.tas_editor_window_id().is_some() {
-            gfx.close_tas_editor_window();
-            self.debug_windows.tas_editor.set_host_window_focused(false);
-            self.focus_state_dirty = true;
-        }
-        if let Some(request) = close_request {
-            self.handle_tas_editor_host_request(request);
-        }
-    }
+fn has_cue_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("cue"))
+}
 
-    pub(super) fn is_tas_editor_window(&self, window_id: winit::window::WindowId) -> bool {
-        self.gfx
-            .as_ref()
-            .and_then(crate::graphics::Graphics::tas_editor_window_id)
-            == Some(window_id)
-    }
+fn has_direct_multitap_cd_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cue")
+                || extension.eq_ignore_ascii_case("chd")
+                || extension.eq_ignore_ascii_case("iso")
+        })
+}
 
-    pub(super) fn handle_tas_editor_window_event(&mut self, event: WindowEvent) {
-        let window_interaction = matches!(&event, WindowEvent::Resized(_) | WindowEvent::Moved(_));
-        let needs_repaint = self
-            .gfx
-            .as_mut()
-            .is_some_and(|gfx| gfx.tas_editor_handles_event(&event));
-
-        match event {
-            WindowEvent::CloseRequested => {
-                if let Some(export) = self.tas_verified_replay_export.as_ref() {
-                    export.request_cancel();
-                    self.toast_manager.info(
-                        "Canceling verified replay export; the TAS Editor remains open until it finishes",
-                    );
-                    return;
-                }
-                if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.close_tas_editor_window();
-                }
-                self.debug_windows.tas_editor.close();
-                if let Some(request) = self.debug_windows.tas_editor.take_pending_host_request() {
-                    self.handle_tas_editor_host_request(request);
-                }
-                self.debug_windows.tas_editor.set_host_window_focused(false);
-                self.focus_state_dirty = true;
-            }
-            WindowEvent::Resized(size) => {
-                if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.resize_tas_editor_window(size.width, size.height);
-                    if let Some(window) = gfx.tas_editor_window() {
-                        window.request_redraw();
-                    }
-                }
-            }
-            WindowEvent::RedrawRequested => {
-                self.render_tas_editor_frame();
-                self.debug_windows.tas_editor.mark_host_rendered();
-            }
-            WindowEvent::Focused(focused) => {
-                self.debug_windows
-                    .tas_editor
-                    .set_host_window_focused(focused);
-                self.focus_state_dirty = true;
-            }
-            _ if needs_repaint
-                && Instant::now()
-                    .duration_since(self.debug_windows.tas_editor.last_host_render())
-                    >= VIEWER_UPDATE_INTERVAL =>
-            {
-                if let Some(window) = self
-                    .gfx
-                    .as_ref()
-                    .and_then(crate::graphics::Graphics::tas_editor_window)
-                {
-                    window.request_redraw();
-                }
-            }
-            _ => {}
-        }
-        if window_interaction {
-            self.tick_during_window_interaction();
-        }
-    }
-
-    pub(super) fn render_tas_editor_frame(&mut self) -> bool {
-        self.refresh_tas_editor_live_status();
-        let result = {
-            let Some(gfx) = self.gfx.as_mut() else {
-                return false;
-            };
-            gfx.render_tas_editor_window(graphics::TasEditorRenderContext {
-                settings: &self.settings,
-                state: &mut self.debug_windows.tas_editor,
-            })
-        };
-        match result {
-            Ok(result) => {
-                if let Some(request) = result.host_request {
-                    self.handle_tas_editor_host_request(request);
-                }
-                true
-            }
-            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
-                if let Some(gfx) = self.gfx.as_mut()
-                    && let Some(size) = gfx.tas_editor_window().map(|window| window.inner_size())
-                {
-                    gfx.resize_tas_editor_window(size.width, size.height);
-                }
-                false
-            }
-            Err(graphics::FrameError::Timeout) => false,
-        }
-    }
+fn has_pce_cd_archive_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("7z")
+                || extension.eq_ignore_ascii_case("rar")
+                || extension.eq_ignore_ascii_case("zip")
+        })
 }
 
 fn default_project_name(source_path: &Path) -> String {

@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use zeff_emu_common::replay::ReplayEvent;
 
 use super::{TasEditOutcome, TasEditorSession};
 use crate::tas_project::TasInputPattern;
@@ -66,12 +67,20 @@ impl TasEditorSession {
         cursor: u64,
         pattern: &TasInputPattern,
     ) -> Result<TasEditOutcome> {
+        self.insert_input_pattern_with_events(cursor, pattern, &[])
+    }
+
+    pub fn insert_input_pattern_with_events(
+        &mut self,
+        cursor: u64,
+        pattern: &TasInputPattern,
+        relative_events: &[ReplayEvent],
+    ) -> Result<TasEditOutcome> {
         self.validate_insertion(cursor, pattern.length())?;
         let before = self.capture_history_entry()?;
         let branch_id = self.selected_branch_id.clone();
         let outcome = self.project.edit_transaction(|edit| {
-            edit.insert_frames(&branch_id, cursor, pattern.length())?;
-            edit.replace_input_pattern(&branch_id, cursor, pattern)
+            edit.insert_input_pattern_with_events(&branch_id, cursor, pattern, relative_events)
         })?;
         self.finish_edit(&outcome, before)?;
         Ok(outcome)

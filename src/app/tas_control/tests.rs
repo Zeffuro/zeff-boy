@@ -13,6 +13,7 @@ mod gbc_recording_roundtrip;
 mod harness;
 mod live_recording;
 mod pause_ownership;
+mod pce_archive_recording_roundtrip;
 mod pce_recording_roundtrip;
 mod playback;
 mod playback_roundtrip;

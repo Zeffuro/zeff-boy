@@ -3,13 +3,13 @@ use crate::emu_backend::loader::DirectGbcTasExecutionLoader;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 impl BatteryRepairHarness {
-    fn cgb_direct(label: &str) -> Self {
+    pub(super) fn cgb_direct(label: &str) -> Self {
         let root = crate::test_support::test_directory(label).unwrap();
         let source_path = root.path().join("battery.gbc");
         let save_path = source_path.with_extension("sav");
         let project_path = root.path().join("battery.ztas");
         let rom = cgb_battery_test_rom();
-        let project_sram = vec![0x4B; 32 * 1024];
+        let project_sram = vec![0x4B; 8 * 1024];
         std::fs::write(&source_path, &rom).unwrap();
         std::fs::write(&save_path, &project_sram).unwrap();
         DirectGbcTasExecutionLoader::new(source_path.clone(), Vec::new())
@@ -31,7 +31,7 @@ impl BatteryRepairHarness {
         )
     }
 
-    fn cgb_zip(label: &str) -> Self {
+    pub(super) fn cgb_zip(label: &str) -> Self {
         let root = crate::test_support::test_directory(label).unwrap();
         let source_path = root.path().join("battery.zip");
         let member_name = "folder/battery.gbc";
@@ -39,7 +39,7 @@ impl BatteryRepairHarness {
         let save_path = source_path.with_extension("sav");
         let project_path = root.path().join("battery.ztas");
         let rom = cgb_battery_test_rom();
-        let project_sram = vec![0x87; 32 * 1024];
+        let project_sram = vec![0x87; 8 * 1024];
         write_zip(&source_path, &[(member_name, &rom)]).unwrap();
         std::fs::write(&save_path, &project_sram).unwrap();
         DirectGbcTasExecutionLoader::new_zip(

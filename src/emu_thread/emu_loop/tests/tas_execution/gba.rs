@@ -2,7 +2,8 @@ use super::super::support::tas_nes_test_loop_from_backend;
 use crate::emu_backend::loader::DirectGbaTasExecutionLoader;
 use crate::emu_thread::{
     EmuCommand, EmuResponse, TasExecutionCacheProof, TasExecutionProfile,
-    TasExecutionRejectedReason, TasExecutionRequest, TasFrameAdvanceRequest, TasInputFrame,
+    TasExecutionRejectedReason, TasExecutionRequest, TasFrameAdvanceRejectedReason,
+    TasFrameAdvanceRequest, TasInputFrame,
 };
 use crate::tas_project::TasDigest;
 
@@ -165,6 +166,63 @@ fn direct_gba_worker_executes_advances_and_rolls_back_one_pad_input() {
         _ => panic!("unexpected rollback response"),
     }
     assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), checkpoint);
+}
+
+#[test]
+fn direct_gba_frame_advance_rejects_same_frame_state_divergence() {
+    let (_directory, loader, project) = loader_and_project("tas-control-direct-gba-divergence");
+    let backend = loader.load_editor_engine(&project).unwrap().into_backend();
+    let (mut emu_loop, responses) = tas_nes_test_loop_from_backend(backend);
+    assert!(emu_loop.handle_command(EmuCommand::AcquireTasControl {
+        request_id: 110,
+        profile: TasExecutionProfile::DirectGbaCartridge,
+    }));
+    let (lease_id, start_state) = match responses.recv().unwrap() {
+        EmuResponse::TasControlAcquired {
+            lease_id, witness, ..
+        } => (lease_id, witness.current_state_bytes),
+        _ => panic!("unexpected acquisition response"),
+    };
+    assert!(emu_loop.handle_command(request(lease_id, 1, start_state, vec![Default::default()],)));
+    let (frame_count, state_sha256) = match responses.recv().unwrap() {
+        EmuResponse::TasExecutionCompleted {
+            lease_id: actual_lease_id,
+            run_id: 1,
+            frame_count,
+            state_sha256,
+            ..
+        } if actual_lease_id == lease_id => (frame_count, state_sha256),
+        _ => panic!("unexpected execution response"),
+    };
+
+    emu_loop.backend.set_input(0x20, 0x08);
+    let diverged = emu_loop.backend.encode_state_bytes().unwrap();
+    assert_eq!(emu_loop.backend.frame_count(), frame_count);
+    assert!(
+        emu_loop.handle_command(EmuCommand::AdvanceTasControl(Box::new(
+            TasFrameAdvanceRequest {
+                profile: TasExecutionProfile::DirectGbaCartridge,
+                lease_id,
+                run_id: 1,
+                advance_id: 1,
+                segment_id: 1,
+                expected_segment_frame_count: 1,
+                expected_executed_project_frames: 1,
+                expected_frame_count: frame_count,
+                expected_state_sha256: state_sha256,
+                input: Default::default(),
+                snapshot: None,
+            },
+        )))
+    );
+    assert!(matches!(
+        responses.recv().unwrap(),
+        EmuResponse::TasFrameAdvanceRejected {
+            reason: TasFrameAdvanceRejectedReason::CandidateStateDigestMismatch,
+            ..
+        }
+    ));
+    assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), diverged);
 }
 
 #[test]

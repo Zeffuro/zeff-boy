@@ -87,6 +87,7 @@ pub(crate) enum PceCdLoadError {
     ArchiveTooLarge(u64),
     TooManyArchiveEntries(usize),
     NoArchiveCue,
+    NoArchivePpfStack,
     MultipleArchiveCues,
     UnsafeArchiveEntry(String),
     DuplicateArchiveEntry(String),

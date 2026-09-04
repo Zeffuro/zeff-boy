@@ -348,6 +348,8 @@ pub(crate) fn is_supported_direct_gb_tas_cartridge(
 ) -> bool {
     let max_rom_bytes = match cartridge_type {
         CartridgeType::RomOnly if ram_size == RamSize::None => 32 * 1024,
+        CartridgeType::RomRam if ram_size == RamSize::Kb8 => 32 * 1024,
+        CartridgeType::RomRamBattery if ram_size == RamSize::Kb8 => 32 * 1024,
         CartridgeType::Mbc1 if ram_size == RamSize::None => 2 * 1024 * 1024,
         CartridgeType::Mbc1Ram
             if matches!(ram_size, RamSize::Kb8 | RamSize::Kb32)

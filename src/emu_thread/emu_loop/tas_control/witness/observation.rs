@@ -28,10 +28,14 @@ pub(in crate::emu_thread) fn observe_loaded_profile(
             observe_direct_sg1000(backend, cheats_present)
         }
         TasExecutionProfile::DirectWsCartridge => observe_direct_ws(backend, cheats_present),
-        TasExecutionProfile::DirectPceHuCard | TasExecutionProfile::DirectPceSixButtonHuCard => {
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceSixButtonHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard => {
             observe_direct_pce(backend, cheats_present, profile)
         }
-        TasExecutionProfile::DirectPceCd => observe_direct_pce(backend, cheats_present, profile),
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd => {
+            observe_direct_pce(backend, cheats_present, profile)
+        }
     }
 }
 
@@ -381,19 +385,39 @@ fn observe_direct_pce(
     let expected_core_family = format!("{:?}", zeff_emu_common::system::CoreFamily::PcEngine);
     let runtime_matches = match profile {
         TasExecutionProfile::DirectPceHuCard => {
-            crate::emu_backend::loader::validate_direct_pce_tas_runtime(backend, cheats_present)
-                .is_ok()
+            crate::emu_backend::loader::validate_direct_pce_tas_execution_runtime(
+                backend,
+                cheats_present,
+            )
+            .is_ok()
         }
         TasExecutionProfile::DirectPceSixButtonHuCard => {
-            crate::emu_backend::loader::validate_direct_pce_six_button_tas_runtime(
+            crate::emu_backend::loader::validate_direct_pce_six_button_tas_execution_runtime(
+                backend,
+                cheats_present,
+            )
+            .is_ok()
+        }
+        TasExecutionProfile::DirectPceMultitapHuCard => {
+            crate::emu_backend::loader::validate_direct_pce_multitap_tas_execution_runtime(
                 backend,
                 cheats_present,
             )
             .is_ok()
         }
         TasExecutionProfile::DirectPceCd => {
-            crate::emu_backend::loader::validate_direct_pce_cd_tas_runtime(backend, cheats_present)
-                .is_ok()
+            crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
+                backend,
+                cheats_present,
+            )
+            .is_ok()
+        }
+        TasExecutionProfile::DirectPceMultitapCd => {
+            crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_execution_runtime(
+                backend,
+                cheats_present,
+            )
+            .is_ok()
         }
         _ => unreachable!("invalid PC Engine TAS profile"),
     };
@@ -404,10 +428,13 @@ fn observe_direct_pce(
             && metadata.core_family.as_deref() == Some(expected_core_family.as_str()),
         load_provenance_available: provenance.is_some(),
         direct_source: load.map(|load| {
-            if profile == TasExecutionProfile::DirectPceCd {
+            if matches!(
+                profile,
+                TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd
+            ) {
                 load.direct_pce_cd
             } else {
-                load.direct_pce_file
+                load.direct_pce_file || load.tas_source_media_sha256 != load.raw_source_media_sha256
             }
         }),
         source_media_sha256: load.map(|load| TasDigest(load.tas_source_media_sha256)),
@@ -415,22 +442,32 @@ fn observe_direct_pce(
         mods_absent: load.map(|load| !load.any_mod_enabled && !load.any_mod_applied),
         persistent_state_absent: load.map(|load| {
             load.persistent_load == crate::emu_backend::pce::PceTasPersistentLoadOutcome::Skipped
-                && (profile == TasExecutionProfile::DirectPceCd
-                    || crate::emu_backend::loader::direct_pce_tas_host_persistence_absent(backend))
+                && (matches!(
+                    profile,
+                    TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd
+                ) || crate::emu_backend::loader::direct_pce_tas_host_persistence_absent(
+                    backend,
+                ))
         }),
         project_owned_persistence: None,
         initial_input_neutral: load.map(|load| load.initial_input.is_none()),
         configured_at_load_sample_rate: load.and_then(|load| load.configured_sample_rate),
         initial_sample_rate: load.map(|load| load.initial_sample_rate),
         current_sample_rate: provenance.map(|view| view.current_sample_rate),
-        firmware_profile_matches: if profile == TasExecutionProfile::DirectPceCd {
+        firmware_profile_matches: if matches!(
+            profile,
+            TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd
+        ) {
             runtime_matches
         } else {
             metadata.firmware.is_empty()
         },
         hardware_profile_matches: runtime_matches,
         controller_profile_matches: runtime_matches,
-        removable_media_absent: if profile == TasExecutionProfile::DirectPceCd {
+        removable_media_absent: if matches!(
+            profile,
+            TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd
+        ) {
             false
         } else {
             backend.media_slot_snapshot().is_none()

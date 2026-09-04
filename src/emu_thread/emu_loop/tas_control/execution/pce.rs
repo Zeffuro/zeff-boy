@@ -68,16 +68,43 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn validate_pce_input(
     input: TasInputFrame,
 ) -> Result<(), ()> {
     let button_mask = match profile {
-        TasExecutionProfile::DirectPceHuCard | TasExecutionProfile::DirectPceCd => 0x0F,
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => 0x0F,
         TasExecutionProfile::DirectPceSixButtonHuCard => 0xFF,
         _ => return Err(()),
     };
     if input.p1_buttons & !button_mask != 0
         || input.p1_dpad & !0x0F != 0
-        || input.p2_buttons != 0
-        || input.p2_dpad != 0
         || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
         || input.zapper != Default::default()
+    {
+        return Err(());
+    }
+    if matches!(
+        profile,
+        TasExecutionProfile::DirectPceMultitapHuCard | TasExecutionProfile::DirectPceMultitapCd
+    ) {
+        if [
+            (input.p2_buttons, input.p2_dpad),
+            (input.p3_buttons, input.p3_dpad),
+            (input.p4_buttons, input.p4_dpad),
+            (input.p5_buttons, input.p5_dpad),
+        ]
+        .into_iter()
+        .any(|(buttons, dpad)| buttons & !0x0F != 0 || dpad & !0x0F != 0)
+        {
+            return Err(());
+        }
+    } else if input.p2_buttons != 0
+        || input.p2_dpad != 0
+        || input.p3_buttons != 0
+        || input.p3_dpad != 0
+        || input.p4_buttons != 0
+        || input.p4_dpad != 0
+        || input.p5_buttons != 0
+        || input.p5_dpad != 0
     {
         return Err(());
     }
@@ -101,16 +128,28 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn validate_direct_pce_start_st
 ) -> Result<(), Rejected> {
     validate_pce_runtime(backend, profile).map_err(|_| Rejected::InvalidStartState)?;
     let pce = backend.pce().ok_or(Rejected::InvalidStartState)?;
-    let frame_count = if profile == TasExecutionProfile::DirectPceCd {
-        let runtime = crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
-            backend, false,
-        )
+    let frame_count = if matches!(
+        profile,
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd
+    ) {
+        let runtime = if profile == TasExecutionProfile::DirectPceMultitapCd {
+            crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_execution_runtime(
+                backend, false,
+            )
+        } else {
+            crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(backend, false)
+        }
         .map_err(|_| Rejected::InvalidStartState)?;
         let inspection = pce
-            .inspect_current_native_cd_tas_state_for_profile(
+            .inspect_current_native_cd_tas_state_for_profile_and_controller(
                 state,
                 runtime.arcade_card_enabled,
                 runtime.memory_base_enabled,
+                if profile == TasExecutionProfile::DirectPceMultitapCd {
+                    zeff_pce_core::hardware::PceControllerMode::Multitap
+                } else {
+                    zeff_pce_core::hardware::PceControllerMode::TwoButton
+                },
             )
             .map_err(|_| Rejected::InvalidStartState)?;
         if Some(inspection.disc_sha256) != backend.replay_metadata().rom_sha256 {
@@ -138,7 +177,9 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn restore_direct_pce_state(
     state: &[u8],
 ) -> Result<(), Rejected> {
     validate_direct_pce_start_state(backend, profile, state)?;
-    let projection = if profile == TasExecutionProfile::DirectPceCd {
+    let projection = if profile == TasExecutionProfile::DirectPceMultitapCd {
+        crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_state(backend, state)
+    } else if profile == TasExecutionProfile::DirectPceCd {
         crate::emu_backend::loader::validate_direct_pce_cd_tas_state(backend, state)
     } else {
         crate::emu_backend::loader::validate_direct_pce_tas_state(backend, state)
@@ -152,13 +193,6 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn restore_direct_pce_state(
         return Err(Rejected::StateFrameMismatch);
     }
     validate_pce_runtime(backend, profile).map_err(|_| Rejected::InvalidStartState)
-}
-
-pub(in crate::emu_thread::emu_loop::tas_control) fn restore_direct_pce_cd_state(
-    backend: &mut EmuBackend,
-    state: &[u8],
-) -> Result<(), Rejected> {
-    restore_direct_pce_state(backend, TasExecutionProfile::DirectPceCd, state)
 }
 
 pub(in crate::emu_thread::emu_loop::tas_control) fn capture_direct_pce_candidate(
@@ -189,8 +223,18 @@ fn validate_pce_runtime(backend: &EmuBackend, profile: TasExecutionProfile) -> a
                 backend, false,
             )?;
         }
+        TasExecutionProfile::DirectPceMultitapHuCard => {
+            crate::emu_backend::loader::validate_direct_pce_multitap_tas_execution_runtime(
+                backend, false,
+            )?;
+        }
         TasExecutionProfile::DirectPceCd => {
             crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
+                backend, false,
+            )?;
+        }
+        TasExecutionProfile::DirectPceMultitapCd => {
+            crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_execution_runtime(
                 backend, false,
             )?;
         }

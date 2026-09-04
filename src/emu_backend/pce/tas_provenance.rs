@@ -16,7 +16,7 @@ pub(crate) enum PceTasPersistentLoadOutcome {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PceTasLoadProvenance {
     pub(crate) raw_source_media_sha256: [u8; 32],
     pub(crate) raw_source_media_len: usize,
@@ -28,6 +28,17 @@ pub(crate) struct PceTasLoadProvenance {
     pub(crate) direct_pce_cd_chd: bool,
     pub(crate) direct_pce_cd_iso: bool,
     pub(crate) direct_pce_cd_ppf: bool,
+    pub(crate) direct_pce_cd_archive: bool,
+    pub(crate) direct_pce_cd_archive_ppf: bool,
+    pub(crate) direct_pce_cd_rar: bool,
+    pub(crate) direct_pce_cd_zip: bool,
+    pub(crate) archive_cue_member_path_sha256: Option<[u8; 32]>,
+    pub(crate) rar_cue_member_path_sha256: Option<[u8; 32]>,
+    pub(crate) zip_cue_member_path_sha256: Option<[u8; 32]>,
+    pub(crate) archive_cue_explicitly_selected: bool,
+    pub(crate) rar_cue_explicitly_selected: bool,
+    pub(crate) zip_cue_explicitly_selected: bool,
+    pub(crate) archive_ppf_patches: Vec<PceTasArchivePpfPatchIdentity>,
     pub(crate) source_disc_sha256: Option<[u8; 32]>,
     pub(crate) effective_disc_sha256: Option<[u8; 32]>,
     pub(crate) any_mod_enabled: bool,
@@ -50,7 +61,7 @@ pub(crate) struct PceTasLoadProvenance {
     pub(crate) effective_topology: PceHardwareTopology,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PceTasLoadProvenanceSeed {
     raw_source_media_sha256: [u8; 32],
     raw_source_media_len: usize,
@@ -59,13 +70,24 @@ pub(crate) struct PceTasLoadProvenanceSeed {
     direct_pce_cd_chd: bool,
     direct_pce_cd_iso: bool,
     direct_pce_cd_ppf: bool,
+    direct_pce_cd_archive: bool,
+    direct_pce_cd_archive_ppf: bool,
+    direct_pce_cd_rar: bool,
+    direct_pce_cd_zip: bool,
+    archive_cue_member_path_sha256: Option<[u8; 32]>,
+    rar_cue_member_path_sha256: Option<[u8; 32]>,
+    zip_cue_member_path_sha256: Option<[u8; 32]>,
+    archive_cue_explicitly_selected: bool,
+    rar_cue_explicitly_selected: bool,
+    zip_cue_explicitly_selected: bool,
+    archive_ppf_patches: Vec<PceTasArchivePpfPatchIdentity>,
     source_disc_sha256: Option<[u8; 32]>,
     effective_disc_sha256: Option<[u8; 32]>,
     tas_source_media: ([u8; 32], usize, [u8; 32]),
     setup: PceTasLoadSetup,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PceTasCdLoadMedia {
     pub(crate) raw_source_media_sha256: [u8; 32],
     pub(crate) raw_source_media_len: usize,
@@ -75,6 +97,24 @@ pub(crate) struct PceTasCdLoadMedia {
     pub(crate) chd: bool,
     pub(crate) iso: bool,
     pub(crate) ppf: bool,
+    pub(crate) archive: bool,
+    pub(crate) archive_ppf: bool,
+    pub(crate) rar: bool,
+    pub(crate) zip: bool,
+    pub(crate) archive_cue_member_path_sha256: Option<[u8; 32]>,
+    pub(crate) rar_cue_member_path_sha256: Option<[u8; 32]>,
+    pub(crate) zip_cue_member_path_sha256: Option<[u8; 32]>,
+    pub(crate) archive_cue_explicitly_selected: bool,
+    pub(crate) rar_cue_explicitly_selected: bool,
+    pub(crate) zip_cue_explicitly_selected: bool,
+    pub(crate) archive_ppf_patches: Vec<PceTasArchivePpfPatchIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PceTasArchivePpfPatchIdentity {
+    pub(crate) member_path: String,
+    pub(crate) len: usize,
+    pub(crate) sha256: [u8; 32],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -126,6 +166,17 @@ impl PceTasLoadProvenanceSeed {
             direct_pce_cd_chd: false,
             direct_pce_cd_iso: false,
             direct_pce_cd_ppf: false,
+            direct_pce_cd_archive: false,
+            direct_pce_cd_archive_ppf: false,
+            direct_pce_cd_rar: false,
+            direct_pce_cd_zip: false,
+            archive_cue_member_path_sha256: None,
+            rar_cue_member_path_sha256: None,
+            zip_cue_member_path_sha256: None,
+            archive_cue_explicitly_selected: false,
+            rar_cue_explicitly_selected: false,
+            zip_cue_explicitly_selected: false,
+            archive_ppf_patches: Vec::new(),
             source_disc_sha256: None,
             effective_disc_sha256: None,
             tas_source_media,
@@ -147,6 +198,17 @@ impl PceTasLoadProvenanceSeed {
             direct_pce_cd_chd: media.chd,
             direct_pce_cd_iso: media.iso,
             direct_pce_cd_ppf: media.ppf,
+            direct_pce_cd_archive: media.archive,
+            direct_pce_cd_archive_ppf: media.archive_ppf,
+            direct_pce_cd_rar: media.rar,
+            direct_pce_cd_zip: media.zip,
+            archive_cue_member_path_sha256: media.archive_cue_member_path_sha256,
+            rar_cue_member_path_sha256: media.rar_cue_member_path_sha256,
+            zip_cue_member_path_sha256: media.zip_cue_member_path_sha256,
+            archive_cue_explicitly_selected: media.archive_cue_explicitly_selected,
+            rar_cue_explicitly_selected: media.rar_cue_explicitly_selected,
+            zip_cue_explicitly_selected: media.zip_cue_explicitly_selected,
+            archive_ppf_patches: media.archive_ppf_patches,
             source_disc_sha256: Some(media.source_disc_sha256),
             effective_disc_sha256: Some(media.effective_disc_sha256),
             tas_source_media,
@@ -170,6 +232,17 @@ impl PceTasLoadProvenanceSeed {
             direct_pce_cd_chd: self.direct_pce_cd_chd,
             direct_pce_cd_iso: self.direct_pce_cd_iso,
             direct_pce_cd_ppf: self.direct_pce_cd_ppf,
+            direct_pce_cd_archive: self.direct_pce_cd_archive,
+            direct_pce_cd_archive_ppf: self.direct_pce_cd_archive_ppf,
+            direct_pce_cd_rar: self.direct_pce_cd_rar,
+            direct_pce_cd_zip: self.direct_pce_cd_zip,
+            archive_cue_member_path_sha256: self.archive_cue_member_path_sha256,
+            rar_cue_member_path_sha256: self.rar_cue_member_path_sha256,
+            zip_cue_member_path_sha256: self.zip_cue_member_path_sha256,
+            archive_cue_explicitly_selected: self.archive_cue_explicitly_selected,
+            rar_cue_explicitly_selected: self.rar_cue_explicitly_selected,
+            zip_cue_explicitly_selected: self.zip_cue_explicitly_selected,
+            archive_ppf_patches: self.archive_ppf_patches,
             source_disc_sha256: self.source_disc_sha256,
             effective_disc_sha256: self.effective_disc_sha256,
             any_mod_enabled: self.setup.any_mod_enabled,
@@ -195,7 +268,7 @@ impl PceTasLoadProvenanceSeed {
 }
 
 impl PceTasLoadProvenance {
-    pub(crate) fn source_media_identity(self) -> TasSourceMediaIdentity {
+    pub(crate) fn source_media_identity(&self) -> TasSourceMediaIdentity {
         TasSourceMediaIdentity::new(self.tas_source_media_sha256, self.tas_source_media_len)
     }
 }
@@ -215,6 +288,7 @@ impl PceBackend {
 
     pub(crate) fn tas_source_media_identity(&self) -> Option<TasSourceMediaIdentity> {
         self.tas_load_provenance
+            .as_ref()
             .map(PceTasLoadProvenance::source_media_identity)
     }
 

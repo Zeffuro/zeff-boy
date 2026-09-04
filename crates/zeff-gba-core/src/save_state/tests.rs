@@ -176,14 +176,14 @@ fn rejects_unsupported_state_version() {
     let rom = minimal_rom();
     let emu = Emulator::new(&rom, 48_000).unwrap();
     let mut bytes = encode_state(&emu).unwrap();
-    bytes[8..12].copy_from_slice(&(VERSION + 1).to_le_bytes());
+    bytes[8..12].copy_from_slice(&(TILT_VERSION + 1).to_le_bytes());
 
     let mut restored = Emulator::new(&rom, 48_000).unwrap();
     let err = decode_state(&mut restored, &bytes).unwrap_err();
 
     assert!(err.to_string().contains(&format!(
         "unsupported GBA save-state version {}",
-        VERSION + 1
+        TILT_VERSION + 1
     )));
 }
 

@@ -14,7 +14,7 @@ use super::direct_fds::{
 use super::{
     ActiveSystem, BackendLoadConfig, EmuBackend, MAX_NES_ZIP_BYTES, TasDigest,
     TasEditorExecutionEngine, TasEditorExecutionProvider, TasExecutionSession, TasInitialBranch,
-    TasProject, has_extension, publish_new_project,
+    TasProject, TasZrplImportWitness, has_extension, publish_new_project,
 };
 
 #[derive(Clone, Debug)]
@@ -184,6 +184,27 @@ impl DirectFdsTasExecutionLoader {
         let project = self.create_project()?;
         project.save_atomic(path)?;
         Ok(project)
+    }
+
+    pub(crate) fn replay_import_witness(
+        &self,
+        start_state: &[u8],
+    ) -> Result<(TasZrplImportWitness, BTreeMap<TasDigest, Vec<u8>>)> {
+        let owned = self.read_creation_disk()?;
+        let mut loader = self.clone();
+        loader.owned_disk = Some(owned.clone());
+        let identity = loader.load_session(start_state)?.identity().clone();
+        let asset = match &owned.zip_member_name {
+            Some(member_name) => encode_zip_fds_asset(member_name, &owned.bytes)?,
+            None => owned.bytes,
+        };
+        Ok((
+            TasZrplImportWitness {
+                project_id: format!("fds-{}", identity.source_media_sha256.to_hex()),
+                identity,
+            },
+            BTreeMap::from([(TasDigest::from_bytes(&asset), asset)]),
+        ))
     }
 
     pub(crate) fn load_session(&self, start_state: &[u8]) -> Result<TasExecutionSession> {

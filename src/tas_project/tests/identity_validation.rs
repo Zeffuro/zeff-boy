@@ -136,7 +136,7 @@ fn every_sync_identity_domain_changes_the_sync_hash() {
         .state_format_compatibility_id
         .push('2'));
     assert_changes!(|project: &mut TasProject| {
-        project.start_state[0] ^= 1;
+        std::sync::Arc::make_mut(&mut project.start_state)[0] ^= 1;
         project.identity.start_state_sha256 = TasDigest::from_bytes(&project.start_state);
     });
     assert_changes!(

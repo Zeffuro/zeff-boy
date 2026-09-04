@@ -1,5 +1,5 @@
 use anyhow::Result;
-use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent};
+use zeff_emu_common::replay::{ReplayEvent, ReplayGameBoyLinkEvent, ReplayJoypadFrame};
 
 use super::*;
 use crate::tas_project::{
@@ -26,6 +26,12 @@ fn gba_rom_with_backup(marker: &[u8]) -> Vec<u8> {
 fn gba_rtc_rom(marker: &[u8]) -> Vec<u8> {
     let mut rom = gba_rom_with_backup(marker);
     rom[0xAC..0xB0].copy_from_slice(b"BPEE");
+    rom
+}
+
+fn gba_tilt_rom() -> Vec<u8> {
+    let mut rom = gba_rom_with_backup(b"EEPROM_V122");
+    rom[0xAC..0xB0].copy_from_slice(b"KYGE");
     rom
 }
 
@@ -97,6 +103,117 @@ fn creates_and_executes_a_one_pad_direct_gba_project() -> Result<()> {
     assert_eq!(
         engine.backend().encode_state_bytes()?,
         expected.encode_state_bytes()?
+    );
+    Ok(())
+}
+
+#[test]
+fn tilt_project_preserves_recorded_sensor_input_through_direct_execution_and_replay() -> Result<()>
+{
+    let directory = crate::test_support::test_directory("tas-gba-tilt-direct")?;
+    let source_path = directory.path().join("tilt.gba");
+    let save_path = source_path.with_extension("sav");
+    let rom = gba_tilt_rom();
+    let save = vec![0x3C; 0x2000];
+    std::fs::write(&source_path, &rom)?;
+    std::fs::write(&save_path, &save)?;
+    let loader = DirectGbaTasExecutionLoader::new(source_path);
+    let mut project = loader.create_project()?;
+    assert_eq!(project.identity().devices.len(), 2);
+    assert_eq!(
+        project.identity().determinism_abi,
+        zeff_gba_core::save_state::TILT_TAS_DETERMINISM_ABI_ID
+    );
+    assert_eq!(
+        project.identity().state_format_compatibility_id,
+        zeff_gba_core::save_state::TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID
+    );
+    assert_ne!(project.identity().sensor_state, TasExternalIdentity::Absent);
+
+    let input = TasInputFrame {
+        players: [
+            TasControllerInput {
+                buttons: 0x21,
+                dpad: 0x04,
+            },
+            TasControllerInput::default(),
+            TasControllerInput::default(),
+            TasControllerInput::default(),
+            TasControllerInput::default(),
+        ],
+        tilt_x_bits: 0x3E80_0000,
+        tilt_y_bits: 0xBF00_0000,
+        ..TasInputFrame::default()
+    };
+    project.edit_transaction(|edit| edit.set_input_range("main", 0, 1, input))?;
+    let mut engine = loader.load_editor_engine(&project)?;
+    let manual_path = directory.path().join("tilt.ztas");
+    let autosaves =
+        TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default())?;
+    let cache = TasSeekStateCache::open(directory.path().join("seek-cache"))?;
+    let mut editor = TasEditorSession::new(project, manual_path, autosaves, cache)?;
+    assert!(engine.seek(&mut editor, 1)?.reached_target());
+
+    let (mut expected, _) = loader.load_fresh_backend()?;
+    crate::emu_backend::gba::restore_direct_gba_tas_execution_state(
+        &mut expected,
+        editor.project().start_state(),
+    )?;
+    expected.apply_replay_input(&ReplayJoypadFrame {
+        buttons: input.players[0].buttons,
+        dpad: input.players[0].dpad,
+        host_tilt: (
+            f32::from_bits(input.tilt_x_bits),
+            f32::from_bits(input.tilt_y_bits),
+        ),
+        ..ReplayJoypadFrame::default()
+    });
+    expected.step_frame();
+    assert_eq!(
+        engine.backend().encode_state_bytes()?,
+        expected.encode_state_bytes()?
+    );
+
+    let plan = super::super::PrivateTasExecutionLoader::DirectGba(loader);
+    let replay_path = directory.path().join("tilt.zrpl");
+    plan.verify_and_export_editor_session(&mut editor, &replay_path)?;
+    let imported =
+        plan.import_replay_file(&replay_path, &directory.path().join("imported.ztas"), false)?;
+    assert_eq!(imported.branch("main").unwrap().input_at(0), input);
+    Ok(())
+}
+
+#[test]
+fn tilt_zip_reopens_by_member_identity_and_rejects_unsupported_topology() -> Result<()> {
+    let directory = crate::test_support::test_directory("tas-gba-tilt-zip")?;
+    let archive_path = directory.path().join("tilt.zip");
+    let rom = gba_tilt_rom();
+    let save = vec![0xA4; 0x2000];
+    write_zip(&archive_path, &[("games/tilt.gba", &rom)])?;
+    std::fs::write(archive_path.with_extension("sav"), &save)?;
+    let loader = DirectGbaTasExecutionLoader::new_zip(
+        archive_path.clone(),
+        Some(archive_path.join("games/tilt.gba")),
+    );
+    let project = loader.create_project()?;
+    assert_eq!(
+        project.identity().sync_config_sha256,
+        crate::emu_backend::gba::zip_gba_tilt_tas_sync_config_sha256("games/tilt.gba")
+    );
+    let reopened = DirectGbaTasExecutionLoader::new_zip_for_project(archive_path, &project)?;
+    assert_eq!(
+        reopened.load_session(project.start_state())?.identity(),
+        project.identity()
+    );
+
+    let unsupported_path = directory.path().join("unsupported.gba");
+    let mut unsupported = gba_rom();
+    unsupported[0xAC..0xB0].copy_from_slice(b"KYGE");
+    std::fs::write(&unsupported_path, unsupported)?;
+    assert!(
+        DirectGbaTasExecutionLoader::new(unsupported_path)
+            .create_project()
+            .is_err()
     );
     Ok(())
 }

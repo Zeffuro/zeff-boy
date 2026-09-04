@@ -100,6 +100,11 @@ pub(crate) fn gb_rtc_complete_persistence_bytes(backend: &EmuBackend) -> Result<
         .context("Game Boy RTC TAS profile requires complete battery state")
 }
 
+pub(super) fn canonicalize_gb_tas_start_state(mut bytes: Vec<u8>) -> Vec<u8> {
+    zeff_gb_core::save_state::canonicalize_bess_rtc_timestamp(&mut bytes);
+    bytes
+}
+
 pub(super) fn validate_gb_rtc_runtime(backend: &EmuBackend) -> Result<usize> {
     let provenance = backend
         .gb_tas_load_provenance()

@@ -9,12 +9,15 @@ use super::constants::{
 
 mod backup;
 mod rtc;
+mod tilt;
 
 #[cfg(test)]
 pub(crate) use backup::BACKUP_EXECUTION_STATE_SIZE;
 use backup::{EepromState, FlashState, detect_backup_kind};
 use rtc::RtcGpio;
 pub use rtc::{RtcDateTime, RtcState};
+use tilt::TiltSensor;
+pub use tilt::TiltState;
 const HEADER_END: usize = 0xC0;
 const TITLE_START: usize = 0xA0;
 const TITLE_END: usize = 0xAC;
@@ -32,6 +35,12 @@ pub enum BackupKind {
     Flash512,
     Flash1M,
     Eeprom,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SensorKind {
+    None,
+    Tilt,
 }
 
 impl BackupKind {
@@ -97,6 +106,7 @@ pub struct Cartridge {
     flash: FlashState,
     eeprom: RefCell<EepromState>,
     rtc: Option<RtcGpio>,
+    tilt: Option<TiltSensor>,
 }
 
 impl Cartridge {
@@ -104,6 +114,7 @@ impl Cartridge {
         let header = RomHeader::parse(rom_data).context("failed to parse GBA ROM header")?;
         let backup_kind = detect_backup_kind(rom_data);
         let has_rtc = is_emerald_rtc(&header);
+        let has_tilt = is_tilt_game(&header);
         Ok(Self {
             rom: rom_data.to_vec(),
             header,
@@ -112,6 +123,7 @@ impl Cartridge {
             flash: FlashState::default(),
             eeprom: RefCell::new(EepromState::default()),
             rtc: has_rtc.then(RtcGpio::default),
+            tilt: has_tilt.then(TiltSensor::default),
         })
     }
 
@@ -137,6 +149,26 @@ impl Cartridge {
 
     pub fn has_rtc(&self) -> bool {
         self.rtc.is_some()
+    }
+
+    pub fn sensor_kind(&self) -> SensorKind {
+        if self.tilt.is_some() {
+            SensorKind::Tilt
+        } else {
+            SensorKind::None
+        }
+    }
+
+    pub fn set_tilt_input(&mut self, x: f32, y: f32) -> bool {
+        let Some(tilt) = &mut self.tilt else {
+            return false;
+        };
+        tilt.set_host_input(x, y);
+        true
+    }
+
+    pub fn tilt_state(&self) -> Option<TiltState> {
+        self.tilt.as_ref().map(TiltSensor::state)
     }
 
     pub fn rtc_date_time(&self) -> Option<RtcDateTime> {
@@ -264,6 +296,11 @@ impl Cartridge {
         }
     }
 
+    pub(crate) fn reset_hardware_execution_state(&mut self) {
+        self.reset_backup_execution_state();
+        self.reset_tilt_hardware();
+    }
+
     pub(crate) fn read_rtc_state(
         &mut self,
         reader: &mut zeff_emu_common::save_state::StateReader<'_>,
@@ -281,6 +318,10 @@ impl Cartridge {
 
 fn is_emerald_rtc(header: &RomHeader) -> bool {
     header.game_code.as_bytes().starts_with(b"BPE")
+}
+
+fn is_tilt_game(header: &RomHeader) -> bool {
+    matches!(header.game_code.as_str(), "KHPJ" | "KYGJ" | "KYGE" | "KYGP")
 }
 
 fn gba_rom_offset(addr: u32) -> Option<usize> {

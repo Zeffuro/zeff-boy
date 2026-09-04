@@ -47,9 +47,24 @@ fn write_cgb_rom(label: &str) -> Result<(crate::test_support::TestDirectory, Pat
 
 #[test]
 fn creates_classifies_and_seeks_a_forced_cgb_project() -> Result<()> {
-    let (directory, source_path, source_bytes) = write_cgb_rom("tas-direct-gbc-flow")?;
+    let (directory, source_path, mut source_bytes) = write_cgb_rom("tas-direct-gbc-flow")?;
+    source_bytes[0x147] = 0x08;
+    source_bytes[0x149] = 0x02;
+    let save_path = source_path.with_extension("sav");
+    let initial_sidecar = vec![0xA5; 8 * 1024];
+    std::fs::write(&source_path, &source_bytes)?;
+    std::fs::write(&save_path, &initial_sidecar)?;
     let loader = DirectGbcTasExecutionLoader::new(source_path.clone(), Vec::new());
     let project = loader.create_project()?;
+    assert_eq!(
+        project.identity().persistent_state,
+        TasExternalIdentity::Absent
+    );
+    let changed_sidecar = vec![0x5A; initial_sidecar.len()];
+    std::fs::write(&save_path, &changed_sidecar)?;
+    let repeated = loader.create_project()?;
+    assert_eq!(repeated.identity(), project.identity());
+    assert_eq!(repeated.start_state(), project.start_state());
 
     assert_eq!(
         project.project_id(),
@@ -86,6 +101,7 @@ fn creates_classifies_and_seeks_a_forced_cgb_project() -> Result<()> {
     let outcome = engine.seek(&mut editor, 1)?;
     assert!(outcome.reached_target());
     assert_eq!(outcome.cursor, 1);
+    assert_eq!(std::fs::read(save_path)?, changed_sidecar);
     Ok(())
 }
 
@@ -107,10 +123,28 @@ fn selector_routes_only_direct_gbc_media_to_the_cgb_loader() -> Result<()> {
 fn zip_member_binds_cgb_profile_and_rejects_archive_mutation() -> Result<()> {
     let directory = test_directory("tas-gbc-zip")?;
     let archive_path = directory.path().join("games.zip");
-    let selected = cgb_rom();
-    let archive_bytes = write_zip(&archive_path, &[("folder/game.gbc", &selected)])?;
-    let loader = DirectGbcTasExecutionLoader::new_zip(archive_path.clone(), None, Vec::new());
+    let first = cgb_rom();
+    let selected = cgb_mapper_rom(0x08, 0x00, 0x02);
+    let archive_bytes = write_zip(
+        &archive_path,
+        &[("first.gbc", &first), ("folder/game.gbc", &selected)],
+    )?;
+    let save_path = archive_path.with_extension("sav");
+    let initial_sidecar = vec![0xA5; 8 * 1024];
+    std::fs::write(&save_path, &initial_sidecar)?;
+    let loader = DirectGbcTasExecutionLoader::new_zip(
+        archive_path.clone(),
+        Some(archive_path.join("folder/game.gbc")),
+        Vec::new(),
+    );
     let project = loader.create_project()?;
+    let changed_sidecar = vec![0x3C; 8 * 1024];
+    std::fs::write(&save_path, &changed_sidecar)?;
+    assert_eq!(
+        project.identity().persistent_state,
+        TasExternalIdentity::Absent
+    );
+    assert_eq!(loader.create_project()?.identity(), project.identity());
     assert_eq!(
         project.identity().source_media_sha256,
         TasDigest::from_bytes(&archive_bytes)
@@ -136,6 +170,14 @@ fn zip_member_binds_cgb_profile_and_rejects_archive_mutation() -> Result<()> {
         reopened.load_session(project.start_state())?.identity(),
         project.identity()
     );
+    let mut engine = reopened.load_editor_engine(&project)?;
+    let manual_path = directory.path().join("manual.ztas");
+    let autosaves =
+        TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default())?;
+    let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache"))?;
+    let mut editor = TasEditorSession::new(project.clone(), manual_path, autosaves, seek_cache)?;
+    assert!(engine.seek(&mut editor, 1)?.reached_target());
+    assert_eq!(std::fs::read(&save_path)?, changed_sidecar);
     let (backend, _) = reopened.load_fresh_backend()?;
     let witness = crate::emu_thread::build_tas_repair_witness(
         &backend,
@@ -157,7 +199,11 @@ fn zip_member_binds_cgb_profile_and_rejects_archive_mutation() -> Result<()> {
 
     write_zip(
         &archive_path,
-        &[("folder/game.gbc", &selected), ("note.txt", b"mutation")],
+        &[
+            ("first.gbc", &first),
+            ("folder/game.gbc", &selected),
+            ("note.txt", b"mutation"),
+        ],
     )?;
     assert!(
         DirectGbcTasExecutionLoader::new_zip_for_project(archive_path, Vec::new(), &project)
@@ -201,8 +247,8 @@ fn zip_cgb_battery_project_imports_adjacent_sram_once() -> Result<()> {
     let directory = test_directory("tas-gbc-zip-battery")?;
     let archive_path = directory.path().join("games.zip");
     let save_path = archive_path.with_extension("sav");
-    let battery = cgb_mapper_rom(0x03, 0x04, 0x03);
-    let initial_sram = (0..32 * 1024)
+    let battery = cgb_mapper_rom(0x09, 0x00, 0x02);
+    let initial_sram = (0..8 * 1024)
         .map(|index| (index as u8).wrapping_mul(19).wrapping_add(5))
         .collect::<Vec<_>>();
     write_zip(&archive_path, &[("folder/game.gbc", &battery)])?;
@@ -243,8 +289,8 @@ fn battery_project_owns_initial_sram_and_ignores_later_sidecar_changes() -> Resu
     let directory = test_directory("tas-direct-gbc-battery")?;
     let source_path = directory.path().join("game.gbc");
     let save_path = directory.path().join("game.sav");
-    let source = cgb_mapper_rom(0x03, 0x04, 0x03);
-    let initial_sram = (0..32 * 1024)
+    let source = cgb_mapper_rom(0x09, 0x00, 0x02);
+    let initial_sram = (0..8 * 1024)
         .map(|index| (index as u8).wrapping_mul(31).wrapping_add(3))
         .collect::<Vec<_>>();
     std::fs::write(&source_path, source)?;
@@ -290,6 +336,9 @@ fn direct_cgb_mbc3_rtc_is_fixed_epoch_and_headless_deterministic() -> Result<()>
 
     let project = loader.create_project()?;
     let repeated = loader.create_project()?;
+    let mut canonical_start = project.start_state().to_vec();
+    zeff_gb_core::save_state::canonicalize_bess_rtc_timestamp(&mut canonical_start);
+    assert_eq!(project.start_state(), canonical_start);
     assert_eq!(project.identity(), repeated.identity());
     assert_eq!(project.start_state(), repeated.start_state());
     assert_eq!(
@@ -418,6 +467,8 @@ fn rejects_color_compatible_dmg_and_external_state_media() -> Result<()> {
     for (cgb_flag, cartridge_type, ram_size) in [
         (0x80, 0x00, 0x00),
         (0x00, 0x00, 0x00),
+        (0xC0, 0x08, 0x00),
+        (0xC0, 0x09, 0x00),
         (0xC0, 0x1E, 0x03),
         (0xC0, 0x22, 0x02),
         (0xC0, 0xFC, 0x03),
@@ -434,6 +485,12 @@ fn rejects_color_compatible_dmg_and_external_state_media() -> Result<()> {
                 .is_err()
         );
     }
+    std::fs::write(&source_path, cgb_mapper_rom(0x09, 0x01, 0x02))?;
+    assert!(
+        DirectGbcTasExecutionLoader::new(source_path.clone(), Vec::new())
+            .create_project()
+            .is_err()
+    );
     drop(directory);
     Ok(())
 }
@@ -460,7 +517,11 @@ fn changed_media_and_wrong_hardware_state_are_rejected() -> Result<()> {
 
 #[test]
 fn replay_export_import_uses_two_fresh_cgb_passes() -> Result<()> {
-    let (directory, source_path, _) = write_cgb_rom("tas-direct-gbc-replay")?;
+    let (directory, source_path, mut source) = write_cgb_rom("tas-direct-gbc-replay")?;
+    source[0x147] = 0x09;
+    source[0x149] = 0x02;
+    std::fs::write(&source_path, source)?;
+    std::fs::write(source_path.with_extension("sav"), vec![0x4A; 8 * 1024])?;
     let loader = DirectGbcTasExecutionLoader::new(source_path.clone(), Vec::new());
     let mut project = loader.create_project()?;
     let input = TasInputFrame {

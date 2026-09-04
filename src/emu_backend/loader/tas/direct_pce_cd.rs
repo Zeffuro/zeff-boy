@@ -7,21 +7,101 @@ use zeff_pce_core::hardware::{
     PceControllerMode, PceHardwareTopology, PceHuCardBoard, PceMemoryBaseMode, PsgRevision,
 };
 
-use super::{ActiveSystem, EmuBackend, TasProjectRuntimeWitness, tas_firmware_identity};
+use super::{
+    ActiveSystem, EmuBackend, TasProjectRuntimeWitness,
+    direct_pce::{PceTasHardwareProfile, direct_pce_tas_devices},
+    tas_firmware_identity,
+};
 use crate::tas_project::{
     TasCameraInput, TasDeviceIdentity, TasDigest, TasExternalIdentity, TasFirmwareIdentity,
-    TasProject, TasProjectIdentity,
+    TasPatchIdentity, TasProject, TasProjectIdentity,
+};
+
+#[path = "direct_pce_cd/rar_identity.rs"]
+mod rar_identity;
+pub(crate) use rar_identity::{
+    arcade_sync_config_sha256 as direct_pce_cd_rar_arcade_tas_sync_config_sha256,
+    memory_base_sync_config_sha256 as direct_pce_cd_rar_memory_base_tas_sync_config_sha256,
+    multitap_sync_config_sha256 as direct_pce_multitap_cd_rar_tas_sync_config_sha256,
+    ppf_source_identity as direct_pce_cd_rar_ppf_source_identity,
+    ppf_sync_config_sha256 as direct_pce_cd_rar_ppf_tas_sync_config_sha256,
+    selected_arcade_sync_config_sha256 as direct_pce_cd_selected_rar_arcade_tas_sync_config_sha256,
+    selected_memory_base_sync_config_sha256 as direct_pce_cd_selected_rar_memory_base_tas_sync_config_sha256,
+    selected_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_rar_tas_sync_config_sha256,
+    selected_ppf_sync_config_sha256 as direct_pce_cd_selected_rar_ppf_tas_sync_config_sha256,
+    selected_sync_config_sha256 as direct_pce_cd_selected_rar_tas_sync_config_sha256,
+    source_identity as direct_pce_cd_rar_source_identity,
+    sync_config_sha256 as direct_pce_cd_rar_tas_sync_config_sha256,
+};
+#[path = "direct_pce_cd/seven_zip_identity.rs"]
+mod seven_zip_identity;
+pub(crate) use seven_zip_identity::{
+    arcade_sync_config_sha256 as direct_pce_cd_archive_arcade_tas_sync_config_sha256,
+    memory_base_sync_config_sha256 as direct_pce_cd_archive_memory_base_tas_sync_config_sha256,
+    multitap_sync_config_sha256 as direct_pce_multitap_cd_archive_tas_sync_config_sha256,
+    ppf_source_identity as direct_pce_cd_archive_ppf_source_identity,
+    ppf_sync_config_sha256 as direct_pce_cd_archive_ppf_tas_sync_config_sha256,
+    selected_arcade_sync_config_sha256 as direct_pce_cd_selected_archive_arcade_tas_sync_config_sha256,
+    selected_memory_base_sync_config_sha256 as direct_pce_cd_selected_archive_memory_base_tas_sync_config_sha256,
+    selected_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_archive_tas_sync_config_sha256,
+    selected_ppf_sync_config_sha256 as direct_pce_cd_selected_archive_ppf_tas_sync_config_sha256,
+    selected_sync_config_sha256 as direct_pce_cd_selected_archive_tas_sync_config_sha256,
+    source_identity as direct_pce_cd_archive_source_identity,
+    sync_config_sha256 as direct_pce_cd_archive_tas_sync_config_sha256,
+};
+#[path = "direct_pce_cd/zip_identity.rs"]
+mod zip_identity;
+pub(crate) use zip_identity::{
+    arcade_sync_config_sha256 as direct_pce_cd_zip_arcade_tas_sync_config_sha256,
+    memory_base_sync_config_sha256 as direct_pce_cd_zip_memory_base_tas_sync_config_sha256,
+    multitap_sync_config_sha256 as direct_pce_multitap_cd_zip_tas_sync_config_sha256,
+    ppf_source_identity as direct_pce_cd_zip_ppf_source_identity,
+    ppf_sync_config_sha256 as direct_pce_cd_zip_ppf_tas_sync_config_sha256,
+    selected_arcade_sync_config_sha256 as direct_pce_cd_selected_zip_arcade_tas_sync_config_sha256,
+    selected_memory_base_sync_config_sha256 as direct_pce_cd_selected_zip_memory_base_tas_sync_config_sha256,
+    selected_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_zip_tas_sync_config_sha256,
+    selected_ppf_sync_config_sha256 as direct_pce_cd_selected_zip_ppf_tas_sync_config_sha256,
+    selected_sync_config_sha256 as direct_pce_cd_selected_zip_tas_sync_config_sha256,
+    source_identity as direct_pce_cd_zip_source_identity,
+    sync_config_sha256 as direct_pce_cd_zip_tas_sync_config_sha256,
+};
+#[path = "direct_pce_cd/execution_runtime.rs"]
+mod execution_runtime;
+use execution_runtime::validate_direct_pce_cd_tas_execution_runtime_for_controller;
+pub(crate) use execution_runtime::{
+    validate_direct_pce_cd_tas_execution_runtime,
+    validate_direct_pce_multitap_cd_tas_execution_runtime,
+};
+#[path = "direct_pce_cd/arcade_multitap_identity.rs"]
+mod arcade_multitap_identity;
+pub(crate) use arcade_multitap_identity::sync_config_sha256 as direct_pce_multitap_cd_arcade_tas_sync_config_sha256;
+#[path = "direct_pce_cd/memory_base_multitap_identity.rs"]
+mod memory_base_multitap_identity;
+pub(crate) use memory_base_multitap_identity::sync_config_sha256 as direct_pce_multitap_cd_memory_base_tas_sync_config_sha256;
+#[path = "direct_pce_cd/media_profile.rs"]
+mod media_profile;
+use media_profile::arcade_sync_config;
+#[cfg(test)]
+use media_profile::sync_config_for_runtime;
+pub(crate) use media_profile::{
+    PceCdArchiveFormat, PceCdArchiveSelection, PceCdExpansion, PceCdTasMediaRoute, PceCdTasProfile,
 };
 
 const PCE_CD_TWO_BUTTON_CONFIGURATION: &[u8] =
     b"zeff-tas-device-config-v1\0pce-two-button-controller\0";
 const PCE_CD_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-cue\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
+const PCE_CD_MULTITAP_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-cue\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=five-port-multitap\0ports=p1-p5-two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0multitap-active-port=none\0select=high\0clear=high\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
+const PCE_CD_CHD_MULTITAP_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-chd\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=five-port-multitap\0ports=p1-p5-two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0multitap-active-port=none\0select=high\0clear=high\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
+const PCE_CD_ISO_MULTITAP_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-iso\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=five-port-multitap\0ports=p1-p5-two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0multitap-active-port=none\0select=high\0clear=high\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
+const PCE_CD_PPF_MULTITAP_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-cue-ppf\0raw-source=base-disc-plus-ordered-ppf-sha256-length\0source-disc-identity=pce-core-cd-disc-v1\0effective-disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=five-port-multitap\0ports=p1-p5-two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=ordered-ppf-exact\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0multitap-active-port=none\0select=high\0clear=high\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
+pub(crate) const PCE_CD_UNPATCHED_DISC_PATCH_FORMAT: &str = "pce-cd-unpatched-disc-v1";
 const PCE_CD_CHD_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-chd\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_ISO_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-iso\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_PPF_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-cue-ppf\0raw-source=base-disc-plus-ordered-ppf-sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=disabled\0mods=ordered-ppf-exact\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_ARCADE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-cue-arcade-card\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=enabled-exact-catalog\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_CHD_ARCADE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-chd-arcade-card\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=enabled-exact-catalog\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_ISO_ARCADE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-iso-arcade-card\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=enabled-exact-catalog\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
+const PCE_CD_PPF_ARCADE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-cue-ppf-arcade-card\0raw-source=base-disc-plus-ordered-ppf-sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=disconnected\0arcade-card=enabled-exact-source-catalog\0mods=ordered-ppf-exact\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_MEMORY_BASE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-cue-memory-base-128\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=enabled-exact-catalog\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_CHD_MEMORY_BASE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-chd-memory-base-128\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=enabled-exact-catalog\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
 const PCE_CD_ISO_MEMORY_BASE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-iso-memory-base-128\0raw-source=sha256-length\0disc-identity=pce-core-cd-disc-v1\0wiring=pc-engine\0topology=base\0system-card=v3-japan-exact-external\0controller=two-button\0memory-base=enabled-exact-catalog\0arcade-card=disabled\0mods=disabled\0host-persistence=disabled\0native-bram=state-owned\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0";
@@ -29,6 +109,49 @@ const PCE_CD_PPF_MEMORY_BASE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-
 
 pub(crate) fn direct_pce_cd_tas_sync_config_sha256() -> TasDigest {
     TasDigest::from_bytes(PCE_CD_SYNC_CONFIGURATION)
+}
+
+pub(crate) fn direct_pce_multitap_cd_tas_sync_config_sha256() -> TasDigest {
+    TasDigest::from_bytes(PCE_CD_MULTITAP_SYNC_CONFIGURATION)
+}
+
+pub(crate) fn is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
+    sync_config_sha256: TasDigest,
+) -> bool {
+    direct_pce_cd_archive_ppf_tas_sync_configs().contains(&sync_config_sha256)
+}
+
+fn direct_pce_cd_archive_ppf_tas_sync_configs() -> [TasDigest; 6] {
+    [
+        direct_pce_cd_archive_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_selected_archive_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_rar_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_selected_rar_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_zip_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_selected_zip_ppf_tas_sync_config_sha256(),
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn direct_pce_cd_archive_ppf_tas_sync_configs_for_test() -> [TasDigest; 6] {
+    direct_pce_cd_archive_ppf_tas_sync_configs()
+}
+
+pub(crate) fn direct_pce_multitap_cd_chd_tas_sync_config_sha256() -> TasDigest {
+    TasDigest::from_bytes(PCE_CD_CHD_MULTITAP_SYNC_CONFIGURATION)
+}
+
+pub(crate) fn direct_pce_multitap_cd_iso_tas_sync_config_sha256() -> TasDigest {
+    TasDigest::from_bytes(PCE_CD_ISO_MULTITAP_SYNC_CONFIGURATION)
+}
+
+pub(crate) fn direct_pce_multitap_cd_ppf_tas_sync_config_sha256() -> TasDigest {
+    TasDigest::from_bytes(PCE_CD_PPF_MULTITAP_SYNC_CONFIGURATION)
+}
+
+pub(crate) fn direct_pce_multitap_cd_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync)
+        .is_some_and(|profile| profile.controller() == PceControllerMode::Multitap)
 }
 
 pub(crate) fn direct_pce_cd_chd_tas_sync_config_sha256() -> TasDigest {
@@ -55,6 +178,10 @@ pub(crate) fn direct_pce_cd_iso_arcade_tas_sync_config_sha256() -> TasDigest {
     TasDigest::from_bytes(PCE_CD_ISO_ARCADE_SYNC_CONFIGURATION)
 }
 
+pub(crate) fn direct_pce_cd_ppf_arcade_tas_sync_config_sha256() -> TasDigest {
+    TasDigest::from_bytes(PCE_CD_PPF_ARCADE_SYNC_CONFIGURATION)
+}
+
 pub(crate) fn direct_pce_cd_memory_base_tas_sync_config_sha256() -> TasDigest {
     TasDigest::from_bytes(PCE_CD_MEMORY_BASE_SYNC_CONFIGURATION)
 }
@@ -71,77 +198,57 @@ pub(crate) fn direct_pce_cd_ppf_memory_base_tas_sync_config_sha256() -> TasDiges
     TasDigest::from_bytes(PCE_CD_PPF_MEMORY_BASE_SYNC_CONFIGURATION)
 }
 
-fn sync_config_for_runtime(
-    chd: bool,
-    iso: bool,
-    ppf: bool,
-    arcade_card: bool,
-    memory_base: bool,
-) -> TasDigest {
-    if chd {
-        if arcade_card {
-            direct_pce_cd_chd_arcade_tas_sync_config_sha256()
-        } else if memory_base {
-            direct_pce_cd_chd_memory_base_tas_sync_config_sha256()
-        } else {
-            direct_pce_cd_chd_tas_sync_config_sha256()
-        }
-    } else if iso {
-        if arcade_card {
-            direct_pce_cd_iso_arcade_tas_sync_config_sha256()
-        } else if memory_base {
-            direct_pce_cd_iso_memory_base_tas_sync_config_sha256()
-        } else {
-            direct_pce_cd_iso_tas_sync_config_sha256()
-        }
-    } else if ppf {
-        if memory_base {
-            direct_pce_cd_ppf_memory_base_tas_sync_config_sha256()
-        } else {
-            direct_pce_cd_ppf_tas_sync_config_sha256()
-        }
-    } else if arcade_card {
-        direct_pce_cd_arcade_tas_sync_config_sha256()
-    } else if memory_base {
-        direct_pce_cd_memory_base_tas_sync_config_sha256()
-    } else {
-        direct_pce_cd_tas_sync_config_sha256()
-    }
+fn memory_base_chd_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync).is_some_and(|profile| {
+        profile.media() == PceCdTasMediaRoute::Chd
+            && profile.expansion() == PceCdExpansion::MemoryBase128
+    })
 }
 
-fn arcade_sync_config(sync_config_sha256: TasDigest) -> bool {
-    sync_config_sha256 == direct_pce_cd_arcade_tas_sync_config_sha256()
-        || sync_config_sha256 == direct_pce_cd_chd_arcade_tas_sync_config_sha256()
-        || sync_config_sha256 == direct_pce_cd_iso_arcade_tas_sync_config_sha256()
+fn memory_base_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync)
+        .is_some_and(|profile| profile.expansion() == PceCdExpansion::MemoryBase128)
 }
 
-fn memory_base_sync_config(sync_config_sha256: TasDigest) -> bool {
-    sync_config_sha256 == direct_pce_cd_memory_base_tas_sync_config_sha256()
-        || sync_config_sha256 == direct_pce_cd_chd_memory_base_tas_sync_config_sha256()
-        || sync_config_sha256 == direct_pce_cd_iso_memory_base_tas_sync_config_sha256()
-        || sync_config_sha256 == direct_pce_cd_ppf_memory_base_tas_sync_config_sha256()
+fn memory_base_iso_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync).is_some_and(|profile| {
+        profile.media() == PceCdTasMediaRoute::Iso
+            && profile.expansion() == PceCdExpansion::MemoryBase128
+    })
 }
 
-fn memory_base_chd_sync_config(sync_config_sha256: TasDigest) -> bool {
-    sync_config_sha256 == direct_pce_cd_chd_memory_base_tas_sync_config_sha256()
+fn memory_base_cue_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync).is_some_and(|profile| {
+        profile.media() == PceCdTasMediaRoute::Cue
+            && profile.expansion() == PceCdExpansion::MemoryBase128
+    })
 }
 
-fn memory_base_iso_sync_config(sync_config_sha256: TasDigest) -> bool {
-    sync_config_sha256 == direct_pce_cd_iso_memory_base_tas_sync_config_sha256()
+fn memory_base_ppf_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync).is_some_and(|profile| {
+        profile.media() == PceCdTasMediaRoute::Ppf
+            && profile.expansion() == PceCdExpansion::MemoryBase128
+    })
 }
 
-fn memory_base_cue_sync_config(sync_config_sha256: TasDigest) -> bool {
-    sync_config_sha256 == direct_pce_cd_memory_base_tas_sync_config_sha256()
+fn archive_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync)
+        .is_some_and(|profile| matches!(profile.archive(), Some((PceCdArchiveFormat::SevenZip, _))))
 }
 
-fn memory_base_ppf_sync_config(sync_config_sha256: TasDigest) -> bool {
-    sync_config_sha256 == direct_pce_cd_ppf_memory_base_tas_sync_config_sha256()
+fn rar_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync)
+        .is_some_and(|profile| matches!(profile.archive(), Some((PceCdArchiveFormat::Rar, _))))
+}
+
+fn zip_sync_config(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync)
+        .is_some_and(|profile| matches!(profile.archive(), Some((PceCdArchiveFormat::Zip, _))))
 }
 
 pub(crate) fn direct_pce_cd_arcade_eligible(ppf: bool, normalized_disc_sha256: [u8; 32]) -> bool {
-    !ppf && crate::emu_backend::pce_profiles::automatic_arcade_card_enabled(Some(
-        normalized_disc_sha256,
-    ))
+    let _ = ppf;
+    crate::emu_backend::pce_profiles::automatic_arcade_card_enabled(Some(normalized_disc_sha256))
 }
 
 pub(crate) fn direct_pce_cd_memory_base_eligible(
@@ -157,6 +264,14 @@ pub(crate) fn direct_pce_cd_memory_base_eligible(
         normalized_disc_sha256,
     )) && crate::emu_backend::pce_profiles::automatic_controller_mode(normalized_disc_sha256)
         == PceControllerMode::TwoButton
+}
+
+pub(crate) fn direct_pce_cd_memory_base_multitap_eligible(
+    normalized_disc_sha256: [u8; 32],
+) -> bool {
+    crate::emu_backend::pce_profiles::automatic_memory_base_enabled(Some(normalized_disc_sha256))
+        && crate::emu_backend::pce_profiles::automatic_controller_mode(normalized_disc_sha256)
+            == PceControllerMode::Multitap
 }
 
 pub(crate) fn direct_pce_cd_chd_source_identity(
@@ -189,6 +304,17 @@ fn devices() -> Vec<TasDeviceIdentity> {
     }]
 }
 
+fn devices_for_controller(controller_mode: PceControllerMode) -> Vec<TasDeviceIdentity> {
+    if controller_mode == PceControllerMode::Multitap {
+        return direct_pce_tas_devices(PceTasHardwareProfile {
+            board: PceHuCardBoard::Plain,
+            topology: PceHardwareTopology::Base,
+            controller_mode,
+        });
+    }
+    devices()
+}
+
 fn firmware_profile_is_supported(sha256: [u8; 32]) -> bool {
     #[cfg(test)]
     if sha256
@@ -200,11 +326,7 @@ fn firmware_profile_is_supported(sha256: [u8; 32]) -> bool {
     {
         return true;
     }
-    zeff_firmware::classify_pce_system_card_sha256(sha256).is_some_and(|profile| {
-        profile.region() == zeff_firmware::PceSystemCardRegion::Japan
-            && profile.tier() == zeff_firmware::PceSystemCardTier::Version3
-            && profile.board() == zeff_firmware::PceSystemCardBoard::SuperCdRom2
-    })
+    sha256 == zeff_firmware::PCE_SYSTEM_CARD_V3_JAPAN_SHA256
 }
 
 fn firmware(
@@ -240,20 +362,45 @@ pub(crate) fn direct_pce_cd_tas_identity(
     backend: &EmuBackend,
     start_state: &[u8],
 ) -> Result<TasProjectIdentity> {
-    let inspection = validate_direct_pce_cd_tas_runtime(backend, false)?;
+    direct_pce_cd_tas_identity_for_controller(backend, start_state, PceControllerMode::TwoButton)
+}
+
+pub(crate) fn direct_pce_multitap_cd_tas_identity(
+    backend: &EmuBackend,
+    start_state: &[u8],
+) -> Result<TasProjectIdentity> {
+    direct_pce_cd_tas_identity_for_controller(backend, start_state, PceControllerMode::Multitap)
+}
+
+fn direct_pce_cd_tas_identity_for_controller(
+    backend: &EmuBackend,
+    start_state: &[u8],
+    controller_mode: PceControllerMode,
+) -> Result<TasProjectIdentity> {
+    let inspection =
+        validate_direct_pce_cd_tas_runtime_for_controller(backend, false, controller_mode)?;
     let metadata = backend.replay_metadata();
     ensure!(
         backend.encode_state_bytes()?.as_slice() == start_state,
         "PC Engine CD TAS start state differs from the loaded baseline"
     );
-    let state = backend
+    let pce = backend
         .pce()
-        .context("PC Engine backend became unavailable")?
-        .inspect_current_native_cd_tas_state_for_profile(
+        .context("PC Engine backend became unavailable")?;
+    let state = if controller_mode == PceControllerMode::TwoButton {
+        pce.inspect_current_native_cd_tas_state_for_profile(
             start_state,
             inspection.arcade_card_enabled,
             inspection.memory_base_enabled,
-        )?;
+        )?
+    } else {
+        pce.inspect_current_native_cd_tas_state_for_profile_and_controller(
+            start_state,
+            inspection.arcade_card_enabled,
+            inspection.memory_base_enabled,
+            controller_mode,
+        )?
+    };
     ensure!(
         state.system_card_sha256 == inspection.system_card_sha256
             && state.disc_sha256 == inspection.disc_sha256,
@@ -274,16 +421,45 @@ pub(crate) fn direct_pce_cd_tas_identity(
             .to_owned(),
         source_media_sha256: TasDigest(provenance.load.tas_source_media_sha256),
         effective_media_sha256: TasDigest(inspection.disc_sha256),
-        patches: Vec::new(),
+        patches: if provenance.load.direct_pce_cd_archive_ppf
+            || (controller_mode == PceControllerMode::Multitap && provenance.load.direct_pce_cd_ppf)
+        {
+            vec![TasPatchIdentity {
+                format: PCE_CD_UNPATCHED_DISC_PATCH_FORMAT.to_owned(),
+                sha256: TasDigest(
+                    provenance.load.source_disc_sha256.context(
+                        "PC Engine CD PPF provenance omitted its unpatched disc identity",
+                    )?,
+                ),
+            }]
+        } else {
+            Vec::new()
+        },
         firmware: firmware(backend, inspection.system_card_sha256)?,
-        devices: devices(),
-        sync_config_sha256: sync_config_for_runtime(
-            provenance.load.direct_pce_cd_chd,
-            provenance.load.direct_pce_cd_iso,
-            provenance.load.direct_pce_cd_ppf,
-            inspection.arcade_card_enabled,
-            inspection.memory_base_enabled,
-        ),
+        devices: devices_for_controller(controller_mode),
+        sync_config_sha256: PceCdTasProfile::from_runtime_flags(
+            (
+                provenance.load.direct_pce_cd_chd,
+                provenance.load.direct_pce_cd_iso,
+                provenance.load.direct_pce_cd_ppf,
+                provenance.load.direct_pce_cd_archive,
+                provenance.load.direct_pce_cd_rar,
+                provenance.load.direct_pce_cd_zip,
+            ),
+            provenance.load.direct_pce_cd_archive_ppf,
+            (
+                provenance.load.archive_cue_explicitly_selected,
+                provenance.load.rar_cue_explicitly_selected,
+                provenance.load.zip_cue_explicitly_selected,
+            ),
+            (
+                inspection.arcade_card_enabled,
+                inspection.memory_base_enabled,
+            ),
+            controller_mode,
+        )
+        .context("PC Engine CD TAS load provenance describes an invalid profile")?
+        .sync_config(),
         persistent_state: TasExternalIdentity::Absent,
         rtc_state: TasExternalIdentity::Absent,
         sensor_state: TasExternalIdentity::Absent,
@@ -295,6 +471,22 @@ pub(crate) fn direct_pce_cd_tas_identity(
 }
 
 pub(crate) fn validate_direct_pce_cd_tas_project_identity(project: &TasProject) -> Result<()> {
+    validate_direct_pce_cd_tas_project_identity_for_controller(
+        project,
+        PceControllerMode::TwoButton,
+    )
+}
+
+pub(crate) fn validate_direct_pce_multitap_cd_tas_project_identity(
+    project: &TasProject,
+) -> Result<()> {
+    validate_direct_pce_cd_tas_project_identity_for_controller(project, PceControllerMode::Multitap)
+}
+
+fn validate_direct_pce_cd_tas_project_identity_for_controller(
+    project: &TasProject,
+    controller_mode: PceControllerMode,
+) -> Result<()> {
     let identity = project.identity();
     ensure!(
         identity.system == ActiveSystem::Pce.code()
@@ -306,42 +498,79 @@ pub(crate) fn validate_direct_pce_cd_tas_project_identity(project: &TasProject) 
                 == zeff_pce_core::hardware::save_state::tas::TAS_STATE_FORMAT_COMPATIBILITY_ID,
         "TAS project does not identify the current native PC Engine core"
     );
-    let arcade_card = arcade_sync_config(identity.sync_config_sha256);
+    let profile = PceCdTasProfile::from_sync(identity.sync_config_sha256)
+        .context("TAS project has an unknown PC Engine CD sync configuration")?;
+    let arcade_card = profile.expansion() == PceCdExpansion::ArcadeCard;
     let memory_base = memory_base_sync_config(identity.sync_config_sha256);
     let memory_base_chd = memory_base_chd_sync_config(identity.sync_config_sha256);
     let memory_base_iso = memory_base_iso_sync_config(identity.sync_config_sha256);
     let memory_base_ppf = memory_base_ppf_sync_config(identity.sync_config_sha256);
+    let memory_base_cue = memory_base_cue_sync_config(identity.sync_config_sha256);
+    let archive = archive_sync_config(identity.sync_config_sha256);
+    let rar = rar_sync_config(identity.sync_config_sha256);
+    let zip = zip_sync_config(identity.sync_config_sha256);
+    let arcade_ppf = arcade_card && profile.media() == PceCdTasMediaRoute::Ppf;
+    let multitap = profile.controller() == PceControllerMode::Multitap;
+    let ppf_multitap = multitap && profile.media() == PceCdTasMediaRoute::Ppf;
+    let archive_ppf = profile.archive_ppf();
     let state = crate::emu_backend::pce::inspect_pce_cd_tas_state_identity_for_arcade_card(
         project.start_state(),
         arcade_card,
     )?;
-    let cue = identity.sync_config_sha256 == direct_pce_cd_tas_sync_config_sha256()
-        || identity.sync_config_sha256 == direct_pce_cd_arcade_tas_sync_config_sha256()
-        || memory_base_cue_sync_config(identity.sync_config_sha256);
+    let multitap_catalog_sha256 = if ppf_multitap {
+        match identity.patches.as_slice() {
+            [patch] if patch.format == PCE_CD_UNPATCHED_DISC_PATCH_FORMAT => patch.sha256.0,
+            _ => [0; 32],
+        }
+    } else {
+        state.disc_sha256
+    };
+    let cue = profile.media() == PceCdTasMediaRoute::Cue || arcade_ppf || memory_base_cue;
     ensure!(
         state.board == PceHuCardBoard::SystemCardV3
             && TasDigest(state.disc_sha256) == identity.effective_media_sha256
-            && (!arcade_card || direct_pce_cd_arcade_eligible(false, state.disc_sha256))
+            && (!arcade_card
+                || arcade_ppf
+                || direct_pce_cd_arcade_eligible(false, state.disc_sha256))
             && (!memory_base
-                || memory_base_ppf
-                || direct_pce_cd_memory_base_eligible(
-                    memory_base_chd,
-                    memory_base_iso,
-                    false,
-                    state.disc_sha256,
-                ))
+                || (multitap
+                    && profile.media() == PceCdTasMediaRoute::Cue
+                    && direct_pce_cd_memory_base_multitap_eligible(state.disc_sha256))
+                || (!multitap
+                    && (memory_base_ppf
+                        || direct_pce_cd_memory_base_eligible(
+                            memory_base_chd,
+                            memory_base_iso,
+                            false,
+                            state.disc_sha256,
+                        ))))
             && !(arcade_card && memory_base)
-            && (identity.sync_config_sha256 == direct_pce_cd_tas_sync_config_sha256()
-                || identity.sync_config_sha256 == direct_pce_cd_chd_tas_sync_config_sha256()
-                || identity.sync_config_sha256 == direct_pce_cd_iso_tas_sync_config_sha256()
-                || identity.sync_config_sha256 == direct_pce_cd_ppf_tas_sync_config_sha256()
-                || arcade_sync_config(identity.sync_config_sha256)
-                || memory_base_sync_config(identity.sync_config_sha256))
-            && (!cue || identity.source_media_sha256 == identity.effective_media_sha256)
-            && (!memory_base_ppf
+            && profile.archive().is_some() == (archive || rar || zip)
+            && (!cue
+                || identity.source_media_sha256 == identity.effective_media_sha256
+                || arcade_ppf)
+            && (!(memory_base_ppf || arcade_ppf)
                 || identity.source_media_sha256 != identity.effective_media_sha256)
-            && identity.patches.is_empty()
-            && identity.devices == devices()
+            && ((!(ppf_multitap || archive_ppf) && identity.patches.is_empty())
+                || ((ppf_multitap || archive_ppf)
+                    && matches!(
+                        identity.patches.as_slice(),
+                        [patch] if patch.format == PCE_CD_UNPATCHED_DISC_PATCH_FORMAT
+                    )
+                    && (!ppf_multitap
+                        || identity.source_media_sha256 != identity.effective_media_sha256)))
+            && multitap == (controller_mode == PceControllerMode::Multitap)
+            && (!multitap
+                || ((!memory_base
+                    || (profile.media() == PceCdTasMediaRoute::Cue
+                        && direct_pce_cd_memory_base_multitap_eligible(state.disc_sha256)))
+                    && (!arcade_card
+                        || (profile.media() == PceCdTasMediaRoute::Cue
+                            && direct_pce_cd_arcade_eligible(false, state.disc_sha256)))
+                    && crate::emu_backend::pce_profiles::automatic_controller_mode(
+                        multitap_catalog_sha256,
+                    ) == PceControllerMode::Multitap))
+            && identity.devices == devices_for_controller(controller_mode)
             && identity.firmware.len() == 1,
         "TAS project media, hardware, or sync configuration is incompatible"
     );
@@ -374,7 +603,30 @@ pub(crate) fn validate_direct_pce_cd_tas_branch_scope(
     project: &TasProject,
     branch_id: &str,
 ) -> Result<()> {
-    validate_direct_pce_cd_tas_project_identity(project)?;
+    validate_direct_pce_cd_tas_branch_scope_for_controller(
+        project,
+        branch_id,
+        PceControllerMode::TwoButton,
+    )
+}
+
+pub(crate) fn validate_direct_pce_multitap_cd_tas_branch_scope(
+    project: &TasProject,
+    branch_id: &str,
+) -> Result<()> {
+    validate_direct_pce_cd_tas_branch_scope_for_controller(
+        project,
+        branch_id,
+        PceControllerMode::Multitap,
+    )
+}
+
+fn validate_direct_pce_cd_tas_branch_scope_for_controller(
+    project: &TasProject,
+    branch_id: &str,
+    controller_mode: PceControllerMode,
+) -> Result<()> {
+    validate_direct_pce_cd_tas_project_identity_for_controller(project, controller_mode)?;
     ensure!(
         project.replay_start() == &Default::default(),
         "PC Engine CD TAS execution does not support replay start metadata"
@@ -389,9 +641,18 @@ pub(crate) fn validate_direct_pce_cd_tas_branch_scope(
     for span in branch.input_spans() {
         let input = span.input;
         ensure!(
-            input.players[0].buttons & !0x0F == 0
-                && input.players[0].dpad & !0x0F == 0
-                && input.players[1..]
+            input.players[..if controller_mode == PceControllerMode::Multitap {
+                5
+            } else {
+                1
+            }]
+                .iter()
+                .all(|player| player.buttons & !0x0F == 0 && player.dpad & !0x0F == 0)
+                && input.players[if controller_mode == PceControllerMode::Multitap {
+                    5
+                } else {
+                    1
+                }..]
                     .iter()
                     .all(|player| *player == Default::default())
                 && input.coleco == [crate::tas_project::TasColecoControllerInput::default(); 2]
@@ -399,7 +660,7 @@ pub(crate) fn validate_direct_pce_cd_tas_branch_scope(
                 && input.tilt_x_bits == 0
                 && input.tilt_y_bits == 0
                 && matches!(input.camera, TasCameraInput::None),
-            "PC Engine CD TAS execution supports one two-button controller only"
+            "PC Engine CD TAS execution input exceeds its controller topology"
         );
     }
     Ok(())
@@ -410,7 +671,34 @@ pub(crate) fn validate_direct_pce_cd_tas_project_witness(
     branch_id: &str,
     witness: TasProjectRuntimeWitness<'_>,
 ) -> Result<()> {
-    validate_direct_pce_cd_tas_branch_scope(project, branch_id)?;
+    validate_direct_pce_cd_tas_project_witness_for_controller(
+        project,
+        branch_id,
+        witness,
+        PceControllerMode::TwoButton,
+    )
+}
+
+pub(crate) fn validate_direct_pce_multitap_cd_tas_project_witness(
+    project: &TasProject,
+    branch_id: &str,
+    witness: TasProjectRuntimeWitness<'_>,
+) -> Result<()> {
+    validate_direct_pce_cd_tas_project_witness_for_controller(
+        project,
+        branch_id,
+        witness,
+        PceControllerMode::Multitap,
+    )
+}
+
+fn validate_direct_pce_cd_tas_project_witness_for_controller(
+    project: &TasProject,
+    branch_id: &str,
+    witness: TasProjectRuntimeWitness<'_>,
+    controller_mode: PceControllerMode,
+) -> Result<()> {
+    validate_direct_pce_cd_tas_branch_scope_for_controller(project, branch_id, controller_mode)?;
     let identity = project.identity();
     ensure!(
         witness.source_media_sha256 == identity.source_media_sha256
@@ -432,181 +720,49 @@ pub(crate) fn validate_direct_pce_cd_tas_project_witness(
     Ok(())
 }
 
-pub(crate) fn validate_direct_pce_cd_tas_execution_runtime(
-    backend: &EmuBackend,
-    cheats_present: bool,
-) -> Result<zeff_pce_core::hardware::save_state::tas::CurrentNativePceCdTasStateInspection> {
-    ensure!(
-        backend.system() == ActiveSystem::Pce,
-        "TAS execution profile requires a PC Engine backend"
-    );
-    let metadata = backend.replay_metadata();
-    let pce = backend
-        .pce()
-        .context("PC Engine backend became unavailable")?;
-    let provenance = pce
-        .tas_load_provenance()
-        .context("PC Engine backend omitted CD load provenance")?;
-    let arcade_card = provenance.load.selected_arcade_card_mode == PceArcadeCardMode::Enabled;
-    let memory_base = provenance.load.selected_memory_base_mode == PceMemoryBaseMode::Enabled;
-    ensure!(
-        provenance.load.direct_pce_cd && provenance.load.raw_source_media_len != 0,
-        "PC Engine CD TAS requires bounded direct media"
-    );
-    ensure!(
-        [
-            provenance.load.direct_pce_cd_chd,
-            provenance.load.direct_pce_cd_iso,
-            provenance.load.direct_pce_cd_ppf,
-        ]
-        .into_iter()
-        .filter(|kind| *kind)
-        .count()
-            <= 1,
-        "PC Engine CD TAS requires one direct media source type"
-    );
-    ensure!(
-        (provenance.load.direct_pce_cd_ppf
-            || provenance.load.source_disc_sha256 == provenance.load.effective_disc_sha256)
-            && provenance.load.effective_disc_sha256 == pce.normalized_disc_hash(),
-        "PC Engine CD TAS normalized disc identity is incompatible"
-    );
-    ensure!(
-        provenance.load.tas_source_media_sha256
-            == if provenance.load.direct_pce_cd_chd {
-                direct_pce_cd_chd_source_identity(
-                    provenance.load.raw_source_media_sha256,
-                    provenance.load.raw_source_media_len,
-                )
-                .0
-            } else if provenance.load.direct_pce_cd_iso {
-                direct_pce_cd_iso_source_identity(
-                    provenance.load.raw_source_media_sha256,
-                    provenance.load.raw_source_media_len,
-                )
-                .0
-            } else {
-                provenance.load.raw_source_media_sha256
-            }
-            && provenance.load.tas_source_media_len == provenance.load.raw_source_media_len
-            && provenance.load.tas_sync_config_sha256
-                == sync_config_for_runtime(
-                    provenance.load.direct_pce_cd_chd,
-                    provenance.load.direct_pce_cd_iso,
-                    provenance.load.direct_pce_cd_ppf,
-                    arcade_card,
-                    memory_base,
-                )
-                .0,
-        "PC Engine CD TAS source identity is incompatible"
-    );
-    ensure!(
-        ((!provenance.load.direct_pce_cd_ppf
-            && !provenance.load.any_mod_enabled
-            && !provenance.load.any_mod_applied)
-            || (provenance.load.direct_pce_cd_ppf && provenance.load.any_mod_enabled))
-            && provenance.load.persistent_load
-                == crate::emu_backend::pce::PceTasPersistentLoadOutcome::Skipped
-            && provenance.load.initial_input.is_none(),
-        "PC Engine CD TAS requires unmodified media with host persistence disabled"
-    );
-    ensure!(
-        provenance.load.direct_pce_cd_chd
-            || provenance.load.direct_pce_cd_iso
-            || provenance.load.direct_pce_cd_ppf
-            || provenance.load.raw_source_media_sha256
-                == provenance
-                    .load
-                    .source_disc_sha256
-                    .context("PC Engine backend omitted source disc identity")?,
-        "PC Engine CD TAS direct CUE identity is incompatible"
-    );
-    ensure!(
-        !arcade_card
-            || provenance.load.effective_disc_sha256.is_some_and(|hash| {
-                direct_pce_cd_arcade_eligible(provenance.load.direct_pce_cd_ppf, hash)
-            }),
-        "PC Engine CD TAS Arcade Card requires an exact direct CUE, CHD, or ISO profile"
-    );
-    ensure!(
-        !memory_base
-            || provenance.load.source_disc_sha256.is_some_and(|hash| {
-                direct_pce_cd_memory_base_eligible(
-                    provenance.load.direct_pce_cd_chd,
-                    provenance.load.direct_pce_cd_iso,
-                    provenance.load.direct_pce_cd_ppf,
-                    hash,
-                )
-            }),
-        "PC Engine CD TAS Memory Base 128 requires an exact direct CUE, CHD, ISO, or ordered PPF profile"
-    );
-    ensure!(
-        !(arcade_card && memory_base),
-        "PC Engine CD TAS does not support combined Arcade Card and Memory Base 128 profiles"
-    );
-    ensure!(
-        provenance.load.configured_sample_rate == Some(48_000)
-            && provenance.load.initial_sample_rate == 48_000
-            && provenance.current_sample_rate == 48_000,
-        "PC Engine CD TAS requires an exact 48000 Hz sample rate"
-    );
-    ensure!(
-        provenance.load.selected_wiring == Some(PceConsoleWiring::PcEngine)
-            && provenance.load.effective_wiring == PceConsoleWiring::PcEngine
-            && provenance.load.selected_board == Some(PceHuCardBoard::SystemCardV3)
-            && provenance.load.effective_board == PceHuCardBoard::SystemCardV3
-            && provenance.load.selected_hardware == Some(PceCartridgeHardware::Base)
-            && provenance.load.effective_topology == PceHardwareTopology::Base
-            && provenance.load.selected_controller_mode == PceControllerMode::TwoButton
-            && provenance.load.effective_controller_mode == PceControllerMode::TwoButton
-            && provenance.load.selected_memory_base_mode
-                == provenance.load.effective_memory_base_mode
-            && matches!(
-                provenance.load.selected_memory_base_mode,
-                PceMemoryBaseMode::Disabled | PceMemoryBaseMode::Enabled
-            )
-            && (provenance.load.selected_arcade_card_mode
-                == provenance.load.effective_arcade_card_mode)
-            && matches!(
-                provenance.load.selected_arcade_card_mode,
-                PceArcadeCardMode::Disabled | PceArcadeCardMode::Enabled
-            ),
-        "PC Engine CD TAS requires Base CD hardware and one two-button pad"
-    );
-    ensure!(
-        !cheats_present && metadata.cheat_sha256.is_none(),
-        "PC Engine CD TAS execution enabled cheats"
-    );
-    ensure!(
-        backend.save_ram_kind() == SaveRamKind::known_battery_backed(CDROM2_BRAM_LEN)
-            && pce.tas_frame_counters_match()
-            && pce.tas_output_policy_is_exact()
-            && pce.tas_presented_frame_is_current(),
-        "PC Engine CD TAS runtime state is incompatible"
-    );
-    let state = backend.encode_state_bytes()?;
-    let inspection =
-        pce.inspect_current_native_cd_tas_state_for_profile(&state, arcade_card, memory_base)?;
-    ensure!(
-        inspection.board == PceHuCardBoard::SystemCardV3
-            && inspection.wiring == PceConsoleWiring::PcEngine
-            && inspection.psg_revision == PsgRevision::HuC6280
-            && inspection.arcade_card_enabled == arcade_card
-            && inspection.memory_base_enabled == memory_base
-            && Some(inspection.disc_sha256) == pce.normalized_disc_hash()
-            && firmware(backend, inspection.system_card_sha256)?.len() == 1,
-        "PC Engine CD core media, firmware, or hardware identity is incompatible"
-    );
-    Ok(inspection)
-}
-
 pub(crate) fn validate_direct_pce_cd_tas_runtime(
     backend: &EmuBackend,
     cheats_present: bool,
 ) -> Result<zeff_pce_core::hardware::save_state::tas::CurrentNativePceCdTasStateInspection> {
-    let inspection = validate_direct_pce_cd_tas_execution_runtime(backend, cheats_present)?;
+    validate_direct_pce_cd_tas_runtime_for_controller(
+        backend,
+        cheats_present,
+        PceControllerMode::TwoButton,
+    )
+}
+
+pub(crate) fn validate_direct_pce_multitap_cd_tas_runtime(
+    backend: &EmuBackend,
+    cheats_present: bool,
+) -> Result<zeff_pce_core::hardware::save_state::tas::CurrentNativePceCdTasStateInspection> {
+    validate_direct_pce_cd_tas_runtime_for_controller(
+        backend,
+        cheats_present,
+        PceControllerMode::Multitap,
+    )
+}
+
+fn validate_direct_pce_cd_tas_runtime_for_controller(
+    backend: &EmuBackend,
+    cheats_present: bool,
+    controller_mode: PceControllerMode,
+) -> Result<zeff_pce_core::hardware::save_state::tas::CurrentNativePceCdTasStateInspection> {
+    let inspection = validate_direct_pce_cd_tas_execution_runtime_for_controller(
+        backend,
+        cheats_present,
+        controller_mode,
+    )?;
+    let multitap_neutral = inspection.controller_multitap.is_some_and(|state| {
+        state.buttons.iter().all(|buttons| buttons.is_empty())
+            && state.active_port.is_none()
+            && state.select_high
+            && state.clear_high
+    });
     ensure!(
-        inspection.controller_buttons == PadButtons::empty(),
+        (controller_mode == PceControllerMode::TwoButton
+            && inspection.controller_buttons == PadButtons::empty()
+            && inspection.controller_multitap.is_none())
+            || (controller_mode == PceControllerMode::Multitap && multitap_neutral),
         "PC Engine CD TAS acquisition requires neutral controller input"
     );
     Ok(inspection)
@@ -616,18 +772,42 @@ pub(crate) fn validate_direct_pce_cd_tas_state(
     backend: &mut EmuBackend,
     state: &[u8],
 ) -> Result<crate::emu_backend::pce::PceTasStateProjection> {
-    validate_direct_pce_cd_tas_execution_runtime(backend, false)?;
+    validate_direct_pce_cd_tas_state_for_controller(backend, state, PceControllerMode::TwoButton)
+}
+
+pub(crate) fn validate_direct_pce_multitap_cd_tas_state(
+    backend: &mut EmuBackend,
+    state: &[u8],
+) -> Result<crate::emu_backend::pce::PceTasStateProjection> {
+    validate_direct_pce_cd_tas_state_for_controller(backend, state, PceControllerMode::Multitap)
+}
+
+fn validate_direct_pce_cd_tas_state_for_controller(
+    backend: &mut EmuBackend,
+    state: &[u8],
+    controller_mode: PceControllerMode,
+) -> Result<crate::emu_backend::pce::PceTasStateProjection> {
+    validate_direct_pce_cd_tas_execution_runtime_for_controller(backend, false, controller_mode)?;
     let pce = match backend {
         EmuBackend::Pce(pce) => pce,
         _ => anyhow::bail!("TAS state requires a PC Engine backend"),
     };
     let arcade_card = pce.arcade_card_mode() == PceArcadeCardMode::Enabled;
     let memory_base = pce.memory_base_mode() == PceMemoryBaseMode::Enabled;
-    let projection = pce.validate_and_load_current_native_cd_tas_state_for_profile(
-        state,
-        arcade_card,
-        memory_base,
-    )?;
+    let projection = if controller_mode == PceControllerMode::TwoButton {
+        pce.validate_and_load_current_native_cd_tas_state_for_profile(
+            state,
+            arcade_card,
+            memory_base,
+        )?
+    } else {
+        pce.validate_and_load_current_native_cd_tas_state_for_profile_and_controller(
+            state,
+            arcade_card,
+            memory_base,
+            controller_mode,
+        )?
+    };
     ensure!(
         projection.framebuffer.as_ref() == pce.tas_core_framebuffer()
             && pce.tas_presented_frame_is_current()
@@ -635,124 +815,10 @@ pub(crate) fn validate_direct_pce_cd_tas_state(
             && pce.tas_frame_counters_match(),
         "PC Engine CD TAS state did not restore exact frame and output state"
     );
-    validate_direct_pce_cd_tas_execution_runtime(backend, false)?;
+    validate_direct_pce_cd_tas_execution_runtime_for_controller(backend, false, controller_mode)?;
     Ok(projection)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        direct_pce_cd_arcade_eligible, direct_pce_cd_chd_arcade_tas_sync_config_sha256,
-        direct_pce_cd_chd_memory_base_tas_sync_config_sha256,
-        direct_pce_cd_iso_arcade_tas_sync_config_sha256,
-        direct_pce_cd_iso_memory_base_tas_sync_config_sha256, direct_pce_cd_memory_base_eligible,
-        direct_pce_cd_memory_base_tas_sync_config_sha256,
-        direct_pce_cd_ppf_memory_base_tas_sync_config_sha256, firmware_profile_is_supported,
-        sync_config_for_runtime,
-    };
-
-    #[test]
-    fn firmware_profile_rejects_wrong_region_tier_and_unknown_hash() {
-        assert!(firmware_profile_is_supported(
-            zeff_firmware::PCE_SYSTEM_CARD_V3_JAPAN_SHA256
-        ));
-        assert!(!firmware_profile_is_supported(
-            zeff_firmware::PCE_SYSTEM_CARD_V3_USA_SHA256
-        ));
-        assert!(!firmware_profile_is_supported(
-            zeff_firmware::PCE_SYSTEM_CARD_V2_JAPAN_SHA256
-        ));
-        assert!(!firmware_profile_is_supported([0; 32]));
-    }
-
-    #[test]
-    fn arcade_catalog_eligibility_excludes_ppf_and_selects_media_specific_identity() {
-        let arcade_catalog_disc = [
-            0xa3, 0x88, 0x7d, 0xa6, 0x25, 0xbb, 0x8d, 0xee, 0x4f, 0xe3, 0x44, 0x76, 0x51, 0x52,
-            0xab, 0x43, 0x73, 0xe8, 0xc5, 0x3d, 0x80, 0xda, 0x78, 0x1b, 0x1a, 0xc9, 0x3e, 0x7d,
-            0x0e, 0x6d, 0xb8, 0xb2,
-        ];
-        assert!(direct_pce_cd_arcade_eligible(false, arcade_catalog_disc));
-        assert!(!direct_pce_cd_arcade_eligible(true, arcade_catalog_disc));
-        assert!(!direct_pce_cd_arcade_eligible(false, [0; 32]));
-        assert_eq!(
-            sync_config_for_runtime(true, false, false, true, false),
-            direct_pce_cd_chd_arcade_tas_sync_config_sha256()
-        );
-        assert_eq!(
-            sync_config_for_runtime(false, true, false, true, false),
-            direct_pce_cd_iso_arcade_tas_sync_config_sha256()
-        );
-    }
-
-    #[test]
-    fn memory_base_catalog_eligibility_selects_each_exact_direct_source_route() {
-        let memory_base_catalog_disc = [
-            0x6d, 0x9c, 0x62, 0x34, 0x57, 0x8f, 0x65, 0x3d, 0x4c, 0x81, 0x37, 0x9e, 0x0b, 0xef,
-            0xfb, 0x4b, 0x80, 0xbe, 0x18, 0x16, 0xf6, 0x61, 0x42, 0xfd, 0x08, 0x63, 0xa7, 0x79,
-            0xe6, 0x8f, 0xab, 0x8f,
-        ];
-        assert!(direct_pce_cd_memory_base_eligible(
-            false,
-            false,
-            false,
-            memory_base_catalog_disc,
-        ));
-        assert!(direct_pce_cd_memory_base_eligible(
-            true,
-            false,
-            false,
-            memory_base_catalog_disc,
-        ));
-        assert!(direct_pce_cd_memory_base_eligible(
-            false,
-            true,
-            false,
-            memory_base_catalog_disc,
-        ));
-        assert!(direct_pce_cd_memory_base_eligible(
-            false,
-            false,
-            true,
-            memory_base_catalog_disc,
-        ));
-        assert!(!direct_pce_cd_memory_base_eligible(
-            true,
-            false,
-            true,
-            memory_base_catalog_disc,
-        ));
-        assert!(!direct_pce_cd_memory_base_eligible(
-            false,
-            true,
-            true,
-            memory_base_catalog_disc,
-        ));
-        assert!(!direct_pce_cd_memory_base_eligible(
-            false,
-            false,
-            false,
-            [
-                0x65, 0xca, 0x62, 0xef, 0x00, 0xa6, 0x46, 0xc1, 0x15, 0x35, 0x4b, 0x7e, 0x96, 0xec,
-                0xb9, 0xbc, 0x51, 0xca, 0x13, 0x88, 0x0a, 0x94, 0x07, 0x95, 0x81, 0x78, 0x47, 0x6b,
-                0x78, 0xc0, 0x84, 0x26,
-            ],
-        ));
-        assert_eq!(
-            sync_config_for_runtime(false, false, false, false, true),
-            direct_pce_cd_memory_base_tas_sync_config_sha256()
-        );
-        assert_eq!(
-            sync_config_for_runtime(true, false, false, false, true),
-            direct_pce_cd_chd_memory_base_tas_sync_config_sha256()
-        );
-        assert_eq!(
-            sync_config_for_runtime(false, true, false, false, true),
-            direct_pce_cd_iso_memory_base_tas_sync_config_sha256()
-        );
-        assert_eq!(
-            sync_config_for_runtime(false, false, true, false, true),
-            direct_pce_cd_ppf_memory_base_tas_sync_config_sha256()
-        );
-    }
-}
+#[path = "direct_pce_cd/identity_tests.rs"]
+mod identity_tests;

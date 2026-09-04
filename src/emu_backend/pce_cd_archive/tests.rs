@@ -379,6 +379,68 @@ fn missing_multiple_unsafe_and_cancelled_packages_are_typed() {
 }
 
 #[test]
+fn explicit_multi_cue_selection_uses_canonical_member_and_authenticated_identity() {
+    let cue = |file: &str| {
+        format!("FILE \"{file}\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n").into_bytes()
+    };
+    let archive = temp_archive(
+        "explicit-multi-cue",
+        &[
+            ("First/Disc.cue", cue("disc.bin")),
+            ("First/disc.bin", vec![0x11; 2_048]),
+            ("second/disc.cue", cue("disc.bin")),
+            ("second/disc.bin", vec![0x22; 2_048]),
+        ],
+        true,
+    );
+    assert_eq!(
+        inspect_7z_cue_members(&archive, DEFAULT_DECODER_MEMORY_LIMIT_MIB).unwrap(),
+        vec!["First/Disc.cue", "second/disc.cue"]
+    );
+    assert!(matches!(
+        load_7z_cue(&archive),
+        Err(PceCdLoadError::MultipleArchiveCues)
+    ));
+
+    let load = |selected: &str| {
+        load_7z_selected_cue_with_control_and_archive_identity(
+            &archive,
+            selected,
+            &AtomicBool::new(false),
+            &PceCdPackageProgress::default(),
+            DEFAULT_DECODER_MEMORY_LIMIT_MIB,
+            false,
+        )
+        .unwrap()
+    };
+    let (first_path, first, first_identity) = load("first\\disc.cue");
+    let (second_path, second, second_identity) = load("second/disc.cue");
+    assert_eq!(first_path, archive.join("First").join("Disc.cue"));
+    assert_eq!(second_path, archive.join("second").join("disc.cue"));
+    assert_ne!(first.source_disc_sha256, second.source_disc_sha256);
+    assert_eq!(first_identity.selection, PceCdArchiveCueSelection::Explicit);
+    assert_eq!(
+        second_identity.selection,
+        PceCdArchiveCueSelection::Explicit
+    );
+    assert_ne!(
+        first_identity.cue_member_path_sha256,
+        second_identity.cue_member_path_sha256
+    );
+    assert!(matches!(
+        load_7z_selected_cue_with_control_and_archive_identity(
+            &archive,
+            "../disc.cue",
+            &AtomicBool::new(false),
+            &PceCdPackageProgress::default(),
+            DEFAULT_DECODER_MEMORY_LIMIT_MIB,
+            false,
+        ),
+        Err(PceCdLoadError::UnsafeArchiveEntry(_))
+    ));
+}
+
+#[test]
 fn controlled_load_reports_complete_cached_preparation() {
     let valid = temp_archive(
         "progress",
@@ -396,288 +458,10 @@ fn controlled_load_reports_complete_cached_preparation() {
     assert_eq!(progress.completed_bytes(), progress.total_bytes());
 }
 
-#[test]
-fn cold_and_warm_cache_loads_preserve_identity_and_virtual_path() {
-    let archive = temp_archive(
-        "cache-cold-warm",
-        &[
-            ("set/disc.bin", vec![0x5A; 8 * 2_048]),
-            ("set/disc.cue", cue()),
-        ],
-        true,
-    );
-    let cache = temp_cache("cold-warm");
-    let _ = std::fs::remove_dir_all(&cache);
-    let cold_progress = PceCdPackageProgress::default();
-    let (cold_path, cold) =
-        load_with_cache(&archive, &cache, &AtomicBool::new(false), &cold_progress).unwrap();
-    let warm_progress = PceCdPackageProgress::default();
-    let (warm_path, warm) =
-        load_with_cache(&archive, &cache, &AtomicBool::new(false), &warm_progress).unwrap();
-
-    assert_eq!(cold_path, archive.join("set").join("disc.cue"));
-    assert_eq!(warm_path, cold_path);
-    assert_eq!(warm.content_sha256, cold.content_sha256);
-    assert_eq!(warm.content_crc32, cold.content_crc32);
-    assert_eq!(warm.source_disc_sha256, cold.source_disc_sha256);
-    assert_eq!(warm.disc, cold.disc);
-    assert!(cold_progress.total_bytes() > warm_progress.total_bytes());
-    assert_eq!(complete_cache_dirs(&cache).len(), 1);
-    assert_eq!(
-        crate::mods::mods_dir_for_rom(ActiveSystem::Pce, warm.content_crc32),
-        crate::mods::mods_dir_for_rom(ActiveSystem::Pce, cold.content_crc32)
-    );
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn unmodified_cache_loads_keep_file_backed_mutation_guards() {
-    let mut bin = vec![0x5A; 4 * 2_048];
-    bin[..8].copy_from_slice(
-        &SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_le_bytes()[..8],
-    );
-    let archive = temp_archive(
-        "cache-file-backed",
-        &[("disc.bin", bin.clone()), ("disc.cue", cue())],
-        true,
-    );
-    let cache = temp_cache("file-backed");
-    let _ = std::fs::remove_dir_all(&cache);
-    let (_, loaded) = load_with_cache_and_mods(&archive, &cache, false).unwrap();
-    let entry = complete_cache_dirs(&cache).pop().unwrap();
-    let data_path = entry.join(CACHE_FILES_DIR).join("disc.bin");
-    let mut changed = std::fs::read(&data_path).unwrap();
-    changed.extend_from_slice(&[0; 2_048]);
-    std::fs::write(&data_path, changed).unwrap();
-
-    assert!(loaded.disc.read_user_sector(0).is_err());
-    drop(loaded);
-    let (_, recovered) = load_with_cache_and_mods(&archive, &cache, false).unwrap();
-    assert_eq!(recovered.disc.read_user_sector(0).unwrap()[0..8], bin[..8]);
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn source_metadata_change_creates_a_new_cache_identity() {
-    let archive = temp_archive(
-        "cache-source-change",
-        &[("disc.bin", vec![0x11; 2_048]), ("disc.cue", cue())],
-        true,
-    );
-    let cache = temp_cache("source-change");
-    let _ = std::fs::remove_dir_all(&cache);
-    let (_, first) = load_with_cache(
-        &archive,
-        &cache,
-        &AtomicBool::new(false),
-        &PceCdPackageProgress::default(),
-    )
-    .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let replacement = temp_archive(
-        "cache-source-change-replacement",
-        &[("disc.bin", vec![0x22; 2_048]), ("disc.cue", cue())],
-        true,
-    );
-    std::fs::copy(replacement, &archive).unwrap();
-    let (_, second) = load_with_cache(
-        &archive,
-        &cache,
-        &AtomicBool::new(false),
-        &PceCdPackageProgress::default(),
-    )
-    .unwrap();
-
-    assert_ne!(first.content_sha256, second.content_sha256);
-    assert_eq!(complete_cache_dirs(&cache).len(), 2);
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn corrupt_manifest_falls_back_to_clean_extraction() {
-    let archive = temp_archive(
-        "cache-corruption",
-        &[("disc.bin", vec![0x33; 2_048]), ("disc.cue", cue())],
-        true,
-    );
-    let cache = temp_cache("corruption");
-    let _ = std::fs::remove_dir_all(&cache);
-    let (_, expected) = load_with_cache(
-        &archive,
-        &cache,
-        &AtomicBool::new(false),
-        &PceCdPackageProgress::default(),
-    )
-    .unwrap();
-    let entry = complete_cache_dirs(&cache).pop().unwrap();
-    std::fs::write(entry.join(CACHE_COMPLETE_FILE), b"not json").unwrap();
-    let (_, after_manifest) = load_with_cache(
-        &archive,
-        &cache,
-        &AtomicBool::new(false),
-        &PceCdPackageProgress::default(),
-    )
-    .unwrap();
-    assert_eq!(after_manifest.disc, expected.disc);
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn same_length_cached_data_tamper_reextracts() {
-    let archive = temp_archive(
-        "cache-data-tamper",
-        &[("disc.bin", vec![0x33; 2_048]), ("disc.cue", cue())],
-        true,
-    );
-    let cache = temp_cache("data-tamper");
-    let _ = std::fs::remove_dir_all(&cache);
-    let (_, expected) = load_with_cache(
-        &archive,
-        &cache,
-        &AtomicBool::new(false),
-        &PceCdPackageProgress::default(),
-    )
-    .unwrap();
-    let entry = complete_cache_dirs(&cache).pop().unwrap();
-    std::fs::write(
-        entry.join(CACHE_FILES_DIR).join("disc.bin"),
-        vec![0x99; 2_048],
-    )
-    .unwrap();
-    let (_, after_member) = load_with_cache(
-        &archive,
-        &cache,
-        &AtomicBool::new(false),
-        &PceCdPackageProgress::default(),
-    )
-    .unwrap();
-    assert_eq!(after_member.disc, expected.disc);
-    assert_eq!(after_member.content_sha256, expected.content_sha256);
-    assert_eq!(after_member.disc.read_user_sector(0).unwrap()[0], 0x33);
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn cancelled_extraction_publishes_no_partial_cache() {
-    let archive = temp_archive_with_methods(
-        "cache-cancel",
-        &[
-            ("disc.bin", vec![0x5A; STREAM_BUFFER_BYTES * 4]),
-            ("disc.cue", cue()),
-        ],
-        true,
-        vec![EncoderConfiguration::new(EncoderMethod::LZMA)],
-    );
-    let cache = temp_cache("cancel");
-    let _ = std::fs::remove_dir_all(&cache);
-    let cancel = AtomicBool::new(false);
-    let progress = PceCdPackageProgress::default();
-    progress.set_cancel_after_completed_bytes(STREAM_BUFFER_BYTES as u64);
-
-    assert_eq!(
-        load_with_cache(&archive, &cache, &cancel, &progress).err(),
-        Some(PceCdLoadError::ArchiveCancelled)
-    );
-    assert!(complete_cache_dirs(&cache).is_empty());
-    assert!(
-        std::fs::read_dir(&cache)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .next()
-            .is_none()
-    );
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn cache_prunes_to_two_complete_entries() {
-    let cache = temp_cache("prune");
-    let _ = std::fs::remove_dir_all(&cache);
-    for index in 0..3_u8 {
-        let archive = temp_archive(
-            &format!("cache-prune-{index}"),
-            &[("disc.bin", vec![index; 2_048]), ("disc.cue", cue())],
-            true,
-        );
-        load_with_cache(
-            &archive,
-            &cache,
-            &AtomicBool::new(false),
-            &PceCdPackageProgress::default(),
-        )
-        .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert_eq!(
-        complete_cache_dirs(&cache).len(),
-        CACHE_MAX_COMPLETE_ENTRIES
-    );
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn live_file_source_survives_cache_pruning() {
-    let cache = temp_cache("prune-live");
-    let _ = std::fs::remove_dir_all(&cache);
-    let first_archive = temp_archive(
-        "cache-prune-live-first",
-        &[("disc.bin", vec![0xA1; 2 * 2_048]), ("disc.cue", cue())],
-        true,
-    );
-    let (_, first) = load_with_cache(
-        &first_archive,
-        &cache,
-        &AtomicBool::new(false),
-        &PceCdPackageProgress::default(),
-    )
-    .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    for index in 0..2_u8 {
-        let archive = temp_archive(
-            &format!("cache-prune-live-{index}"),
-            &[
-                ("disc.bin", vec![0xB0 + index; 2 * 2_048]),
-                ("disc.cue", cue()),
-            ],
-            true,
-        );
-        load_with_cache(
-            &archive,
-            &cache,
-            &AtomicBool::new(false),
-            &PceCdPackageProgress::default(),
-        )
-        .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-
-    assert_eq!(first.disc.read_user_sector(0).unwrap()[0], 0xA1);
-    drop(first);
-    let _ = std::fs::remove_dir_all(cache);
-}
-
-#[test]
-fn cache_cleanup_rejects_root_and_out_of_root_targets() {
-    let base = temp_cache("delete-containment");
-    let root = base.join("root");
-    let outside = base.join("outside");
-    let _ = std::fs::remove_dir_all(&base);
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::create_dir_all(&outside).unwrap();
-    std::fs::write(outside.join("keep"), b"keep").unwrap();
-
-    remove_cache_entry(&root, &root);
-    remove_cache_entry(&root, &outside);
-
-    assert!(root.is_dir());
-    assert_eq!(std::fs::read(outside.join("keep")).unwrap(), b"keep");
-    let _ = std::fs::remove_dir_all(base);
-}
+#[path = "tests/cache_tests.rs"]
+mod cache_tests;
+#[path = "tests/ppf_tests.rs"]
+mod ppf_tests;
 
 #[test]
 fn controlled_load_cancels_at_a_decode_chunk_boundary() {
@@ -800,6 +584,88 @@ fn packaged_loader_preserves_virtual_cue_and_real_source_paths() {
         zeff_pce_core::hardware::PceHuCardBoard::SystemCardV3
     );
     assert_eq!(progress.phase(), PceCdPackageLoadPhase::Complete);
+}
+
+#[test]
+fn native_multi_cue_picker_revalidates_selected_7z_member() {
+    let archive = temp_archive(
+        "backend-multi-cue",
+        &[
+            ("disc-a/disc.cue", cue()),
+            ("disc-a/disc.bin", vec![0; 2_048]),
+            ("disc-b/disc.cue", cue()),
+            ("disc-b/disc.bin", vec![0; 2_048]),
+        ],
+        true,
+    );
+    let system_card: &'static [u8] = Box::leak(vec![0; 262_144].into_boxed_slice());
+    let config = BackendLoadConfig {
+        pce_cd_system_card_override: Some(system_card),
+        pce_cd_system_card_sha256_override: Some(zeff_firmware::PCE_SYSTEM_CARD_V3_USA_SHA256),
+        pce_console_wiring: Some(zeff_pce_core::hardware::PceConsoleWiring::TurboGrafx16),
+        ..BackendLoadConfig::default()
+    };
+
+    let selection = crate::emu_backend::loader::prepare_seven_zip_backend(
+        &archive,
+        None,
+        None,
+        &config,
+        &AtomicBool::new(false),
+        &PceCdPackageProgress::default(),
+    )
+    .unwrap();
+    let crate::emu_backend::loader::PreparedSevenZipBackend::Selection(entries) = selection else {
+        panic!("multi-CUE archive did not offer a native archive selection");
+    };
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["disc-a/disc.cue", "disc-b/disc.cue"]
+    );
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.system == ActiveSystem::Pce)
+    );
+
+    let selected = crate::emu_backend::loader::prepare_seven_zip_backend(
+        &archive,
+        Some(entries[1].index),
+        None,
+        &config,
+        &AtomicBool::new(false),
+        &PceCdPackageProgress::default(),
+    )
+    .unwrap();
+    let crate::emu_backend::loader::PreparedSevenZipBackend::Ready {
+        rom_path, system, ..
+    } = selected
+    else {
+        panic!("selected multi-CUE entry did not load");
+    };
+    assert_eq!(rom_path, archive.join("disc-b").join("disc.cue"));
+    assert_eq!(system, ActiveSystem::Pce);
+
+    let reopened = crate::emu_backend::loader::prepare_seven_zip_backend(
+        &archive,
+        None,
+        Some(&rom_path),
+        &config,
+        &AtomicBool::new(false),
+        &PceCdPackageProgress::default(),
+    )
+    .unwrap();
+    let crate::emu_backend::loader::PreparedSevenZipBackend::Ready {
+        rom_path: reopened_path,
+        ..
+    } = reopened
+    else {
+        panic!("fresh virtual member lookup did not reopen the selected CUE");
+    };
+    assert_eq!(reopened_path, rom_path);
 }
 
 #[test]

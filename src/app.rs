@@ -105,6 +105,7 @@ pub(crate) fn run(
     );
 
     let cached_is_mbc7 = backend.as_ref().is_some_and(|b| b.is_mbc7());
+    let cached_is_gba_tilt = backend.as_ref().is_some_and(|b| b.is_gba_tilt());
     let cached_is_pocket_camera = backend.as_ref().is_some_and(|b| b.is_pocket_camera());
     let cached_rom_path = backend.as_ref().map(|b| b.rom_path().to_path_buf());
     let cached_source_path = backend.as_ref().map(|b| b.source_path().to_path_buf());
@@ -214,6 +215,7 @@ pub(crate) fn run(
         cached_ui_data: None,
         rom_info: CachedRomInfo {
             is_mbc7: cached_is_mbc7,
+            is_gba_tilt: cached_is_gba_tilt,
             is_pocket_camera: cached_is_pocket_camera,
             rom_path: cached_rom_path,
             source_path: cached_source_path,
@@ -283,6 +285,8 @@ pub(crate) fn run(
         tas_control: tas_control::TasControlCoordinator::new(),
         #[cfg(not(target_arch = "wasm32"))]
         tas_repair: tas_control::repair::TasRepairManager::new(),
+        #[cfg(not(target_arch = "wasm32"))]
+        pending_tas_repair_activation: None,
         #[cfg(not(target_arch = "wasm32"))]
         tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder::default(),
         #[cfg(not(target_arch = "wasm32"))]
@@ -468,6 +472,8 @@ struct App {
     #[cfg(not(target_arch = "wasm32"))]
     tas_repair: tas_control::repair::TasRepairManager,
     #[cfg(not(target_arch = "wasm32"))]
+    pending_tas_repair_activation: Option<tas_control::repair::TasPreparedRepair>,
+    #[cfg(not(target_arch = "wasm32"))]
     tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder,
     #[cfg(not(target_arch = "wasm32"))]
     tas_playback_scheduler: tas_control::realtime::TasPlaybackScheduler,
@@ -636,6 +642,10 @@ impl App {
     }
 
     fn speed_mode_label(&self) -> &'static str {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.realtime_tas_recording_active() {
+            return "TAS Recording";
+        }
         if self.speed.paused {
             return "Paused";
         }
@@ -742,14 +752,14 @@ impl App {
     }
 
     fn update_host_tilt_and_stick_mode(&mut self) -> (f32, f32) {
-        let is_mbc7 = self.rom_info.is_mbc7;
+        let has_tilt_sensor = self.rom_info.is_mbc7 || self.rom_info.is_gba_tilt;
         let keyboard = self.host_input.tilt_vector();
         let mouse = self.mouse_tilt_vector();
         let left_stick = self.tilt.left_stick;
 
-        self.sync_host_input_with_stick_mode(is_mbc7);
-        let target = self.compute_target_tilt(is_mbc7, keyboard, mouse, left_stick);
-        self.update_smoothed_tilt(target, is_mbc7)
+        self.sync_host_input_with_stick_mode(has_tilt_sensor);
+        let target = self.compute_target_tilt(has_tilt_sensor, keyboard, mouse, left_stick);
+        self.update_smoothed_tilt(target, has_tilt_sensor)
     }
 }
 

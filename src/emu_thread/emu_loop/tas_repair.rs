@@ -8,7 +8,6 @@ use crate::emu_thread::{
 use crate::tas_project::TasDigest;
 
 use super::EmuLoop;
-use super::tas_control::TasControlContext;
 
 #[derive(Default)]
 pub(super) struct TasRepairWorkerState {
@@ -173,16 +172,7 @@ impl EmuLoop {
         {
             return Err(TasRepairSuspendRejectedReason::InvalidIdentity);
         }
-        let context = TasControlContext {
-            uncapped_execution: self.uncapped_mode,
-            audio_recording_active: self.audio_recording_capture.active,
-            link_activity: self.pending_tcp_link.is_some()
-                || self.tcp_link.is_some()
-                || self.game_boy_replay_link.is_some()
-                || self.wonder_swan_replay_link.is_some(),
-            pending_frame_delivery: !self.drain_rx.is_empty(),
-            runtime_fault: !self.runtime_fault.can_step(),
-        };
+        let context = self.tas_control_context();
         if let Some(reason) = self.tas_control.acquire_blocker(&context) {
             return Err(suspend_blocker(reason));
         }
@@ -266,12 +256,33 @@ impl EmuLoop {
                 .map_err(|_| TasRepairSuspendRejectedReason::StateCaptureFailed)?;
             }
             crate::emu_thread::TasExecutionProfile::DirectGbaCartridge => {
-                super::tas_control::execution::gba::validate_direct_gba_start_state(
-                    &self.backend,
-                    &state_bytes,
-                    identity.persistence,
-                )
-                .map_err(|_| TasRepairSuspendRejectedReason::StateCaptureFailed)?;
+                if identity.persistence == crate::emu_thread::TasPersistenceContract::Absent {
+                    super::tas_control::execution::gba::validate_direct_gba_start_state(
+                        &self.backend,
+                        &state_bytes,
+                        identity.persistence,
+                    )
+                    .map_err(|_| TasRepairSuspendRejectedReason::StateCaptureFailed)?;
+                } else {
+                    let gba = self
+                        .backend
+                        .gba()
+                        .ok_or(TasRepairSuspendRejectedReason::StateCaptureFailed)?;
+                    if gba.emu.sensor_kind()
+                        == zeff_gba_core::hardware::cartridge::SensorKind::Tilt
+                    {
+                        zeff_gba_core::save_state::inspect_current_native_gba_tilt_tas_state(
+                            &gba.emu,
+                            &state_bytes,
+                        )
+                    } else {
+                        zeff_gba_core::save_state::inspect_current_native_gba_tas_state(
+                            &gba.emu,
+                            &state_bytes,
+                        )
+                    }
+                    .map_err(|_| TasRepairSuspendRejectedReason::StateCaptureFailed)?;
+                }
             }
             _ => {}
         }
@@ -574,7 +585,9 @@ fn validate_suspend_profile(
                 }
                 crate::emu_thread::TasExecutionProfile::DirectPceHuCard
                 | crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard
-                | crate::emu_thread::TasExecutionProfile::DirectPceCd => {
+                | crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard
+                | crate::emu_thread::TasExecutionProfile::DirectPceCd
+                | crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => {
                     crate::emu_backend::ActiveSystem::Pce
                 }
             }
@@ -582,21 +595,51 @@ fn validate_suspend_profile(
         return Err(TasRepairSuspendRejectedReason::ProfileMismatch);
     }
     let fds_original = identity.profile == crate::emu_thread::TasExecutionProfile::DirectFdsDisk;
+    let pce_cd_original = matches!(
+        identity.profile,
+        crate::emu_thread::TasExecutionProfile::DirectPceCd
+            | crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd
+    );
     if !fds_original && observation.source_media_sha256 != Some(identity.source_media_sha256) {
         return Err(TasRepairSuspendRejectedReason::SourceMediaMismatch);
     }
     if observation.effective_media_sha256 != Some(identity.effective_media_sha256) {
         return Err(TasRepairSuspendRejectedReason::EffectiveMediaMismatch);
     }
+    let ppf_multitap_mods = identity.profile
+        == crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd
+        && backend.pce().and_then(crate::emu_backend::PceBackend::tas_load_provenance).is_some_and(
+            |provenance| {
+                provenance.load.direct_pce_cd_ppf
+                    && provenance.load.tas_sync_config_sha256
+                        == crate::emu_backend::loader::direct_pce_multitap_cd_ppf_tas_sync_config_sha256().0
+            },
+        );
+    let archive_ppf_mods = identity.profile
+        == crate::emu_thread::TasExecutionProfile::DirectPceCd
+        && backend
+            .pce()
+            .and_then(crate::emu_backend::PceBackend::tas_load_provenance)
+            .is_some_and(|provenance| {
+                provenance.load.direct_pce_cd_archive_ppf
+                    && crate::emu_backend::loader::is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
+                        crate::tas_project::TasDigest(provenance.load.tas_sync_config_sha256),
+                    )
+                    && crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
+                        backend, false,
+                    )
+                    .is_ok()
+            });
     if !observation.identity_metadata_matches
         || !observation.load_provenance_available
         || (!fds_original && observation.direct_source != Some(true))
-        || observation.mods_absent != Some(true)
+        || (observation.mods_absent != Some(true) && !ppf_multitap_mods && !archive_ppf_mods)
         || observation.initial_input_neutral != Some(true)
         || !observation.firmware_profile_matches
-        || !observation.hardware_profile_matches
+        || (identity.persistence == crate::emu_thread::TasPersistenceContract::Absent
+            && !observation.hardware_profile_matches)
         || !observation.controller_profile_matches
-        || !observation.removable_media_absent
+        || (!pce_cd_original && !observation.removable_media_absent)
         || !observation.cheats_absent
     {
         return Err(TasRepairSuspendRejectedReason::UnsafeLoadedProfile);
@@ -772,3 +815,7 @@ fn proof_mismatch_reason(
         TasRepairActionRejectedReason::LoadedProfileMismatch
     }
 }
+
+#[cfg(test)]
+#[path = "tas_repair/archive_ppf_tests.rs"]
+mod archive_ppf_tests;

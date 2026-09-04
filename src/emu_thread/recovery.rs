@@ -247,7 +247,7 @@ impl RecoveryCoordinator {
                 generation: record.generation,
                 component_sha256: record.component_sha256,
             },
-            native_payload: backend.encode_state_bytes()?,
+            native_payload: backend.encode_external_state_bytes()?,
         };
         encode_recovery_state(&envelope).map_err(Into::into)
     }

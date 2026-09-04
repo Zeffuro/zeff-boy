@@ -133,7 +133,7 @@ pub(super) fn project() -> TasProject {
             state_format_compatibility_id: "nes-state-v7".to_owned(),
             start_state_sha256: TasDigest::from_bytes(&start_state),
         },
-        start_state,
+        start_state: start_state.into(),
         replay_start: ReplayStartMetadata::default(),
         edit_generation: 3,
         rerecord_count: 2,

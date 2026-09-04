@@ -183,13 +183,34 @@ pub(crate) fn select_private_tas_execution_loader_with_rom_path(
         ActiveSystem::Pce
             if has_extension(&source_path, "cue")
                 || has_extension(&source_path, "chd")
-                || has_extension(&source_path, "iso") =>
+                || has_extension(&source_path, "iso")
+                || has_extension(&source_path, "7z")
+                || has_extension(&source_path, "rar") =>
         {
-            let loader = DirectPceCdTasExecutionLoader::new(source_path, firmware_search_dirs);
+            let loader = if has_extension(&source_path, "7z") || has_extension(&source_path, "rar")
+            {
+                DirectPceCdTasExecutionLoader::new_with_rom_path(
+                    source_path,
+                    rom_path,
+                    firmware_search_dirs,
+                )?
+            } else {
+                DirectPceCdTasExecutionLoader::new(source_path, firmware_search_dirs)
+            };
             loader.load_fresh_backend()?;
             Ok(PrivateTasExecutionLoader::DirectPceCd(loader))
         }
         ActiveSystem::Pce if has_extension(&source_path, "zip") => {
+            let pce_cd = zip_routes_to_pce_cd(&source_path, rom_path.as_deref())?;
+            if pce_cd {
+                let loader = DirectPceCdTasExecutionLoader::new_with_rom_path(
+                    source_path,
+                    rom_path,
+                    firmware_search_dirs,
+                )?;
+                loader.load_fresh_backend()?;
+                return Ok(PrivateTasExecutionLoader::DirectPceCd(loader));
+            }
             let loader = DirectPceTasExecutionLoader::new_zip(source_path, rom_path);
             loader.load_fresh_backend()?;
             Ok(PrivateTasExecutionLoader::DirectPce(loader))
@@ -226,6 +247,58 @@ pub(crate) fn select_private_tas_execution_loader_with_rom_path(
     }
 }
 
+pub(crate) fn select_private_tas_execution_loader_for_replay(
+    source_path: PathBuf,
+    rom_path: Option<PathBuf>,
+    system: ActiveSystem,
+    firmware_search_dirs: Vec<PathBuf>,
+    start_state: &[u8],
+) -> Result<PrivateTasExecutionLoader> {
+    if system == ActiveSystem::Pce
+        && (has_extension(&source_path, "cue")
+            || has_extension(&source_path, "chd")
+            || has_extension(&source_path, "iso")
+            || has_extension(&source_path, "7z")
+            || has_extension(&source_path, "rar")
+            || (has_extension(&source_path, "zip")
+                && zip_routes_to_pce_cd(&source_path, rom_path.as_deref())?))
+    {
+        let loader = DirectPceCdTasExecutionLoader::new_multitap_with_rom_path(
+            source_path.clone(),
+            rom_path.clone(),
+            firmware_search_dirs.clone(),
+        )?;
+        if loader.load_session(start_state).is_ok() {
+            return Ok(PrivateTasExecutionLoader::DirectPceCd(loader));
+        }
+    }
+    if system == ActiveSystem::Pce
+        && has_extension(&source_path, "zip")
+        && zip_routes_to_pce_cd(&source_path, rom_path.as_deref())?
+    {
+        let loader = DirectPceCdTasExecutionLoader::new_with_rom_path(
+            source_path,
+            rom_path,
+            firmware_search_dirs,
+        )?;
+        loader.load_session(start_state)?;
+        return Ok(PrivateTasExecutionLoader::DirectPceCd(loader));
+    }
+    if system == ActiveSystem::Pce
+        && (has_extension(&source_path, "pce") || has_extension(&source_path, "zip"))
+    {
+        return Ok(PrivateTasExecutionLoader::DirectPce(
+            DirectPceTasExecutionLoader::new_for_replay(source_path, rom_path, start_state)?,
+        ));
+    }
+    select_private_tas_execution_loader_with_rom_path(
+        source_path,
+        rom_path,
+        system,
+        firmware_search_dirs,
+    )
+}
+
 pub(crate) fn select_private_tas_execution_loader_for_project(
     source_path: PathBuf,
     system: ActiveSystem,
@@ -235,10 +308,18 @@ pub(crate) fn select_private_tas_execution_loader_for_project(
     if system == ActiveSystem::Pce
         && (has_extension(&source_path, "cue")
             || has_extension(&source_path, "chd")
-            || has_extension(&source_path, "iso"))
-        && validate_direct_pce_cd_tas_project_identity(project).is_ok()
+            || has_extension(&source_path, "iso")
+            || has_extension(&source_path, "7z")
+            || has_extension(&source_path, "rar")
+            || has_extension(&source_path, "zip"))
+        && (validate_direct_pce_cd_tas_project_identity(project).is_ok()
+            || validate_direct_pce_multitap_cd_tas_project_identity(project).is_ok())
     {
-        let loader = DirectPceCdTasExecutionLoader::new(source_path, firmware_search_dirs.clone());
+        let loader = DirectPceCdTasExecutionLoader::new_for_project(
+            source_path,
+            firmware_search_dirs.clone(),
+            project,
+        )?;
         loader.load_fresh_backend()?;
         return Ok(PrivateTasExecutionLoader::DirectPceCd(loader));
     }
@@ -254,6 +335,9 @@ pub(crate) fn select_private_tas_execution_loader_for_project(
             }
             (true, false, zeff_pce_core::hardware::PceControllerMode::SixButton) => {
                 DirectPceTasExecutionLoader::new_six_button(source_path)
+            }
+            (true, false, zeff_pce_core::hardware::PceControllerMode::Multitap) => {
+                DirectPceTasExecutionLoader::new_multitap(source_path)
             }
             (false, true, _) => {
                 DirectPceTasExecutionLoader::new_zip_for_project(source_path, project)?
@@ -356,6 +440,49 @@ pub(crate) fn select_private_tas_execution_loader_for_project(
     Ok(PrivateTasExecutionLoader::DirectGameGear(loader))
 }
 
+fn zip_contains_pce_cd_cue(source_path: &Path) -> Result<bool> {
+    crate::emu_backend::pce_cd_zip::zip_contains_cue(source_path).map_err(Into::into)
+}
+
+fn zip_routes_to_pce_cd(source_path: &Path, rom_path: Option<&Path>) -> Result<bool> {
+    match rom_path {
+        Some(path) => Ok(has_extension(path, "cue")),
+        None => zip_contains_pce_cd_cue(source_path),
+    }
+}
+
+fn loaded_pce_cd_attachment_loader(
+    source_path: PathBuf,
+    rom_path: Option<&Path>,
+    system: ActiveSystem,
+    firmware_search_dirs: Vec<PathBuf>,
+) -> Result<Option<PrivateTasExecutionLoader>> {
+    if system != ActiveSystem::Pce {
+        return Ok(None);
+    }
+    let direct_cd = has_extension(&source_path, "cue")
+        || has_extension(&source_path, "chd")
+        || has_extension(&source_path, "iso");
+    let archive_cd = (has_extension(&source_path, "7z")
+        || has_extension(&source_path, "rar")
+        || has_extension(&source_path, "zip"))
+        && rom_path.is_some_and(|path| has_extension(path, "cue"));
+    if direct_cd {
+        return Ok(Some(PrivateTasExecutionLoader::DirectPceCd(
+            DirectPceCdTasExecutionLoader::new(source_path, firmware_search_dirs),
+        )));
+    }
+    if archive_cd {
+        let loader = DirectPceCdTasExecutionLoader::new_for_loaded_rom_path(
+            source_path,
+            rom_path.expect("archive CD path was checked"),
+            firmware_search_dirs,
+        )?;
+        return Ok(Some(PrivateTasExecutionLoader::DirectPceCd(loader)));
+    }
+    Ok(None)
+}
+
 pub(crate) fn select_private_tas_execution_attachment(
     source_path: Option<PathBuf>,
     rom_path: Option<PathBuf>,
@@ -375,12 +502,21 @@ pub(crate) fn select_private_tas_execution_attachment(
             firmware_search_dirs,
             project,
         ),
-        None => select_private_tas_execution_loader_with_rom_path(
-            source_path,
-            rom_path,
+        None => match loaded_pce_cd_attachment_loader(
+            source_path.clone(),
+            rom_path.as_deref(),
             system,
-            firmware_search_dirs,
-        ),
+            firmware_search_dirs.clone(),
+        ) {
+            Ok(Some(loader)) => Ok(loader),
+            Ok(None) => select_private_tas_execution_loader_with_rom_path(
+                source_path,
+                rom_path,
+                system,
+                firmware_search_dirs,
+            ),
+            Err(error) => Err(error),
+        },
     };
     match selection {
         Ok(loader) => TasEditorExecutionAttachment::Available(Box::new(loader)),
@@ -412,4 +548,36 @@ pub(crate) fn has_extension(path: &Path, extension: &str) -> bool {
     path.extension()
         .and_then(|candidate| candidate.to_str())
         .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mixed_pce_zip_honors_the_explicit_member_before_package_autodetection() -> Result<()> {
+        let directory = crate::test_support::test_directory("tas-pce-mixed-zip-routing")?;
+        let archive = directory.path().join("mixed.zip");
+        crate::test_support::write_zip(
+            &archive,
+            &[
+                ("game.pce", &[0; 64]),
+                (
+                    "disc/disc.cue",
+                    b"FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n",
+                ),
+                ("disc/disc.bin", &[0; 2048]),
+            ],
+        )?;
+        assert!(!zip_routes_to_pce_cd(
+            &archive,
+            Some(&archive.join("game.pce"))
+        )?);
+        assert!(zip_routes_to_pce_cd(
+            &archive,
+            Some(&archive.join("disc").join("disc.cue"))
+        )?);
+        assert!(zip_routes_to_pce_cd(&archive, None)?);
+        Ok(())
+    }
 }

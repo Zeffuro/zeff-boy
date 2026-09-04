@@ -16,7 +16,7 @@ pub(super) struct TasEditorProjectWitness {
 }
 
 pub(super) fn project_sha256(project: &TasProject) -> Result<TasDigest> {
-    Ok(TasDigest::from_bytes(&project.encode()?))
+    project.editor_content_sha256()
 }
 
 pub(super) fn project_witness(project: &TasProject) -> Result<TasEditorProjectWitness> {

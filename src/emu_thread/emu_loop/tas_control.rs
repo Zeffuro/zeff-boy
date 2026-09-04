@@ -51,6 +51,19 @@ pub(super) struct TasRestoredCheckpoint {
     pub(super) frame_count: u64,
 }
 
+fn tas_state_digest(profile: TasExecutionProfile, state: &[u8]) -> TasDigest {
+    if !matches!(
+        profile,
+        TasExecutionProfile::DirectGbCartridgeDmg | TasExecutionProfile::DirectGbCartridgeCgb
+    ) {
+        return TasDigest::from_bytes(state);
+    }
+
+    let mut canonical = state.to_vec();
+    zeff_gb_core::save_state::canonicalize_bess_rtc_timestamp(&mut canonical);
+    TasDigest::from_bytes(&canonical)
+}
+
 pub(super) struct TasControl {
     authority: BackendAuthority,
     next_lease_id: u64,
@@ -67,11 +80,8 @@ pub(super) struct TasControlContext {
 }
 
 impl EmuLoop {
-    pub(super) fn dispatch_tas_control(
-        &mut self,
-        command: EmuCommand,
-    ) -> ControlFlow<bool, EmuCommand> {
-        let context = TasControlContext {
+    pub(super) fn tas_control_context(&self) -> TasControlContext {
+        TasControlContext {
             uncapped_execution: self.uncapped_mode,
             audio_recording_active: self.audio_recording_capture.active,
             link_activity: self.pending_tcp_link.is_some()
@@ -80,7 +90,14 @@ impl EmuLoop {
                 || self.wonder_swan_replay_link.is_some(),
             pending_frame_delivery: !self.drain_rx.is_empty(),
             runtime_fault: !self.runtime_fault.can_step(),
-        };
+        }
+    }
+
+    pub(super) fn dispatch_tas_control(
+        &mut self,
+        command: EmuCommand,
+    ) -> ControlFlow<bool, EmuCommand> {
+        let context = self.tas_control_context();
         let cheats_present = !self.last_cheats.is_empty();
         let dispatch = match command {
             EmuCommand::InspectTasReadiness {

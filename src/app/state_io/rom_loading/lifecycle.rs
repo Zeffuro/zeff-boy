@@ -153,6 +153,7 @@ impl App {
             self.pending_symbol_load = None;
         }
         self.rom_info.is_mbc7 = false;
+        self.rom_info.is_gba_tilt = false;
         self.rom_info.is_pocket_camera = false;
         self.debug_windows.last_disasm_pc = None;
         self.debug_windows.last_disasm_mapping = None;

@@ -69,4 +69,8 @@ impl Emulator {
             .keypad
             .set_host_input(buttons_pressed, dpad_pressed);
     }
+
+    pub fn set_tilt_input(&mut self, x: f32, y: f32) -> bool {
+        self.bus.cartridge.set_tilt_input(x, y)
+    }
 }

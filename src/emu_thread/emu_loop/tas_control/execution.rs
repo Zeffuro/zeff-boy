@@ -95,7 +95,9 @@ fn execute_fresh_tas(
         }
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             pce::execute_direct_pce_tas(backend, runtime_fault, request)
         }
     }
@@ -145,7 +147,9 @@ fn execute_cached_suffix(
         }
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             pce::validate_pce_inputs(request.profile, inputs)
                 .map_err(|_| Rejected::InvalidInput)?;
         }
@@ -213,7 +217,7 @@ fn execute_cached_suffix(
     Ok(TasExecutionResult {
         profile: request.profile,
         frame_count,
-        state_sha256: TasDigest::from_bytes(&state_bytes),
+        state_sha256: super::tas_state_digest(request.profile, &state_bytes),
         executed_project_frames,
         segment_id: 1,
         segment_frame_count: transaction_frames,
@@ -403,6 +407,19 @@ fn validate_request_for_cache(
     {
         return Err(Rejected::InvalidInput);
     }
+    if !matches!(
+        request.profile,
+        TasExecutionProfile::DirectPceMultitapHuCard | TasExecutionProfile::DirectPceMultitapCd
+    ) && request.input_prefix.iter().any(|input| {
+        input.p3_buttons != 0
+            || input.p3_dpad != 0
+            || input.p4_buttons != 0
+            || input.p4_dpad != 0
+            || input.p5_buttons != 0
+            || input.p5_dpad != 0
+    }) {
+        return Err(Rejected::InvalidInput);
+    }
     let input_frames =
         u64::try_from(request.input_prefix.len()).map_err(|_| Rejected::FrameLimitExceeded)?;
     if input_frames > MAX_EDITOR_SEEK_EXECUTION_FRAMES {
@@ -459,7 +476,9 @@ fn validate_request_for_cache(
         }
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             pce::validate_pce_inputs(request.profile, &request.input_prefix)
                 .map_err(|_| Rejected::InvalidInput)?;
             pce::validate_direct_pce_start_state(
@@ -608,7 +627,9 @@ fn restore_cached_tas(
         }
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             pce::restore_direct_pce_state(backend, request.profile, &cached_state.bytes)?;
         }
     }
@@ -617,7 +638,7 @@ fn restore_cached_tas(
         .map_err(|_| Rejected::StateCaptureFailed)?;
     let frame_count = backend.frame_count();
     if frame_count != cached_state.frame_count
-        || TasDigest::from_bytes(&restored) != cached_state.sha256
+        || super::tas_state_digest(request.profile, &restored) != cached_state.sha256
     {
         return Err(Rejected::StateFrameMismatch);
     }
@@ -640,7 +661,7 @@ fn restore_cached_profile_state(
     persistence: TasPersistenceContract,
 ) -> Result<(), Rejected> {
     if cached_state.bytes.len() > MAX_START_STATE_BYTES
-        || TasDigest::from_bytes(&cached_state.bytes) != cached_state.sha256
+        || super::tas_state_digest(profile, &cached_state.bytes) != cached_state.sha256
     {
         return Err(Rejected::InvalidStartState);
     }
@@ -678,7 +699,9 @@ fn restore_cached_profile_state(
         }
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
-        | TasExecutionProfile::DirectPceCd => {
+        | TasExecutionProfile::DirectPceMultitapHuCard
+        | TasExecutionProfile::DirectPceCd
+        | TasExecutionProfile::DirectPceMultitapCd => {
             pce::restore_direct_pce_state(backend, profile, &cached_state.bytes)?;
         }
     }
@@ -686,7 +709,7 @@ fn restore_cached_profile_state(
         .encode_state_bytes()
         .map_err(|_| Rejected::StateCaptureFailed)?;
     if backend.frame_count() != cached_state.frame_count
-        || TasDigest::from_bytes(&restored) != cached_state.sha256
+        || super::tas_state_digest(profile, &restored) != cached_state.sha256
     {
         return Err(Rejected::StateFrameMismatch);
     }
@@ -715,7 +738,17 @@ pub(super) fn replay_frame(input: TasInputFrame) -> ReplayJoypadFrame {
         dpad: input.p1_dpad,
         buttons_p2: input.p2_buttons,
         dpad_p2: input.p2_dpad,
+        buttons_p3: input.p3_buttons,
+        dpad_p3: input.p3_dpad,
+        buttons_p4: input.p4_buttons,
+        dpad_p4: input.p4_dpad,
+        buttons_p5: input.p5_buttons,
+        dpad_p5: input.p5_dpad,
         zapper: input.zapper,
+        host_tilt: (
+            f32::from_bits(input.tilt_x_bits),
+            f32::from_bits(input.tilt_y_bits),
+        ),
         ..ReplayJoypadFrame::default()
     }
 }

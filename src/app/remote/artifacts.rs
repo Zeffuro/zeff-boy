@@ -84,6 +84,7 @@ impl App {
         match self.recv_cold_response() {
             Some(EmuResponse::LoadStateOk {
                 path: loaded,
+                warning,
                 media_slot_snapshot,
                 game_boy_serial_device,
             }) => {
@@ -98,6 +99,7 @@ impl App {
                 self.remote_graphics_frames_remaining = 3;
                 Ok(json!({
                     "path": loaded,
+                    "warning": warning.map(crate::emu_thread::LoadStateWarning::message),
                     "status": self.live_status_json(),
                 }))
             }

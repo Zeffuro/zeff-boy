@@ -96,8 +96,12 @@ pub(in crate::emu_thread::emu_loop) fn validate_direct_gba_start_state(
             .map_err(|_| Rejected::InvalidStartState)?;
     let gba = backend.gba().ok_or(Rejected::InvalidStartState)?;
     let inspection =
-        zeff_gba_core::save_state::inspect_current_native_gba_tas_state(&gba.emu, state)
-            .map_err(|_| Rejected::InvalidStartState)?;
+        if gba.emu.sensor_kind() == zeff_gba_core::hardware::cartridge::SensorKind::Tilt {
+            zeff_gba_core::save_state::inspect_current_native_gba_tilt_tas_state(&gba.emu, state)
+        } else {
+            zeff_gba_core::save_state::inspect_current_native_gba_tas_state(&gba.emu, state)
+        }
+        .map_err(|_| Rejected::InvalidStartState)?;
     if inspection.rom_sha256 != gba.emu.rom_hash()
         || inspection.save_ram_kind != current.save_ram_kind
         || inspection.battery_data.as_ref().map(Vec::len)
@@ -105,6 +109,8 @@ pub(in crate::emu_thread::emu_loop) fn validate_direct_gba_start_state(
         || inspection.rtc_present
             != matches!(persistence, TasPersistenceContract::GbaRtcBattery { .. })
         || inspection.rtc_date_time.is_some() != inspection.rtc_present
+        || inspection.sensor_kind != current.sensor_kind
+        || inspection.tilt_state.is_some() != current.tilt_state.is_some()
         || inspection.external_bios
         || inspection.startup != zeff_gba_core::save_state::GbaTasStartup::InternalPostBoot
         || inspection.sample_rate != crate::emu_backend::gba::DIRECT_GBA_SAMPLE_RATE
@@ -184,10 +190,15 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn capture_direct_gba_candidate
 ) -> Result<(u64, TasDigest), Rejected> {
     validate_direct_gba_profile_runtime(backend, persistence)
         .map_err(|_| Rejected::StateCaptureFailed)?;
+    capture_direct_gba_advanced_candidate(backend, expected_frame)
+}
+
+pub(in crate::emu_thread::emu_loop::tas_control) fn capture_direct_gba_advanced_candidate(
+    backend: &EmuBackend,
+    expected_frame: u64,
+) -> Result<(u64, TasDigest), Rejected> {
     let state = backend
         .encode_state_bytes()
-        .map_err(|_| Rejected::StateCaptureFailed)?;
-    validate_direct_gba_start_state(backend, &state, persistence)
         .map_err(|_| Rejected::StateCaptureFailed)?;
     let frame_count = backend.frame_count();
     if frame_count != expected_frame {

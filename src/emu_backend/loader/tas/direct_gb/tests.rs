@@ -21,6 +21,7 @@ use crate::tas_project::{
 use crate::test_support::{build_gb_test_rom, test_directory, write_zip};
 
 mod replay;
+mod scope;
 
 fn write_direct_rom(label: &str) -> Result<(crate::test_support::TestDirectory, PathBuf, Vec<u8>)> {
     let directory = test_directory(label)?;
@@ -67,12 +68,27 @@ fn mbc3_rtc_sidecar(ram_len: usize, saved_seconds: u64) -> (Vec<u8>, Vec<u8>) {
 }
 
 #[test]
-fn creates_reopens_and_seeks_a_direct_rom_only_project() -> Result<()> {
-    let (directory, source_path, source_bytes) = write_direct_rom("tas-direct-gb-flow")?;
+fn creates_reopens_and_seeks_a_direct_rom_ram_project_without_using_a_sidecar() -> Result<()> {
+    let (directory, source_path, mut source_bytes) = write_direct_rom("tas-direct-gb-flow")?;
+    source_bytes[0x147] = 0x08;
+    source_bytes[0x149] = 0x02;
+    let save_path = source_path.with_extension("sav");
+    let initial_sidecar = vec![0xA5; 8 * 1024];
+    std::fs::write(&source_path, &source_bytes)?;
+    std::fs::write(&save_path, &initial_sidecar)?;
     let loader = DirectGbTasExecutionLoader::new(source_path, Vec::new());
     let project_path = directory.path().join("movie.ztas");
 
     let in_memory = loader.create_project()?;
+    assert_eq!(
+        in_memory.identity().persistent_state,
+        TasExternalIdentity::Absent
+    );
+    let changed_sidecar = vec![0x5A; initial_sidecar.len()];
+    std::fs::write(&save_path, &changed_sidecar)?;
+    let repeated = loader.create_project()?;
+    assert_eq!(repeated.identity(), in_memory.identity());
+    assert_eq!(repeated.start_state(), in_memory.start_state());
     let decoded = TasProject::decode(&in_memory.encode()?)?;
     assert_eq!(decoded.project_id(), in_memory.project_id());
     assert_eq!(decoded.identity(), in_memory.identity());
@@ -112,6 +128,7 @@ fn creates_reopens_and_seeks_a_direct_rom_only_project() -> Result<()> {
     assert_eq!(outcome.cursor, 1);
     assert_eq!(outcome.framebuffer.width(), 160);
     assert_eq!(outcome.framebuffer.height(), 144);
+    assert_eq!(std::fs::read(save_path)?, changed_sidecar);
     Ok(())
 }
 
@@ -153,6 +170,8 @@ fn zip_member_binds_archive_member_and_effective_media() -> Result<()> {
     let archive_path = directory.path().join("games.zip");
     let first = build_gb_test_rom();
     let mut selected = first.clone();
+    selected[0x147] = 0x08;
+    selected[0x149] = 0x02;
     selected[0x200] = 0xA5;
     let archive_bytes = write_zip(
         &archive_path,
@@ -163,12 +182,22 @@ fn zip_member_binds_archive_member_and_effective_media() -> Result<()> {
             .create_project()
             .is_err()
     );
+    let save_path = archive_path.with_extension("sav");
+    let initial_sidecar = vec![0xA5; 8 * 1024];
+    std::fs::write(&save_path, &initial_sidecar)?;
     let loader = DirectGbTasExecutionLoader::new_zip(
         archive_path.clone(),
         Some(archive_path.join("folder/selected.gb")),
         Vec::new(),
     );
     let project = loader.create_project()?;
+    let changed_sidecar = vec![0x3C; 8 * 1024];
+    std::fs::write(&save_path, &changed_sidecar)?;
+    assert_eq!(
+        project.identity().persistent_state,
+        TasExternalIdentity::Absent
+    );
+    assert_eq!(loader.create_project()?.identity(), project.identity());
     assert_eq!(
         project.identity().source_media_sha256,
         TasDigest::from_bytes(&archive_bytes)
@@ -188,6 +217,14 @@ fn zip_member_binds_archive_member_and_effective_media() -> Result<()> {
     )?;
     let session = reopened.load_session(project.start_state())?;
     assert_eq!(session.identity(), project.identity());
+    let mut engine = reopened.load_editor_engine(&project)?;
+    let manual_path = directory.path().join("manual.ztas");
+    let autosaves =
+        TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default())?;
+    let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache"))?;
+    let mut editor = TasEditorSession::new(project.clone(), manual_path, autosaves, seek_cache)?;
+    assert!(engine.seek(&mut editor, 1)?.reached_target());
+    assert_eq!(std::fs::read(&save_path)?, changed_sidecar);
     let (backend, _) = reopened.load_fresh_backend()?;
     assert_eq!(
         backend.tas_source_media_identity().unwrap().sha256,
@@ -269,8 +306,8 @@ fn zip_battery_project_imports_adjacent_sram_once() -> Result<()> {
     let directory = test_directory("tas-gb-zip-battery")?;
     let archive_path = directory.path().join("games.zip");
     let save_path = archive_path.with_extension("sav");
-    let battery = build_direct_mapper_rom(0x03, 0x04, 0x03);
-    let initial_sram = (0..32 * 1024)
+    let battery = build_direct_mapper_rom(0x09, 0x00, 0x02);
+    let initial_sram = (0..8 * 1024)
         .map(|index| (index as u8).wrapping_mul(17).wrapping_add(11))
         .collect::<Vec<_>>();
     write_zip(&archive_path, &[("folder/game.gb", &battery)])?;
@@ -322,6 +359,9 @@ fn direct_mbc3_rtc_project_is_fixed_epoch_and_headless_deterministic() -> Result
 
     let project = loader.create_project()?;
     let repeated = loader.create_project()?;
+    let mut canonical_start = project.start_state().to_vec();
+    zeff_gb_core::save_state::canonicalize_bess_rtc_timestamp(&mut canonical_start);
+    assert_eq!(project.start_state(), canonical_start);
     assert_eq!(project.identity(), repeated.identity());
     assert_eq!(project.start_state(), repeated.start_state());
     assert_eq!(
@@ -439,6 +479,7 @@ fn creates_and_seeks_the_largest_supported_mapper_cartridge() -> Result<()> {
 fn accepts_every_supported_non_battery_cartridge_class() {
     for (label, cartridge_type, rom_size, ram_size) in [
         ("rom-only", 0x00, 0x00, 0x00),
+        ("rom-ram", 0x08, 0x00, 0x02),
         ("mbc1", 0x01, 0x06, 0x00),
         ("mbc1-ram", 0x02, 0x04, 0x03),
         ("mbc1-large-ram", 0x02, 0x06, 0x02),
@@ -459,6 +500,7 @@ fn accepts_every_supported_non_battery_cartridge_class() {
 #[test]
 fn accepts_supported_battery_cartridge_classes() {
     for (label, cartridge_type, rom_size, ram_size) in [
+        ("rom-ram", 0x09, 0x00, 0x02),
         ("mbc1", 0x03, 0x04, 0x03),
         ("mbc2", 0x06, 0x03, 0x00),
         ("mbc3-no-rtc", 0x13, 0x06, 0x03),
@@ -479,8 +521,8 @@ fn battery_project_owns_initial_sram_and_never_writes_the_sidecar() -> Result<()
     let directory = test_directory("tas-direct-gb-battery")?;
     let source_path = directory.path().join("game.gb");
     let save_path = directory.path().join("game.sav");
-    let source = build_direct_mapper_rom(0x03, 0x04, 0x03);
-    let initial_sram = (0..32 * 1024)
+    let source = build_direct_mapper_rom(0x09, 0x00, 0x02);
+    let initial_sram = (0..8 * 1024)
         .map(|index| (index as u8).wrapping_mul(29).wrapping_add(7))
         .collect::<Vec<_>>();
     std::fs::write(&source_path, source)?;
@@ -560,7 +602,9 @@ fn rejects_ineligible_media_before_creating_a_project() -> Result<()> {
 #[test]
 fn rejects_persistent_external_hardware_and_invalid_mapper_sizes() {
     for (label, cartridge_type, rom_size, ram_size) in [
-        ("rom-ram", 0x08, 0x00, 0x02),
+        ("rom-ram-without-ram", 0x08, 0x00, 0x00),
+        ("rom-ram-battery-without-ram", 0x09, 0x00, 0x00),
+        ("rom-ram-battery-large-rom", 0x09, 0x01, 0x02),
         ("mbc5-rumble", 0x1C, 0x08, 0x00),
         ("mbc7-sensor", 0x22, 0x06, 0x02),
         ("camera", 0xFC, 0x05, 0x03),
@@ -766,104 +810,4 @@ fn runtime_rejects_every_direct_gb_profile_deviation() {
 
     let cheats = profile_backend(setup, 32 * 1024, GbPersistentLoadOutcome::Absent, false);
     assert!(validate_direct_gb_tas_runtime(&cheats, true).is_err());
-}
-
-#[test]
-fn branch_scope_rejects_non_p1_input_events_and_nondefault_start_metadata() -> Result<()> {
-    let (_directory, source_path, _) = write_direct_rom("tas-direct-gb-branch")?;
-    let loader = DirectGbTasExecutionLoader::new(source_path, Vec::new());
-    let project = loader.create_project()?;
-    let mut p2 = project.clone();
-    p2.edit_transaction(|edit| {
-        edit.set_input_range(
-            "main",
-            0,
-            1,
-            TasInputFrame {
-                players: [
-                    TasControllerInput::default(),
-                    TasControllerInput {
-                        buttons: 1,
-                        dpad: 0,
-                    },
-                    TasControllerInput::default(),
-                    TasControllerInput::default(),
-                    TasControllerInput::default(),
-                ],
-                ..TasInputFrame::default()
-            },
-        )
-    })?;
-    assert!(DirectGbTasExecutionLoader::validate_project_branch_scope(&p2, "main").is_err());
-
-    let mut high_bits = project.clone();
-    high_bits.edit_transaction(|edit| {
-        edit.set_input_range(
-            "main",
-            0,
-            1,
-            TasInputFrame {
-                players: [
-                    TasControllerInput {
-                        buttons: 0x10,
-                        dpad: 0,
-                    },
-                    TasControllerInput::default(),
-                    TasControllerInput::default(),
-                    TasControllerInput::default(),
-                    TasControllerInput::default(),
-                ],
-                ..TasInputFrame::default()
-            },
-        )
-    })?;
-    assert!(DirectGbTasExecutionLoader::validate_project_branch_scope(&high_bits, "main").is_err());
-
-    let mut special_input = project.clone();
-    special_input.edit_transaction(|edit| {
-        edit.set_input_range(
-            "main",
-            0,
-            1,
-            TasInputFrame {
-                zapper: crate::tas_project::TasZapperInput {
-                    enabled: true,
-                    ..crate::tas_project::TasZapperInput::default()
-                },
-                ..TasInputFrame::default()
-            },
-        )
-    })?;
-    assert!(
-        DirectGbTasExecutionLoader::validate_project_branch_scope(&special_input, "main").is_err()
-    );
-
-    let mut event = project.clone();
-    event.edit_transaction(|edit| {
-        edit.replace_branch_events("main", vec![ReplayEvent::FdsDiskSide { frame: 0, side: 0 }])
-    })?;
-    assert!(DirectGbTasExecutionLoader::validate_project_branch_scope(&event, "main").is_err());
-
-    let identity = project.identity().clone();
-    let start_state = project.start_state().to_vec();
-    let replay_start = ReplayStartMetadata {
-        game_boy_link_tick: Some(0),
-        ..ReplayStartMetadata::default()
-    };
-    let linked = TasProject::new(
-        "linked",
-        identity,
-        start_state,
-        replay_start,
-        TasInitialBranch {
-            id: "main".to_owned(),
-            name: "Main".to_owned(),
-            frame_count: 1,
-            input_spans: Vec::new(),
-            events: Vec::new(),
-        },
-        BTreeMap::new(),
-    )?;
-    assert!(DirectGbTasExecutionLoader::validate_project_branch_scope(&linked, "main").is_err());
-    Ok(())
 }

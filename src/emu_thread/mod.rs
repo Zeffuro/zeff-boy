@@ -38,9 +38,10 @@ pub(crate) use types::TasPersistenceBaseline;
 pub(crate) use types::profile_frame_publication;
 pub(crate) use types::{
     AudioConfig, AudioRecordingCapture, EmuCommand, EmuCommandAuthority, EmuResponse, FrameInput,
-    FrameResult, GuestCallRequest, JoypadInput, MemorySearchRequest, PceMouseInput, RenderSettings,
-    ReplayJoypadFrame, ReplayStartState, ReusableBuffers, SharedFramebuffer, SnapshotRequest,
-    SpeculationBlockers, TasControlCommandKind, WorkerRuntimeFault, ZapperInput,
+    FrameResult, GuestCallRequest, JoypadInput, LoadStateWarning, MemorySearchRequest,
+    PceMouseInput, RenderSettings, ReplayJoypadFrame, ReplayStartState, ReusableBuffers,
+    SharedFramebuffer, SnapshotRequest, SpeculationBlockers, TasControlCommandKind,
+    WorkerRuntimeFault, ZapperInput,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use types::{

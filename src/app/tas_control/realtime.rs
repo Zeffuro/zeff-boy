@@ -3,6 +3,8 @@ use std::time::Duration;
 use crate::app::App;
 use crate::platform::Instant;
 
+const RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum RealtimePhase {
     #[default]
@@ -37,12 +39,19 @@ impl TasRealtimeRecorder {
         self.phase = RealtimePhase::Off;
     }
 
-    pub(super) fn next_wake(&self) -> Option<Instant> {
+    pub(super) fn next_wake(&self, now: Instant) -> Option<Instant> {
         match self.phase {
             RealtimePhase::Running {
                 next_frame_at,
                 frame_pending: false,
             } => Some(next_frame_at),
+            RealtimePhase::Running {
+                frame_pending: true,
+                ..
+            }
+            | RealtimePhase::Suspended {
+                frame_pending: true,
+            } => Some(now + RESPONSE_POLL_INTERVAL),
             _ => None,
         }
     }
@@ -119,12 +128,16 @@ impl TasPlaybackScheduler {
         self.phase = RealtimePhase::Off;
     }
 
-    pub(super) fn next_wake(&self) -> Option<Instant> {
+    pub(super) fn next_wake(&self, now: Instant) -> Option<Instant> {
         match self.phase {
             RealtimePhase::Running {
                 next_frame_at,
                 frame_pending: false,
             } => Some(next_frame_at),
+            RealtimePhase::Running {
+                frame_pending: true,
+                ..
+            } => Some(now + RESPONSE_POLL_INTERVAL),
             _ => None,
         }
     }
@@ -192,8 +205,8 @@ impl App {
         self.tas_playback_scheduler.reset();
     }
 
-    pub(in crate::app) fn linked_tas_playback_next_wake(&self) -> Option<Instant> {
-        self.tas_playback_scheduler.next_wake()
+    pub(in crate::app) fn linked_tas_playback_next_wake(&self, now: Instant) -> Option<Instant> {
+        self.tas_playback_scheduler.next_wake(now)
     }
 
     pub(in crate::app) fn pump_linked_tas_playback(&mut self) {
@@ -239,6 +252,7 @@ impl App {
             return Err(error);
         }
         self.tas_realtime_recorder.reset();
+        self.recompute_pause();
         Ok(())
     }
 
@@ -246,6 +260,7 @@ impl App {
         self.tas_control.stop_realtime_recording();
         self.tas_realtime_recorder.reset();
         self.finish_realtime_tas_history_group_if_idle();
+        self.recompute_pause();
     }
 
     pub(in crate::app) fn realtime_tas_recording_active(&self) -> bool {
@@ -256,8 +271,8 @@ impl App {
         self.realtime_tas_recording_active() && !self.realtime_tas_game_input_owned()
     }
 
-    pub(in crate::app) fn realtime_tas_recording_next_wake(&self) -> Option<Instant> {
-        self.tas_realtime_recorder.next_wake()
+    pub(in crate::app) fn realtime_tas_recording_next_wake(&self, now: Instant) -> Option<Instant> {
+        self.tas_realtime_recorder.next_wake(now)
     }
 
     pub(in crate::app) fn finish_realtime_tas_history_group_if_idle(&mut self) {
@@ -327,7 +342,7 @@ mod tests {
             recorder.poll(true, true, true, start, FRAME),
             RealtimePoll::Idle
         );
-        assert_eq!(recorder.next_wake(), Some(start + FRAME));
+        assert_eq!(recorder.next_wake(start), Some(start + FRAME));
         assert_eq!(
             recorder.poll(
                 true,
@@ -363,7 +378,10 @@ mod tests {
             recorder.poll(true, true, true, start + FRAME * 5, FRAME),
             RealtimePoll::Record
         );
-        assert_eq!(recorder.next_wake(), Some(start + FRAME * 5));
+        assert_eq!(
+            recorder.next_wake(start + FRAME * 5),
+            Some(start + FRAME * 5)
+        );
     }
 
     #[test]
@@ -376,12 +394,15 @@ mod tests {
             recorder.poll(true, false, true, start + FRAME, FRAME),
             RealtimePoll::Idle
         );
-        assert_eq!(recorder.next_wake(), None);
+        assert_eq!(recorder.next_wake(start + FRAME), None);
         assert_eq!(
             recorder.poll(true, true, true, start + FRAME * 10, FRAME),
             RealtimePoll::Idle
         );
-        assert_eq!(recorder.next_wake(), Some(start + FRAME * 11));
+        assert_eq!(
+            recorder.next_wake(start + FRAME * 10),
+            Some(start + FRAME * 11)
+        );
         assert_eq!(
             recorder.poll(true, true, true, start + FRAME * 11, FRAME),
             RealtimePoll::Record
@@ -407,12 +428,18 @@ mod tests {
             recorder.poll(true, false, true, start + FRAME * 20, FRAME),
             RealtimePoll::Idle
         );
-        assert_eq!(recorder.next_wake(), None);
+        assert_eq!(
+            recorder.next_wake(start + FRAME * 20),
+            Some(start + FRAME * 20 + RESPONSE_POLL_INTERVAL)
+        );
         assert_eq!(
             recorder.poll(true, true, true, start + FRAME * 20, FRAME),
             RealtimePoll::Idle
         );
-        assert_eq!(recorder.next_wake(), Some(start + FRAME * 21));
+        assert_eq!(
+            recorder.next_wake(start + FRAME * 20),
+            Some(start + FRAME * 21)
+        );
         assert_eq!(
             recorder.poll(true, true, true, start + FRAME * 21, FRAME),
             RealtimePoll::Record
@@ -432,7 +459,7 @@ mod tests {
             RealtimePoll::Idle
         );
         assert_eq!(recorder.phase, RealtimePhase::Off);
-        assert_eq!(recorder.next_wake(), None);
+        assert_eq!(recorder.next_wake(start + FRAME), None);
     }
 
     #[test]
@@ -440,7 +467,7 @@ mod tests {
         let start = Instant::now();
         let mut scheduler = TasPlaybackScheduler::default();
         assert_eq!(scheduler.poll(true, true, start, FRAME), RealtimePoll::Idle);
-        assert_eq!(scheduler.next_wake(), Some(start + FRAME));
+        assert_eq!(scheduler.next_wake(start), Some(start + FRAME));
         assert_eq!(
             scheduler.poll(true, true, start + FRAME, FRAME),
             RealtimePoll::Record
@@ -455,7 +482,10 @@ mod tests {
             RealtimePoll::Record
         );
         scheduler.mark_sent();
-        assert_eq!(scheduler.next_wake(), None);
+        assert_eq!(
+            scheduler.next_wake(start + FRAME * 20),
+            Some(start + FRAME * 20 + RESPONSE_POLL_INTERVAL)
+        );
         assert_eq!(
             scheduler.poll(true, true, start + FRAME * 20, FRAME),
             RealtimePoll::Idle
@@ -474,7 +504,7 @@ mod tests {
             scheduler.poll(false, false, start + FRAME * 2, FRAME),
             RealtimePoll::Idle
         );
-        assert_eq!(scheduler.next_wake(), None);
+        assert_eq!(scheduler.next_wake(start + FRAME * 2), None);
         assert_eq!(scheduler.phase, RealtimePhase::Off);
     }
 }

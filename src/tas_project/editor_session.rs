@@ -465,7 +465,7 @@ impl TasEditorSession {
         } else {
             self.history.undo.push(current);
         }
-        self.project_sha256 = TasDigest::from_bytes(&target.project_bytes);
+        self.project_sha256 = project_sha256(&restored_project)?;
         self.project = restored_project;
         self.selected_branch_id = target.selected_branch_id;
         self.cursor = target.cursor;

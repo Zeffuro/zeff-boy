@@ -16,20 +16,6 @@ impl App {
             self.toast_manager.error("Load the replay's game first");
             return;
         };
-        let loader =
-            match crate::emu_backend::loader::select_private_tas_execution_loader_with_rom_path(
-                source_path.clone(),
-                self.rom_info.rom_path.clone(),
-                self.active_system,
-                self.settings.emulation.firmware_search_dirs(),
-            ) {
-                Ok(loader) => loader,
-                Err(error) => {
-                    self.toast_manager
-                        .error(format!("Could not import replay: {error:#}"));
-                    return;
-                }
-            };
 
         self.pause_for_dialog();
         let replay_path = crate::platform::FileDialog::new()
@@ -40,6 +26,30 @@ impl App {
         let Some(replay_path) = replay_path else {
             return;
         };
+        let start_state = match crate::tas_project::TasProject::read_zrpl_start_state(&replay_path)
+        {
+            Ok(start_state) => start_state,
+            Err(error) => {
+                self.toast_manager
+                    .error(format!("Could not import replay: {error:#}"));
+                return;
+            }
+        };
+        let loader =
+            match crate::emu_backend::loader::select_private_tas_execution_loader_for_replay(
+                source_path,
+                self.rom_info.rom_path.clone(),
+                self.active_system,
+                self.settings.emulation.firmware_search_dirs(),
+                &start_state,
+            ) {
+                Ok(loader) => loader,
+                Err(error) => {
+                    self.toast_manager
+                        .error(format!("Could not import replay: {error:#}"));
+                    return;
+                }
+            };
 
         let mut dialog = crate::platform::FileDialog::new()
             .set_title("Save imported TAS project")
@@ -94,11 +104,11 @@ impl App {
         };
         let manual_path = session.manual_path().to_owned();
         let loader =
-            match crate::emu_backend::loader::select_private_tas_execution_loader_with_rom_path(
+            match crate::emu_backend::loader::select_private_tas_execution_loader_for_project(
                 source_path.clone(),
-                self.rom_info.rom_path.clone(),
                 self.active_system,
                 self.settings.emulation.firmware_search_dirs(),
+                session.project(),
             ) {
                 Ok(loader) => loader,
                 Err(error) => {

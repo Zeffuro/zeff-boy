@@ -3,7 +3,9 @@ use crate::app::{App, DebugRequests};
 
 impl App {
     pub(in crate::app) fn refresh_tas_control_readiness(&mut self) {
-        if !self.tas_control.gameplay_commands_allowed() {
+        if self.pending_tas_repair_activation.is_some()
+            || !self.tas_control.gameplay_commands_allowed()
+        {
             return;
         }
         let Some(session) = self.debug_windows.tas_editor.active_session() else {
@@ -47,7 +49,9 @@ impl App {
     }
 
     pub(in crate::app) fn worker_gameplay_commands_allowed(&self) -> bool {
-        self.tas_control.gameplay_commands_allowed()
+        self.pending_tas_repair_activation.is_none()
+            && !self.tas_repair.has_active_transaction()
+            && self.tas_control.gameplay_commands_allowed()
     }
 
     pub(in crate::app) fn fence_tas_control_gameplay(&mut self) {
@@ -184,6 +188,7 @@ impl App {
     }
 
     pub(in crate::app) fn cancel_tas_control(&mut self) {
+        self.pending_tas_repair_activation = None;
         self.request_tas_repair_resolution(repair::TasRepairResolution::Restore);
         self.stop_realtime_tas_recording();
         if let Some(command) = self.tas_control.cancel() {

@@ -50,17 +50,23 @@ pub(crate) fn classify_direct_tas_execution_profile(
         system if system == ActiveSystem::Pce.code() => {
             if validate_direct_pce_tas_project_identity(project).is_ok() {
                 Ok(
-                    if direct_pce_tas_project_profile(project)?.controller_mode
-                        == zeff_pce_core::hardware::PceControllerMode::SixButton
-                    {
-                        TasExecutionProfile::DirectPceSixButtonHuCard
-                    } else {
-                        TasExecutionProfile::DirectPceHuCard
+                    match direct_pce_tas_project_profile(project)?.controller_mode {
+                        zeff_pce_core::hardware::PceControllerMode::SixButton => {
+                            TasExecutionProfile::DirectPceSixButtonHuCard
+                        }
+                        zeff_pce_core::hardware::PceControllerMode::Multitap => {
+                            TasExecutionProfile::DirectPceMultitapHuCard
+                        }
+                        _ => TasExecutionProfile::DirectPceHuCard,
                     },
                 )
             } else {
-                validate_direct_pce_cd_tas_project_identity(project)?;
-                Ok(TasExecutionProfile::DirectPceCd)
+                if validate_direct_pce_multitap_cd_tas_project_identity(project).is_ok() {
+                    Ok(TasExecutionProfile::DirectPceMultitapCd)
+                } else {
+                    validate_direct_pce_cd_tas_project_identity(project)?;
+                    Ok(TasExecutionProfile::DirectPceCd)
+                }
             }
         }
         _ => bail!("the TAS project does not identify a live execution profile"),
@@ -140,11 +146,16 @@ pub(crate) fn validate_tas_project_witness(
         TasExecutionProfile::DirectWsCartridge => {
             validate_direct_ws_tas_project_witness(project, branch_id, witness)
         }
-        TasExecutionProfile::DirectPceHuCard | TasExecutionProfile::DirectPceSixButtonHuCard => {
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceSixButtonHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard => {
             validate_direct_pce_tas_project_witness(project, branch_id, witness)
         }
         TasExecutionProfile::DirectPceCd => {
             validate_direct_pce_cd_tas_project_witness(project, branch_id, witness)
+        }
+        TasExecutionProfile::DirectPceMultitapCd => {
+            validate_direct_pce_multitap_cd_tas_project_witness(project, branch_id, witness)
         }
     }
 }

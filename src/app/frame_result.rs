@@ -268,6 +268,7 @@ impl App {
         }
 
         self.rom_info.is_mbc7 = result.is_mbc7;
+        self.rom_info.is_gba_tilt = result.is_gba_tilt;
         self.rom_info.is_pocket_camera = result.is_pocket_camera;
         if let Some(device) = result.game_boy_serial_device {
             self.game_boy_serial_device = device;

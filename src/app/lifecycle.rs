@@ -307,10 +307,10 @@ impl App {
                     let next_emu_frame_time = self.timing.last_frame_time + effective;
                     let next_ui_frame_time = self.timing.last_render_time + UI_RENDER_INTERVAL;
                     let mut next_frame_time = next_emu_frame_time.max(next_ui_frame_time);
-                    if let Some(recording_wake) = self.realtime_tas_recording_next_wake() {
+                    if let Some(recording_wake) = self.realtime_tas_recording_next_wake(now) {
                         next_frame_time = next_frame_time.min(recording_wake);
                     }
-                    if let Some(playback_wake) = self.linked_tas_playback_next_wake() {
+                    if let Some(playback_wake) = self.linked_tas_playback_next_wake(now) {
                         next_frame_time = next_frame_time.min(playback_wake);
                     }
                     if now >= next_frame_time {

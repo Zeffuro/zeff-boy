@@ -72,17 +72,35 @@ impl PceBackend {
     ) -> anyhow::Result<
         zeff_pce_core::hardware::save_state::tas::CurrentNativePceCdTasStateInspection,
     > {
+        self.inspect_current_native_cd_tas_state_for_profile_and_controller(
+            bytes,
+            arcade_card,
+            memory_base,
+            PceControllerMode::TwoButton,
+        )
+    }
+
+    pub(crate) fn inspect_current_native_cd_tas_state_for_profile_and_controller(
+        &self,
+        bytes: &[u8],
+        arcade_card: bool,
+        memory_base: bool,
+        controller_mode: PceControllerMode,
+    ) -> anyhow::Result<
+        zeff_pce_core::hardware::save_state::tas::CurrentNativePceCdTasStateInspection,
+    > {
         let parsed = parse_state(bytes)?;
         ensure!(
             parsed.mouse_host_buttons.is_empty(),
             "PC Engine TAS state contains host mouse input"
         );
         let inspection =
-            zeff_pce_core::hardware::save_state::tas::inspect_current_native_pce_cd_tas_state_for_profile(
+            zeff_pce_core::hardware::save_state::tas::inspect_current_native_pce_cd_tas_state_for_profile_and_controller(
                 &self.machine,
                 &parsed.core_state,
                 arcade_card,
                 memory_base,
+                controller_mode,
             )?;
         ensure!(
             parsed.frame_count == inspection.projection.frame_count,
@@ -133,15 +151,35 @@ impl PceBackend {
         arcade_card: bool,
         memory_base: bool,
     ) -> anyhow::Result<PceTasStateProjection> {
+        self.validate_and_load_current_native_cd_tas_state_for_profile_and_controller(
+            bytes,
+            arcade_card,
+            memory_base,
+            PceControllerMode::TwoButton,
+        )
+    }
+
+    pub(crate) fn validate_and_load_current_native_cd_tas_state_for_profile_and_controller(
+        &mut self,
+        bytes: &[u8],
+        arcade_card: bool,
+        memory_base: bool,
+        controller_mode: PceControllerMode,
+    ) -> anyhow::Result<PceTasStateProjection> {
         let parsed = parse_state(bytes)?;
-        let inspection =
-            self.inspect_current_native_cd_tas_state_for_profile(bytes, arcade_card, memory_base)?;
+        let inspection = self.inspect_current_native_cd_tas_state_for_profile_and_controller(
+            bytes,
+            arcade_card,
+            memory_base,
+            controller_mode,
+        )?;
         let projection =
-            zeff_pce_core::hardware::save_state::tas::validate_and_load_current_native_pce_cd_tas_state_for_profile(
+            zeff_pce_core::hardware::save_state::tas::validate_and_load_current_native_pce_cd_tas_state_for_profile_and_controller(
                 &mut self.machine,
                 &parsed.core_state,
                 arcade_card,
                 memory_base,
+                controller_mode,
             )
             .context("failed to restore strict PC Engine CD TAS state")?;
         ensure!(
@@ -150,7 +188,7 @@ impl PceBackend {
         );
         self.frame_count = parsed.frame_count;
         self.mouse_host_buttons = parsed.mouse_host_buttons;
-        self.pce_controller_mode = PceControllerMode::TwoButton;
+        self.pce_controller_mode = controller_mode;
         self.pce_memory_base_mode = if memory_base {
             PceMemoryBaseMode::Enabled
         } else {

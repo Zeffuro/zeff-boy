@@ -468,8 +468,8 @@ impl App {
                 "replay contains WonderSwan link events but current ROM is not a WonderSwan game"
             );
         }
-        if player.uses_host_tilt_input() && !self.rom_info.is_mbc7 {
-            anyhow::bail!("replay contains MBC7 tilt input but current ROM is not an MBC7 game");
+        if player.uses_host_tilt_input() && !(self.rom_info.is_mbc7 || self.rom_info.is_gba_tilt) {
+            anyhow::bail!("replay contains tilt input but the current ROM has no tilt sensor");
         }
         if player.uses_host_camera_input() && !self.rom_info.is_pocket_camera {
             anyhow::bail!(

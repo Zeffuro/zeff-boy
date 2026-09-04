@@ -850,4 +850,5 @@ mod gb_tests;
 mod gbc_tests;
 mod nes_tests;
 mod pce_cd_tests;
+mod pce_tests;
 mod ws_tests;

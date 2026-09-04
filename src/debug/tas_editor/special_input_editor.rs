@@ -11,15 +11,16 @@ use crate::tas_project::{
 pub(super) const NES_ZAPPER_DEVICE: &str = "nes-zapper";
 pub(super) const GAME_BOY_MBC7_DEVICE: &str = "game-boy-mbc7";
 pub(super) const GAME_BOY_POCKET_CAMERA_DEVICE: &str = "game-boy-pocket-camera";
+pub(super) const GBA_TILT_DEVICE: &str = "gba-tilt-sensor";
 
 const ASSET_ROW_HEIGHT: f32 = 22.0;
 const ASSET_LIST_HEIGHT: f32 = 132.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TasSpecialInputMutation {
-    SetNesZapper(TasZapperInput),
-    SetMbc7Tilt { x_bits: u32, y_bits: u32 },
-    SetPocketCamera(TasCameraInput),
+    NesZapper(TasZapperInput),
+    RecordedTilt { x_bits: u32, y_bits: u32 },
+    PocketCamera(TasCameraInput),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -50,7 +51,20 @@ impl TasSpecialInputAction {
 pub(super) struct TasSpecialInputCapabilities {
     pub(super) nes_zapper: bool,
     pub(super) mbc7_tilt: bool,
+    pub(super) gba_tilt: bool,
     pub(super) pocket_camera: bool,
+}
+
+impl TasSpecialInputCapabilities {
+    fn recorded_tilt_device(self) -> Option<(&'static str, &'static str)> {
+        if self.mbc7_tilt {
+            Some((GAME_BOY_MBC7_DEVICE, "Game Boy MBC7 recorded tilt"))
+        } else if self.gba_tilt {
+            Some((GBA_TILT_DEVICE, "GBA cartridge recorded tilt"))
+        } else {
+            None
+        }
+    }
 }
 
 pub(super) fn special_input_capabilities(
@@ -66,6 +80,7 @@ pub(super) fn special_input_capabilities(
         nes_zapper: matches!(identity.system.as_str(), "nes") && has_device(NES_ZAPPER_DEVICE),
         mbc7_tilt: matches!(identity.system.as_str(), "gb" | "game_boy")
             && has_device(GAME_BOY_MBC7_DEVICE),
+        gba_tilt: identity.system == "gba" && has_device(GBA_TILT_DEVICE),
         pocket_camera: matches!(identity.system.as_str(), "gb" | "game_boy")
             && has_device(GAME_BOY_POCKET_CAMERA_DEVICE),
     }
@@ -131,7 +146,7 @@ fn apply_mutation(
     capabilities: TasSpecialInputCapabilities,
 ) -> Result<&'static str> {
     match mutation {
-        TasSpecialInputMutation::SetNesZapper(zapper) => {
+        TasSpecialInputMutation::NesZapper(zapper) => {
             ensure_editable_or_clearing(
                 capabilities.nes_zapper,
                 input.zapper != TasZapperInput::default(),
@@ -141,18 +156,20 @@ fn apply_mutation(
             input.zapper = zapper;
             Ok("NES Zapper recorded input")
         }
-        TasSpecialInputMutation::SetMbc7Tilt { x_bits, y_bits } => {
+        TasSpecialInputMutation::RecordedTilt { x_bits, y_bits } => {
             ensure_editable_or_clearing(
-                capabilities.mbc7_tilt,
+                capabilities.recorded_tilt_device().is_some(),
                 (input.tilt_x_bits, input.tilt_y_bits) != (0, 0),
                 (x_bits, y_bits) == (0, 0),
-                "Game Boy MBC7 tilt",
+                "recorded tilt",
             )?;
             input.tilt_x_bits = x_bits;
             input.tilt_y_bits = y_bits;
-            Ok("Game Boy MBC7 recorded tilt")
+            Ok(capabilities
+                .recorded_tilt_device()
+                .map_or("recorded tilt", |(_, label)| label))
         }
-        TasSpecialInputMutation::SetPocketCamera(camera) => {
+        TasSpecialInputMutation::PocketCamera(camera) => {
             ensure_editable_or_clearing(
                 capabilities.pocket_camera,
                 input.camera != TasCameraInput::None,
@@ -191,8 +208,10 @@ pub(super) fn ensure_nondefault_input_authorable(
     if input.zapper != TasZapperInput::default() && !capabilities.nes_zapper {
         bail!("project identity does not declare the NES Zapper device");
     }
-    if (input.tilt_x_bits, input.tilt_y_bits) != (0, 0) && !capabilities.mbc7_tilt {
-        bail!("project identity does not declare the Game Boy MBC7 tilt device");
+    if (input.tilt_x_bits, input.tilt_y_bits) != (0, 0)
+        && capabilities.recorded_tilt_device().is_none()
+    {
+        bail!("project identity does not declare a supported recorded tilt device");
     }
     if let TasCameraInput::Blob(digest) = input.camera {
         if !capabilities.pocket_camera {
@@ -252,8 +271,30 @@ pub(super) fn draw_special_input_editor(
         if capabilities.nes_zapper || input.zapper != TasZapperInput::default() {
             draw_zapper(ui, context, input.zapper, capabilities.nes_zapper, actions);
         }
-        if capabilities.mbc7_tilt || (input.tilt_x_bits, input.tilt_y_bits) != (0, 0) {
-            draw_tilt(ui, context, input, capabilities.mbc7_tilt, actions);
+        if let Some((device, label)) = capabilities.recorded_tilt_device() {
+            draw_tilt(
+                ui,
+                context,
+                input,
+                TiltPresentation {
+                    device,
+                    label,
+                    editable: true,
+                },
+                actions,
+            );
+        } else if (input.tilt_x_bits, input.tilt_y_bits) != (0, 0) {
+            draw_tilt(
+                ui,
+                context,
+                input,
+                TiltPresentation {
+                    device: "declared tilt",
+                    label: "Recorded tilt",
+                    editable: false,
+                },
+                actions,
+            );
         }
         if capabilities.pocket_camera || input.camera != TasCameraInput::None {
             draw_camera(ui, session, context, input.camera, capabilities.pocket_camera, actions);
@@ -279,7 +320,7 @@ fn draw_zapper(
             ui,
             context,
             "Clear unsupported Zapper input",
-            TasSpecialInputMutation::SetNesZapper(TasZapperInput::default()),
+            TasSpecialInputMutation::NesZapper(TasZapperInput::default()),
             actions,
         );
         return;
@@ -306,33 +347,41 @@ fn draw_zapper(
         None
     };
     if edited != current {
-        push_action(
-            actions,
-            context,
-            TasSpecialInputMutation::SetNesZapper(edited),
-        );
+        push_action(actions, context, TasSpecialInputMutation::NesZapper(edited));
     }
+}
+
+#[derive(Clone, Copy)]
+struct TiltPresentation<'a> {
+    device: &'a str,
+    label: &'a str,
+    editable: bool,
 }
 
 fn draw_tilt(
     ui: &mut egui::Ui,
     context: DrawContext<'_>,
     input: TasInputFrame,
-    editable: bool,
+    presentation: TiltPresentation<'_>,
     actions: &mut Vec<TasEditorAction>,
 ) {
+    let TiltPresentation {
+        device,
+        label,
+        editable,
+    } = presentation;
     ui.separator();
-    ui.label("Game Boy MBC7 recorded tilt — exact IEEE-754 payload bits");
+    ui.label(format!("{label} — exact IEEE-754 payload bits"));
     if !editable {
         ui.monospace(format!(
-            "Stored without a declared {GAME_BOY_MBC7_DEVICE:?} device: X=0x{:08X}, Y=0x{:08X}",
+            "Stored without a declared {device:?} device: X=0x{:08X}, Y=0x{:08X}",
             input.tilt_x_bits, input.tilt_y_bits
         ));
         clear_button(
             ui,
             context,
-            "Clear unsupported MBC7 tilt",
-            TasSpecialInputMutation::SetMbc7Tilt {
+            "Clear unsupported recorded tilt",
+            TasSpecialInputMutation::RecordedTilt {
                 x_bits: 0,
                 y_bits: 0,
             },
@@ -354,7 +403,7 @@ fn draw_tilt(
         push_action(
             actions,
             context,
-            TasSpecialInputMutation::SetMbc7Tilt { x_bits, y_bits },
+            TasSpecialInputMutation::RecordedTilt { x_bits, y_bits },
         );
     }
 }
@@ -381,7 +430,7 @@ fn draw_camera(
             ui,
             context,
             "Clear unsupported Pocket Camera frame",
-            TasSpecialInputMutation::SetPocketCamera(TasCameraInput::None),
+            TasSpecialInputMutation::PocketCamera(TasCameraInput::None),
             actions,
         );
         return;
@@ -399,7 +448,7 @@ fn draw_camera(
         push_action(
             actions,
             context,
-            TasSpecialInputMutation::SetPocketCamera(TasCameraInput::None),
+            TasSpecialInputMutation::PocketCamera(TasCameraInput::None),
         );
     }
     let assets = session.project().assets();
@@ -426,7 +475,7 @@ fn draw_camera(
                     push_action(
                         actions,
                         context,
-                        TasSpecialInputMutation::SetPocketCamera(TasCameraInput::Blob(digest)),
+                        TasSpecialInputMutation::PocketCamera(TasCameraInput::Blob(digest)),
                     );
                 }
             }

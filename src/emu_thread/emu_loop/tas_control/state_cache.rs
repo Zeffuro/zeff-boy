@@ -53,7 +53,7 @@ impl WorkerTasStateCache {
                 && entry.key.proof == proof
         })?;
         let entry = self.entries.remove(index)?;
-        if TasDigest::from_bytes(&entry.state.bytes) != entry.state.sha256 {
+        if super::tas_state_digest(profile, &entry.state.bytes) != entry.state.sha256 {
             self.total_bytes = self.total_bytes.saturating_sub(entry.state.bytes.len());
             return None;
         }
@@ -174,7 +174,7 @@ impl TasControl {
         else {
             return;
         };
-        if candidate.state_sha256 != TasDigest::from_bytes(&state_bytes) {
+        if candidate.state_sha256 != super::tas_state_digest(*profile, &state_bytes) {
             return;
         }
         let profile = *profile;
@@ -257,6 +257,20 @@ mod tests {
         }
     }
 
+    fn rtc_state(timestamp: u64) -> Vec<u8> {
+        let mut bytes = b"native-state-prefix".to_vec();
+        let first_block_offset = bytes.len() as u32;
+        bytes.extend_from_slice(b"RTC ");
+        bytes.extend_from_slice(&0x30u32.to_le_bytes());
+        bytes.extend_from_slice(&[0x31; 0x28]);
+        bytes.extend_from_slice(&timestamp.to_le_bytes());
+        bytes.extend_from_slice(b"END ");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&first_block_offset.to_le_bytes());
+        bytes.extend_from_slice(b"BESS");
+        bytes
+    }
+
     #[test]
     fn exact_proof_and_schema_are_required_and_recent_entries_survive_eviction() {
         let mut cache = WorkerTasStateCache::new();
@@ -298,5 +312,38 @@ mod tests {
                 )
                 .is_none()
         );
+    }
+
+    #[test]
+    fn gb_cache_digest_ignores_only_the_bess_rtc_capture_time() {
+        let profile = TasExecutionProfile::DirectGbCartridgeDmg;
+        let original = rtc_state(100);
+        let sha256 = super::super::tas_state_digest(profile, &original);
+        let mut cache = WorkerTasStateCache::new();
+        cache.insert(
+            profile,
+            "gb-v14",
+            proof(1),
+            CachedTasState {
+                bytes: rtc_state(101),
+                sha256,
+                frame_count: 1,
+            },
+        );
+        assert!(cache.get(profile, "gb-v14", proof(1)).is_some());
+
+        let mut changed_rtc = rtc_state(102);
+        changed_rtc[b"native-state-prefix".len() + 8] ^= 1;
+        cache.insert(
+            profile,
+            "gb-v14",
+            proof(2),
+            CachedTasState {
+                bytes: changed_rtc,
+                sha256,
+                frame_count: 1,
+            },
+        );
+        assert!(cache.get(profile, "gb-v14", proof(2)).is_none());
     }
 }

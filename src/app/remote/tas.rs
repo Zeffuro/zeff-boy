@@ -153,9 +153,13 @@ impl App {
         if self.emu_thread.is_none() || self.rom_info.source_path.is_none() {
             anyhow::bail!("no source-loaded game is available to reload");
         }
+        self.drain_emu_responses();
         self.repair_loaded_game_and_connect_tas()?;
+        self.pump_pending_tas_repair_activation();
+        let repair_activated = self.tas_repair.has_active_transaction();
         Ok(json!({
-            "repair_activated": true,
+            "repair_activated": repair_activated,
+            "repair_queued": !repair_activated,
             "tas": self.live_tas_status_json(),
         }))
     }
@@ -443,7 +447,11 @@ fn tas_execution_profile_name(profile: crate::emu_thread::TasExecutionProfile) -
         crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard => {
             "direct_pce_six_button_hucard"
         }
+        crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard => {
+            "direct_pce_multitap_hucard"
+        }
         crate::emu_thread::TasExecutionProfile::DirectPceCd => "direct_pce_cd",
+        crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => "direct_pce_multitap_cd",
     }
 }
 

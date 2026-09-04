@@ -121,6 +121,35 @@ impl Bus {
         self.bios.is_some()
     }
 
+    pub(crate) fn reset_hardware(&mut self) {
+        let ppu_debug = self.ppu.debug_flags();
+        self.ppu = Ppu::new();
+        self.ppu
+            .set_debug_flags(ppu_debug.bg, ppu_debug.window, ppu_debug.sprites);
+        self.ppu.set_debug_bg_layers(ppu_debug.bg_layers);
+        self.apu.reset_hardware();
+        self.keypad.reset_hardware();
+        self.timers = Timers::default();
+        self.dma = DmaController::default();
+        self.ewram.fill(0);
+        self.iwram.fill(0);
+        self.io.fill(0);
+        self.palette_ram.fill(0);
+        self.vram.fill(0);
+        self.oam.fill(0);
+        self.pending_dma_cycles = 0;
+        self.irq_delay_cycles = None;
+        self.halt_requested = false;
+        self.debug_trace_enabled = false;
+        self.debug_trace_reads = false;
+        self.debug_trace_writes = false;
+        self.debug_trace_events.borrow_mut().clear();
+        self.cartridge.reset_hardware_execution_state();
+        if !self.has_external_bios() {
+            self.initialize_post_boot_io_defaults();
+        }
+    }
+
     fn initialize_post_boot_io_defaults(&mut self) {
         self.write_io16_raw(BG2PA, 0x0100);
         self.write_io16_raw(BG2PD, 0x0100);

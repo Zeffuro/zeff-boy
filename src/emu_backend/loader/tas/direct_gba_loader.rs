@@ -12,9 +12,10 @@ use super::{
 };
 use crate::emu_backend::gba::{
     DIRECT_GBA_SAMPLE_RATE, MAX_DIRECT_GBA_ROM_BYTES, direct_gba_tas_identity,
-    validate_direct_gba_tas_branch_scope, validate_direct_gba_tas_private_runtime,
-    validate_direct_gba_tas_state, zip_gba_battery_tas_sync_config_sha256, zip_gba_tas_identity,
-    zip_gba_tas_sync_config_sha256,
+    is_gba_tilt_tas_identity, validate_direct_gba_tas_branch_scope,
+    validate_direct_gba_tas_private_runtime, validate_direct_gba_tas_state,
+    zip_gba_battery_tas_sync_config_sha256, zip_gba_tas_identity, zip_gba_tas_sync_config_sha256,
+    zip_gba_tilt_tas_sync_config_sha256,
 };
 
 const MAX_GBA_ZIP_BYTES: u64 = 128 * 1024 * 1024;
@@ -28,6 +29,7 @@ pub(crate) struct DirectGbaTasExecutionLoader {
 pub(crate) struct GbaTasMediaIdentity {
     source_media_sha256: TasDigest,
     sync_config_sha256: TasDigest,
+    zip_member_name: Option<String>,
 }
 
 impl DirectGbaTasExecutionLoader {
@@ -63,12 +65,16 @@ impl DirectGbaTasExecutionLoader {
                 zip_gba_battery_tas_sync_config_sha256
             }
         };
+        let tilt = is_gba_tilt_tas_identity(project.identity());
         let rtc = project.identity().rtc_state != crate::tas_project::TasExternalIdentity::Absent;
         let matches = inspection
             .entries
             .into_iter()
             .filter(|entry| {
-                if rtc {
+                if tilt {
+                    zip_gba_tilt_tas_sync_config_sha256(&entry.member_name)
+                        == project.identity().sync_config_sha256
+                } else if rtc {
                     crate::emu_backend::gba::supported_gba_rtc_backup_kinds()
                         .into_iter()
                         .filter(|kind| {
@@ -201,6 +207,7 @@ impl DirectGbaTasExecutionLoader {
             let media = GbaTasMediaIdentity {
                 source_media_sha256: TasDigest::from_bytes(&source_bytes),
                 sync_config_sha256: crate::emu_backend::gba::direct_gba_tas_sync_config_sha256(),
+                zip_member_name: None,
             };
             let backend = crate::emu_backend::loader::load_backend_from_bounded_direct_source(
                 ActiveSystem::GameBoyAdvance,
@@ -222,6 +229,7 @@ impl DirectGbaTasExecutionLoader {
             let media = GbaTasMediaIdentity {
                 source_media_sha256: TasDigest(selected.archive_sha256),
                 sync_config_sha256: zip_gba_tas_sync_config_sha256(&selected.member_name),
+                zip_member_name: Some(selected.member_name),
             };
             let backend = super::load_backend_from_rom_source(
                 ActiveSystem::GameBoyAdvance,
@@ -236,22 +244,10 @@ impl DirectGbaTasExecutionLoader {
             anyhow::bail!("GBA TAS execution requires a direct .gba file or selected ZIP member");
         };
         validate_direct_gba_tas_private_runtime(&backend, false)?;
-        let zip_member = if has_extension(&self.source_path, "zip") {
-            Some(
-                crate::rom_archive::extract_bounded_zip_member(
-                    &self.source_path,
-                    self.rom_path.as_deref(),
-                    "gba",
-                    MAX_GBA_ZIP_BYTES,
-                    MAX_DIRECT_GBA_ROM_BYTES,
-                )?
-                .member_name,
-            )
-        } else {
-            None
-        };
-        media.sync_config_sha256 =
-            crate::emu_backend::gba::gba_tas_sync_config(&backend, zip_member.as_deref())?;
+        media.sync_config_sha256 = crate::emu_backend::gba::gba_tas_sync_config(
+            &backend,
+            media.zip_member_name.as_deref(),
+        )?;
         let EmuBackend::Gba(gba) = &mut backend else {
             unreachable!("direct GBA loader must produce a GBA backend");
         };

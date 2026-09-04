@@ -74,8 +74,9 @@ impl TasEditorControlSnapshot {
             profile,
             edit_generation: project.edit_generation(),
             project_content_sha256: session.project_content_sha256(),
-            sync_identity_sha256: project.sync_identity_sha256()?,
-            branch_prefix_sha256: project.branch_prefix_sha256(&branch_id, execution_prefix_len)?,
+            sync_identity_sha256: project.sync_identity_sha256_from_validated()?,
+            branch_prefix_sha256: project
+                .branch_prefix_sha256_from_validated(&branch_id, execution_prefix_len)?,
             branch_id,
             branch_frame_count: frame_count,
             cursor,
@@ -271,11 +272,25 @@ fn materialize_profile_input(
     profile: TasExecutionProfile,
 ) -> Result<TasInputFrame> {
     let input = branch.input_at(cursor);
+    let [p3, p4, p5] = if matches!(
+        profile,
+        TasExecutionProfile::DirectPceMultitapHuCard | TasExecutionProfile::DirectPceMultitapCd
+    ) {
+        [input.players[2], input.players[3], input.players[4]]
+    } else {
+        [Default::default(); 3]
+    };
     let input = TasInputFrame {
         p1_buttons: input.players[0].buttons,
         p1_dpad: input.players[0].dpad,
         p2_buttons: input.players[1].buttons,
         p2_dpad: input.players[1].dpad,
+        p3_buttons: p3.buttons,
+        p3_dpad: p3.dpad,
+        p4_buttons: p4.buttons,
+        p4_dpad: p4.dpad,
+        p5_buttons: p5.buttons,
+        p5_dpad: p5.dpad,
         coleco: input.coleco,
         zapper: zeff_emu_common::replay::ReplayZapperFrame {
             enabled: input.zapper.enabled,
@@ -283,6 +298,8 @@ fn materialize_profile_input(
             hit: input.zapper.hit,
             screen_pos: input.zapper.screen_pos.map(|[x, y]| (x, y)),
         },
+        tilt_x_bits: input.tilt_x_bits,
+        tilt_y_bits: input.tilt_y_bits,
         fds_disk_side: (profile == TasExecutionProfile::DirectFdsDisk)
             .then(|| {
                 branch.events().iter().find_map(|event| match event {
@@ -342,6 +359,15 @@ fn materialize_profile_input(
 }
 
 fn validate_profile_input(profile: TasExecutionProfile, input: TasInputFrame) -> Result<()> {
+    if !matches!(
+        profile,
+        TasExecutionProfile::DirectGbCartridgeDmg
+            | TasExecutionProfile::DirectGbCartridgeCgb
+            | TasExecutionProfile::DirectGbaCartridge
+    ) && (input.tilt_x_bits != 0 || input.tilt_y_bits != 0)
+    {
+        anyhow::bail!("the selected TAS input contains tilt sensor input");
+    }
     if profile != TasExecutionProfile::DirectFdsDisk
         && (input.fds_disk_side.is_some()
             || input.fds_write_protected.is_some()
@@ -426,6 +452,24 @@ fn validate_profile_input(profile: TasExecutionProfile, input: TasInputFrame) ->
         {
             anyhow::bail!(
                 "the selected TAS input is outside the direct PC Engine six-button profile"
+            );
+        }
+        TasExecutionProfile::DirectPceMultitapHuCard | TasExecutionProfile::DirectPceMultitapCd
+            if input.p1_buttons & !0x0F != 0
+                || input.p1_dpad & !0x0F != 0
+                || input.p2_buttons & !0x0F != 0
+                || input.p2_dpad & !0x0F != 0
+                || input.p3_buttons & !0x0F != 0
+                || input.p3_dpad & !0x0F != 0
+                || input.p4_buttons & !0x0F != 0
+                || input.p4_dpad & !0x0F != 0
+                || input.p5_buttons & !0x0F != 0
+                || input.p5_dpad & !0x0F != 0
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default() =>
+        {
+            anyhow::bail!(
+                "the selected TAS input is outside the direct PC Engine multitap profile"
             );
         }
         _ => {}

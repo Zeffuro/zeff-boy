@@ -107,10 +107,14 @@ pub(in crate::emu_thread) fn build_tas_witness(
             build_direct_sg1000_witness(backend, cheats_present)
         }
         TasExecutionProfile::DirectWsCartridge => build_direct_ws_witness(backend, cheats_present),
-        TasExecutionProfile::DirectPceHuCard | TasExecutionProfile::DirectPceSixButtonHuCard => {
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceSixButtonHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard => {
             build_direct_pce_witness(backend, cheats_present, profile)
         }
-        TasExecutionProfile::DirectPceCd => build_direct_pce_cd_witness(backend, cheats_present),
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd => {
+            build_direct_pce_cd_witness(backend, cheats_present, profile)
+        }
     }
 }
 
@@ -463,9 +467,14 @@ fn build_direct_gba_witness_with_persistence(
     let (frame_count, state_bytes) =
         capture_current_state(|| backend.frame_count(), || backend.encode_state_bytes())?;
     let gba = backend.gba().ok_or(Rejected::UnsupportedSystem)?;
-    let inspection =
+    let inspection = if gba.emu.sensor_kind()
+        == zeff_gba_core::hardware::cartridge::SensorKind::Tilt
+    {
+        zeff_gba_core::save_state::inspect_current_native_gba_tilt_tas_state(&gba.emu, &state_bytes)
+    } else {
         zeff_gba_core::save_state::inspect_current_native_gba_tas_state(&gba.emu, &state_bytes)
-            .map_err(|_| Rejected::StateWitnessUnavailable)?;
+    }
+    .map_err(|_| Rejected::StateWitnessUnavailable)?;
     let persistence_matches = match persistence {
         TasPersistenceContract::Absent => {
             inspection.save_ram_kind == zeff_emu_common::save_ram::SaveRamKind::None
@@ -512,8 +521,20 @@ fn build_direct_gba_witness_with_persistence(
         effective_media_sha256: TasDigest(effective_media_sha256),
         current_state_sha256: TasDigest::from_bytes(&state_bytes),
         current_state_bytes: state_bytes,
-        determinism_abi: zeff_gba_core::save_state::TAS_DETERMINISM_ABI_ID,
-        state_format_compatibility_id: zeff_gba_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID,
+        determinism_abi: if inspection.sensor_kind
+            == zeff_gba_core::hardware::cartridge::SensorKind::Tilt
+        {
+            zeff_gba_core::save_state::TILT_TAS_DETERMINISM_ABI_ID
+        } else {
+            zeff_gba_core::save_state::TAS_DETERMINISM_ABI_ID
+        },
+        state_format_compatibility_id: if inspection.sensor_kind
+            == zeff_gba_core::hardware::cartridge::SensorKind::Tilt
+        {
+            zeff_gba_core::save_state::TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID
+        } else {
+            zeff_gba_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID
+        },
         sync_config_sha256: TasDigest(provenance.load.tas_sync_config_sha256),
     })
 }
@@ -679,6 +700,12 @@ fn build_direct_pce_witness(
                 cheats_present,
             )
         }
+        TasExecutionProfile::DirectPceMultitapHuCard => {
+            crate::emu_backend::loader::validate_direct_pce_multitap_tas_runtime(
+                backend,
+                cheats_present,
+            )
+        }
         _ => return Err(Rejected::UnsupportedSystem),
     }
     .map_err(|_| Rejected::StateWitnessUnavailable)?;
@@ -704,7 +731,7 @@ fn build_direct_pce_witness(
     Ok(TasControlLeaseWitness {
         profile,
         frame_count,
-        source_media_sha256: TasDigest(provenance.load.raw_source_media_sha256),
+        source_media_sha256: TasDigest(provenance.load.tas_source_media_sha256),
         effective_media_sha256: TasDigest(effective_media_sha256),
         current_state_sha256: TasDigest::from_bytes(&state_bytes),
         current_state_bytes: state_bytes,
@@ -718,18 +745,30 @@ fn build_direct_pce_witness(
 fn build_direct_pce_cd_witness(
     backend: &EmuBackend,
     cheats_present: bool,
+    profile: TasExecutionProfile,
 ) -> Result<TasControlLeaseWitness, Rejected> {
-    let inspection =
+    let inspection = if profile == TasExecutionProfile::DirectPceMultitapCd {
+        crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_runtime(
+            backend,
+            cheats_present,
+        )
+    } else {
         crate::emu_backend::loader::validate_direct_pce_cd_tas_runtime(backend, cheats_present)
-            .map_err(|_| Rejected::StateWitnessUnavailable)?;
+    }
+    .map_err(|_| Rejected::StateWitnessUnavailable)?;
     let (frame_count, state_bytes) =
         capture_current_state(|| backend.frame_count(), || backend.encode_state_bytes())?;
     let pce = backend.pce().ok_or(Rejected::UnsupportedSystem)?;
     let state_inspection = pce
-        .inspect_current_native_cd_tas_state_for_profile(
+        .inspect_current_native_cd_tas_state_for_profile_and_controller(
             &state_bytes,
             inspection.arcade_card_enabled,
             inspection.memory_base_enabled,
+            if profile == TasExecutionProfile::DirectPceMultitapCd {
+                zeff_pce_core::hardware::PceControllerMode::Multitap
+            } else {
+                zeff_pce_core::hardware::PceControllerMode::TwoButton
+            },
         )
         .map_err(|_| Rejected::StateWitnessUnavailable)?;
     if inspection.system_card_sha256 != state_inspection.system_card_sha256
@@ -743,7 +782,7 @@ fn build_direct_pce_cd_witness(
         .tas_load_provenance()
         .ok_or(Rejected::LoadProvenanceUnavailable)?;
     Ok(TasControlLeaseWitness {
-        profile: TasExecutionProfile::DirectPceCd,
+        profile,
         frame_count,
         source_media_sha256: TasDigest(provenance.load.tas_source_media_sha256),
         effective_media_sha256: TasDigest(inspection.disc_sha256),

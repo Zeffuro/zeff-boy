@@ -1124,7 +1124,8 @@ mod tas_state;
 #[path = "pce_tests.rs"]
 mod tests;
 pub(crate) use tas_provenance::{
-    PceTasCdLoadMedia, PceTasLoadProvenanceSeed, PceTasLoadSetup, PceTasPersistentLoadOutcome,
+    PceTasArchivePpfPatchIdentity, PceTasCdLoadMedia, PceTasLoadProvenance,
+    PceTasLoadProvenanceSeed, PceTasLoadSetup, PceTasPersistentLoadOutcome,
     pce_persistent_load_outcome,
 };
 pub(crate) use tas_state::{

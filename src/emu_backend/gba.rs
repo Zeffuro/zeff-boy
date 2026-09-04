@@ -28,13 +28,14 @@ pub(crate) use tas_provenance::{
 pub(crate) use tas_runtime::{
     DIRECT_GBA_SAMPLE_RATE, MAX_DIRECT_GBA_ROM_BYTES, direct_gba_tas_identity,
     direct_gba_tas_sync_config_sha256, gba_rtc_persistence_witness, gba_tas_sync_config,
-    restore_direct_gba_tas_execution_state, supported_gba_rtc_backup_kinds,
-    validate_direct_gba_tas_branch_scope, validate_direct_gba_tas_execution_runtime,
-    validate_direct_gba_tas_private_execution_runtime, validate_direct_gba_tas_private_runtime,
-    validate_direct_gba_tas_project_identity, validate_direct_gba_tas_project_witness,
-    validate_direct_gba_tas_runtime, validate_direct_gba_tas_state,
-    zip_gba_battery_tas_sync_config_sha256, zip_gba_rtc_tas_sync_config_sha256,
-    zip_gba_tas_identity, zip_gba_tas_sync_config_sha256,
+    is_gba_tilt_tas_identity, restore_direct_gba_tas_execution_state,
+    supported_gba_rtc_backup_kinds, validate_direct_gba_tas_branch_scope,
+    validate_direct_gba_tas_execution_runtime, validate_direct_gba_tas_private_execution_runtime,
+    validate_direct_gba_tas_private_runtime, validate_direct_gba_tas_project_identity,
+    validate_direct_gba_tas_project_witness, validate_direct_gba_tas_runtime,
+    validate_direct_gba_tas_state, zip_gba_battery_tas_sync_config_sha256,
+    zip_gba_rtc_tas_sync_config_sha256, zip_gba_tas_identity, zip_gba_tas_sync_config_sha256,
+    zip_gba_tilt_tas_sync_config_sha256,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -438,8 +439,12 @@ impl EmulatorCore for GbaBackend {
         self.emu.encode_state()
     }
 
-    fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        self.emu.load_state_from_bytes(bytes)
+    fn load_state_from_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> anyhow::Result<zeff_emu_common::StateRestoreOutcome> {
+        self.emu.load_state_from_bytes(bytes)?;
+        Ok(zeff_emu_common::StateRestoreOutcome::Exact)
     }
 
     fn rom_path(&self) -> &Path {

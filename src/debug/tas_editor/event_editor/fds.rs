@@ -112,7 +112,9 @@ pub(in crate::debug::tas_editor) fn can_author_fds_events(identity: &TasProjectI
         })
 }
 
-pub(super) fn project_media_id(identity: &TasProjectIdentity) -> MediaObjectId {
+pub(in crate::debug::tas_editor) fn project_media_id(
+    identity: &TasProjectIdentity,
+) -> MediaObjectId {
     MediaObjectId::new(format!(
         "sha256:{}",
         identity.effective_media_sha256.to_hex()
@@ -174,7 +176,7 @@ pub(in crate::debug::tas_editor) fn is_editable_event(
     }
 }
 
-pub(super) fn validate_timeline(
+pub(in crate::debug::tas_editor) fn validate_timeline(
     events: &[ReplayEvent],
     frame_count: u64,
     project_media_id: &MediaObjectId,

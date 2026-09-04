@@ -1,12 +1,15 @@
+mod events;
 mod presentation;
 
 use anyhow::{Result, bail};
+use zeff_emu_common::replay::ReplayEvent;
 
 use super::{
     TasEditorWindowState, special_input_editor::ensure_nondefault_input_authorable,
     timeline_selection::TasInputSelection,
 };
 use crate::tas_project::{TasDigest, TasEditorSession, TasInputPattern};
+use events::{replacement_events, validate_copied_events};
 
 pub(super) fn draw_input_clipboard(
     ui: &mut egui::Ui,
@@ -40,6 +43,8 @@ pub(super) struct TasInputClipboardCopyAction {
     source_movie_sha256: TasDigest,
     start: u64,
     pattern: TasInputPattern,
+    events: Vec<ReplayEvent>,
+    include_events: bool,
     expected_selection: Option<TasInputSelection>,
 }
 
@@ -67,6 +72,8 @@ struct TasInputClipboardEntry {
     source_movie_sha256: TasDigest,
     start: u64,
     pattern: TasInputPattern,
+    events: Vec<ReplayEvent>,
+    include_events: bool,
 }
 
 pub(super) struct TasInputClipboardState {
@@ -88,6 +95,8 @@ impl TasInputClipboardAction {
             source_movie_sha256,
             start,
             pattern,
+            events: Vec::new(),
+            include_events: false,
             expected_selection: None,
         })
     }
@@ -159,11 +168,35 @@ impl TasInputClipboardAction {
             source_movie_sha256,
             start,
             pattern,
+            events: Vec::new(),
+            include_events: true,
             expected_selection: Some(TasInputSelection {
                 branch_id: expected_branch_id,
                 start: expected_selection.0,
                 end: expected_selection.1,
             }),
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn copy_selection_with_events(
+        expected_project_sha256: TasDigest,
+        source_movie_sha256: TasDigest,
+        pattern: TasInputPattern,
+        events: Vec<ReplayEvent>,
+        expected_selection: TasInputSelection,
+    ) -> Self {
+        let source_branch_id = expected_selection.branch_id.clone();
+        let start = expected_selection.start;
+        Self::CopyPattern(TasInputClipboardCopyAction {
+            expected_project_sha256,
+            source_branch_id,
+            source_movie_sha256,
+            start,
+            pattern,
+            events,
+            include_events: true,
+            expected_selection: Some(expected_selection),
         })
     }
 
@@ -238,12 +271,40 @@ impl TasInputClipboardState {
         if source.input_pattern(action.start, action.pattern.length())? != action.pattern {
             bail!("input-pattern source changed after this copy was prepared; retry it");
         }
+        let events = if action.include_events {
+            let end = action
+                .start
+                .checked_add(action.pattern.length())
+                .ok_or_else(|| anyhow::anyhow!("copied event range overflows"))?;
+            let source_events = source
+                .events()
+                .iter()
+                .filter(|event| event.frame() >= action.start && event.frame() < end)
+                .cloned()
+                .collect::<Vec<_>>();
+            if source_events != action.events {
+                bail!("source TAS events changed after this copy was prepared; retry it");
+            }
+            validate_copied_events(session, &source_events)?;
+            source_events
+                .into_iter()
+                .map(|mut event| {
+                    let frame = event.frame() - action.start;
+                    set_event_frame(&mut event, frame);
+                    event
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.bump_generation()?;
         self.entry = Some(TasInputClipboardEntry {
             source_branch_id: action.source_branch_id,
             source_movie_sha256: action.source_movie_sha256,
             start: action.start,
             pattern: action.pattern,
+            events,
+            include_events: action.include_events,
         });
         Ok(())
     }
@@ -302,32 +363,35 @@ impl TasEditorWindowState {
                 ))
             }
             TasInputClipboardAction::PasteAtCursor(action) => {
-                let pattern = self
-                    .input_clipboard
-                    .entry(action.clipboard_generation)?
-                    .pattern
-                    .clone();
+                let entry = self.input_clipboard.entry(action.clipboard_generation)?;
+                let pattern = entry.pattern.clone();
+                let events = entry.events.clone();
+                let include_events = entry.include_events;
                 let witness = TasInputPatternPasteWitness {
                     expected_project_sha256: action.expected_project_sha256,
                     target_branch_id: action.target_branch_id,
                     target_movie_sha256: action.target_movie_sha256,
                     expected_cursor: Some(action.cursor),
                 };
-                self.apply_pattern_at_cursor(witness, action.cursor, pattern)
+                self.apply_pattern_at_cursor(
+                    witness,
+                    action.cursor,
+                    pattern,
+                    events,
+                    include_events,
+                )
             }
             TasInputClipboardAction::InsertAtCursor(action) => {
-                let pattern = self
-                    .input_clipboard
-                    .entry(action.clipboard_generation)?
-                    .pattern
-                    .clone();
+                let entry = self.input_clipboard.entry(action.clipboard_generation)?;
+                let pattern = entry.pattern.clone();
+                let events = entry.events.clone();
                 let witness = TasInputPatternPasteWitness {
                     expected_project_sha256: action.expected_project_sha256,
                     target_branch_id: action.target_branch_id,
                     target_movie_sha256: action.target_movie_sha256,
                     expected_cursor: Some(action.cursor),
                 };
-                self.insert_pattern_at_cursor(witness, action.cursor, pattern)
+                self.insert_pattern_at_cursor(witness, action.cursor, pattern, events)
             }
             TasInputClipboardAction::TileAcrossSelection(action) => {
                 let session = self
@@ -341,18 +405,24 @@ impl TasEditorWindowState {
                     bail!("input selection branch changed after this tile was requested; retry it");
                 }
                 let length = action.selection.length();
-                let pattern = self
-                    .input_clipboard
-                    .entry(action.clipboard_generation)?
-                    .pattern
-                    .tile_to_length(length)?;
+                let entry = self.input_clipboard.entry(action.clipboard_generation)?;
+                if !entry.events.is_empty() {
+                    bail!("copied drive events cannot be tiled safely");
+                }
+                let pattern = entry.pattern.tile_to_length(length)?;
                 let witness = TasInputPatternPasteWitness {
                     expected_project_sha256: action.expected_project_sha256,
                     target_branch_id: action.target_branch_id,
                     target_movie_sha256: action.target_movie_sha256,
                     expected_cursor: None,
                 };
-                self.apply_pattern_at_cursor(witness, action.selection.start, pattern)
+                self.apply_pattern_at_cursor(
+                    witness,
+                    action.selection.start,
+                    pattern,
+                    Vec::new(),
+                    false,
+                )
             }
         }
     }
@@ -362,6 +432,8 @@ impl TasEditorWindowState {
         witness: TasInputPatternPasteWitness,
         start: u64,
         pattern: TasInputPattern,
+        relative_events: Vec<ReplayEvent>,
+        include_events: bool,
     ) -> Result<String> {
         let end = start
             .checked_add(pattern.length())
@@ -401,9 +473,21 @@ impl TasEditorWindowState {
                     )?;
                 }
             }
+            let replacement_events = replacement_events(
+                session,
+                &witness.target_branch_id,
+                start,
+                end,
+                &relative_events,
+                include_events,
+            )?;
             let branch_id = witness.target_branch_id;
             session.edit_transaction(move |edit| {
-                edit.replace_input_pattern(&branch_id, start, &pattern)
+                edit.replace_input_pattern(&branch_id, start, &pattern)?;
+                if let Some(events) = replacement_events {
+                    edit.replace_branch_events(&branch_id, events)?;
+                }
+                Ok(())
             })?
         };
         if !outcome.changed {
@@ -434,6 +518,7 @@ impl TasEditorWindowState {
         witness: TasInputPatternPasteWitness,
         cursor: u64,
         pattern: TasInputPattern,
+        relative_events: Vec<ReplayEvent>,
     ) -> Result<String> {
         let end = cursor
             .checked_add(pattern.length())
@@ -451,7 +536,8 @@ impl TasEditorWindowState {
                     span.input,
                 )?;
             }
-            session.insert_input_pattern(cursor, &pattern)?;
+            validate_copied_events(session, &relative_events)?;
+            session.insert_input_pattern_with_events(cursor, &pattern, &relative_events)?;
             session.set_cursor(cursor)?;
         }
         let session = self
@@ -466,6 +552,17 @@ impl TasEditorWindowState {
             ));
         }
         Ok("Inserted copied input frames".to_owned())
+    }
+}
+
+fn set_event_frame(event: &mut ReplayEvent, new_frame: u64) {
+    match event {
+        ReplayEvent::FdsDiskSide { frame, .. }
+        | ReplayEvent::Media { frame, .. }
+        | ReplayEvent::GameBoyLink { frame, .. }
+        | ReplayEvent::GameBoyLinkState { frame, .. }
+        | ReplayEvent::GameBoyLinkStateAtTick { frame, .. }
+        | ReplayEvent::WonderSwanLink { frame, .. } => *frame = new_frame,
     }
 }
 

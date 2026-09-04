@@ -14,6 +14,7 @@ use zeff_emu_common::time::FrameLifecycle;
 
 const PCE_TWO_BUTTON_CONFIGURATION: &[u8] =
     b"zeff-tas-device-config-v1\0pce-two-button-controller\0";
+const PCE_MULTITAP_PORTS: [&str; 5] = ["p1", "p2", "p3", "p4", "p5"];
 const PCE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-hucard\0wiring=pc-engine\0topology=base\0board=plain\0controller=two-button\0memory-base=disconnected\0arcade-card=disabled\0cd=absent\0supergrafx=absent\0mods=disabled\0persistence=absent\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0firmware=absent\0";
 const PCE_SF2_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-hucard\0wiring=pc-engine\0topology=base\0board=sf2-ce\0controller=two-button\0memory-base=disconnected\0arcade-card=disabled\0cd=absent\0supergrafx=absent\0mods=disabled\0persistence=absent\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0firmware=absent\0";
 const PCE_POPULOUS_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-hucard\0wiring=pc-engine\0topology=base\0board=populous\0controller=two-button\0memory-base=disconnected\0arcade-card=disabled\0cd=absent\0supergrafx=absent\0mods=disabled\0mapper-ram=32768-native-state-owned\0host-persistence=disabled\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0firmware=absent\0";
@@ -26,6 +27,8 @@ const PCE_SIX_BUTTON_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-
 const PCE_SIX_BUTTON_ZIP_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-zip-member\0wiring=pc-engine\0topology=base\0board=plain\0controller=six-button\0memory-base=disconnected\0arcade-card=disabled\0cd=absent\0supergrafx=absent\0mods=disabled\0persistence=absent\0initial-input=neutral\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0firmware=absent\0member=";
 const PCE_SIX_BUTTON_CONFIGURATION: &[u8] =
     b"zeff-tas-device-config-v1\0pce-six-button-controller\0";
+const PCE_MULTITAP_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-direct-hucard\0wiring=pc-engine\0topology=base\0board=plain\0controller=five-port-multitap\0ports=p1-p5-two-button\0memory-base=disconnected\0arcade-card=disabled\0cd=absent\0supergrafx=absent\0mods=disabled\0persistence=absent\0initial-input=neutral\0multitap-active-port=none\0select=high\0clear=high\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0firmware=absent\0";
+const PCE_MULTITAP_ZIP_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0pce-zip-member\0wiring=pc-engine\0topology=base\0board=plain\0controller=five-port-multitap\0ports=p1-p5-two-button\0memory-base=disconnected\0arcade-card=disabled\0cd=absent\0supergrafx=absent\0mods=disabled\0persistence=absent\0initial-input=neutral\0multitap-active-port=none\0select=high\0clear=high\0sample-rate=48000\0overscan=full\0palette=raw-rgb\0firmware=absent\0member=";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PceTasHardwareProfile {
@@ -49,6 +52,10 @@ pub(crate) fn direct_pce_tas_sync_config_sha256_for_profile(
     if profile.controller_mode == PceControllerMode::SixButton {
         ensure_six_button_profile(profile);
         return TasDigest::from_bytes(PCE_SIX_BUTTON_SYNC_CONFIGURATION);
+    }
+    if profile.controller_mode == PceControllerMode::Multitap {
+        ensure_multitap_profile(profile);
+        return TasDigest::from_bytes(PCE_MULTITAP_SYNC_CONFIGURATION);
     }
     if profile.topology == PceHardwareTopology::SuperGrafx && profile.board == PceHuCardBoard::Plain
     {
@@ -78,6 +85,14 @@ pub(crate) fn zip_pce_tas_sync_config_sha256_for_profile(
     profile: PceTasHardwareProfile,
     member_name: &str,
 ) -> TasDigest {
+    if profile.controller_mode == PceControllerMode::Multitap {
+        ensure_multitap_profile(profile);
+        let mut bytes =
+            Vec::with_capacity(PCE_MULTITAP_ZIP_SYNC_CONFIGURATION.len() + member_name.len());
+        bytes.extend_from_slice(PCE_MULTITAP_ZIP_SYNC_CONFIGURATION);
+        bytes.extend_from_slice(member_name.as_bytes());
+        return TasDigest::from_bytes(&bytes);
+    }
     if profile.controller_mode == PceControllerMode::SixButton {
         ensure_six_button_profile(profile);
         let mut bytes =
@@ -118,7 +133,27 @@ fn ensure_six_button_profile(profile: PceTasHardwareProfile) {
     );
 }
 
-fn direct_pce_tas_devices(profile: PceTasHardwareProfile) -> Vec<TasDeviceIdentity> {
+fn ensure_multitap_profile(profile: PceTasHardwareProfile) {
+    assert!(
+        profile.board == PceHuCardBoard::Plain
+            && profile.topology == PceHardwareTopology::Base
+            && profile.controller_mode == PceControllerMode::Multitap,
+        "unsupported direct PC Engine Multitap TAS hardware profile"
+    );
+}
+
+pub(crate) fn direct_pce_tas_devices(profile: PceTasHardwareProfile) -> Vec<TasDeviceIdentity> {
+    if profile.controller_mode == PceControllerMode::Multitap {
+        ensure_multitap_profile(profile);
+        return PCE_MULTITAP_PORTS
+            .into_iter()
+            .map(|port| TasDeviceIdentity {
+                port: port.to_owned(),
+                device: "pce-two-button-controller".to_owned(),
+                configuration_sha256: TasDigest::from_bytes(PCE_TWO_BUTTON_CONFIGURATION),
+            })
+            .collect();
+    }
     vec![TasDeviceIdentity {
         port: "p1".to_owned(),
         device: match profile.controller_mode {
@@ -281,6 +316,11 @@ pub(crate) fn validate_direct_pce_tas_project_identity(project: &TasProject) -> 
             topology: PceHardwareTopology::Base,
             controller_mode: PceControllerMode::SixButton,
         },
+        PceTasHardwareProfile {
+            board: PceHuCardBoard::Plain,
+            topology: PceHardwareTopology::Base,
+            controller_mode: PceControllerMode::Multitap,
+        },
     ]
     .into_iter()
     .find(|profile| {
@@ -352,24 +392,31 @@ pub(crate) fn validate_direct_pce_tas_branch_scope(
     );
     for span in branch.input_spans() {
         let input = span.input;
+        let supported_players = if profile.controller_mode == PceControllerMode::Multitap {
+            &input.players[..]
+        } else {
+            &input.players[..1]
+        };
         ensure!(
-            input.players[0].buttons
-                & if profile.controller_mode == PceControllerMode::SixButton {
-                    !0xFF
-                } else {
-                    !0x0F
-                }
-                == 0
-                && input.players[0].dpad & !0x0F == 0
-                && input.players[1..]
+            supported_players.iter().all(|player| {
+                player.buttons
+                    & if profile.controller_mode == PceControllerMode::SixButton {
+                        !0xFF
+                    } else {
+                        !0x0F
+                    }
+                    == 0
+                    && player.dpad & !0x0F == 0
+            }) && (profile.controller_mode == PceControllerMode::Multitap
+                || input.players[1..]
                     .iter()
-                    .all(|player| *player == Default::default())
+                    .all(|player| *player == Default::default()))
                 && input.coleco == [crate::tas_project::TasColecoControllerInput::default(); 2]
                 && input.zapper == Default::default()
                 && input.tilt_x_bits == 0
                 && input.tilt_y_bits == 0
                 && matches!(input.camera, TasCameraInput::None),
-            "direct PC Engine TAS execution supports one configured controller only"
+            "direct PC Engine TAS execution input does not match its controller topology"
         );
     }
     Ok(())
@@ -459,6 +506,41 @@ pub(crate) fn validate_direct_pce_six_button_tas_execution_runtime(
         cheats_present,
         PceTasHardwareProfile {
             controller_mode: PceControllerMode::SixButton,
+            ..pce_tas_profile(backend)?
+        },
+    )
+}
+
+pub(crate) fn validate_direct_pce_multitap_tas_runtime(
+    backend: &EmuBackend,
+    cheats_present: bool,
+) -> Result<zeff_pce_core::hardware::save_state::tas::CurrentNativePceTasStateInspection> {
+    let inspection = validate_direct_pce_multitap_tas_execution_runtime(backend, cheats_present)?;
+    let multitap = inspection
+        .controller_multitap
+        .context("PC Engine Multitap TAS state omitted its controller state")?;
+    ensure!(
+        multitap
+            .buttons
+            .into_iter()
+            .all(|buttons| buttons.is_empty())
+            && multitap.active_port.is_none()
+            && multitap.select_high
+            && multitap.clear_high,
+        "direct PC Engine Multitap TAS acquisition requires neutral controller and mux state"
+    );
+    Ok(inspection)
+}
+
+pub(crate) fn validate_direct_pce_multitap_tas_execution_runtime(
+    backend: &EmuBackend,
+    cheats_present: bool,
+) -> Result<zeff_pce_core::hardware::save_state::tas::CurrentNativePceTasStateInspection> {
+    validate_direct_pce_tas_execution_runtime_for_profile(
+        backend,
+        cheats_present,
+        PceTasHardwareProfile {
+            controller_mode: PceControllerMode::Multitap,
             ..pce_tas_profile(backend)?
         },
     )
@@ -574,6 +656,8 @@ pub(crate) fn validate_direct_pce_tas_execution_runtime_for_profile(
     );
     if expected_profile.controller_mode == PceControllerMode::SixButton {
         ensure_six_button_profile(expected_profile);
+    } else if expected_profile.controller_mode == PceControllerMode::Multitap {
+        ensure_multitap_profile(expected_profile);
     }
     Ok(inspection)
 }
@@ -611,8 +695,10 @@ fn pce_tas_profile(backend: &EmuBackend) -> Result<PceTasHardwareProfile> {
     );
     ensure!(
         controller_mode == PceControllerMode::TwoButton
-            || (controller_mode == PceControllerMode::SixButton
-                && board == PceHuCardBoard::Plain
+            || (matches!(
+                controller_mode,
+                PceControllerMode::SixButton | PceControllerMode::Multitap
+            ) && board == PceHuCardBoard::Plain
                 && topology == PceHardwareTopology::Base),
         "PC Engine TAS execution requires a supported controller topology"
     );
@@ -682,6 +768,18 @@ fn inspect_backend_state_identity(
 }
 
 fn project_controller_mode(devices: &[TasDeviceIdentity]) -> Result<PceControllerMode> {
+    let multitap = PCE_MULTITAP_PORTS
+        .into_iter()
+        .zip(devices)
+        .all(|(port, device)| {
+            device.port == port
+                && device.device == "pce-two-button-controller"
+                && device.configuration_sha256
+                    == TasDigest::from_bytes(PCE_TWO_BUTTON_CONFIGURATION)
+        });
+    if devices.len() == 5 && multitap {
+        return Ok(PceControllerMode::Multitap);
+    }
     ensure!(
         devices.len() == 1 && devices[0].port == "p1",
         "TAS project has an invalid PC Engine controller topology"

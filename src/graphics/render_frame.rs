@@ -192,13 +192,13 @@ impl Graphics {
             .and_then(|name| name.to_str())
             .unwrap_or("archive");
 
-        egui::Window::new("Select ROM from archive")
+        egui::Window::new("Select content from archive")
             .collapsible(false)
             .resizable(true)
             .default_width(560.0)
             .show(ctx_egui, |ui| {
                 ui.label(format!(
-                    "{} contains multiple supported ROMs. Choose one to load:",
+                    "{} contains multiple supported entries. Choose one to load:",
                     archive_name
                 ));
                 ui.separator();

@@ -49,7 +49,7 @@ pub(crate) fn draw_live_transport_strip(
                     }
                     TasPrimaryTransportAction::Record => {
                         if ui
-                            .add_enabled(enabled, egui::Button::new("● Record"))
+                            .add_enabled(enabled, egui::Button::new("Record"))
                             .on_hover_text("Record gameplay, including neutral input frames")
                             .clicked()
                         {

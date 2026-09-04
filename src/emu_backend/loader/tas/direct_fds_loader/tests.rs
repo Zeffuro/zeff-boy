@@ -5,6 +5,8 @@ use zeff_emu_common::replay::ReplayEvent;
 use super::*;
 use crate::test_support::write_zip;
 
+mod replay;
+
 static FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =
     [0xEA; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE];
 static OTHER_FDS_BIOS: [u8; zeff_nes_core::hardware::cartridge::mappers::FDS_BIOS_SIZE] =

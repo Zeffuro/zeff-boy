@@ -5,6 +5,7 @@ use zeff_emu_common::debug::{BusAccessEvent, TraceWriteKind, TraceWriteWidth};
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 use zeff_z80::{IoWriteCycle, Z80Bus};
 
+use crate::ExpansionHardware;
 use crate::constants::{
     BIOS_END, BIOS_SIZE, BIOS_START, CARTRIDGE_END, CARTRIDGE_START, CONTROLLER_PSG_PORT_END,
     CONTROLLER_PSG_PORT_START, EXPANSION_END, EXPANSION_START, IO_OPEN_BUS_VALUE,
@@ -175,6 +176,10 @@ impl Bus {
         &self.cartridge
     }
 
+    pub const fn expansion_hardware(&self) -> ExpansionHardware {
+        ExpansionHardware::Absent
+    }
+
     pub fn input(&self) -> &ControllerPorts {
         &self.input
     }
@@ -239,6 +244,73 @@ impl Bus {
         self.psg.write_state(w);
         w.write_bool(self.nmi_line);
         w.write_bool(self.nmi_pending);
+    }
+
+    pub(crate) fn write_portable_ram_state(&self, w: &mut StateWriter) {
+        w.write_bytes(&self.work_ram);
+    }
+
+    pub(crate) fn read_portable_ram_state(
+        &mut self,
+        r: &mut StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        let mut work_ram = [0; WORK_RAM_SIZE];
+        r.read_exact(&mut work_ram)?;
+        self.work_ram = work_ram;
+        Ok(())
+    }
+
+    pub(crate) fn write_portable_input_state(&self, w: &mut StateWriter) {
+        self.input.write_state(w);
+    }
+
+    pub(crate) fn read_portable_input_state(
+        &mut self,
+        r: &mut StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        self.input.read_state(r)
+    }
+
+    pub(crate) fn write_portable_vdp_state(&self, w: &mut StateWriter) {
+        self.vdp.write_state(w);
+    }
+
+    pub(crate) fn read_portable_vdp_state(
+        &mut self,
+        r: &mut StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        self.vdp.read_state(r)
+    }
+
+    pub(crate) fn write_portable_psg_state(&self, w: &mut StateWriter) {
+        self.psg.write_state(w);
+    }
+
+    pub(crate) fn read_portable_psg_state(
+        &mut self,
+        r: &mut StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        self.psg.read_state(r)
+    }
+
+    pub(crate) fn write_portable_interrupt_state(&self, w: &mut StateWriter) {
+        w.write_bool(self.nmi_line);
+        w.write_bool(self.nmi_pending);
+    }
+
+    pub(crate) fn read_portable_interrupt_state(
+        &mut self,
+        r: &mut StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        self.nmi_line = r.read_bool()?;
+        self.nmi_pending = r.read_bool()?;
+        if self.nmi_line != self.vdp.nmi_line() {
+            bail!("ColecoVision portable state contains an inconsistent VDP NMI line");
+        }
+        self.pending_psg_write_cycle = None;
+        self.debug_trace_mode = CpuAccessTraceMode::None;
+        self.debug_trace_events.borrow_mut().clear();
+        Ok(())
     }
 
     pub fn read_state(&mut self, r: &mut StateReader<'_>) -> anyhow::Result<()> {
@@ -435,6 +507,7 @@ mod tests {
     #[test]
     fn maps_bios_open_bus_mirrored_ram_and_cartridge() {
         let mut bus = bus();
+        assert_eq!(bus.expansion_hardware(), ExpansionHardware::Absent);
         assert_eq!(bus.cpu_read(0x0123), 0x5A);
         assert_eq!(bus.cpu_read(EXPANSION_START), MEMORY_OPEN_BUS_VALUE);
         assert_eq!(bus.cpu_read(EXPANSION_END), MEMORY_OPEN_BUS_VALUE);

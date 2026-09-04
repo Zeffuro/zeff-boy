@@ -5,7 +5,8 @@ mod decode;
 mod encode;
 
 pub use bess::{
-    canonicalize_replay_hash_bytes, has_bess_footer, import_bess, project_replay_state_bytes,
+    canonicalize_bess_rtc_timestamp, canonicalize_replay_hash_bytes, has_bess_footer, import_bess,
+    project_replay_state_bytes,
 };
 #[cfg(test)]
 use decode::decode_state;

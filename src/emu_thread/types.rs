@@ -231,6 +231,7 @@ pub(crate) struct FrameResult {
     pub(crate) audio_playback_speed: usize,
     pub(crate) ui_data: ui::UiFrameData,
     pub(crate) is_mbc7: bool,
+    pub(crate) is_gba_tilt: bool,
     pub(crate) is_pocket_camera: bool,
     pub(crate) game_boy_serial_device: Option<zeff_gb_core::hardware::GameBoySerialDevice>,
     pub(crate) game_boy_printer_jobs: Vec<zeff_gb_core::hardware::GameBoyPrinterJob>,
@@ -331,6 +332,8 @@ pub(crate) enum EmuCommand {
         dpad_pressed: u8,
     },
     CaptureStateBytes,
+    #[cfg(target_arch = "wasm32")]
+    CaptureExternalStateBytes,
     ExecuteGuestCall(GuestCallRequest),
     UndoGuestCall(Vec<u8>),
     CaptureReplayStart {
@@ -349,6 +352,12 @@ pub(crate) enum EmuCommand {
             Option<zeff_emu_common::replay::ReplayGameBoyLinkCoordinatorState>,
         game_boy_link_start_tick: Option<u64>,
         wonder_swan_link_start_tick: Option<u64>,
+    },
+    #[cfg(target_arch = "wasm32")]
+    LoadExternalStateBytes {
+        state_bytes: Vec<u8>,
+        buttons_pressed: u8,
+        dpad_pressed: u8,
     },
     SetSampleRate(u32),
     SetUncapped(bool),
@@ -449,6 +458,10 @@ impl EmuCommand {
                 EmuCommandAuthority::Gameplay(TasControlCommandKind::StateOrRecovery)
             }
             #[cfg(target_arch = "wasm32")]
+            Self::CaptureExternalStateBytes | Self::LoadExternalStateBytes { .. } => {
+                EmuCommandAuthority::Gameplay(TasControlCommandKind::StateOrRecovery)
+            }
+            #[cfg(target_arch = "wasm32")]
             Self::FlushBatterySram | Self::RestoreStateBackup(_) => {
                 EmuCommandAuthority::Gameplay(TasControlCommandKind::StateOrRecovery)
             }
@@ -497,6 +510,25 @@ impl EmuCommand {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoadStateWarning {
+    BestEffortBess,
+    BestEffortPortable,
+}
+
+impl LoadStateWarning {
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::BestEffortBess => {
+                "Loaded BESS state with best-effort compatibility; some emulator state may not be restored exactly"
+            }
+            Self::BestEffortPortable => {
+                "Loaded portable state with best-effort compatibility; some emulator state may not be restored exactly"
+            }
+        }
+    }
+}
+
 pub(crate) enum EmuResponse {
     SaveStateOk {
         path: PathBuf,
@@ -505,6 +537,7 @@ pub(crate) enum EmuResponse {
     SaveStateFailed(String),
     LoadStateOk {
         path: String,
+        warning: Option<LoadStateWarning>,
         media_slot_snapshot: Option<zeff_emu_common::media::MediaSlotSnapshot>,
         game_boy_serial_device: Option<zeff_gb_core::hardware::GameBoySerialDevice>,
     },

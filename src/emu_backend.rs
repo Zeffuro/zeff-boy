@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use zeff_emu_common::memory::MemoryRegionDescriptor;
 use zeff_emu_common::replay::ReplayJoypadFrame;
 use zeff_emu_common::save_ram::SaveRamKind;
@@ -52,6 +51,8 @@ pub(crate) mod pce_cd_file;
 pub(crate) mod pce_cd_overlay;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod pce_cd_rar;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pce_cd_zip;
 mod pce_display;
 pub(crate) mod pce_profiles;
 #[cfg(all(feature = "profile-cores", not(target_arch = "wasm32")))]
@@ -165,6 +166,9 @@ macro_rules! dispatch {
         }
     };
 }
+
+mod state_io;
+pub(crate) use state_io::canonicalize_state_bytes_for_replay_hash;
 
 impl EmuBackend {
     #[cfg(not(target_arch = "wasm32"))]
@@ -414,31 +418,6 @@ impl EmuBackend {
             return;
         }
         dispatch!(self, debug_suspend())
-    }
-
-    pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        if !self.supports_state_capture() {
-            anyhow::bail!("state capture is not supported by this core");
-        }
-        dispatch!(self, encode_state_bytes())
-    }
-
-    pub(crate) fn rewind_framebuffer(&self) -> &[u8] {
-        if dispatch!(self, state_restores_framebuffer()) {
-            &[]
-        } else {
-            self.framebuffer()
-        }
-    }
-
-    pub(crate) fn encode_replay_hash_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let mut bytes = self.encode_state_bytes()?;
-        canonicalize_state_bytes_for_replay_hash(self.system(), &mut bytes)?;
-        Ok(bytes)
-    }
-
-    pub(crate) fn encode_replay_start_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        self.encode_state_bytes()
     }
 
     pub(crate) fn rom_path(&self) -> &Path {
@@ -868,6 +847,15 @@ impl EmuBackend {
         dispatch!(self, is_mbc7())
     }
 
+    pub(crate) fn is_gba_tilt(&self) -> bool {
+        matches!(
+            self,
+            Self::Gba(gba)
+                if gba.emu.sensor_kind()
+                    == zeff_gba_core::hardware::cartridge::SensorKind::Tilt
+        )
+    }
+
     #[inline]
     pub(crate) fn is_pocket_camera(&self) -> bool {
         dispatch!(self, is_pocket_camera())
@@ -991,8 +979,12 @@ impl EmuBackend {
     }
 
     pub(crate) fn set_replay_host_tilt(&mut self, host_tilt: (f32, f32)) {
-        if let Self::Gb(gb) = self {
-            gb.emu.set_mbc7_host_tilt(host_tilt.0, host_tilt.1);
+        match self {
+            Self::Gb(gb) => gb.emu.set_mbc7_host_tilt(host_tilt.0, host_tilt.1),
+            Self::Gba(gba) => {
+                gba.emu.set_tilt_input(host_tilt.0, host_tilt.1);
+            }
+            _ => {}
         }
     }
 
@@ -1253,46 +1245,8 @@ impl EmuBackend {
         }
     }
 
-    pub(crate) fn load_state_from_bytes(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        if !self.supports_state_capture() {
-            anyhow::bail!("state restore is not supported by this core");
-        }
-        dispatch!(self, load_state_from_bytes(bytes))
-    }
-
     pub(crate) fn is_running(&self) -> bool {
         !self.is_suspended()
-    }
-
-    pub(crate) fn slot_path(&self, slot: u8) -> anyhow::Result<PathBuf> {
-        if !self.supports_save_states() {
-            anyhow::bail!("save states are not supported by this core");
-        }
-        crate::save_paths::slot_path(
-            self.system().storage_subdir(),
-            self.state_extension(),
-            self.rom_hash(),
-            slot,
-        )
-    }
-
-    pub(crate) fn load_state(&mut self, slot: u8) -> anyhow::Result<String> {
-        let path = self.slot_path(slot)?;
-        let bytes = crate::platform::read_save_data(&path)
-            .with_context(|| format!("failed to read save state: {}", path.display()))?
-            .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;
-        self.load_state_from_bytes(bytes)?;
-        Ok(path.display().to_string())
-    }
-
-    pub(crate) fn load_state_from_path(&mut self, path: &Path) -> anyhow::Result<()> {
-        if !self.supports_save_states() {
-            anyhow::bail!("save states are not supported by this core");
-        }
-        let bytes = crate::platform::read_save_data(path)
-            .with_context(|| format!("failed to read save state: {}", path.display()))?
-            .ok_or_else(|| anyhow::anyhow!("save state not found: {}", path.display()))?;
-        self.load_state_from_bytes(bytes)
     }
 }
 
@@ -1320,19 +1274,6 @@ impl FrameLifecycle for EmuBackend {
     fn frame_count(&self) -> u64 {
         dispatch!(self, frame_count())
     }
-}
-
-pub(crate) fn canonicalize_state_bytes_for_replay_hash(
-    system: ActiveSystem,
-    bytes: &mut Vec<u8>,
-) -> anyhow::Result<()> {
-    if system == ActiveSystem::GameBoy {
-        zeff_gb_core::save_state::project_replay_state_bytes(bytes)?;
-        zeff_gb_core::save_state::canonicalize_replay_hash_bytes(bytes);
-    } else if system == ActiveSystem::Nes {
-        zeff_nes_core::save_state::project_replay_state_bytes(bytes)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -136,7 +136,7 @@ impl CoreState {
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
         match &mut self.core {
-            ActiveCore::Gb(emu) => emu.load_state(data),
+            ActiveCore::Gb(emu) => emu.load_state(data).map(|_| ()),
             ActiveCore::Gba(emu) => emu.load_state(data),
             ActiveCore::Nes(emu) => emu.load_state(data),
             ActiveCore::Pce(host) => host.load_state(data),

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -23,31 +23,42 @@ use super::pce_cd::{
 };
 use super::pce_cd_file::{
     CueFileSource, load_cached_cue_file_backed, try_load_cached_cue_ppf_overlay,
+    try_load_cached_cue_ppf_overlay_byte_slices,
 };
 use crate::rom_archive::ArchiveRomEntry;
 
 mod cache;
 mod loading;
+pub(super) mod ppf;
 
 #[cfg(test)]
 #[path = "pce_cd_archive/tests.rs"]
 mod tests;
 
 use cache::{
-    CacheIdentity, CachedDiscError, cache_key, extract_cache, load_cached_disc, pce_cd_cache_root,
-    prepare_cache, prune_cache, remove_cache_entry, source_fingerprint, touch_cache_entry,
-    validate_cacheable_manifest,
+    CacheIdentity, CachedDiscError, SourceFingerprint, cache_key, extract_cache,
+    load_cached_archive_ppf_disc, load_cached_disc, pce_cd_cache_root, prepare_cache, prune_cache,
+    remove_cache_entry, source_fingerprint, touch_cache_entry, validate_cacheable_manifest,
 };
 
 use loading::DecodePassPolicy;
 pub(crate) use loading::{
-    SevenZipContents, inspect_7z_contents, load_7z_cue_with_control_and_mods,
-    load_7z_rom_entry_with_control,
+    SevenZipContents, inspect_7z_contents, inspect_7z_cue_candidates_with_archive_identity,
+    inspect_7z_cue_members, inspect_7z_ppf_candidates_with_archive_identity,
+    load_7z_cue_with_control_and_archive_identity, load_7z_cue_with_control_and_archive_ppf,
+    load_7z_cue_with_control_and_mods, load_7z_rom_entry_with_control,
+    load_7z_selected_cue_with_control_and_archive_identity,
+    load_7z_selected_cue_with_control_and_archive_ppf,
+};
+pub(crate) use ppf::{
+    PceCdArchivePpfCandidate, PceCdArchivePpfLoad, PceCdArchivePpfPatch,
+    PceCdArchivePpfPatchIdentity,
 };
 
 #[cfg(test)]
 pub(crate) use loading::{
-    inspect_7z_cue_path, load_7z_cue, load_7z_cue_with_cache_root, load_7z_cue_with_control,
+    inspect_7z_cue_path, load_7z_cue, load_7z_cue_with_cache_root,
+    load_7z_cue_with_cache_root_and_archive_identity_for_test, load_7z_cue_with_control,
 };
 
 #[cfg(feature = "profile-cores")]
@@ -60,7 +71,7 @@ const PCE_CD_7Z_ENTRY_LIMIT: usize = 256;
 const PCE_CD_7Z_METADATA_CANCEL_BOUND_BYTES: usize = 64 * 1024 * 1024;
 const STREAM_BUFFER_BYTES: usize = 64 * 1024;
 const GENERIC_ROM_BYTES_LIMIT: u64 = 128 * 1024 * 1024;
-const CACHE_FORMAT_VERSION: u32 = 1;
+const CACHE_FORMAT_VERSION: u32 = 2;
 const CACHE_COMPLETE_FILE: &str = "complete.json";
 const CACHE_FILES_DIR: &str = "files";
 const CACHE_ENTRY_BYTES_LIMIT: u64 = PCE_CD_7Z_DECODED_BYTES_LIMIT;
@@ -92,6 +103,43 @@ pub(crate) struct PceCdPackageProgress {
     total_bytes: AtomicU64,
     #[cfg(test)]
     cancel_after_completed_bytes: AtomicU64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PceCdArchiveCueIdentity {
+    pub(crate) source_sha256: [u8; 32],
+    pub(crate) source_len: usize,
+    pub(crate) cue_member_path_sha256: [u8; 32],
+    pub(crate) selection: PceCdArchiveCueSelection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PceCdArchiveCueSelection {
+    Unique,
+    Explicit,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PceCdArchiveCueCandidate {
+    pub(crate) cue_member: String,
+    pub(crate) identity: PceCdArchiveCueIdentity,
+}
+
+fn archive_cue_identity(
+    source: SourceFingerprint,
+    cue_name: &str,
+    selection: PceCdArchiveCueSelection,
+) -> Result<PceCdArchiveCueIdentity, PceCdLoadError> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"zeff-pce-cd-7z-cue-member:v1\0");
+    hasher.update(cue_name.as_bytes());
+    Ok(PceCdArchiveCueIdentity {
+        source_sha256: source.sha256,
+        source_len: usize::try_from(source.size)
+            .map_err(|_| PceCdLoadError::ArchiveTooLarge(source.size))?,
+        cue_member_path_sha256: hasher.finalize().into(),
+        selection,
+    })
 }
 
 impl Default for PceCdPackageProgress {
@@ -179,14 +227,73 @@ fn open_validated(
     path: &Path,
     decoder_memory_limit_mib: usize,
 ) -> Result<(ArchiveReader<File>, ArchiveManifest), PceCdLoadError> {
-    let metadata = std::fs::metadata(path)
+    let source =
+        File::open(path).map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    open_validated_source(source, path, decoder_memory_limit_mib)
+}
+
+fn open_validated_with_source_fingerprint(
+    path: &Path,
+    decoder_memory_limit_mib: usize,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+) -> Result<(ArchiveReader<File>, ArchiveManifest, SourceFingerprint), PceCdLoadError> {
+    let mut source =
+        File::open(path).map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    validate_source_metadata(&source, path)?;
+    let source_fingerprint = source_fingerprint(&mut source, path, cancel, progress)?;
+    let (reader, manifest) = open_validated_source(source, path, decoder_memory_limit_mib)?;
+    Ok((reader, manifest, source_fingerprint))
+}
+
+fn open_validated_with_source_verifier(
+    path: &Path,
+    decoder_memory_limit_mib: usize,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+) -> Result<
+    (
+        ArchiveReader<File>,
+        ArchiveManifest,
+        SourceFingerprint,
+        File,
+    ),
+    PceCdLoadError,
+> {
+    let mut source =
+        File::open(path).map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    validate_source_metadata(&source, path)?;
+    let verifier = source
+        .try_clone()
         .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
-    if !metadata.is_file() {
-        return Err(PceCdLoadError::ArchiveUnreadable(path.to_path_buf()));
+    let fingerprint = source_fingerprint(&mut source, path, cancel, progress)?;
+    let (reader, manifest) = open_validated_source(source, path, decoder_memory_limit_mib)?;
+    Ok((reader, manifest, fingerprint, verifier))
+}
+
+fn reauthenticate_source(
+    source: &mut File,
+    expected: SourceFingerprint,
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+) -> Result<(), PceCdLoadError> {
+    source
+        .seek(SeekFrom::Start(0))
+        .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    let actual = source_fingerprint(source, path, cancel, progress)?;
+    if actual != expected {
+        return Err(PceCdLoadError::ArchiveChanged);
     }
-    if metadata.len() > SEVEN_ZIP_ARCHIVE_BYTES_LIMIT {
-        return Err(PceCdLoadError::ArchiveTooLarge(metadata.len()));
-    }
+    Ok(())
+}
+
+fn open_validated_source(
+    source: File,
+    path: &Path,
+    decoder_memory_limit_mib: usize,
+) -> Result<(ArchiveReader<File>, ArchiveManifest), PceCdLoadError> {
+    validate_source_metadata(&source, path)?;
     let limits = ArchiveLimits {
         max_header_bytes: PCE_CD_7Z_METADATA_CANCEL_BOUND_BYTES,
         max_decoder_memory_kb: decoder_memory_limit_mib.saturating_mul(1024),
@@ -199,7 +306,7 @@ fn open_validated(
         max_property_bytes: PCE_CD_CUE_BYTES_LIMIT,
         max_name_bytes: PCE_CD_CUE_BYTES_LIMIT,
     };
-    let mut reader = ArchiveReader::open_with_limits(path, Password::empty(), limits)
+    let mut reader = ArchiveReader::new_with_limits(source, Password::empty(), limits)
         .map_err(map_sevenz_error)?;
     reader.set_thread_count(1);
     let archive = reader.archive();
@@ -264,11 +371,51 @@ fn open_validated(
     Ok((reader, ArchiveManifest { cue_names, entries }))
 }
 
+fn validate_source_metadata(source: &File, path: &Path) -> Result<(), PceCdLoadError> {
+    let metadata = source
+        .metadata()
+        .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    if !metadata.is_file() {
+        return Err(PceCdLoadError::ArchiveUnreadable(path.to_path_buf()));
+    }
+    if metadata.len() > SEVEN_ZIP_ARCHIVE_BYTES_LIMIT {
+        return Err(PceCdLoadError::ArchiveTooLarge(metadata.len()));
+    }
+    Ok(())
+}
+
 fn unique_cue_name(manifest: &ArchiveManifest) -> Result<&str, PceCdLoadError> {
-    match manifest.cue_names.as_slice() {
-        [] => Err(PceCdLoadError::NoArchiveCue),
-        [name] => Ok(name),
-        _ => Err(PceCdLoadError::MultipleArchiveCues),
+    select_normalized_cue_name(&manifest.cue_names, None)
+}
+
+pub(super) fn select_normalized_cue_name<'a>(
+    cue_names: &'a [String],
+    selected: Option<&str>,
+) -> Result<&'a str, PceCdLoadError> {
+    let Some(selected) = selected else {
+        return match cue_names {
+            [] => Err(PceCdLoadError::NoArchiveCue),
+            [name] => Ok(name),
+            _ => Err(PceCdLoadError::MultipleArchiveCues),
+        };
+    };
+    if cue_names.is_empty() {
+        return Err(PceCdLoadError::NoArchiveCue);
+    }
+    let normalized = normalize_portable_path(selected)
+        .map_err(|_| PceCdLoadError::UnsafeArchiveEntry(selected.to_owned()))?;
+    if !extension_is(&normalized, "cue") {
+        return Err(PceCdLoadError::ArchiveMemberMissing(normalized));
+    }
+    match cue_names
+        .iter()
+        .filter(|name| name.eq_ignore_ascii_case(&normalized))
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] => Err(PceCdLoadError::ArchiveMemberMissing(normalized)),
+        [name] => Ok(name.as_str()),
+        _ => Err(PceCdLoadError::DuplicateArchiveEntry(normalized)),
     }
 }
 

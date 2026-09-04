@@ -176,8 +176,8 @@ fn validate_replay_input_devices(player: &ReplayPlayer, backend: &EmuBackend) ->
             "replay contains WonderSwan link events but current ROM is not a WonderSwan game"
         );
     }
-    if player.uses_host_tilt_input() && !backend.is_mbc7() {
-        anyhow::bail!("replay contains MBC7 tilt input but current ROM is not an MBC7 game");
+    if player.uses_host_tilt_input() && !(backend.is_mbc7() || backend.is_gba_tilt()) {
+        anyhow::bail!("replay contains tilt input but the current cartridge has no tilt sensor");
     }
     if player.uses_host_camera_input() && !backend.is_pocket_camera() {
         anyhow::bail!(

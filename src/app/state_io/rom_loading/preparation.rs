@@ -182,7 +182,7 @@ impl App {
                     entries,
                 });
                 self.toast_manager
-                    .info("Archive contains multiple ROMs; choose one to load");
+                    .info("Archive contains multiple supported entries; choose one to load");
             }
             super::super::super::RomPreparationOutcome::Failed(error) => {
                 log::error!("Failed to load archive: {error}");

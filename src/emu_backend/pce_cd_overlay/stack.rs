@@ -33,13 +33,24 @@ pub(crate) fn apply_ppf_bytes_stack(
     builder: &mut PatchOverlayBuilder,
     patches: &[(String, Vec<u8>)],
 ) -> PatchOverlayStack {
+    let patches = patches
+        .iter()
+        .map(|(filename, bytes)| (filename.as_str(), bytes.as_slice()))
+        .collect::<Vec<_>>();
+    apply_ppf_byte_slices_stack(builder, &patches)
+}
+
+pub(crate) fn apply_ppf_byte_slices_stack(
+    builder: &mut PatchOverlayBuilder,
+    patches: &[(&str, &[u8])],
+) -> PatchOverlayStack {
     let mut applied = Vec::with_capacity(patches.len());
     for (filename, patch) in patches {
         let Ok(PatchOverlayApply::Applied) = builder.apply_ppf(patch) else {
             return PatchOverlayStack::Fallback;
         };
         applied.push((
-            filename.clone(),
+            (*filename).to_owned(),
             !crate::patching::ppf_has_source_validation(patch),
         ));
     }

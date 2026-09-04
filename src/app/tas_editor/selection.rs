@@ -43,6 +43,9 @@ pub(super) fn readiness_summary(
         | TasReadinessCode::DirectSource => {
             "Load the exact unmodified game identified by this TAS project".to_owned()
         }
+        TasReadinessCode::PersistentState => {
+            "This TAS starts from its own save data; reload the game to connect".to_owned()
+        }
         _ => "The loaded game's deterministic profile does not match this TAS project".to_owned(),
     }
 }
@@ -139,5 +142,7 @@ pub(super) fn has_pce_cd_extension(path: &Path) -> bool {
             extension.eq_ignore_ascii_case("cue")
                 || extension.eq_ignore_ascii_case("chd")
                 || extension.eq_ignore_ascii_case("iso")
+                || extension.eq_ignore_ascii_case("7z")
+                || extension.eq_ignore_ascii_case("rar")
         })
 }

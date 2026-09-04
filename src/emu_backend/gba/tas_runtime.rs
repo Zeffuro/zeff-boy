@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use zeff_emu_common::save_ram::SaveRamKind;
-use zeff_gba_core::hardware::cartridge::BackupKind;
+use zeff_gba_core::hardware::cartridge::{BackupKind, SensorKind};
 
 use crate::emu_backend::{ActiveSystem, EmuBackend};
 use crate::tas_project::{
@@ -11,6 +11,7 @@ use crate::tas_project::{
 use super::{GbaRtcPersistenceWitness, GbaTasPersistentLoadOutcome};
 
 mod rtc;
+mod tilt;
 
 const CONTROLLER_CONFIGURATION: &[u8] = b"zeff-tas-device-config-v1\0gba-standard-keypad\0";
 const SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0gba-direct-cartridge\0startup=internal-post-boot\0persistence=absent\0rtc=absent\0link=absent\0sensors=absent\0mods=disabled\0initial-input=neutral\0sample-rate=48000\0firmware=hle:nintendo.gba.bios:zeff-gba-hle:1\0";
@@ -35,6 +36,14 @@ pub(crate) fn zip_gba_tas_sync_config_sha256(member_name: &str) -> TasDigest {
 
 pub(crate) fn zip_gba_battery_tas_sync_config_sha256(member_name: &str) -> TasDigest {
     zip_gba_tas_sync_config_sha256_for_profile(member_name, true)
+}
+
+pub(crate) fn direct_gba_tilt_tas_sync_config_sha256() -> TasDigest {
+    tilt::direct_sync_config()
+}
+
+pub(crate) fn zip_gba_tilt_tas_sync_config_sha256(member_name: &str) -> TasDigest {
+    tilt::zip_sync_config(member_name)
 }
 
 pub(crate) fn direct_gba_rtc_tas_sync_config_sha256(backup_kind: BackupKind) -> TasDigest {
@@ -92,12 +101,17 @@ fn zip_gba_tas_sync_config_sha256_for_profile(member_name: &str, battery: bool) 
     TasDigest::from_bytes(&bytes)
 }
 
-fn devices() -> Vec<TasDeviceIdentity> {
-    vec![TasDeviceIdentity {
+fn devices(sensor_kind: SensorKind) -> Vec<TasDeviceIdentity> {
+    let mut devices = vec![TasDeviceIdentity {
         port: "p1".to_owned(),
         device: "gba-standard-keypad".to_owned(),
         configuration_sha256: TasDigest::from_bytes(CONTROLLER_CONFIGURATION),
-    }]
+    }];
+    if sensor_kind == SensorKind::Tilt {
+        devices.push(tilt::device());
+    }
+    devices.sort_by(|left, right| left.port.cmp(&right.port));
+    devices
 }
 
 fn firmware() -> Vec<TasFirmwareIdentity> {
@@ -108,13 +122,14 @@ fn firmware() -> Vec<TasFirmwareIdentity> {
     }]
 }
 
-fn current_state_rom_sha256(state: &[u8]) -> Result<[u8; 32]> {
+fn current_state_rom_sha256(state: &[u8], tilt: bool) -> Result<[u8; 32]> {
     ensure!(
         state.len() >= 44 && state[..8] == *b"ZBGBAST\0",
         "TAS requires a native GBA save state"
     );
     ensure!(
-        u32::from_le_bytes(state[8..12].try_into().expect("length checked")) == 10,
+        u32::from_le_bytes(state[8..12].try_into().expect("length checked"))
+            == if tilt { 11 } else { 10 },
         "TAS requires current native GBA state"
     );
     Ok(state[state.len() - 32..]
@@ -163,6 +178,7 @@ fn gba_tas_identity(
     start_state: &[u8],
 ) -> Result<TasProjectIdentity> {
     let inspection = validate_direct_gba_tas_private_runtime(backend, false)?;
+    let tilt_profile = inspection.sensor_kind == SensorKind::Tilt;
     let metadata = backend.replay_metadata();
     let effective_media_sha256 = TasDigest(
         metadata
@@ -174,7 +190,7 @@ fn gba_tas_identity(
         "GBA TAS start state differs from the loaded baseline"
     );
     ensure!(
-        TasDigest(current_state_rom_sha256(start_state)?) == effective_media_sha256,
+        TasDigest(current_state_rom_sha256(start_state, tilt_profile)?) == effective_media_sha256,
         "GBA TAS start state identity differs from the loaded core"
     );
     let rtc_state = backend
@@ -187,19 +203,28 @@ fn gba_tas_identity(
         core_family: metadata
             .core_family
             .context("GBA backend omitted its core-family identity")?,
-        determinism_abi: zeff_gba_core::save_state::TAS_DETERMINISM_ABI_ID.to_owned(),
+        determinism_abi: if tilt_profile {
+            zeff_gba_core::save_state::TILT_TAS_DETERMINISM_ABI_ID
+        } else {
+            zeff_gba_core::save_state::TAS_DETERMINISM_ABI_ID
+        }
+        .to_owned(),
         source_media_sha256,
         effective_media_sha256,
         patches: Vec::new(),
         firmware: firmware(),
-        devices: devices(),
+        devices: devices(inspection.sensor_kind),
         sync_config_sha256,
         persistent_state: gba_persistent_identity(&inspection)?,
         rtc_state: rtc::identity(rtc_state.as_deref()),
-        sensor_state: TasExternalIdentity::Absent,
+        sensor_state: tilt::identity(inspection.tilt_state),
         cheats: TasExternalIdentity::Absent,
-        state_format_compatibility_id: zeff_gba_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID
-            .to_owned(),
+        state_format_compatibility_id: if tilt_profile {
+            zeff_gba_core::save_state::TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID
+        } else {
+            zeff_gba_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID
+        }
+        .to_owned(),
         start_state_sha256: TasDigest::from_bytes(start_state),
     })
 }
@@ -212,54 +237,87 @@ pub(crate) fn validate_direct_gba_tas_project_identity(project: &TasProject) -> 
                 == format!("{:?}", zeff_emu_common::system::CoreFamily::GameBoyAdvance),
         "TAS project does not identify the native GBA core"
     );
+    let tilt_profile = is_gba_tilt_tas_identity(identity);
     ensure!(
-        identity.determinism_abi == zeff_gba_core::save_state::TAS_DETERMINISM_ABI_ID
-            && identity.state_format_compatibility_id
-                == zeff_gba_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID,
+        tilt_profile
+            || (identity.determinism_abi == zeff_gba_core::save_state::TAS_DETERMINISM_ABI_ID
+                && identity.state_format_compatibility_id
+                    == zeff_gba_core::save_state::TAS_STATE_FORMAT_COMPATIBILITY_ID),
         "TAS project uses an incompatible GBA determinism or state format"
     );
-    let direct_media = identity.source_media_sha256 == identity.effective_media_sha256
-        && match identity.rtc_state {
-            TasExternalIdentity::Absent => match identity.persistent_state {
-                TasExternalIdentity::Absent => {
-                    identity.sync_config_sha256 == direct_gba_tas_sync_config_sha256()
-                }
-                TasExternalIdentity::ExternalSha256(_) => {
-                    identity.sync_config_sha256 == direct_gba_battery_tas_sync_config_sha256()
-                }
-            },
-            TasExternalIdentity::ExternalSha256(_) => supported_gba_rtc_backup_kinds()
-                .into_iter()
-                .filter(|kind| {
-                    (*kind == BackupKind::None)
-                        == (identity.persistent_state == TasExternalIdentity::Absent)
-                })
-                .any(|kind| {
-                    identity.sync_config_sha256 == direct_gba_rtc_tas_sync_config_sha256(kind)
-                }),
-        };
+    let direct_media = tilt_profile
+        && identity.source_media_sha256 == identity.effective_media_sha256
+        && identity.persistent_state != TasExternalIdentity::Absent
+        && identity.rtc_state == TasExternalIdentity::Absent
+        && identity.sync_config_sha256 == direct_gba_tilt_tas_sync_config_sha256()
+        || !tilt_profile
+            && identity.source_media_sha256 == identity.effective_media_sha256
+            && match identity.rtc_state {
+                TasExternalIdentity::Absent => match identity.persistent_state {
+                    TasExternalIdentity::Absent => {
+                        identity.sync_config_sha256 == direct_gba_tas_sync_config_sha256()
+                    }
+                    TasExternalIdentity::ExternalSha256(_) => {
+                        identity.sync_config_sha256 == direct_gba_battery_tas_sync_config_sha256()
+                    }
+                },
+                TasExternalIdentity::ExternalSha256(_) => supported_gba_rtc_backup_kinds()
+                    .into_iter()
+                    .filter(|kind| {
+                        (*kind == BackupKind::None)
+                            == (identity.persistent_state == TasExternalIdentity::Absent)
+                    })
+                    .any(|kind| {
+                        identity.sync_config_sha256 == direct_gba_rtc_tas_sync_config_sha256(kind)
+                    }),
+            };
     let zip_media = identity.source_media_sha256 != identity.effective_media_sha256
         && identity.sync_config_sha256 != direct_gba_tas_sync_config_sha256()
-        && identity.sync_config_sha256 != direct_gba_battery_tas_sync_config_sha256();
+        && identity.sync_config_sha256 != direct_gba_battery_tas_sync_config_sha256()
+        && identity.sync_config_sha256 != direct_gba_tilt_tas_sync_config_sha256();
     ensure!(
         (direct_media || zip_media)
             && identity.patches.is_empty()
             && identity.firmware == firmware()
-            && identity.devices == devices(),
+            && identity.devices
+                == devices(if tilt_profile {
+                    SensorKind::Tilt
+                } else {
+                    SensorKind::None
+                }),
         "TAS project media, firmware, devices, or sync configuration is incompatible"
     );
     ensure!(
-        identity.sensor_state == TasExternalIdentity::Absent
+        identity.sensor_state
+            == if tilt_profile {
+                tilt::identity(Some(zeff_gba_core::hardware::cartridge::TiltState {
+                    host_x_bits: 0,
+                    host_y_bits: 0,
+                    x_latch: 0x0FFF,
+                    y_latch: 0x0FFF,
+                    latch_ready: false,
+                }))
+            } else {
+                TasExternalIdentity::Absent
+            }
             && identity.cheats == TasExternalIdentity::Absent,
         "TAS project declares unsupported external state"
     );
     ensure!(
-        TasDigest(current_state_rom_sha256(project.start_state())?)
-            == identity.effective_media_sha256
+        TasDigest(current_state_rom_sha256(
+            project.start_state(),
+            tilt_profile
+        )?) == identity.effective_media_sha256
             && TasDigest::from_bytes(project.start_state()) == identity.start_state_sha256,
         "GBA start state identity differs from the project"
     );
     Ok(())
+}
+
+pub(crate) fn is_gba_tilt_tas_identity(identity: &TasProjectIdentity) -> bool {
+    identity.determinism_abi == zeff_gba_core::save_state::TILT_TAS_DETERMINISM_ABI_ID
+        && identity.state_format_compatibility_id
+            == zeff_gba_core::save_state::TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID
 }
 
 pub(crate) fn validate_direct_gba_tas_branch_scope(
@@ -267,6 +325,7 @@ pub(crate) fn validate_direct_gba_tas_branch_scope(
     branch_id: &str,
 ) -> Result<()> {
     validate_direct_gba_tas_project_identity(project)?;
+    let tilt_profile = is_gba_tilt_tas_identity(project.identity());
     ensure!(
         project.replay_start() == &Default::default(),
         "direct GBA TAS execution does not support replay start metadata"
@@ -288,8 +347,7 @@ pub(crate) fn validate_direct_gba_tas_branch_scope(
                     .all(|player| *player == Default::default())
                 && input.coleco == [crate::tas_project::TasColecoControllerInput::default(); 2]
                 && input.zapper == Default::default()
-                && input.tilt_x_bits == 0
-                && input.tilt_y_bits == 0
+                && (tilt_profile || (input.tilt_x_bits == 0 && input.tilt_y_bits == 0))
                 && matches!(input.camera, TasCameraInput::None),
             "direct GBA TAS execution supports one standard keypad only"
         );
@@ -314,8 +372,10 @@ pub(crate) fn validate_direct_gba_tas_project_witness(
     );
     ensure!(
         TasDigest::from_bytes(witness.current_state_bytes) == witness.current_state_sha256
-            && TasDigest(current_state_rom_sha256(witness.current_state_bytes)?)
-                == identity.effective_media_sha256,
+            && TasDigest(current_state_rom_sha256(
+                witness.current_state_bytes,
+                is_gba_tilt_tas_identity(identity),
+            )?) == identity.effective_media_sha256,
         "worker GBA state identity does not match the TAS project"
     );
     Ok(())
@@ -338,6 +398,7 @@ pub(crate) fn validate_direct_gba_tas_runtime(
         "direct GBA TAS acquisition requires neutral post-boot keypad state"
     );
     validate_initial_rtc(&inspection)?;
+    validate_initial_tilt(&inspection)?;
     Ok(inspection)
 }
 
@@ -365,6 +426,7 @@ pub(crate) fn validate_direct_gba_tas_private_runtime(
         "direct GBA TAS acquisition requires neutral post-boot keypad state"
     );
     validate_initial_rtc(&inspection)?;
+    validate_initial_tilt(&inspection)?;
     Ok(inspection)
 }
 
@@ -446,8 +508,7 @@ fn validate_direct_gba_tas_runtime_inner(
     );
     let gba = backend.gba().context("GBA backend became unavailable")?;
     let state = backend.encode_state_bytes()?;
-    let inspection =
-        zeff_gba_core::save_state::inspect_current_native_gba_tas_state(&gba.emu, &state)?;
+    let inspection = inspect_gba_tas_state(&gba.emu, &state)?;
     ensure!(
         inspection.rom_sha256 == effective_media_sha256,
         "GBA state ROM identity differs from the loaded cartridge"
@@ -468,6 +529,18 @@ fn validate_direct_gba_tas_runtime_inner(
             && (allow_project_owned_battery || !inspection.rtc_present),
         "GBA state contains unsupported RTC hardware or state"
     );
+    match inspection.sensor_kind {
+        SensorKind::None => ensure!(
+            inspection.tilt_state.is_none(),
+            "GBA state contains unexpected tilt state"
+        ),
+        SensorKind::Tilt => ensure!(
+            backup_kind == BackupKind::Eeprom
+                && !inspection.rtc_present
+                && inspection.tilt_state.is_some(),
+            "GBA tilt TAS requires an EEPROM cartridge without RTC"
+        ),
+    }
     ensure!(
         !inspection.external_bios
             && inspection.startup == zeff_gba_core::save_state::GbaTasStartup::InternalPostBoot,
@@ -507,8 +580,11 @@ fn restore_direct_gba_tas_state_bytes(
     let EmuBackend::Gba(gba) = backend else {
         anyhow::bail!("TAS state requires a GBA backend");
     };
-    let inspection =
-        zeff_gba_core::save_state::restore_current_native_gba_tas_state(&mut gba.emu, state)?;
+    let inspection = if gba.emu.sensor_kind() == SensorKind::Tilt {
+        zeff_gba_core::save_state::restore_current_native_gba_tilt_tas_state(&mut gba.emu, state)?
+    } else {
+        zeff_gba_core::save_state::restore_current_native_gba_tas_state(&mut gba.emu, state)?
+    };
     ensure!(
         inspection.projection.framebuffer.len() == ActiveSystem::GameBoyAdvance.framebuffer_len()
             && inspection.projection.framebuffer.as_ref() == gba.emu.framebuffer(),
@@ -523,17 +599,49 @@ pub(crate) fn gba_tas_sync_config(
 ) -> Result<TasDigest> {
     let gba = backend.gba().context("GBA backend became unavailable")?;
     let state = backend.encode_state_bytes()?;
-    let inspection =
-        zeff_gba_core::save_state::inspect_current_native_gba_tas_state(&gba.emu, &state)?;
+    let inspection = inspect_gba_tas_state(&gba.emu, &state)?;
     let backup_kind = validate_gba_backup_kind(&gba.emu)?;
-    Ok(match (zip_member, inspection.rtc_present, backup_kind) {
-        (Some(member), true, kind) => zip_gba_rtc_tas_sync_config_sha256(member, kind),
-        (None, true, kind) => direct_gba_rtc_tas_sync_config_sha256(kind),
-        (Some(member), false, BackupKind::None) => zip_gba_tas_sync_config_sha256(member),
-        (Some(member), false, _) => zip_gba_battery_tas_sync_config_sha256(member),
-        (None, false, BackupKind::None) => direct_gba_tas_sync_config_sha256(),
-        (None, false, _) => direct_gba_battery_tas_sync_config_sha256(),
-    })
+    Ok(
+        match (
+            zip_member,
+            inspection.sensor_kind,
+            inspection.rtc_present,
+            backup_kind,
+        ) {
+            (Some(member), SensorKind::Tilt, false, BackupKind::Eeprom) => {
+                zip_gba_tilt_tas_sync_config_sha256(member)
+            }
+            (None, SensorKind::Tilt, false, BackupKind::Eeprom) => {
+                direct_gba_tilt_tas_sync_config_sha256()
+            }
+            (_, SensorKind::Tilt, _, _) => anyhow::bail!("GBA tilt TAS topology is unsupported"),
+            (Some(member), SensorKind::None, true, kind) => {
+                zip_gba_rtc_tas_sync_config_sha256(member, kind)
+            }
+            (None, SensorKind::None, true, kind) => direct_gba_rtc_tas_sync_config_sha256(kind),
+            (Some(member), SensorKind::None, false, BackupKind::None) => {
+                zip_gba_tas_sync_config_sha256(member)
+            }
+            (Some(member), SensorKind::None, false, _) => {
+                zip_gba_battery_tas_sync_config_sha256(member)
+            }
+            (None, SensorKind::None, false, BackupKind::None) => {
+                direct_gba_tas_sync_config_sha256()
+            }
+            (None, SensorKind::None, false, _) => direct_gba_battery_tas_sync_config_sha256(),
+        },
+    )
+}
+
+fn inspect_gba_tas_state(
+    emu: &zeff_gba_core::emulator::Emulator,
+    state: &[u8],
+) -> Result<zeff_gba_core::save_state::CurrentNativeGbaTasStateInspection> {
+    if emu.sensor_kind() == SensorKind::Tilt {
+        zeff_gba_core::save_state::inspect_current_native_gba_tilt_tas_state(emu, state)
+    } else {
+        zeff_gba_core::save_state::inspect_current_native_gba_tas_state(emu, state)
+    }
 }
 
 fn validate_initial_rtc(
@@ -542,6 +650,16 @@ fn validate_initial_rtc(
     ensure!(
         inspection.rtc_state.is_none_or(rtc::is_initial_epoch),
         "direct GBA TAS acquisition requires the deterministic RTC epoch"
+    );
+    Ok(())
+}
+
+fn validate_initial_tilt(
+    inspection: &zeff_gba_core::save_state::CurrentNativeGbaTasStateInspection,
+) -> Result<()> {
+    ensure!(
+        inspection.tilt_state.is_none_or(tilt::is_initial),
+        "direct GBA TAS acquisition requires neutral initial tilt state"
     );
     Ok(())
 }

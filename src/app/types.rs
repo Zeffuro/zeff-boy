@@ -350,6 +350,7 @@ impl DebugRequests {
 
 pub(super) struct CachedRomInfo {
     pub(super) is_mbc7: bool,
+    pub(super) is_gba_tilt: bool,
     pub(super) is_pocket_camera: bool,
     pub(super) rom_path: Option<PathBuf>,
     pub(super) source_path: Option<PathBuf>,

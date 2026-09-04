@@ -16,6 +16,90 @@ pub(crate) enum SevenZipContents {
     Roms(Vec<ArchiveRomEntry>),
 }
 
+pub(crate) fn inspect_7z_cue_members(
+    path: &Path,
+    decoder_memory_limit_mib: usize,
+) -> Result<Vec<String>, PceCdLoadError> {
+    let (_, manifest) = open_validated(path, decoder_memory_limit_mib)?;
+    Ok(manifest.cue_names)
+}
+
+pub(crate) fn inspect_7z_cue_candidates_with_archive_identity(
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+) -> Result<Vec<PceCdArchiveCueCandidate>, PceCdLoadError> {
+    check_cancelled(cancel)?;
+    progress.set_phase(PceCdPackageLoadPhase::Inspecting);
+    let (_, manifest, source) =
+        open_validated_with_source_fingerprint(path, decoder_memory_limit_mib, cancel, progress)?;
+    manifest
+        .cue_names
+        .into_iter()
+        .map(|cue_member| {
+            Ok(PceCdArchiveCueCandidate {
+                identity: archive_cue_identity(
+                    source,
+                    &cue_member,
+                    PceCdArchiveCueSelection::Explicit,
+                )?,
+                cue_member,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn inspect_7z_ppf_candidates_with_archive_identity(
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+) -> Result<Vec<PceCdArchivePpfCandidate>, PceCdLoadError> {
+    check_cancelled(cancel)?;
+    progress.set_phase(PceCdPackageLoadPhase::Inspecting);
+    let (mut reader, manifest, source, mut source_verifier) =
+        open_validated_with_source_verifier(path, decoder_memory_limit_mib, cancel, progress)?;
+    let descriptors = ppf_members(&manifest);
+    let mut candidates = Vec::with_capacity(manifest.cue_names.len());
+    let mut targets = BTreeSet::new();
+    for cue_name in &manifest.cue_names {
+        if let Some(names) = ppf::discover_archive_ppf_members(cue_name, &descriptors)? {
+            targets.extend(names.iter().cloned());
+            candidates.push((cue_name.clone(), names));
+        }
+    }
+    if candidates.is_empty() {
+        return Err(PceCdLoadError::NoArchivePpfStack);
+    }
+    let mut extracted = decode_pass(
+        &mut reader,
+        &manifest,
+        &targets,
+        cancel,
+        progress,
+        DecodePassPolicy {
+            progress_base: 0,
+            decoded_bytes_limit: PCE_CD_7Z_DECODED_BYTES_LIMIT,
+        },
+    )?;
+    reauthenticate_source(&mut source_verifier, source, path, cancel, progress)?;
+    candidates
+        .into_iter()
+        .map(|(cue_member, names)| {
+            Ok(PceCdArchivePpfCandidate {
+                identity: archive_cue_identity(
+                    source,
+                    &cue_member,
+                    PceCdArchiveCueSelection::Explicit,
+                )?,
+                patches: ppf::patch_identities(&names, &mut extracted)?,
+                cue_member,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(crate) fn inspect_7z_cue_path(path: &Path) -> Result<PathBuf, PceCdLoadError> {
     let (_, manifest) = open_validated(path, DEFAULT_DECODER_MEMORY_LIMIT_MIB)?;
@@ -74,6 +158,167 @@ pub(crate) fn load_7z_cue_with_control_and_mods(
         apply_mods,
         &cache_root,
     )
+}
+
+pub(crate) fn load_7z_cue_with_control_and_archive_identity(
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+    apply_mods: bool,
+) -> Result<(PathBuf, LoadedPceCd, PceCdArchiveCueIdentity), PceCdLoadError> {
+    let cache_root = pce_cd_cache_root();
+    load_7z_cue_with_cache_root_and_archive_identity(
+        path,
+        CachedCueLoadOptions {
+            cancel,
+            progress,
+            decoder_memory_limit_mib,
+            apply_mods,
+            cache_root: &cache_root,
+            reuse_cache: false,
+            selected_cue_name: None,
+        },
+    )
+}
+
+pub(crate) fn load_7z_selected_cue_with_control_and_archive_identity(
+    path: &Path,
+    selected_cue_name: &str,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+    apply_mods: bool,
+) -> Result<(PathBuf, LoadedPceCd, PceCdArchiveCueIdentity), PceCdLoadError> {
+    let cache_root = pce_cd_cache_root();
+    load_7z_cue_with_cache_root_and_archive_identity(
+        path,
+        CachedCueLoadOptions {
+            cancel,
+            progress,
+            decoder_memory_limit_mib,
+            apply_mods,
+            cache_root: &cache_root,
+            reuse_cache: false,
+            selected_cue_name: Some(selected_cue_name),
+        },
+    )
+}
+
+pub(crate) fn load_7z_cue_with_control_and_archive_ppf(
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+) -> Result<PceCdArchivePpfLoad, PceCdLoadError> {
+    load_7z_archive_ppf(path, None, cancel, progress, decoder_memory_limit_mib)
+}
+
+pub(crate) fn load_7z_selected_cue_with_control_and_archive_ppf(
+    path: &Path,
+    selected_cue_name: &str,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+) -> Result<PceCdArchivePpfLoad, PceCdLoadError> {
+    load_7z_archive_ppf(
+        path,
+        Some(selected_cue_name),
+        cancel,
+        progress,
+        decoder_memory_limit_mib,
+    )
+}
+
+fn load_7z_archive_ppf(
+    path: &Path,
+    selected_cue_name: Option<&str>,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+) -> Result<PceCdArchivePpfLoad, PceCdLoadError> {
+    let _cache_guard = CACHE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    check_cancelled(cancel)?;
+    progress.set_phase(PceCdPackageLoadPhase::Inspecting);
+    let (mut reader, manifest, source, mut source_verifier) =
+        open_validated_with_source_verifier(path, decoder_memory_limit_mib, cancel, progress)?;
+    let cue_name = select_normalized_cue_name(&manifest.cue_names, selected_cue_name)?.to_owned();
+    let patch_names = ppf::discover_archive_ppf_members(&cue_name, &ppf_members(&manifest))?
+        .ok_or(PceCdLoadError::NoArchivePpfStack)?;
+    let selection = if selected_cue_name.is_some() {
+        PceCdArchiveCueSelection::Explicit
+    } else {
+        PceCdArchiveCueSelection::Unique
+    };
+    let archive_identity = archive_cue_identity(source, &cue_name, selection)?;
+    validate_cacheable_manifest(&manifest)?;
+    let cache_root = pce_cd_cache_root();
+    std::fs::create_dir_all(&cache_root)
+        .map_err(|error| PceCdLoadError::Archive(format!("CD cache: {error}")))?;
+    let base_key = cache_key(path, source);
+    static STRICT_PPF_CACHE_NONCE: AtomicU64 = AtomicU64::new(0);
+    let nonce = STRICT_PPF_CACHE_NONCE.fetch_add(1, Ordering::Relaxed);
+    let strict_key = format!("{base_key}-tas-ppf-{}-{nonce}", std::process::id());
+    let identity = CacheIdentity {
+        source,
+        key: &strict_key,
+    };
+    let cache = extract_cache(
+        &mut reader,
+        &manifest,
+        identity,
+        &cache_root,
+        cancel,
+        progress,
+    )?;
+    let (mut loaded, patches) = match load_cached_archive_ppf_disc(
+        &cache,
+        &manifest,
+        &cue_name,
+        &patch_names,
+        cancel,
+        progress,
+    ) {
+        Ok(result) => result,
+        Err(CachedDiscError::Load(error)) => return Err(error),
+        Err(CachedDiscError::Corrupt) => {
+            remove_cache_entry(&cache_root, &cache.path);
+            return Err(PceCdLoadError::ArchiveChanged);
+        }
+    };
+    if let Err(error) = reauthenticate_source(&mut source_verifier, source, path, cancel, progress)
+    {
+        remove_cache_entry(&cache_root, &cache.path);
+        return Err(error);
+    }
+    let unpatched_disc_sha256 = loaded.source_disc_sha256;
+    touch_cache_entry(&cache.path);
+    prune_cache(&cache_root, Some(&cache.path));
+    progress.set_phase(PceCdPackageLoadPhase::Complete);
+    loaded.source_disc_sha256 = unpatched_disc_sha256;
+    Ok(PceCdArchivePpfLoad {
+        cue_path: virtual_member_path(path, &cue_name),
+        loaded,
+        archive_identity,
+        patches,
+        unpatched_disc_sha256,
+    })
+}
+
+fn ppf_members(manifest: &ArchiveManifest) -> Vec<ppf::ArchivePpfMember> {
+    manifest
+        .entries
+        .iter()
+        .map(|member| ppf::ArchivePpfMember {
+            name: member.name.clone(),
+            size: member.size,
+            is_regular: !member.is_directory
+                && !member.is_anti
+                && !member.is_link
+                && member.has_stream
+                && member.crc_checked,
+        })
+        .collect()
 }
 
 #[cfg(feature = "profile-cores")]
@@ -199,11 +444,59 @@ pub(crate) fn load_7z_cue_with_cache_root(
     apply_mods: bool,
     cache_root: &Path,
 ) -> Result<(PathBuf, LoadedPceCd), PceCdLoadError> {
+    load_7z_cue_with_cache_root_and_archive_identity(
+        path,
+        CachedCueLoadOptions {
+            cancel,
+            progress,
+            decoder_memory_limit_mib,
+            apply_mods,
+            cache_root,
+            reuse_cache: true,
+            selected_cue_name: None,
+        },
+    )
+    .map(|(cue_path, loaded, _)| (cue_path, loaded))
+}
+
+struct CachedCueLoadOptions<'a> {
+    cancel: &'a AtomicBool,
+    progress: &'a PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+    apply_mods: bool,
+    cache_root: &'a Path,
+    reuse_cache: bool,
+    selected_cue_name: Option<&'a str>,
+}
+
+fn load_7z_cue_with_cache_root_and_archive_identity(
+    path: &Path,
+    options: CachedCueLoadOptions<'_>,
+) -> Result<(PathBuf, LoadedPceCd, PceCdArchiveCueIdentity), PceCdLoadError> {
+    let CachedCueLoadOptions {
+        cancel,
+        progress,
+        decoder_memory_limit_mib,
+        apply_mods,
+        cache_root,
+        reuse_cache,
+        selected_cue_name,
+    } = options;
     let _cache_guard = CACHE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     check_cancelled(cancel)?;
     progress.set_phase(PceCdPackageLoadPhase::Inspecting);
-    let (mut reader, manifest) = open_validated(path, decoder_memory_limit_mib)?;
-    let cue_name = unique_cue_name(&manifest)?.to_owned();
+    let (mut reader, manifest, source) =
+        open_validated_with_source_fingerprint(path, decoder_memory_limit_mib, cancel, progress)?;
+    let cue_name = select_normalized_cue_name(&manifest.cue_names, selected_cue_name)?.to_owned();
+    let archive_identity = archive_cue_identity(
+        source,
+        &cue_name,
+        if selected_cue_name.is_some() {
+            PceCdArchiveCueSelection::Explicit
+        } else {
+            PceCdArchiveCueSelection::Unique
+        },
+    )?;
     check_cancelled(cancel)?;
     validate_cacheable_manifest(&manifest)?;
     let decoded_bytes = manifest
@@ -214,34 +507,60 @@ pub(crate) fn load_7z_cue_with_cache_root(
     if decoded_bytes > CACHE_ENTRY_BYTES_LIMIT {
         return Err(PceCdLoadError::ArchiveDecodedLimit);
     }
-    let source = source_fingerprint(path)?;
     let cache_key = cache_key(path, source);
+    static STRICT_CACHE_NONCE: AtomicU64 = AtomicU64::new(0);
+    let strict_cache_key = (!reuse_cache).then(|| {
+        let nonce = STRICT_CACHE_NONCE.fetch_add(1, Ordering::Relaxed);
+        format!("{cache_key}-tas-{}-{nonce}", std::process::id())
+    });
     let identity = CacheIdentity {
         source,
-        key: &cache_key,
+        key: strict_cache_key.as_deref().unwrap_or(&cache_key),
     };
-    let mut cache = prepare_cache(
-        &mut reader,
-        &manifest,
-        identity,
-        cache_root,
-        cancel,
-        progress,
-    )?;
+    let mut cache = if reuse_cache {
+        prepare_cache(
+            &mut reader,
+            &manifest,
+            identity,
+            cache_root,
+            cancel,
+            progress,
+        )?
+    } else {
+        std::fs::create_dir_all(cache_root)
+            .map_err(|error| PceCdLoadError::Archive(format!("CD cache: {error}")))?;
+        extract_cache(
+            &mut reader,
+            &manifest,
+            identity,
+            cache_root,
+            cancel,
+            progress,
+        )?
+    };
 
     for attempt in 0..2 {
         match load_cached_disc(&cache, &manifest, &cue_name, cancel, progress, apply_mods) {
             Ok(loaded) => {
                 touch_cache_entry(&cache.path);
                 prune_cache(cache_root, Some(&cache.path));
-                return Ok((virtual_member_path(path, &cue_name), loaded));
+                return Ok((
+                    virtual_member_path(path, &cue_name),
+                    loaded,
+                    archive_identity,
+                ));
             }
             Err(CachedDiscError::Load(error)) => return Err(error),
             Err(CachedDiscError::Corrupt) if attempt == 0 => {
                 remove_cache_entry(cache_root, &cache.path);
-                let (mut retry_reader, retry_manifest) =
-                    open_validated(path, decoder_memory_limit_mib)?;
-                if retry_manifest != manifest {
+                let (mut retry_reader, retry_manifest, retry_source) =
+                    open_validated_with_source_fingerprint(
+                        path,
+                        decoder_memory_limit_mib,
+                        cancel,
+                        progress,
+                    )?;
+                if retry_manifest != manifest || retry_source != source {
                     return Err(PceCdLoadError::ArchiveChanged);
                 }
                 cache = extract_cache(
@@ -257,4 +576,26 @@ pub(crate) fn load_7z_cue_with_cache_root(
         }
     }
     unreachable!()
+}
+
+#[cfg(test)]
+pub(crate) fn load_7z_cue_with_cache_root_and_archive_identity_for_test(
+    path: &Path,
+    cancel: &AtomicBool,
+    progress: &PceCdPackageProgress,
+    decoder_memory_limit_mib: usize,
+    cache_root: &Path,
+) -> Result<(PathBuf, LoadedPceCd, PceCdArchiveCueIdentity), PceCdLoadError> {
+    load_7z_cue_with_cache_root_and_archive_identity(
+        path,
+        CachedCueLoadOptions {
+            cancel,
+            progress,
+            decoder_memory_limit_mib,
+            apply_mods: false,
+            cache_root,
+            reuse_cache: false,
+            selected_cue_name: None,
+        },
+    )
 }

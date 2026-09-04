@@ -4,8 +4,9 @@ use zeff_emu_common::replay::POCKET_CAMERA_FRAME_BYTES;
 use zeff_emu_common::replay::ReplayStartMetadata;
 
 use super::special_input_editor::{
-    GAME_BOY_MBC7_DEVICE, GAME_BOY_POCKET_CAMERA_DEVICE, NES_ZAPPER_DEVICE, TasSpecialInputAction,
-    TasSpecialInputMutation, camera_asset_is_authorable, special_input_capabilities,
+    GAME_BOY_MBC7_DEVICE, GAME_BOY_POCKET_CAMERA_DEVICE, GBA_TILT_DEVICE, NES_ZAPPER_DEVICE,
+    TasSpecialInputAction, TasSpecialInputMutation, camera_asset_is_authorable,
+    special_input_capabilities,
 };
 use super::*;
 use crate::emu_backend::loader::direct_nes_tas_identity;
@@ -179,6 +180,41 @@ fn capabilities_require_exact_system_and_device_identity() {
     assert!(capabilities.mbc7_tilt);
     assert!(capabilities.pocket_camera);
     assert!(!capabilities.nes_zapper);
+
+    let gba = synthetic_identity("gba", &[GBA_TILT_DEVICE], &start_state);
+    let capabilities = special_input_capabilities(&gba);
+    assert!(capabilities.gba_tilt);
+    assert!(!capabilities.mbc7_tilt);
+
+    let wrong_gba_system = synthetic_identity("gb", &[GBA_TILT_DEVICE], &start_state);
+    assert!(!special_input_capabilities(&wrong_gba_system).gba_tilt);
+}
+
+#[test]
+fn gba_tilt_is_authorable_with_exact_raw_bits() {
+    let (_root, mut state) = synthetic_state(
+        "gba",
+        &[GBA_TILT_DEVICE],
+        TasInputFrame::default(),
+        BTreeMap::new(),
+    );
+    let (x_bits, y_bits) = (0x7FC0_0123, 0xBF00_0000);
+    reduce_special(
+        &mut state,
+        1,
+        TasSpecialInputMutation::RecordedTilt { x_bits, y_bits },
+    )
+    .unwrap();
+    let branch = state.session.as_ref().unwrap().selected_branch();
+    assert_eq!(
+        (
+            branch.input_at(1).tilt_x_bits,
+            branch.input_at(1).tilt_y_bits
+        ),
+        (x_bits, y_bits)
+    );
+    assert_eq!(branch.input_at(0), TasInputFrame::default());
+    assert_eq!(branch.input_at(2), TasInputFrame::default());
 }
 
 #[test]
@@ -198,7 +234,7 @@ fn applicable_channels_replace_only_the_selected_frame_exactly() {
     reduce_special(
         &mut zapper_state,
         1,
-        TasSpecialInputMutation::SetNesZapper(zapper),
+        TasSpecialInputMutation::NesZapper(zapper),
     )
     .unwrap();
     let branch = zapper_state.session.as_ref().unwrap().selected_branch();
@@ -219,7 +255,7 @@ fn applicable_channels_replace_only_the_selected_frame_exactly() {
     reduce_special(
         &mut tilt_state,
         0,
-        TasSpecialInputMutation::SetMbc7Tilt { x_bits, y_bits },
+        TasSpecialInputMutation::RecordedTilt { x_bits, y_bits },
     )
     .unwrap();
     let input = tilt_state
@@ -251,14 +287,14 @@ fn camera_selection_uses_only_an_existing_content_addressed_asset() {
     let wrong_size_error = reduce_special(
         &mut state,
         0,
-        TasSpecialInputMutation::SetPocketCamera(TasCameraInput::Blob(wrong_digest)),
+        TasSpecialInputMutation::PocketCamera(TasCameraInput::Blob(wrong_digest)),
     )
     .unwrap_err();
     assert!(wrong_size_error.to_string().contains("128x112"));
     reduce_special(
         &mut state,
         0,
-        TasSpecialInputMutation::SetPocketCamera(TasCameraInput::Blob(digest)),
+        TasSpecialInputMutation::PocketCamera(TasCameraInput::Blob(digest)),
     )
     .unwrap();
     assert_eq!(
@@ -277,7 +313,7 @@ fn camera_selection_uses_only_an_existing_content_addressed_asset() {
     let error = reduce_special(
         &mut state,
         1,
-        TasSpecialInputMutation::SetPocketCamera(TasCameraInput::Blob(missing)),
+        TasSpecialInputMutation::PocketCamera(TasCameraInput::Blob(missing)),
     )
     .unwrap_err();
     assert!(error.to_string().contains("missing camera asset"));
@@ -305,7 +341,7 @@ fn legacy_wrong_sized_camera_reference_is_preserved_until_explicitly_cleared() {
     reduce_special(
         &mut state,
         0,
-        TasSpecialInputMutation::SetPocketCamera(TasCameraInput::Blob(digest)),
+        TasSpecialInputMutation::PocketCamera(TasCameraInput::Blob(digest)),
     )
     .unwrap();
     assert_eq!(
@@ -321,7 +357,7 @@ fn legacy_wrong_sized_camera_reference_is_preserved_until_explicitly_cleared() {
     reduce_special(
         &mut state,
         0,
-        TasSpecialInputMutation::SetPocketCamera(TasCameraInput::None),
+        TasSpecialInputMutation::PocketCamera(TasCameraInput::None),
     )
     .unwrap();
     assert_eq!(
@@ -345,7 +381,7 @@ fn successful_movie_edit_clears_preview_and_preserves_history_rerecord_autosave(
     reduce_special(
         &mut state,
         1,
-        TasSpecialInputMutation::SetNesZapper(TasZapperInput {
+        TasSpecialInputMutation::NesZapper(TasZapperInput {
             enabled: true,
             trigger: true,
             hit: true,
@@ -426,7 +462,7 @@ fn changed_input_detaches_an_execution_profile_that_no_longer_accepts_the_projec
     let message = reduce_special(
         &mut state,
         1,
-        TasSpecialInputMutation::SetNesZapper(TasZapperInput {
+        TasSpecialInputMutation::NesZapper(TasZapperInput {
             enabled: true,
             ..TasZapperInput::default()
         }),
@@ -448,7 +484,7 @@ fn failed_action_rolls_back_and_preserves_exact_preview() {
     let error = reduce_special(
         &mut state,
         3,
-        TasSpecialInputMutation::SetNesZapper(TasZapperInput {
+        TasSpecialInputMutation::NesZapper(TasZapperInput {
             enabled: true,
             ..TasZapperInput::default()
         }),
@@ -482,7 +518,7 @@ fn unsupported_legacy_value_can_only_be_cleared() {
     let error = reduce_special(
         &mut state,
         0,
-        TasSpecialInputMutation::SetNesZapper(TasZapperInput {
+        TasSpecialInputMutation::NesZapper(TasZapperInput {
             enabled: true,
             trigger: false,
             ..TasZapperInput::default()
@@ -494,7 +530,7 @@ fn unsupported_legacy_value_can_only_be_cleared() {
     reduce_special(
         &mut state,
         0,
-        TasSpecialInputMutation::SetNesZapper(TasZapperInput::default()),
+        TasSpecialInputMutation::NesZapper(TasZapperInput::default()),
     )
     .unwrap();
     assert_eq!(
@@ -521,7 +557,7 @@ fn queued_action_fails_closed_after_an_exact_project_revision_change() {
         session.project_content_sha256(),
         "main".to_owned(),
         1,
-        TasSpecialInputMutation::SetMbc7Tilt {
+        TasSpecialInputMutation::RecordedTilt {
             x_bits: 0x3F80_0000,
             y_bits: 0,
         },
@@ -529,7 +565,7 @@ fn queued_action_fails_closed_after_an_exact_project_revision_change() {
     reduce_special(
         &mut state,
         0,
-        TasSpecialInputMutation::SetMbc7Tilt {
+        TasSpecialInputMutation::RecordedTilt {
             x_bits: 0,
             y_bits: 0x4000_0000,
         },

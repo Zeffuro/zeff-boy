@@ -6,10 +6,10 @@ use super::{TasEditorAction, TasEditorWindowState};
 use crate::tas_project::{TasDigest, TasEditorSession};
 
 mod fds;
-#[cfg(test)]
-pub(super) use fds::is_editable_event;
 use fds::{FdsDraft, FdsDrawContext};
-pub(super) use fds::{FdsMediaMutation, can_author_fds_events};
+pub(super) use fds::{
+    FdsMediaMutation, can_author_fds_events, is_editable_event, project_media_id, validate_timeline,
+};
 
 const EVENT_ROW_HEIGHT: f32 = 22.0;
 const EVENT_LIST_HEIGHT: f32 = 176.0;

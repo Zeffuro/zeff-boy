@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,14 +9,29 @@ use std::sync::{Arc, Mutex};
 use rars::{
     Archive, ArchiveFamily, ArchiveReadOptions, ArchiveReader, AttrSource, ExtractedEntryMeta,
 };
+use sha2::{Digest, Sha256};
 
 use super::pce_cd::{
     LoadedPceCd, PCE_CD_CUE_BYTES_LIMIT, PCE_CD_DATA_BYTES_LIMIT, PceCdLoadError,
     build_disc_with_mods, normalize_portable_path, parse_cue_bytes,
 };
-use super::pce_cd_archive::{PceCdPackageLoadPhase, PceCdPackageProgress};
+use super::pce_cd_archive::{
+    PceCdArchiveCueCandidate, PceCdArchiveCueIdentity, PceCdArchiveCueSelection,
+    PceCdPackageLoadPhase, PceCdPackageProgress, select_normalized_cue_name,
+};
+
+#[path = "pce_cd_rar/ppf.rs"]
+mod ppf;
+pub(crate) use ppf::{
+    inspect_rar_ppf_candidates_with_archive_identity, load_rar_cue_with_control_and_archive_ppf,
+    load_rar_selected_cue_with_control_and_archive_ppf,
+};
+#[cfg(test)]
+#[path = "pce_cd_rar/ppf_tests.rs"]
+mod ppf_tests;
 
 const RAR_ARCHIVE_BYTES_LIMIT: u64 = 8 * 1024 * 1024 * 1024;
+const RAR_TAS_ARCHIVE_BYTES_LIMIT: u64 = 1024 * 1024 * 1024;
 const RAR_DECODED_BYTES_LIMIT: u64 = 1024 * 1024 * 1024;
 const RAR_ENTRY_LIMIT: usize = 256;
 const DOS_REPARSE_POINT: u64 = 0x400;
@@ -33,7 +48,7 @@ struct RarMember {
 #[derive(Debug)]
 struct RarManifest {
     members: Vec<RarMember>,
-    cue_name: String,
+    cue_names: Vec<String>,
     decoded_bytes: u64,
 }
 
@@ -65,6 +80,12 @@ struct PassWriter {
     output: Option<SharedBytes>,
     expected: u64,
     written: u64,
+}
+
+struct RarLoadControl {
+    cancel: Arc<AtomicBool>,
+    progress: Arc<PceCdPackageProgress>,
+    apply_mods: bool,
 }
 
 impl Write for PassWriter {
@@ -106,9 +127,40 @@ impl Write for PassWriter {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn inspect_rar_cue_path(path: &Path) -> Result<PathBuf, PceCdLoadError> {
     let (_, manifest) = open_validated(path)?;
-    Ok(virtual_member_path(path, &manifest.cue_name))
+    Ok(virtual_member_path(
+        path,
+        select_normalized_cue_name(&manifest.cue_names, None)?,
+    ))
+}
+
+pub(crate) fn inspect_rar_cue_members(path: &Path) -> Result<Vec<String>, PceCdLoadError> {
+    let (_, manifest) = open_validated(path)?;
+    Ok(manifest.cue_names)
+}
+
+pub(crate) fn inspect_rar_cue_candidates_with_archive_identity(
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<Vec<PceCdArchiveCueCandidate>, PceCdLoadError> {
+    let (_, manifest, source_sha256, source_len) = open_validated_owned(path, cancel)?;
+    manifest
+        .cue_names
+        .into_iter()
+        .map(|cue_member| {
+            Ok(PceCdArchiveCueCandidate {
+                identity: rar_cue_identity(
+                    source_sha256,
+                    source_len,
+                    &cue_member,
+                    PceCdArchiveCueSelection::Explicit,
+                )?,
+                cue_member,
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn load_rar_cue_with_control_and_mods(
@@ -120,28 +172,54 @@ pub(crate) fn load_rar_cue_with_control_and_mods(
     check_cancelled(&cancel)?;
     progress.set_phase(PceCdPackageLoadPhase::Inspecting);
     let (archive, manifest) = open_validated(path)?;
-    let cue_target = BTreeSet::from([manifest.cue_name.clone()]);
+    let cue_name = select_normalized_cue_name(&manifest.cue_names, None)?.to_owned();
+    load_validated_archive(
+        path,
+        &archive,
+        &manifest,
+        &cue_name,
+        RarLoadControl {
+            cancel,
+            progress,
+            apply_mods,
+        },
+    )
+}
+
+fn load_validated_archive(
+    path: &Path,
+    archive: &Archive,
+    manifest: &RarManifest,
+    cue_name: &str,
+    control: RarLoadControl,
+) -> Result<(PathBuf, LoadedPceCd), PceCdLoadError> {
+    let RarLoadControl {
+        cancel,
+        progress,
+        apply_mods,
+    } = control;
+    let cue_target = BTreeSet::from([cue_name.to_owned()]);
     progress.set_phase(PceCdPackageLoadPhase::ReadingCue);
     progress.set_total_bytes(manifest.decoded_bytes.saturating_mul(2));
     progress.set_completed_bytes(0);
     let mut cue = extract_targets(
-        &archive,
-        &manifest,
+        archive,
+        manifest,
         &cue_target,
         Arc::clone(&cancel),
         Arc::clone(&progress),
         0,
     )?;
     let cue_bytes = cue
-        .remove(&manifest.cue_name)
-        .ok_or_else(|| PceCdLoadError::ArchiveMemberMissing(manifest.cue_name.clone()))?;
+        .remove(cue_name)
+        .ok_or_else(|| PceCdLoadError::ArchiveMemberMissing(cue_name.to_owned()))?;
     let sheet = parse_cue_bytes(&cue_bytes)?;
 
     let mut resolved = Vec::with_capacity(sheet.files.len());
     let mut targets = BTreeSet::new();
     let mut data_bytes = 0_u64;
     for file in &sheet.files {
-        let name = resolve_reference(&manifest, &manifest.cue_name, &file.reference)?;
+        let name = resolve_reference(manifest, cue_name, &file.reference)?;
         let member = manifest
             .members
             .iter()
@@ -160,8 +238,8 @@ pub(crate) fn load_rar_cue_with_control_and_mods(
     check_cancelled(&cancel)?;
     progress.set_phase(PceCdPackageLoadPhase::ReadingData);
     let mut extracted = extract_targets(
-        &archive,
-        &manifest,
+        archive,
+        manifest,
         &targets,
         cancel,
         progress,
@@ -176,7 +254,69 @@ pub(crate) fn load_rar_cue_with_control_and_mods(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let loaded = build_disc_with_mods(cue_bytes, &sheet, files, apply_mods)?;
-    Ok((virtual_member_path(path, &manifest.cue_name), loaded))
+    Ok((virtual_member_path(path, cue_name), loaded))
+}
+
+pub(crate) fn load_rar_cue_with_control_and_archive_identity(
+    path: &Path,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<PceCdPackageProgress>,
+    apply_mods: bool,
+) -> Result<(PathBuf, LoadedPceCd, PceCdArchiveCueIdentity), PceCdLoadError> {
+    check_cancelled(&cancel)?;
+    progress.set_phase(PceCdPackageLoadPhase::Inspecting);
+    let (archive, manifest, source_sha256, source_len) = open_validated_owned(path, &cancel)?;
+    let cue_name = select_normalized_cue_name(&manifest.cue_names, None)?.to_owned();
+    let identity = rar_cue_identity(
+        source_sha256,
+        source_len,
+        &cue_name,
+        PceCdArchiveCueSelection::Unique,
+    )?;
+    let (cue_path, loaded) = load_validated_archive(
+        path,
+        &archive,
+        &manifest,
+        &cue_name,
+        RarLoadControl {
+            cancel,
+            progress,
+            apply_mods,
+        },
+    )?;
+    Ok((cue_path, loaded, identity))
+}
+
+pub(crate) fn load_rar_selected_cue_with_control_and_archive_identity(
+    path: &Path,
+    selected_cue_name: &str,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<PceCdPackageProgress>,
+    apply_mods: bool,
+) -> Result<(PathBuf, LoadedPceCd, PceCdArchiveCueIdentity), PceCdLoadError> {
+    check_cancelled(&cancel)?;
+    progress.set_phase(PceCdPackageLoadPhase::Inspecting);
+    let (archive, manifest, source_sha256, source_len) = open_validated_owned(path, &cancel)?;
+    let cue_name =
+        select_normalized_cue_name(&manifest.cue_names, Some(selected_cue_name))?.to_owned();
+    let identity = rar_cue_identity(
+        source_sha256,
+        source_len,
+        &cue_name,
+        PceCdArchiveCueSelection::Explicit,
+    )?;
+    let (cue_path, loaded) = load_validated_archive(
+        path,
+        &archive,
+        &manifest,
+        &cue_name,
+        RarLoadControl {
+            cancel,
+            progress,
+            apply_mods,
+        },
+    )?;
+    Ok((cue_path, loaded, identity))
 }
 
 fn open_validated(path: &Path) -> Result<(Archive, RarManifest), PceCdLoadError> {
@@ -189,6 +329,59 @@ fn open_validated(path: &Path) -> Result<(Archive, RarManifest), PceCdLoadError>
         return Err(PceCdLoadError::ArchiveTooLarge(metadata.len()));
     }
     let archive = ArchiveReader::read_path(path).map_err(map_rar_error)?;
+    let manifest = validate_archive(&archive)?;
+    Ok((archive, manifest))
+}
+
+fn open_validated_owned(
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<(Archive, RarManifest, [u8; 32], usize), PceCdLoadError> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+    let size = file
+        .metadata()
+        .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?
+        .len();
+    if size > RAR_TAS_ARCHIVE_BYTES_LIMIT {
+        return Err(PceCdLoadError::ArchiveTooLarge(size));
+    }
+    let capacity = usize::try_from(size).map_err(|_| PceCdLoadError::ArchiveTooLarge(size))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(capacity)
+        .map_err(|_| PceCdLoadError::ArchiveAllocationFailed)?;
+    let mut chunk = [0; 64 * 1024];
+    loop {
+        check_cancelled(cancel)?;
+        let read = file
+            .read(&mut chunk)
+            .map_err(|_| PceCdLoadError::ArchiveUnreadable(path.to_path_buf()))?;
+        if read == 0 {
+            break;
+        }
+        let next_len = bytes
+            .len()
+            .checked_add(read)
+            .ok_or(PceCdLoadError::ArchiveTooLarge(u64::MAX))?;
+        if next_len as u64 > RAR_TAS_ARCHIVE_BYTES_LIMIT {
+            return Err(PceCdLoadError::ArchiveTooLarge(next_len as u64));
+        }
+        bytes
+            .try_reserve(read)
+            .map_err(|_| PceCdLoadError::ArchiveAllocationFailed)?;
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    if bytes.len() != capacity {
+        return Err(PceCdLoadError::ArchiveChanged);
+    }
+    let source_sha256 = Sha256::digest(&bytes).into();
+    let archive = ArchiveReader::read_owned(bytes).map_err(map_rar_error)?;
+    let manifest = validate_archive(&archive)?;
+    Ok((archive, manifest, source_sha256, capacity))
+}
+
+fn validate_archive(archive: &Archive) -> Result<RarManifest, PceCdLoadError> {
     let mut members = Vec::new();
     let mut names = BTreeSet::new();
     let mut cue_names = Vec::new();
@@ -245,19 +438,28 @@ fn open_validated(path: &Path) -> Result<(Archive, RarManifest), PceCdLoadError>
             is_directory: member.meta.is_directory,
         });
     }
-    let cue_name = match cue_names.as_slice() {
-        [] => return Err(PceCdLoadError::NoArchiveCue),
-        [cue] => cue.clone(),
-        _ => return Err(PceCdLoadError::MultipleArchiveCues),
-    };
-    Ok((
-        archive,
-        RarManifest {
-            members,
-            cue_name,
-            decoded_bytes,
-        },
-    ))
+    Ok(RarManifest {
+        members,
+        cue_names,
+        decoded_bytes,
+    })
+}
+
+fn rar_cue_identity(
+    source_sha256: [u8; 32],
+    source_len: usize,
+    cue_name: &str,
+    selection: PceCdArchiveCueSelection,
+) -> Result<PceCdArchiveCueIdentity, PceCdLoadError> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"zeff-pce-cd-rar-cue-member:v1\0");
+    hasher.update(cue_name.as_bytes());
+    Ok(PceCdArchiveCueIdentity {
+        source_sha256,
+        source_len,
+        cue_member_path_sha256: hasher.finalize().into(),
+        selection,
+    })
 }
 
 fn extract_targets(
@@ -268,6 +470,7 @@ fn extract_targets(
     progress: Arc<PceCdPackageProgress>,
     progress_base: u64,
 ) -> Result<BTreeMap<String, Vec<u8>>, PceCdLoadError> {
+    check_cancelled(&cancel)?;
     let maximum = manifest.decoded_bytes.saturating_mul(2);
     let state = Arc::new(PassState {
         cancel,
@@ -461,11 +664,11 @@ mod tests {
     use rars::rar50::{ArchiveEntry, Rar50Writer, WriterOptions};
     use rars::{ArchiveVersion, EntrySource, FeatureSet};
 
-    fn archive_path(name: &str) -> PathBuf {
+    pub(super) fn archive_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("zeff-pce-rar-{}-{name}.rar", std::process::id()))
     }
 
-    fn write_archive(path: &Path, entries: &[(&[u8], &[u8])]) {
+    pub(super) fn write_archive(path: &Path, entries: &[(&[u8], &[u8])]) {
         let entries = entries
             .iter()
             .map(|(name, data)| {
@@ -544,6 +747,54 @@ mod tests {
             PceCdLoadError::ArchiveMemberMissing("disc.bin".to_owned())
         );
         let _ = std::fs::remove_file(missing);
+    }
+
+    #[test]
+    fn rar_explicit_multi_cue_selection_is_normalized_and_bound() {
+        let path = archive_path("selected-multi");
+        let cue = b"FILE \"disc.bin\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n";
+        write_archive(
+            &path,
+            &[
+                (b"First/Disc.cue", cue),
+                (b"First/disc.bin", &[0x11; 2048]),
+                (b"second/disc.cue", cue),
+                (b"second/disc.bin", &[0x22; 2048]),
+            ],
+        );
+        assert_eq!(
+            inspect_rar_cue_members(&path).unwrap(),
+            vec!["First/Disc.cue", "second/disc.cue"]
+        );
+        assert_eq!(
+            inspect_rar_cue_path(&path),
+            Err(PceCdLoadError::MultipleArchiveCues)
+        );
+        let load = |selected: &str| {
+            load_rar_selected_cue_with_control_and_archive_identity(
+                &path,
+                selected,
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(PceCdPackageProgress::default()),
+                false,
+            )
+            .unwrap()
+        };
+        let (first_path, first, first_identity) = load("first\\disc.cue");
+        let (second_path, second, second_identity) = load("second/disc.cue");
+        assert_eq!(first_path, path.join("First").join("Disc.cue"));
+        assert_eq!(second_path, path.join("second").join("disc.cue"));
+        assert_ne!(first.source_disc_sha256, second.source_disc_sha256);
+        assert_eq!(first_identity.selection, PceCdArchiveCueSelection::Explicit);
+        assert_eq!(
+            second_identity.selection,
+            PceCdArchiveCueSelection::Explicit
+        );
+        assert_ne!(
+            first_identity.cue_member_path_sha256,
+            second_identity.cue_member_path_sha256
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

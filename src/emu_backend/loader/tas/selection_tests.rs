@@ -46,6 +46,19 @@ fn private_attachment_selection_reports_current_capability_reasons() {
             )
         ));
     }
+    for extension in ["7z", "rar", "zip"] {
+        let source = PathBuf::from(format!("missing.{extension}"));
+        assert!(matches!(
+            select_private_tas_execution_attachment(
+                Some(source.clone()),
+                Some(source.join("second").join("disc.cue")),
+                Some(ActiveSystem::Pce),
+                Vec::new(),
+                None,
+            ),
+            TasEditorExecutionAttachment::Available(_)
+        ));
+    }
 }
 
 #[test]

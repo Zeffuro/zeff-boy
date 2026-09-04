@@ -26,6 +26,43 @@ fn external_bios_starts_at_reset_vector_and_can_enter_game_pak_rom() {
 }
 
 #[test]
+fn reset_restores_fresh_hardware_and_clears_queued_audio() {
+    let rom = minimal_rom();
+    let mut emu = Emulator::new(&rom, 48_000).unwrap();
+    emu.set_apu_channel_mutes([true, false, true, false, true, false]);
+    emu.set_apu_debug_capture_enabled(true);
+    emu.set_ppu_debug_flags(false, true, false);
+    emu.set_ppu_debug_bg_layers([true, false, true, false]);
+    emu.cpu_write32(0x0200_0000, 0xDEAD_BEEF);
+    emu.cpu_write16(0x0400_0102, 0x0080);
+    emu.step_frame();
+    assert_ne!(emu.apu_debug_snapshot().sample_buffer_len, 0);
+
+    emu.reset();
+
+    let mut fresh = Emulator::new(&rom, 48_000).unwrap();
+    fresh.set_apu_channel_mutes([true, false, true, false, true, false]);
+    fresh.set_apu_debug_capture_enabled(true);
+    fresh.set_ppu_debug_flags(false, true, false);
+    fresh.set_ppu_debug_bg_layers([true, false, true, false]);
+    assert_eq!(emu.apu_debug_snapshot().sample_buffer_len, 0);
+    assert_eq!(emu.encode_state().unwrap(), fresh.encode_state().unwrap());
+}
+
+#[test]
+fn reset_preserves_battery_data() {
+    let mut rom = minimal_rom();
+    rom.extend_from_slice(b"SRAM_V113");
+    let mut emu = Emulator::new(&rom, 48_000).unwrap();
+    let battery = vec![0x5A; crate::hardware::constants::SRAM_SIZE];
+    emu.load_battery_sram(&battery).unwrap();
+
+    emu.reset();
+
+    assert_eq!(emu.dump_battery_sram(), Some(battery));
+}
+
+#[test]
 fn external_bios_swi_uses_supervisor_vector() {
     let mut bios = vec![0; crate::hardware::constants::BIOS_SIZE];
     bios[8..12].copy_from_slice(&0xEAFF_FFFE_u32.to_le_bytes());

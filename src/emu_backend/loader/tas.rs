@@ -33,6 +33,8 @@ mod direct_nes_loader;
 mod direct_pce;
 mod direct_pce_cd;
 mod direct_pce_cd_loader;
+#[cfg(test)]
+mod direct_pce_cd_replay_tests;
 mod direct_pce_loader;
 mod direct_sg1000;
 mod direct_sg1000_loader;
@@ -101,18 +103,30 @@ pub(crate) use direct_nes_loader::DirectNesTasExecutionLoader;
 pub(crate) use direct_pce::{
     direct_pce_tas_host_persistence_absent, direct_pce_tas_project_profile,
     direct_pce_tas_sync_config_sha256_for_profile,
+    validate_direct_pce_multitap_tas_execution_runtime, validate_direct_pce_multitap_tas_runtime,
     validate_direct_pce_six_button_tas_execution_runtime,
     validate_direct_pce_six_button_tas_runtime, validate_direct_pce_tas_execution_runtime,
     validate_direct_pce_tas_project_identity, validate_direct_pce_tas_project_witness,
     validate_direct_pce_tas_runtime, validate_direct_pce_tas_state,
     zip_pce_tas_sync_config_sha256_for_profile,
 };
+#[cfg(test)]
+pub(crate) use direct_pce_cd::direct_pce_cd_archive_ppf_tas_sync_configs_for_test;
 pub(crate) use direct_pce_cd::{
+    direct_pce_multitap_cd_ppf_tas_sync_config_sha256,
+    is_direct_pce_cd_archive_ppf_tas_sync_config_sha256,
     validate_direct_pce_cd_tas_execution_runtime, validate_direct_pce_cd_tas_project_identity,
     validate_direct_pce_cd_tas_project_witness, validate_direct_pce_cd_tas_runtime,
-    validate_direct_pce_cd_tas_state,
+    validate_direct_pce_cd_tas_state, validate_direct_pce_multitap_cd_tas_execution_runtime,
+    validate_direct_pce_multitap_cd_tas_project_identity,
+    validate_direct_pce_multitap_cd_tas_project_witness,
+    validate_direct_pce_multitap_cd_tas_runtime, validate_direct_pce_multitap_cd_tas_state,
 };
 pub(crate) use direct_pce_cd_loader::DirectPceCdTasExecutionLoader;
+#[cfg(test)]
+pub(crate) use direct_pce_cd_loader::{
+    register_test_pce_cd_ppf_stack, register_test_pce_cd_system_card,
+};
 pub(crate) use direct_pce_loader::{
     DirectPceTasExecutionLoader, MAX_DIRECT_PCE_HUCARD_BYTES, classify_direct_pce_tas_hardware,
 };
@@ -157,6 +171,7 @@ pub(crate) use project_profile::{
 pub(crate) use selection::{
     has_extension, select_private_tas_execution_attachment, select_private_tas_execution_loader,
     select_private_tas_execution_loader_for_project,
+    select_private_tas_execution_loader_for_replay,
     select_private_tas_execution_loader_with_rom_path,
 };
 
@@ -346,27 +361,36 @@ impl PrivateTasExecutionLoader {
             TasProject::is_project_path(project_path),
             "TAS projects must use the .ztas extension"
         );
-        let project = TasProject::import_zrpl_with_witness(replay_path, |start_state| {
-            let (prefix, session) = match self {
-                Self::DirectNes(loader) => ("nes", loader.load_session(start_state)?),
-                Self::DirectFds(_) => bail!("FDS replay import requires project-owned disk media"),
-                Self::DirectGb(loader) => ("gb", loader.load_session(start_state)?),
-                Self::DirectGbc(loader) => ("gbc", loader.load_session(start_state)?),
-                Self::DirectColeco(loader) => ("coleco", loader.load_session(start_state)?),
-                Self::DirectSms(loader) => ("sms", loader.load_session(start_state)?),
-                Self::DirectGameGear(loader) => ("game-gear", loader.load_session(start_state)?),
-                Self::DirectGba(loader) => ("gba", loader.load_session(start_state)?),
-                Self::DirectSg1000(loader) => ("sg1000", loader.load_session(start_state)?),
-                Self::DirectWs(loader) => ("ws", loader.load_session(start_state)?),
-                Self::DirectPce(loader) => ("pce", loader.load_session(start_state)?),
-                Self::DirectPceCd(loader) => ("pce-cd", loader.load_session(start_state)?),
-            };
-            let identity = session.identity().clone();
-            Ok(TasZrplImportWitness {
-                project_id: format!("{prefix}-{}", identity.source_media_sha256.to_hex()),
-                identity,
-            })
-        })?;
+        let project =
+            TasProject::import_zrpl_with_witness_and_assets(replay_path, |start_state| {
+                if let Self::DirectFds(loader) = self {
+                    return loader.replay_import_witness(start_state);
+                }
+                let (prefix, session) = match self {
+                    Self::DirectNes(loader) => ("nes", loader.load_session(start_state)?),
+                    Self::DirectFds(_) => unreachable!("FDS replay import handled above"),
+                    Self::DirectGb(loader) => ("gb", loader.load_session(start_state)?),
+                    Self::DirectGbc(loader) => ("gbc", loader.load_session(start_state)?),
+                    Self::DirectColeco(loader) => ("coleco", loader.load_session(start_state)?),
+                    Self::DirectSms(loader) => ("sms", loader.load_session(start_state)?),
+                    Self::DirectGameGear(loader) => {
+                        ("game-gear", loader.load_session(start_state)?)
+                    }
+                    Self::DirectGba(loader) => ("gba", loader.load_session(start_state)?),
+                    Self::DirectSg1000(loader) => ("sg1000", loader.load_session(start_state)?),
+                    Self::DirectWs(loader) => ("ws", loader.load_session(start_state)?),
+                    Self::DirectPce(loader) => ("pce", loader.load_session(start_state)?),
+                    Self::DirectPceCd(loader) => ("pce-cd", loader.load_session(start_state)?),
+                };
+                let identity = session.identity().clone();
+                Ok((
+                    TasZrplImportWitness {
+                        project_id: format!("{prefix}-{}", identity.source_media_sha256.to_hex()),
+                        identity,
+                    },
+                    std::collections::BTreeMap::new(),
+                ))
+            })?;
         for branch in project.branches() {
             self.validate_project_branch_scope(&project, branch.id())?;
         }

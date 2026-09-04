@@ -67,11 +67,16 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let tas_fenced = false;
         let paused = self.pause_state.effective(tas_fenced);
+        #[cfg(not(target_arch = "wasm32"))]
+        let tas_recording = self.realtime_tas_recording_active();
+        #[cfg(target_arch = "wasm32")]
+        let tas_recording = false;
         if self.speed.paused && !paused {
             self.timing.last_frame_time = crate::platform::Instant::now();
         }
         self.speed.paused = paused;
-        self.toast_manager.set_paused(paused);
+        self.toast_manager.set_paused(paused && !tas_recording);
+        self.toast_manager.set_recording(tas_recording);
     }
 
     pub(in crate::app) fn set_user_paused(&mut self, paused: bool) {

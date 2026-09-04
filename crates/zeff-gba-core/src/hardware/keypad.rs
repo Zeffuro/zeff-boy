@@ -46,6 +46,10 @@ impl Keypad {
     pub fn write_keycnt(&mut self, value: u16) {
         self.keycnt = value & 0xC3FF;
     }
+
+    pub(crate) fn reset_hardware(&mut self) {
+        self.keycnt = 0;
+    }
 }
 
 #[cfg(test)]

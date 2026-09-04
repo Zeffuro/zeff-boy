@@ -24,7 +24,9 @@ pub(in crate::app) const fn profile_supports_live_input_recording(
             | crate::emu_thread::TasExecutionProfile::DirectWsCartridge
             | crate::emu_thread::TasExecutionProfile::DirectPceHuCard
             | crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard
+            | crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard
             | crate::emu_thread::TasExecutionProfile::DirectPceCd
+            | crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd
     )
 }
 
@@ -265,7 +267,11 @@ fn input_from_prepared(
             {
                 bail!("live input is outside the direct Game Boy profile");
             }
-            Ok(p1)
+            Ok(TasInputFrame {
+                tilt_x_bits: input.tilt_x_bits,
+                tilt_y_bits: input.tilt_y_bits,
+                ..p1
+            })
         }
         crate::emu_thread::TasExecutionProfile::DirectGameGearCartridge => {
             if p1.p1_buttons & !0x0B != 0
@@ -288,13 +294,15 @@ fn input_from_prepared(
                     .any(|player| player.buttons != 0 || player.dpad != 0)
                 || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
                 || input.zapper != Default::default()
-                || input.tilt_x_bits != 0
-                || input.tilt_y_bits != 0
                 || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
             {
                 bail!("live input is outside the direct GBA profile");
             }
-            Ok(p1)
+            Ok(TasInputFrame {
+                tilt_x_bits: input.tilt_x_bits,
+                tilt_y_bits: input.tilt_y_bits,
+                ..p1
+            })
         }
         crate::emu_thread::TasExecutionProfile::DirectNesCartridge
         | crate::emu_thread::TasExecutionProfile::DirectFdsDisk => {
@@ -316,9 +324,12 @@ fn input_from_prepared(
                     hit: input.zapper.hit,
                     screen_pos: input.zapper.screen_pos.map(|[x, y]| (x, y)),
                 },
+                tilt_x_bits: 0,
+                tilt_y_bits: 0,
                 fds_disk_side: None,
                 fds_write_protected: None,
                 fds_media_event: None,
+                ..TasInputFrame::default()
             })
         }
         crate::emu_thread::TasExecutionProfile::DirectColecoCartridge => {
@@ -414,6 +425,34 @@ fn input_from_prepared(
                 bail!("live input is outside the direct PC Engine six-button TAS profile");
             }
             Ok(p1)
+        }
+        crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard
+        | crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => {
+            if input
+                .players
+                .iter()
+                .any(|player| player.buttons & !0x0F != 0 || player.dpad & !0x0F != 0)
+                || input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2]
+                || input.zapper != Default::default()
+                || input.tilt_x_bits != 0
+                || input.tilt_y_bits != 0
+                || !matches!(input.camera, crate::tas_project::TasCameraInput::None)
+            {
+                bail!("live input is outside the direct PC Engine multitap TAS profile");
+            }
+            Ok(TasInputFrame {
+                p1_buttons: input.players[0].buttons,
+                p1_dpad: input.players[0].dpad,
+                p2_buttons: input.players[1].buttons,
+                p2_dpad: input.players[1].dpad,
+                p3_buttons: input.players[2].buttons,
+                p3_dpad: input.players[2].dpad,
+                p4_buttons: input.players[3].buttons,
+                p4_dpad: input.players[3].dpad,
+                p5_buttons: input.players[4].buttons,
+                p5_dpad: input.players[4].dpad,
+                ..TasInputFrame::default()
+            })
         }
     }
 }

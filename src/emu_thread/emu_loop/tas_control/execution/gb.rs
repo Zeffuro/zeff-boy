@@ -180,5 +180,5 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn capture_direct_gb_candidate(
     if frame_count != expected_frame {
         return Err(Rejected::StateFrameMismatch);
     }
-    Ok((frame_count, TasDigest::from_bytes(&state)))
+    Ok((frame_count, super::super::tas_state_digest(profile, &state)))
 }
