@@ -19,13 +19,15 @@ pub use tas_state::{
     CurrentNativeGbaTasStateInspection, CurrentNativeGbaTasStateProjection, GbaTasKeypadState,
     GbaTasStartup, TAS_DETERMINISM_ABI_ID, TAS_STATE_FORMAT_COMPATIBILITY_ID,
     TILT_TAS_DETERMINISM_ABI_ID, TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID,
+    current_native_gba_tas_state_rom_sha256, current_native_gba_tilt_tas_state_rom_sha256,
     inspect_current_native_gba_tas_state, inspect_current_native_gba_tilt_tas_state,
     restore_current_native_gba_tas_state, restore_current_native_gba_tilt_tas_state,
 };
 
 const MAGIC: &[u8; 8] = b"ZBGBAST\0";
-const VERSION: u32 = 10;
-const TILT_VERSION: u32 = 11;
+const LEGACY_TILT_VERSION: u32 = 11;
+const VERSION: u32 = 12;
+const TILT_VERSION: u32 = 13;
 const MAX_BACKUP_SIZE: usize = 0x20_000;
 const MAX_FIFO_SIZE: usize = 32;
 #[cfg(test)]
@@ -39,6 +41,8 @@ const VERSION_10_BACKUP_EXECUTION_STATE_SIZE: usize =
     crate::hardware::cartridge::BACKUP_EXECUTION_STATE_SIZE;
 #[cfg(test)]
 const VERSION_11_TILT_EXECUTION_STATE_SIZE: usize = 14;
+#[cfg(test)]
+const VERSION_12_PSG_STATE_SIZE: usize = crate::hardware::apu::PSG_SAVE_STATE_SIZE;
 
 pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     let mut w = StateWriter::with_capacity(0x80_000);
@@ -100,7 +104,8 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u16(emu.bus.keypad.read_keyinput());
     w.write_u16(emu.bus.keypad.read_keycnt());
 
-    for timer in emu.bus.timers.all() {
+    let timer_registers = emu.bus.timer_registers_snapshot();
+    for timer in timer_registers {
         w.write_u16(timer.reload);
         w.write_u16(timer.counter);
         w.write_u16(timer.control);
@@ -143,7 +148,7 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u64(0);
     emu.bus.cartridge.write_rtc_state(&mut w);
     w.write_bool(emu.bus.has_external_bios());
-    let timer_timing = emu.bus.timers.timing_state();
+    let timer_timing = emu.bus.timer_timing_state();
     for accum in timer_timing.cycle_accum {
         w.write_u32(accum);
     }
@@ -195,7 +200,8 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
     w.write_u32(execution.data_access_count);
     w.write_u32(execution.data_bus_phase_cycles);
     emu.bus.cartridge.write_backup_execution_state(&mut w);
-    if version >= TILT_VERSION {
+    emu.bus.apu.write_psg_state(&mut w);
+    if version == TILT_VERSION {
         emu.bus.cartridge.write_tilt_execution_state(&mut w);
     }
     w.write_bytes(&emu.rom_hash);
@@ -204,6 +210,7 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
+    emu.bus.invalidate_event_deadline_after_state_load();
     let mut r = StateReader::new(data);
     let mut magic = [0u8; 8];
     r.read_exact(&mut magic)?;
@@ -464,7 +471,13 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     } else {
         emu.bus.cartridge.reset_backup_execution_state();
     }
-    if version >= TILT_VERSION {
+    if version >= VERSION {
+        emu.bus.apu.read_psg_state(&mut r)?;
+    } else {
+        let (apu, io) = (&mut emu.bus.apu, &emu.bus.io);
+        apu.migrate_legacy_psg_state(io);
+    }
+    if matches!(version, LEGACY_TILT_VERSION | TILT_VERSION) {
         emu.bus.cartridge.read_tilt_execution_state(&mut r)?;
     } else {
         emu.bus.cartridge.reset_tilt_execution_state();
@@ -481,6 +494,8 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
     if !r.is_exhausted() {
         bail!("GBA save state has trailing bytes");
     }
+    emu.bus
+        .restore_master_cycles_after_state_load(emu.cpu.cycles);
     Ok(())
 }
 
@@ -507,6 +522,8 @@ fn read_fixed_vec(
 
 #[cfg(test)]
 mod backup_state_tests;
+#[cfg(test)]
+mod psg_state_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

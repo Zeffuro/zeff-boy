@@ -8,6 +8,7 @@ mod mixing;
 mod noise;
 mod runtime;
 mod square;
+pub(super) mod state;
 mod wave;
 
 const APU_INITIAL_SAMPLE_CAPACITY: usize = 2048;
@@ -81,7 +82,7 @@ pub(super) struct PsgChannelSnapshot {
     pub(super) ch4_volume: u8,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ChannelState {
     enabled: bool,
     length_enabled: bool,
@@ -248,6 +249,7 @@ impl Psg {
 
     pub(in crate::hardware::apu) fn clear_host_output_after_state_load(&mut self) {
         self.sample_buffer.clear();
+        self.sample_cycle_accum = 0.0;
         self.debug_capture_cycle_accum = 0;
         for history in &mut self.channel_debug_history {
             history.clear();
@@ -258,6 +260,7 @@ impl Psg {
     #[cfg(test)]
     pub(in crate::hardware::apu) fn seed_host_output_for_state_load_test(&mut self) {
         self.sample_buffer.extend([0.75, -0.75]);
+        self.sample_cycle_accum = 19.5;
         self.debug_capture_cycle_accum = 17;
         for (index, history) in self.channel_debug_history.iter_mut().enumerate() {
             history.push((index + 1) as f32);
@@ -266,8 +269,12 @@ impl Psg {
     }
 
     #[cfg(test)]
-    pub(in crate::hardware::apu) fn host_output_state_for_test(&self) -> (usize, u64) {
-        (self.sample_buffer.len(), self.debug_capture_cycle_accum)
+    pub(in crate::hardware::apu) fn host_output_state_for_test(&self) -> (usize, f64, u64) {
+        (
+            self.sample_buffer.len(),
+            self.sample_cycle_accum,
+            self.debug_capture_cycle_accum,
+        )
     }
 }
 
@@ -307,7 +314,6 @@ impl Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn powered_psg() -> Psg {
         let mut psg = Psg::new(48_000);
         psg.write(NR52, 0x80);

@@ -156,16 +156,14 @@ impl Timers {
         let period = timer_period(timer.control);
         let accum = self.cycle_accum.get(index).copied().unwrap_or(0);
         let start_delay = u32::from(self.start_delay_cycles[index]);
-        let cycles_until_increment = period.saturating_sub(accum).max(1);
         let increments_until_overflow = 0x1_0000 - u32::from(timer.counter);
         Some(
-            start_delay
-                .saturating_add(cycles_until_increment)
-                .saturating_add(
-                    increments_until_overflow
-                        .saturating_sub(1)
-                        .saturating_mul(period),
-                ),
+            start_delay.saturating_add(
+                increments_until_overflow
+                    .saturating_mul(period)
+                    .saturating_sub(accum)
+                    .max(1),
+            ),
         )
     }
 
@@ -348,5 +346,21 @@ mod tests {
         timers.step(96);
         assert_eq!(timers.read16(0, false), 0xFFFE);
         assert_eq!(timers.cycles_until_overflow(0), Some(128));
+    }
+
+    #[test]
+    fn cycles_until_overflow_accounts_for_accepted_noncanonical_accumulator() {
+        let mut timers = Timers::default();
+        timers.write16(0, false, 0xFFF0);
+        timers.write16(0, true, 0x00C0);
+        assert!(timers.set_timing_state(TimerTimingState {
+            cycle_accum: [31, 0, 0, 0],
+            start_delay_cycles: [1, 0, 0, 0],
+            clock_phase: 0,
+        }));
+
+        assert_eq!(timers.cycles_until_overflow(0), Some(2));
+        assert_eq!(timers.step_with_overflows(1).1[0], 0);
+        assert_eq!(timers.step_with_overflows(1).1[0], 2);
     }
 }

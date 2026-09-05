@@ -13,6 +13,17 @@ impl EmuBackend {
         dispatch!(self, encode_state_bytes())
     }
 
+    pub(crate) fn encode_pce_tas_state_bytes_into(
+        &self,
+        core_state: &mut Vec<u8>,
+        output: &mut Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let Self::Pce(backend) = self else {
+            anyhow::bail!("PC Engine TAS state capture requires a PC Engine backend");
+        };
+        backend.encode_tas_state_bytes_into(core_state, output)
+    }
+
     pub(crate) fn encode_external_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         if !self.supports_save_states() {
             anyhow::bail!("save states are not supported by this core");

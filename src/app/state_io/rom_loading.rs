@@ -1,16 +1,22 @@
 use super::App;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::emu_backend::loader::is_direct_pce_cd_path;
 use crate::emu_backend::{
     ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
 };
 use crate::emu_thread::{EmuCommand, EmuResponse, TasControlCommandKind};
 use crate::rom_archive::PendingArchiveSelection;
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 use zeff_emu_common::time::MachineTiming;
 use zeff_ws_core::hardware::cartridge::RomOrientation;
 
-use self::detection::{
-    detect_and_extract_archive_entry, detect_and_extract_archive_entry_path, is_zip_path,
-};
+#[cfg(target_arch = "wasm32")]
+use self::detection::detect_and_extract_archive_entry_path;
+#[cfg(not(target_arch = "wasm32"))]
+use self::detection::detect_and_extract_archive_entry_path_with_zip_witness;
+use self::detection::{detect_and_extract_archive_entry, is_zip_path};
 
 mod detection;
 mod lifecycle;
@@ -20,6 +26,8 @@ mod preparation;
 mod symbols;
 
 pub(crate) use detection::detect_and_extract_rom;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use detection::detect_and_extract_rom_with_zip_witness;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use detection::is_native_archive_path;
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,8 +50,29 @@ struct PreparedRomLoad {
     original_crc: u32,
 }
 
+struct PreparedRomInput {
+    rom_path: PathBuf,
+    preloaded_data: Option<Vec<u8>>,
+    authenticated_zip_member: Option<crate::rom_archive::AuthenticatedZipMember>,
+    system: ActiveSystem,
+}
+
 fn dismiss_archive_selection_for_new_load(slot: &mut Option<PendingArchiveSelection>) {
     *slot = None;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn preflight_direct_pce_cd_source(path: &Path) -> anyhow::Result<()> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("couldn't open PCE-CD source '{}'", path.display()))?;
+    if !file
+        .metadata()
+        .with_context(|| format!("couldn't inspect PCE-CD source '{}'", path.display()))?
+        .is_file()
+    {
+        anyhow::bail!("PCE-CD source '{}' is not a file", path.display());
+    }
+    Ok(())
 }
 
 impl App {
@@ -69,7 +98,7 @@ impl App {
         self.debug_windows.tas_editor.attach_execution(attachment);
     }
 
-    fn backend_load_config(&self, system: ActiveSystem) -> BackendLoadConfig {
+    pub(super) fn backend_load_config(&self, system: ActiveSystem) -> BackendLoadConfig {
         #[cfg(not(target_arch = "wasm32"))]
         let configured_firmware_dir = self.settings.emulation.firmware_directory_path();
         #[cfg(not(target_arch = "wasm32"))]
@@ -111,6 +140,7 @@ impl App {
             pce_hucard_board: None,
             pce_cartridge_hardware: None,
             pce_cd_tas_source_media: None,
+            authenticated_zip_member: None,
             #[cfg(not(target_arch = "wasm32"))]
             pce_cd_tas_archive_cue: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -159,29 +189,30 @@ impl App {
         path: &Path,
         rom_path: &Path,
         preloaded_data: Option<Vec<u8>>,
+        config: BackendLoadConfig,
     ) -> anyhow::Result<(EmuBackend, u32)> {
-        let loaded = load_backend_from_rom_source(
-            system,
-            path,
-            rom_path,
-            preloaded_data,
-            self.backend_load_config(system),
-        )?;
+        let loaded = load_backend_from_rom_source(system, path, rom_path, preloaded_data, config)?;
         Ok((loaded.backend, loaded.original_crc32))
     }
 
     fn load_prepared_rom_with_options(
         &mut self,
         source_path: &Path,
-        rom_path: PathBuf,
-        preloaded_data: Option<Vec<u8>>,
-        system: ActiveSystem,
+        input: PreparedRomInput,
         auto_load_state: bool,
     ) {
+        let PreparedRomInput {
+            rom_path,
+            preloaded_data,
+            authenticated_zip_member,
+            system,
+        } = input;
         #[cfg(not(target_arch = "wasm32"))]
         self.stop_emu_thread();
+        let mut config = self.backend_load_config(system);
+        config.authenticated_zip_member = authenticated_zip_member;
         let (backend, original_crc) =
-            match self.init_backend(system, source_path, &rom_path, preloaded_data) {
+            match self.init_backend(system, source_path, &rom_path, preloaded_data, config) {
                 Ok(result) => result,
                 Err(e) => {
                     log::error!("Failed to load ROM '{}': {}", source_path.display(), e);
@@ -388,6 +419,17 @@ impl App {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
+        if is_direct_pce_cd_path(path) {
+            if let Err(error) = preflight_direct_pce_cd_source(path) {
+                let message = format!("{error:#}");
+                log::warn!("{message}");
+                self.toast_manager.error(message);
+                return;
+            }
+            self.begin_native_archive_preparation(path, None, None, auto_load_state);
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if is_zip_path(path) {
             match zip_media_route(path, None) {
                 Ok(ZipMediaRoute::PceCd) => {
@@ -412,6 +454,17 @@ impl App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         self.cancel_pending_rom_preparation(false);
+        #[cfg(not(target_arch = "wasm32"))]
+        let detected = match detect_and_extract_rom_with_zip_witness(path) {
+            Ok(result) => result,
+            Err(e) => {
+                let msg = format!("{e:#}");
+                log::warn!("{msg}");
+                self.toast_manager.error(msg);
+                return;
+            }
+        };
+        #[cfg(target_arch = "wasm32")]
         let (rom_path, preloaded_data, system) = match detect_and_extract_rom(path) {
             Ok(result) => result,
             Err(e) => {
@@ -422,11 +475,26 @@ impl App {
             }
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         self.load_prepared_rom_with_options(
             path,
-            rom_path,
-            preloaded_data,
-            system,
+            PreparedRomInput {
+                rom_path: detected.rom_path,
+                preloaded_data: detected.preloaded_data,
+                authenticated_zip_member: detected.authenticated_zip_member,
+                system: detected.system,
+            },
+            auto_load_state,
+        );
+        #[cfg(target_arch = "wasm32")]
+        self.load_prepared_rom_with_options(
+            path,
+            PreparedRomInput {
+                rom_path,
+                preloaded_data,
+                authenticated_zip_member: None,
+                system,
+            },
             auto_load_state,
         );
     }
@@ -488,9 +556,12 @@ impl App {
 
         self.load_prepared_rom_with_options(
             archive_path,
-            rom_path,
-            preloaded_data,
-            system,
+            PreparedRomInput {
+                rom_path,
+                preloaded_data,
+                authenticated_zip_member: None,
+                system,
+            },
             auto_load_state,
         );
     }
@@ -538,6 +609,20 @@ impl App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         self.cancel_pending_rom_preparation(false);
+        #[cfg(not(target_arch = "wasm32"))]
+        let detected = match detect_and_extract_archive_entry_path_with_zip_witness(
+            archive_path,
+            virtual_rom_path,
+        ) {
+            Ok(result) => result,
+            Err(e) => {
+                let msg = format!("{e:#}");
+                log::warn!("{msg}");
+                self.toast_manager.error(msg);
+                return;
+            }
+        };
+        #[cfg(target_arch = "wasm32")]
         let (rom_path, preloaded_data, system) =
             match detect_and_extract_archive_entry_path(archive_path, virtual_rom_path) {
                 Ok(result) => result,
@@ -549,11 +634,26 @@ impl App {
                 }
             };
 
+        #[cfg(not(target_arch = "wasm32"))]
         self.load_prepared_rom_with_options(
             archive_path,
-            rom_path,
-            preloaded_data,
-            system,
+            PreparedRomInput {
+                rom_path: detected.rom_path,
+                preloaded_data: detected.preloaded_data,
+                authenticated_zip_member: detected.authenticated_zip_member,
+                system: detected.system,
+            },
+            auto_load_state,
+        );
+        #[cfg(target_arch = "wasm32")]
+        self.load_prepared_rom_with_options(
+            archive_path,
+            PreparedRomInput {
+                rom_path,
+                preloaded_data,
+                authenticated_zip_member: None,
+                system,
+            },
             auto_load_state,
         );
     }
@@ -632,7 +732,7 @@ mod tests {
     };
     use super::{
         automatic_symbol_loading_available, dismiss_archive_selection_for_new_load,
-        is_native_archive_path, should_inspect_recovery,
+        is_direct_pce_cd_path, is_native_archive_path, should_inspect_recovery,
     };
     use crate::emu_backend::{EmuBackend, PceBackend};
     use std::path::PathBuf;
@@ -683,6 +783,14 @@ mod tests {
             crate::emu_backend::ActiveSystem::from_path(&PathBuf::from("disc.7z")),
             None
         );
+    }
+
+    #[test]
+    fn direct_pce_cd_media_routes_to_background_preparation() {
+        assert!(is_direct_pce_cd_path(&PathBuf::from("disc.CUE")));
+        assert!(is_direct_pce_cd_path(&PathBuf::from("disc.chd")));
+        assert!(is_direct_pce_cd_path(&PathBuf::from("disc.Iso")));
+        assert!(!is_direct_pce_cd_path(&PathBuf::from("game.pce")));
     }
 
     #[test]

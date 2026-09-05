@@ -666,7 +666,7 @@ fn acquisition_failure_does_not_install_or_consume_a_lease() {
                 profile: TasExecutionProfile::DirectNesCartridge,
             },
             unblocked_context(),
-            |_| Err(TasControlAcquireRejectedReason::StateWitnessUnavailable),
+            |_, _| Err(TasControlAcquireRejectedReason::StateWitnessUnavailable),
         ),
         ControlFlow::Break(EmuResponse::TasControlAcquireRejected {
             request_id: 80,
@@ -683,7 +683,7 @@ fn acquisition_failure_does_not_install_or_consume_a_lease() {
                 profile: TasExecutionProfile::DirectNesCartridge,
             },
             unblocked_context(),
-            |_| Ok(inconsistent),
+            |_, _| Ok(inconsistent),
         ),
         ControlFlow::Break(EmuResponse::TasControlAcquireRejected {
             request_id: 81,
@@ -698,7 +698,7 @@ fn acquisition_failure_does_not_install_or_consume_a_lease() {
                 profile: TasExecutionProfile::DirectNesCartridge,
             },
             unblocked_context(),
-            |_| Ok(dummy_witness()),
+            |_, _| Ok(dummy_witness()),
         ),
         ControlFlow::Break(EmuResponse::TasControlAcquired {
             request_id: 82,
@@ -718,7 +718,7 @@ fn rollback_restore_and_verification_failures_keep_the_exact_lease_fenced() {
                 profile: TasExecutionProfile::DirectNesCartridge,
             },
             unblocked_context(),
-            |_| Ok(dummy_witness()),
+            |_, _| Ok(dummy_witness()),
         ),
         ControlFlow::Break(EmuResponse::TasControlAcquired { lease_id: 1, .. })
     ));
@@ -769,7 +769,7 @@ fn rollback_restore_and_verification_failures_keep_the_exact_lease_fenced() {
 fn assert_replay_command_latches(command: EmuCommand) {
     let mut control = TasControl::new();
     assert!(matches!(
-        control.dispatch(command, unblocked_context(), |_| unreachable!()),
+        control.dispatch(command, unblocked_context(), |_, _| unreachable!()),
         ControlFlow::Continue(_)
     ));
     assert!(matches!(
@@ -779,7 +779,7 @@ fn assert_replay_command_latches(command: EmuCommand) {
                 profile: TasExecutionProfile::DirectNesCartridge,
             },
             unblocked_context(),
-            |_| Ok(dummy_witness()),
+            |_, _| Ok(dummy_witness()),
         ),
         ControlFlow::Break(EmuResponse::TasControlAcquireRejected {
             request_id: 91,
@@ -828,7 +828,7 @@ fn ordinary_worker_commands_do_not_latch_replay_refusal() {
         control.dispatch(
             EmuCommand::SetSampleRate(48_000),
             unblocked_context(),
-            |_| unreachable!(),
+            |_, _| unreachable!(),
         ),
         ControlFlow::Continue(_)
     ));
@@ -839,7 +839,7 @@ fn ordinary_worker_commands_do_not_latch_replay_refusal() {
                 profile: TasExecutionProfile::DirectNesCartridge,
             },
             unblocked_context(),
-            |_| Ok(dummy_witness()),
+            |_, _| Ok(dummy_witness()),
         ),
         ControlFlow::Break(EmuResponse::TasControlAcquired {
             request_id: 92,

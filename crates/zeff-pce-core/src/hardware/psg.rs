@@ -391,12 +391,21 @@ impl StereoBlipResampler {
         }
     }
 
+    #[cfg(test)]
     fn push_level(&mut self, left: i64, right: i64, output: &mut Vec<i16>) {
-        self.clocks += 1;
-        if self.clocks == BLIP_FRAME_CLOCKS {
-            self.flush(output);
-        }
+        self.advance_clocks(1, output);
         self.refresh_level(left, right);
+    }
+
+    fn advance_clocks(&mut self, mut clocks: u64, output: &mut Vec<i16>) {
+        while clocks != 0 {
+            let step = clocks.min(u64::from(BLIP_FRAME_CLOCKS - self.clocks)) as u32;
+            self.clocks += step;
+            clocks -= u64::from(step);
+            if self.clocks == BLIP_FRAME_CLOCKS {
+                self.flush(output);
+            }
+        }
     }
 
     fn refresh_level(&mut self, left: i64, right: i64) {

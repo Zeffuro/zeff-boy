@@ -8,6 +8,7 @@ use crate::tas_project::TasDigest;
 
 #[path = "pce/arcade_multitap.rs"]
 mod arcade_multitap;
+mod cd_profiles;
 mod memory_base_multitap;
 #[path = "pce/ppf_multitap.rs"]
 mod ppf_multitap;
@@ -371,9 +372,11 @@ fn direct_pce_worker_executes_advances_rolls_back_and_rejects_unowned_input() {
         } if actual_lease_id == lease_id => (frame_count, state_sha256),
         _ => panic!("unexpected execution response"),
     };
+    let expected_state = expected.encode_state_bytes().unwrap();
+    assert_eq!(state_sha256, TasDigest::from_bytes(&expected_state));
     assert_eq!(
         emu_loop.backend.encode_state_bytes().unwrap(),
-        expected.encode_state_bytes().unwrap()
+        expected_state
     );
 
     let next_input = TasInputFrame {
@@ -401,17 +404,23 @@ fn direct_pce_worker_executes_advances_rolls_back_and_rejects_unowned_input() {
             },
         )))
     );
-    assert!(matches!(
-        responses.recv().unwrap(),
+    let advanced_state_sha256 = match responses.recv().unwrap() {
         EmuResponse::TasFrameAdvanced {
             profile: TasExecutionProfile::DirectPceHuCard,
             frame_count: 2,
+            state_sha256,
             ..
-        }
-    ));
+        } => state_sha256,
+        _ => panic!("unexpected frame advance response"),
+    };
+    let expected_state = expected.encode_state_bytes().unwrap();
+    assert_eq!(
+        advanced_state_sha256,
+        TasDigest::from_bytes(&expected_state)
+    );
     assert_eq!(
         emu_loop.backend.encode_state_bytes().unwrap(),
-        expected.encode_state_bytes().unwrap()
+        expected_state
     );
 
     assert!(emu_loop.handle_command(EmuCommand::RollbackTasControl { lease_id }));
@@ -733,54 +742,6 @@ fn direct_pce_cd_multitap_worker_dispatches_five_ports_and_restores_checkpoint()
         ));
         assert_eq!(emu_loop.backend.encode_state_bytes().unwrap(), checkpoint);
     }
-}
-
-#[test]
-fn direct_pce_cd_chd_memory_base_worker_executes_advances_caches_and_rolls_back() {
-    let (_directory, loader, project, _memory_base_catalog) =
-        chd_loader_and_project("tas-control-direct-pce-cd-chd");
-    execute_direct_pce_cd_worker(
-        loader,
-        project,
-        zeff_pce_core::hardware::PceMemoryBaseMode::Enabled,
-        zeff_pce_core::hardware::PceArcadeCardMode::Disabled,
-    );
-}
-
-#[test]
-fn direct_pce_cd_iso_memory_base_worker_executes_advances_caches_and_rolls_back() {
-    let (_directory, loader, project, _memory_base_catalog) =
-        iso_loader_and_project("tas-control-direct-pce-cd-iso");
-    execute_direct_pce_cd_worker(
-        loader,
-        project,
-        zeff_pce_core::hardware::PceMemoryBaseMode::Enabled,
-        zeff_pce_core::hardware::PceArcadeCardMode::Disabled,
-    );
-}
-
-#[test]
-fn direct_pce_cd_ppf_memory_base_worker_executes_advances_caches_and_rolls_back() {
-    let (_directory, loader, project, _memory_base_catalog) =
-        ppf_loader_and_project("tas-control-direct-pce-cd-ppf");
-    execute_direct_pce_cd_worker(
-        loader,
-        project,
-        zeff_pce_core::hardware::PceMemoryBaseMode::Enabled,
-        zeff_pce_core::hardware::PceArcadeCardMode::Disabled,
-    );
-}
-
-#[test]
-fn direct_pce_cd_ppf_arcade_worker_executes_advances_caches_and_rolls_back() {
-    let (_directory, loader, project, _arcade_catalog) =
-        ppf_arcade_loader_and_project("tas-control-direct-pce-cd-ppf-arcade");
-    execute_direct_pce_cd_worker(
-        loader,
-        project,
-        zeff_pce_core::hardware::PceMemoryBaseMode::Disabled,
-        zeff_pce_core::hardware::PceArcadeCardMode::Enabled,
-    );
 }
 
 fn execute_direct_pce_cd_worker(

@@ -34,6 +34,7 @@ const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: c_uint = 68;
 const RETRO_PIXEL_FORMAT_0RGB1555: c_uint = 0;
 const RETRO_PIXEL_FORMAT_XRGB8888: c_uint = 1;
 const RETRO_PIXEL_FORMAT_RGB565: c_uint = 2;
+const RETRO_MEMORY_SAVE_RAM: c_uint = 0;
 const RETRO_NUM_CORE_OPTION_VALUES_MAX: usize = 128;
 const MAX_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_AUDIO_TELEMETRY_FRAMES: usize = 100_000;
@@ -188,6 +189,7 @@ pub struct HarnessConfig {
     /// Fresh CSV destination for generic per-emulated-frame audio telemetry.
     pub audio_frame_csv: Option<PathBuf>,
     pub audio_s16le: Option<PathBuf>,
+    pub blackhole_output: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -217,8 +219,9 @@ pub struct HarnessResult {
     pub callbacks: CallbackCounts,
     pub video_pixel_format: c_uint,
     pub invalid_audio_buffer_len: bool,
-    pub video_hash: [u8; 32],
-    pub audio_hash: [u8; 32],
+    pub callback_payload_hashing: bool,
+    pub video_hash: Option<[u8; 32]>,
+    pub audio_hash: Option<[u8; 32]>,
     pub unsupported_environment_commands: Vec<c_uint>,
     pub geometry: RetroGameGeometry,
     pub advertised_frames_per_second: f64,
@@ -226,6 +229,10 @@ pub struct HarnessResult {
     pub last_video: VideoFrameInfo,
     pub serialize_size: usize,
     pub serialize_hash: [u8; 32],
+    pub save_ram_size: usize,
+    pub save_ram_nonnull: bool,
+    pub save_ram_sha256: Option<[u8; 32]>,
+    pub save_ram_post_roundtrip_sha256: Option<[u8; 32]>,
     pub state_roundtrip: bool,
     pub undersized_serialize_rejected: bool,
 }
@@ -238,8 +245,8 @@ pub struct RepeatedHarnessResult {
     pub elapsed_ms_p50: f64,
     pub elapsed_ms_p95: f64,
     pub state_hashes_match: bool,
-    pub video_hashes_match: bool,
-    pub audio_hashes_match: bool,
+    pub video_hashes_match: Option<bool>,
+    pub audio_hashes_match: Option<bool>,
     pub callback_counts_match: bool,
 }
 
@@ -297,6 +304,7 @@ struct CallbackState {
     audio_s16le_bytes: usize,
     audio_s16le_error: Option<String>,
     capture_audio_s16le: bool,
+    blackhole_output: bool,
     invalid_audio_frame_index: bool,
     unsupported_environment_commands: Vec<c_uint>,
 }
@@ -512,23 +520,25 @@ unsafe extern "C" fn video_refresh(
             state.invalid_video_buffer_len = true;
             return;
         };
-        let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), frame_bytes) };
         state.counts.visible_video_bytes = state
             .counts
             .visible_video_bytes
             .saturating_add(visible_row_bytes.saturating_mul(height as usize));
-        state
-            .video_hasher
-            .update(state.active_pixel_format.to_le_bytes());
-        state.video_hasher.update(width.to_le_bytes());
-        state.video_hasher.update(height.to_le_bytes());
-        for row in bytes.chunks_exact(pitch).take(height as usize) {
-            state.video_hasher.update(&row[..visible_row_bytes]);
-        }
-        if state.capture_frame == Some(state.frame_index) {
-            match capture_rgb24(bytes, width, height, pitch, state.active_pixel_format) {
-                Ok(captured) => state.captured_frame = Some(captured),
-                Err(error) => state.capture_error = Some(error.to_string()),
+        if !state.blackhole_output {
+            let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), frame_bytes) };
+            state
+                .video_hasher
+                .update(state.active_pixel_format.to_le_bytes());
+            state.video_hasher.update(width.to_le_bytes());
+            state.video_hasher.update(height.to_le_bytes());
+            for row in bytes.chunks_exact(pitch).take(height as usize) {
+                state.video_hasher.update(&row[..visible_row_bytes]);
+            }
+            if state.capture_frame == Some(state.frame_index) {
+                match capture_rgb24(bytes, width, height, pitch, state.active_pixel_format) {
+                    Ok(captured) => state.captured_frame = Some(captured),
+                    Err(error) => state.capture_error = Some(error.to_string()),
+                }
             }
         }
     }
@@ -542,15 +552,17 @@ unsafe extern "C" fn audio_sample(left: i16, right: i16) {
     state.counts.audio_sample_calls += 1;
     state.counts.audio_frames += 1;
     state.counts.audio_bytes += std::mem::size_of::<i16>() * 2;
-    state.audio_hasher.update(left.to_le_bytes());
-    state.audio_hasher.update(right.to_le_bytes());
-    let [left_low, left_high] = left.to_le_bytes();
-    let [right_low, right_high] = right.to_le_bytes();
-    write_audio_s16le(state, &[left_low, left_high, right_low, right_high]);
-    record_frame_audio(state, 1, 0, 1, std::mem::size_of::<i16>() * 2, |hasher| {
-        hasher.update(left.to_le_bytes());
-        hasher.update(right.to_le_bytes());
-    });
+    if !state.blackhole_output {
+        state.audio_hasher.update(left.to_le_bytes());
+        state.audio_hasher.update(right.to_le_bytes());
+        let [left_low, left_high] = left.to_le_bytes();
+        let [right_low, right_high] = right.to_le_bytes();
+        write_audio_s16le(state, &[left_low, left_high, right_low, right_high]);
+        record_frame_audio(state, 1, 0, 1, std::mem::size_of::<i16>() * 2, |hasher| {
+            hasher.update(left.to_le_bytes());
+            hasher.update(right.to_le_bytes());
+        });
+    }
 }
 
 unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
@@ -572,25 +584,27 @@ unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
             state.invalid_audio_buffer_len = true;
             return 0;
         };
-        let samples = unsafe { std::slice::from_raw_parts(data, sample_count) };
-        for sample in samples {
-            state.audio_hasher.update(sample.to_le_bytes());
+        if !state.blackhole_output {
+            let samples = unsafe { std::slice::from_raw_parts(data, sample_count) };
+            for sample in samples {
+                state.audio_hasher.update(sample.to_le_bytes());
+            }
+            for sample in samples {
+                write_audio_s16le(state, &sample.to_le_bytes());
+            }
+            record_frame_audio(
+                state,
+                0,
+                1,
+                frames,
+                frames.saturating_mul(std::mem::size_of::<i16>() * 2),
+                |hasher| {
+                    for sample in samples {
+                        hasher.update(sample.to_le_bytes());
+                    }
+                },
+            );
         }
-        for sample in samples {
-            write_audio_s16le(state, &sample.to_le_bytes());
-        }
-        record_frame_audio(
-            state,
-            0,
-            1,
-            frames,
-            frames.saturating_mul(std::mem::size_of::<i16>() * 2),
-            |hasher| {
-                for sample in samples {
-                    hasher.update(sample.to_le_bytes());
-                }
-            },
-        );
     } else {
         record_frame_audio(
             state,
@@ -759,6 +773,13 @@ pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult>
         !config.rom_bytes.is_empty(),
         "the libretro harness requires nonempty content bytes"
     );
+    anyhow::ensure!(
+        !config.blackhole_output
+            || (config.frame_capture.is_none()
+                && config.audio_frame_csv.is_none()
+                && config.audio_s16le.is_none()),
+        "blackhole output cannot be combined with video or audio capture"
+    );
     let telemetry_frame_count = config
         .warmup_frames
         .checked_add(config.measurement_frames)
@@ -835,6 +856,7 @@ pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult>
             .as_ref()
             .map(|_| vec![FrameAudioStats::default(); telemetry_frame_count]),
         audio_s16le,
+        blackhole_output: config.blackhole_output,
         ..CallbackState::default()
     });
 
@@ -877,8 +899,14 @@ pub fn run_repeated_fixed_frames(
         elapsed_ms_p50: percentile(&elapsed_ms, 0.5),
         elapsed_ms_p95: percentile(&elapsed_ms, 0.95),
         state_hashes_match: all_equal(runs.iter().map(|run| run.serialize_hash)),
-        video_hashes_match: all_equal(runs.iter().map(|run| run.video_hash)),
-        audio_hashes_match: all_equal(runs.iter().map(|run| run.audio_hash)),
+        video_hashes_match: repeated_callback_hashes_match(
+            !config.blackhole_output,
+            runs.iter().map(|run| run.video_hash),
+        ),
+        audio_hashes_match: repeated_callback_hashes_match(
+            !config.blackhole_output,
+            runs.iter().map(|run| run.audio_hash),
+        ),
         callback_counts_match: all_equal(runs.iter().map(|run| run.callbacks)),
         runs,
     })
@@ -900,6 +928,15 @@ fn all_equal<T: PartialEq>(mut values: impl Iterator<Item = T>) -> bool {
         return true;
     };
     values.all(|value| value == first)
+}
+
+fn repeated_callback_hashes_match<T: PartialEq>(
+    hashing_enabled: bool,
+    hashes: impl Iterator<Item = Option<T>>,
+) -> Option<bool> {
+    hashing_enabled.then(|| {
+        all_equal(hashes.map(|hash| hash.expect("enabled callback hashing produced a hash")))
+    })
 }
 
 unsafe fn run_loaded_core(
@@ -938,6 +975,10 @@ unsafe fn run_loaded_core(
         unsafe { library.get(b"retro_serialize\0") }?;
     let unserialize: Symbol<unsafe extern "C" fn(*const c_void, usize) -> bool> =
         unsafe { library.get(b"retro_unserialize\0") }?;
+    let get_memory_data: Symbol<unsafe extern "C" fn(c_uint) -> *mut c_void> =
+        unsafe { library.get(b"retro_get_memory_data\0") }?;
+    let get_memory_size: Symbol<unsafe extern "C" fn(c_uint) -> usize> =
+        unsafe { library.get(b"retro_get_memory_size\0") }?;
 
     unsafe {
         set_environment(environment);
@@ -976,6 +1017,7 @@ unsafe fn run_loaded_core(
         unsafe { run() };
     }
     let elapsed = start.elapsed();
+    let save_ram = unsafe { snapshot_save_ram(*get_memory_data, *get_memory_size)? };
     let state_size = unsafe { serialize_size() };
     anyhow::ensure!(state_size > 0, "retro_serialize_size returned zero");
     let undersized_serialize_rejected =
@@ -989,6 +1031,7 @@ unsafe fn run_loaded_core(
     let state_roundtrip = unsafe { unserialize(state.as_ptr().cast(), state_size) }
         && unsafe { serialize(state.as_mut_ptr().cast(), state_size) }
         && Sha256::digest(&state).as_slice() == state_hash;
+    let save_ram_post_roundtrip = unsafe { snapshot_save_ram(*get_memory_data, *get_memory_size)? };
     unsafe {
         unload_game();
         deinit();
@@ -1036,8 +1079,11 @@ unsafe fn run_loaded_core(
         callbacks: callback_state.counts,
         video_pixel_format: callback_state.active_pixel_format,
         invalid_audio_buffer_len: callback_state.invalid_audio_buffer_len,
-        video_hash: callback_state.video_hasher.clone().finalize().into(),
-        audio_hash: callback_state.audio_hasher.clone().finalize().into(),
+        callback_payload_hashing: !callback_state.blackhole_output,
+        video_hash: (!callback_state.blackhole_output)
+            .then(|| callback_state.video_hasher.clone().finalize().into()),
+        audio_hash: (!callback_state.blackhole_output)
+            .then(|| callback_state.audio_hasher.clone().finalize().into()),
         unsupported_environment_commands: callback_state.unsupported_environment_commands.clone(),
         geometry: av_info.geometry,
         advertised_frames_per_second: av_info.timing.fps,
@@ -1045,6 +1091,10 @@ unsafe fn run_loaded_core(
         last_video: callback_state.last_video,
         serialize_size: state_size,
         serialize_hash: state_hash,
+        save_ram_size: save_ram.bytes.len(),
+        save_ram_nonnull: save_ram.nonnull,
+        save_ram_sha256: save_ram.hash,
+        save_ram_post_roundtrip_sha256: save_ram_post_roundtrip.hash,
         state_roundtrip,
         undersized_serialize_rejected,
     };
@@ -1154,6 +1204,40 @@ unsafe fn serialize_rejects_undersized_buffer(
     Ok(!unsafe { serialize(probe.as_mut_ptr().cast(), state_size - 1) })
 }
 
+#[derive(Debug)]
+struct SaveRamSnapshot {
+    bytes: Vec<u8>,
+    nonnull: bool,
+    hash: Option<[u8; 32]>,
+}
+
+unsafe fn snapshot_save_ram(
+    get_memory_data: unsafe extern "C" fn(c_uint) -> *mut c_void,
+    get_memory_size: unsafe extern "C" fn(c_uint) -> usize,
+) -> anyhow::Result<SaveRamSnapshot> {
+    let size = unsafe { get_memory_size(RETRO_MEMORY_SAVE_RAM) };
+    let data = unsafe { get_memory_data(RETRO_MEMORY_SAVE_RAM) };
+    unsafe { copy_save_ram(data, size) }
+}
+
+unsafe fn copy_save_ram(data: *mut c_void, size: usize) -> anyhow::Result<SaveRamSnapshot> {
+    anyhow::ensure!(
+        size == 0 || !data.is_null(),
+        "retro_get_memory_data returned null for {size} bytes of save RAM"
+    );
+    let bytes = if size == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size) }.to_vec()
+    };
+    let hash = (!bytes.is_empty()).then(|| Sha256::digest(&bytes).into());
+    Ok(SaveRamSnapshot {
+        nonnull: !data.is_null(),
+        bytes,
+        hash,
+    })
+}
+
 fn reset_measurement_callbacks() {
     let mut state = CALLBACK_STATE
         .lock()
@@ -1180,7 +1264,8 @@ mod tests {
         RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
         RETRO_NUM_CORE_OPTION_VALUES_MAX, RETRO_PIXEL_FORMAT_RGB565, RetroCoreOptionV2Definition,
         RetroCoreOptionValue, RetroCoreOptionsV2, RetroCoreOptionsV2Intl, RetroLogCallback,
-        RetroVariable, audio_batch, capture_rgb24, environment, get_variable, percentile,
+        RetroVariable, audio_batch, audio_sample, capture_rgb24, copy_save_ram, environment,
+        get_variable, percentile, repeated_callback_hashes_match,
         serialize_rejects_undersized_buffer, validate_callback_buffers, video_refresh,
     };
     use sha2::Digest;
@@ -1190,6 +1275,22 @@ mod tests {
     fn percentile_uses_a_measured_sample() {
         assert_eq!(percentile(&[10.0, 20.0, 30.0, 40.0, 50.0], 0.5), 30.0);
         assert_eq!(percentile(&[10.0, 20.0, 30.0, 40.0, 50.0], 0.95), 50.0);
+    }
+
+    #[test]
+    fn disabled_callback_hashes_are_not_evaluated_for_repeats() {
+        assert_eq!(
+            repeated_callback_hashes_match(false, [None::<[u8; 32]>, None].into_iter()),
+            None
+        );
+        assert_eq!(
+            repeated_callback_hashes_match(true, [Some([1; 32]), Some([1; 32])].into_iter()),
+            Some(true)
+        );
+        assert_eq!(
+            repeated_callback_hashes_match(true, [Some([1; 32]), Some([2; 32])].into_iter()),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1254,6 +1355,58 @@ mod tests {
     }
 
     #[test]
+    fn blackhole_callbacks_validate_and_count_without_hashing_payloads() {
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+            requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            blackhole_output: true,
+            ..CallbackState::default()
+        });
+        let pixels = [1_u8, 2, 3, 4, 5, 6, 7, 8];
+        let samples = [1_i16, -2, 3, -4];
+
+        unsafe {
+            video_refresh(pixels.as_ptr().cast(), 2, 2, 4);
+            audio_sample(5, -6);
+            assert_eq!(audio_batch(samples.as_ptr(), 2), 2);
+        }
+
+        let state = CALLBACK_STATE.lock().unwrap().take().unwrap();
+        validate_callback_buffers(&state).unwrap();
+        assert_eq!(state.counts.video_calls, 1);
+        assert_eq!(state.counts.video_bytes, 8);
+        assert_eq!(state.counts.visible_video_bytes, 8);
+        assert_eq!(state.counts.audio_sample_calls, 1);
+        assert_eq!(state.counts.audio_batch_calls, 1);
+        assert_eq!(state.counts.audio_frames, 3);
+        assert_eq!(state.counts.audio_bytes, 12);
+        assert_eq!(
+            state.video_hasher.finalize(),
+            sha2::Sha256::new().finalize()
+        );
+        assert_eq!(
+            state.audio_hasher.finalize(),
+            sha2::Sha256::new().finalize()
+        );
+    }
+
+    #[test]
+    fn blackhole_video_still_rejects_an_invalid_pitch() {
+        let pixels = [0_u8; 8];
+        *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+            requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+            blackhole_output: true,
+            ..CallbackState::default()
+        });
+
+        unsafe { video_refresh(pixels.as_ptr().cast(), 2, 2, 3) };
+
+        let state = CALLBACK_STATE.lock().unwrap().take().unwrap();
+        assert!(validate_callback_buffers(&state).is_err());
+    }
+
+    #[test]
     fn undersized_serialize_probe_keeps_an_ignoring_core_in_bounds() {
         unsafe extern "C" fn ignores_size(buffer: *mut std::ffi::c_void, _size: usize) -> bool {
             unsafe { std::ptr::write_bytes(buffer, 0xA5, 4) };
@@ -1273,6 +1426,39 @@ mod tests {
         }
 
         assert!(unsafe { serialize_rejects_undersized_buffer(requires_exact_size, 4) }.unwrap());
+    }
+
+    #[test]
+    fn save_ram_snapshot_copies_and_hashes_nonempty_memory() {
+        let mut source = [1_u8, 2, 3];
+        let snapshot = unsafe { copy_save_ram(source.as_mut_ptr().cast(), source.len()) }.unwrap();
+        source.fill(0);
+
+        assert!(snapshot.nonnull);
+        assert_eq!(snapshot.bytes, [1, 2, 3]);
+        assert_eq!(
+            snapshot.hash,
+            Some(sha2::Sha256::digest([1_u8, 2, 3]).into())
+        );
+    }
+
+    #[test]
+    fn save_ram_snapshot_allows_null_empty_memory_with_an_empty_hash_sentinel() {
+        let snapshot = unsafe { copy_save_ram(std::ptr::null_mut(), 0) }.unwrap();
+
+        assert!(!snapshot.nonnull);
+        assert!(snapshot.bytes.is_empty());
+        assert!(snapshot.hash.is_none());
+    }
+
+    #[test]
+    fn save_ram_snapshot_rejects_null_nonempty_memory() {
+        let error = unsafe { copy_save_ram(std::ptr::null_mut(), 1) }.unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "retro_get_memory_data returned null for 1 bytes of save RAM"
+        );
     }
 
     #[test]

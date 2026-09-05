@@ -5,10 +5,10 @@ use super::{MAGIC, TILT_VERSION, VERSION, decode_state, encode_state};
 use crate::emulator::Emulator;
 use crate::hardware::cartridge::{RtcDateTime, RtcState, SensorKind, TiltState};
 
-pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tas-determinism-v2";
-pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v10";
-pub const TILT_TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tilt-tas-determinism-v1";
-pub const TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v11-tilt";
+pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tas-determinism-v3";
+pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v12";
+pub const TILT_TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tilt-tas-determinism-v2";
+pub const TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v13-tilt";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GbaTasKeypadState {
@@ -49,6 +49,27 @@ pub struct CurrentNativeGbaTasStateInspection {
     pub startup: GbaTasStartup,
 }
 
+pub fn current_native_gba_tas_state_rom_sha256(data: &[u8]) -> Result<[u8; 32]> {
+    native_gba_tas_state_rom_sha256(data, VERSION)
+}
+
+pub fn current_native_gba_tilt_tas_state_rom_sha256(data: &[u8]) -> Result<[u8; 32]> {
+    native_gba_tas_state_rom_sha256(data, TILT_VERSION)
+}
+
+fn native_gba_tas_state_rom_sha256(data: &[u8], expected_version: u32) -> Result<[u8; 32]> {
+    ensure!(
+        data.len() >= 44 && data[..8] == *MAGIC,
+        "GBA TAS requires a native save state"
+    );
+    let version = u32::from_le_bytes(data[8..12].try_into().expect("length checked"));
+    ensure!(
+        version == expected_version,
+        "GBA TAS requires current native v{expected_version} state"
+    );
+    Ok(data[data.len() - 32..].try_into().expect("length checked"))
+}
+
 pub fn inspect_current_native_gba_tas_state(
     emu: &Emulator,
     data: &[u8],
@@ -68,15 +89,7 @@ fn inspect_native_gba_tas_state(
     data: &[u8],
     expected_version: u32,
 ) -> Result<CurrentNativeGbaTasStateInspection> {
-    ensure!(
-        data.len() >= 12 && data[..8] == *MAGIC,
-        "GBA TAS requires a native save state"
-    );
-    let version = u32::from_le_bytes(data[8..12].try_into().expect("length checked"));
-    ensure!(
-        version == expected_version,
-        "GBA TAS requires current native v{expected_version} state"
-    );
+    native_gba_tas_state_rom_sha256(data, expected_version)?;
 
     let mut candidate = emu.clone();
     decode_state(&mut candidate, data)?;
@@ -150,7 +163,9 @@ fn restore_native_gba_tas_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::save_state::{VERSION_9_ROM_HASH_SIZE, VERSION_10_BACKUP_EXECUTION_STATE_SIZE};
+    use crate::save_state::{
+        VERSION_9_ROM_HASH_SIZE, VERSION_10_BACKUP_EXECUTION_STATE_SIZE, VERSION_12_PSG_STATE_SIZE,
+    };
 
     fn rom(marker: u8) -> Vec<u8> {
         let mut rom = vec![0; 0xC0];
@@ -192,8 +207,10 @@ mod tests {
         assert!(restore_current_native_gba_tas_state(&mut target, &state).is_err());
         assert_eq!(encode_state(&target).unwrap(), before);
 
-        let legacy_len =
-            state.len() - VERSION_10_BACKUP_EXECUTION_STATE_SIZE - VERSION_9_ROM_HASH_SIZE;
+        let legacy_len = state.len()
+            - VERSION_10_BACKUP_EXECUTION_STATE_SIZE
+            - VERSION_12_PSG_STATE_SIZE
+            - VERSION_9_ROM_HASH_SIZE;
         let mut legacy = state[..legacy_len].to_vec();
         legacy[8..12].copy_from_slice(&8u32.to_le_bytes());
         assert!(inspect_current_native_gba_tas_state(&source, &legacy).is_err());
@@ -204,5 +221,36 @@ mod tests {
         malformed.pop();
         assert!(restore_current_native_gba_tas_state(&mut target, &malformed).is_err());
         assert_eq!(encode_state(&target).unwrap(), before);
+    }
+
+    #[test]
+    fn rom_hash_helpers_require_the_current_matching_profile() {
+        let normal_rom = rom(0x21);
+        let normal_state = encode_state(&Emulator::new(&normal_rom, 48_000).unwrap()).unwrap();
+
+        let mut tilt_rom = rom(0x22);
+        tilt_rom[0xAC..0xB0].copy_from_slice(b"KYGE");
+        tilt_rom[0xB0..0xB2].copy_from_slice(b"01");
+        tilt_rom.extend_from_slice(b"EEPROM_V122");
+        let tilt_state = encode_state(&Emulator::new(&tilt_rom, 48_000).unwrap()).unwrap();
+
+        assert_eq!(
+            current_native_gba_tas_state_rom_sha256(&normal_state).unwrap(),
+            Emulator::new(&normal_rom, 48_000).unwrap().rom_hash()
+        );
+        assert_eq!(
+            current_native_gba_tilt_tas_state_rom_sha256(&tilt_state).unwrap(),
+            Emulator::new(&tilt_rom, 48_000).unwrap().rom_hash()
+        );
+        assert!(current_native_gba_tas_state_rom_sha256(&tilt_state).is_err());
+        assert!(current_native_gba_tilt_tas_state_rom_sha256(&normal_state).is_err());
+
+        let mut legacy_normal = normal_state;
+        legacy_normal[8..12].copy_from_slice(&10u32.to_le_bytes());
+        assert!(current_native_gba_tas_state_rom_sha256(&legacy_normal).is_err());
+
+        let mut legacy_tilt = tilt_state;
+        legacy_tilt[8..12].copy_from_slice(&11u32.to_le_bytes());
+        assert!(current_native_gba_tilt_tas_state_rom_sha256(&legacy_tilt).is_err());
     }
 }

@@ -272,3 +272,53 @@ fn tas_event_ranges_preserve_final_cursor_without_subframe_off_by_one() {
     }];
     assert!(boundary.validate().is_err());
 }
+
+#[test]
+fn validated_prefix_hash_batch_preserves_public_hash_contracts() {
+    let project = project();
+    let cursors = [0, 6, 6, 12];
+    let expected = cursors
+        .iter()
+        .map(|&cursor| project.branch_prefix_sha256("main", cursor).unwrap())
+        .collect::<Vec<_>>();
+    let actual = project
+        .branch_prefix_sha256_many_from_validated("main", &cursors)
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(actual[1], actual[2]);
+
+    let sync_identity = project.sync_identity_sha256_from_validated().unwrap();
+    let branch = project.branch("main").unwrap();
+    assert_eq!(
+        actual[1],
+        super::super::identity::hash_branch(sync_identity, branch, 6, false).unwrap()
+    );
+    assert_ne!(
+        actual[1],
+        super::super::identity::hash_branch(sync_identity, branch, 6, true).unwrap()
+    );
+    assert_eq!(
+        project
+            .branch_prefix_sha256_many_from_validated("main", &[])
+            .unwrap(),
+        Vec::new()
+    );
+
+    let unknown = project
+        .branch_prefix_sha256_many_from_validated("missing", &[u64::MAX])
+        .unwrap_err();
+    assert!(unknown.to_string().contains("unknown TAS branch"));
+    let out_of_range = project
+        .branch_prefix_sha256_many_from_validated("main", &[0, 13])
+        .unwrap_err();
+    assert!(out_of_range.to_string().contains("past branch end"));
+
+    let mut changed = project.clone();
+    changed.identity.determinism_abi.push('2');
+    assert_ne!(
+        changed
+            .branch_prefix_sha256_many_from_validated("main", &cursors)
+            .unwrap(),
+        actual
+    );
+}

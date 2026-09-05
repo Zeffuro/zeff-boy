@@ -46,6 +46,8 @@ pub struct Emulator {
     pub(crate) debug: AddressDebugController,
     pub(crate) opcode_log: OpcodeLog<WsOpcodeRecord>,
     pub(crate) instruction_trace: zeff_emu_common::debug::InstructionTraceStore,
+    #[cfg(test)]
+    pub(crate) hlt_fast_forward_calls: u64,
 }
 
 impl Emulator {
@@ -64,6 +66,8 @@ impl Emulator {
             debug: AddressDebugController::new(),
             opcode_log: OpcodeLog::new(),
             instruction_trace: zeff_emu_common::debug::InstructionTraceStore::default(),
+            #[cfg(test)]
+            hlt_fast_forward_calls: 0,
         };
         emu.reset();
         Ok(emu)
@@ -82,6 +86,10 @@ impl Emulator {
         self.debug.clear_hits();
         self.opcode_log.clear();
         self.instruction_trace.clear();
+        #[cfg(test)]
+        {
+            self.hlt_fast_forward_calls = 0;
+        }
     }
 }
 

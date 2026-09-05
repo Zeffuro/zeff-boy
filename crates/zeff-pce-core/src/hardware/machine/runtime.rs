@@ -89,6 +89,16 @@ impl PceMachine {
         self.bus.devices_mut().drain_audio_samples_into(output);
     }
 
+    #[cfg(feature = "profiling")]
+    pub fn profiling_snapshot(&self) -> PceProfilingSnapshot {
+        self.profiling.snapshot
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn reset_profiling(&mut self) {
+        self.profiling = PceProfiling::default();
+    }
+
     #[inline]
     pub fn framebuffer(&self) -> &[u8] {
         self.front_video.framebuffer()
@@ -196,6 +206,8 @@ impl PceMachine {
                 master_ticks_per_cycle,
                 trace_enabled.then_some(&mut self.trace_scratch),
                 &mut self.debug,
+                #[cfg(feature = "profiling")]
+                &mut self.profiling,
             );
             let mut action = None;
             let mut trap = None;
@@ -233,6 +245,34 @@ impl PceMachine {
             return Err(PceMachineError::CpuTrap(trap));
         }
         let action = action.expect("successful CPU action is present");
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.snapshot.cpu_boundaries += 1;
+            match action {
+                PceCpuAction::Instruction(step) => {
+                    self.profiling.snapshot.cpu_instruction_boundaries += 1;
+                    match entering_speed {
+                        SpeedMode::Low => {
+                            self.profiling.snapshot.cpu_low_speed_cycles += u64::from(step.cycles)
+                        }
+                        SpeedMode::High => {
+                            self.profiling.snapshot.cpu_high_speed_cycles += u64::from(step.cycles)
+                        }
+                    }
+                }
+                PceCpuAction::Interrupt(step) => {
+                    self.profiling.snapshot.cpu_interrupt_boundaries += 1;
+                    match entering_speed {
+                        SpeedMode::Low => {
+                            self.profiling.snapshot.cpu_low_speed_cycles += u64::from(step.cycles)
+                        }
+                        SpeedMode::High => {
+                            self.profiling.snapshot.cpu_high_speed_cycles += u64::from(step.cycles)
+                        }
+                    }
+                }
+            }
+        }
         if trace_enabled {
             let physical_pc = match action {
                 PceCpuAction::Instruction(step) => step.physical_pc,
@@ -341,6 +381,8 @@ impl PceMachine {
                 1,
                 None,
                 &mut self.debug,
+                #[cfg(feature = "profiling")]
+                &mut self.profiling,
             );
             bus.advance_devices(master_ticks);
             (

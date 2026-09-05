@@ -248,6 +248,18 @@ impl Bus {
         }
     }
 
+    pub(crate) fn halted_cpu_next_event_cycles(&self) -> u32 {
+        let mut cycles = super::constants::CYCLES_PER_SCANLINE - self.ppu.line_cycles();
+        let serial_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
+        if let Some(uart_cycles) = self.uart.cycles_until_tx_complete(serial_control) {
+            cycles = cycles.min(uart_cycles);
+        }
+        if let Some(sound_dma_cycles) = self.cycles_until_next_sound_dma_transfer() {
+            cycles = cycles.min(sound_dma_cycles);
+        }
+        cycles
+    }
+
     #[cfg(feature = "profiling")]
     pub fn profiling_snapshot(&self) -> ProfilingSnapshot {
         self.profiling

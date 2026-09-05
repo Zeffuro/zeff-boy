@@ -10,6 +10,12 @@ const GPIO_MASK: u8 = 0x0F;
 const SCK: u8 = 0x01;
 const SIO: u8 = 0x02;
 const CS: u8 = 0x04;
+
+#[cfg(feature = "profiling")]
+pub(super) fn instruction_fetch_overlaps_gpio(addr: u32, width: u8) -> bool {
+    let end = addr.saturating_add(u32::from(width).saturating_sub(1));
+    addr <= GPIO_CONTROL + 1 && end >= GPIO_DATA
+}
 const CONTROL_HOUR_24: u8 = 0x40;
 
 pub(super) mod persistence;

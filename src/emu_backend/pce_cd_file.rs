@@ -127,8 +127,9 @@ fn load_cue_file_backed(
     files: Vec<FileBackedCueFile>,
     progress: impl FnMut(u64) -> Result<(), PceCdLoadError>,
 ) -> Result<LoadedPceCd, PceCdLoadError> {
-    let (content_sha256, content_crc32) = content_identity(cue_bytes, sheet, &files, progress)?;
-    let disc = build_disc(sheet, &files)?;
+    let (content_sha256, content_crc32, file_sha256) =
+        content_identity(cue_bytes, sheet, &files, progress)?;
+    let disc = build_disc(sheet, &files, &file_sha256)?;
     let source_disc_sha256 = disc.content_hash();
     let raw_source_media_len = disc_payload_len(&disc)?;
     Ok(LoadedPceCd {
@@ -233,7 +234,7 @@ fn content_identity(
     sheet: &CueSheet,
     files: &[FileBackedCueFile],
     mut progress: impl FnMut(u64) -> Result<(), PceCdLoadError>,
-) -> Result<([u8; 32], u32), PceCdLoadError> {
+) -> Result<([u8; 32], u32, Vec<[u8; 32]>), PceCdLoadError> {
     let mut sha = Sha256::new();
     let mut crc = Crc32::new();
     update_identity(&mut sha, &mut crc, CONTENT_ID_DOMAIN);
@@ -241,11 +242,17 @@ fn content_identity(
     let count = (sheet.files.len() as u64).to_le_bytes();
     sha.update(count);
     crc.update(&count);
+    let mut file_sha256 = Vec::with_capacity(files.len());
     for (cue_file, file) in sheet.files.iter().zip(files) {
         update_identity(&mut sha, &mut crc, cue_file.reference.as_bytes());
-        update_file_identity(&mut sha, &mut crc, file, &mut progress)?;
+        file_sha256.push(update_file_identity(
+            &mut sha,
+            &mut crc,
+            file,
+            &mut progress,
+        )?);
     }
-    Ok((sha.finalize().into(), crc.finalize()))
+    Ok((sha.finalize().into(), crc.finalize(), file_sha256))
 }
 
 fn update_file_identity(
@@ -253,7 +260,7 @@ fn update_file_identity(
     crc: &mut Crc32,
     source: &FileBackedCueFile,
     progress: &mut impl FnMut(u64) -> Result<(), PceCdLoadError>,
-) -> Result<(), PceCdLoadError> {
+) -> Result<[u8; 32], PceCdLoadError> {
     let bytes = (source.bytes as u64).to_le_bytes();
     sha.update(bytes);
     crc.update(&bytes);
@@ -271,17 +278,22 @@ fn update_file_identity(
         remaining -= count;
         progress(count as u64)?;
     }
+    let member_sha = member_sha.finalize().into();
     if source
         .expected_sha256
-        .is_some_and(|expected| expected != <[u8; 32]>::from(member_sha.finalize()))
+        .is_some_and(|expected| expected != member_sha)
     {
         return Err(PceCdLoadError::ArchiveChanged);
     }
-    Ok(())
+    Ok(member_sha)
 }
 
-fn build_disc(sheet: &CueSheet, files: &[FileBackedCueFile]) -> Result<CdDisc, PceCdLoadError> {
-    build_disc_with_raw_sources(sheet, files, None)
+fn build_disc(
+    sheet: &CueSheet,
+    files: &[FileBackedCueFile],
+    file_sha256: &[[u8; 32]],
+) -> Result<CdDisc, PceCdLoadError> {
+    build_disc_with_raw_sources(sheet, files, Some(file_sha256), None)
 }
 
 fn build_disc_from_raw_sources(
@@ -289,18 +301,22 @@ fn build_disc_from_raw_sources(
     files: &[FileBackedCueFile],
     sources: &[Arc<dyn CdTrackSource>],
 ) -> Result<CdDisc, PceCdLoadError> {
-    build_disc_with_raw_sources(sheet, files, Some(sources))
+    build_disc_with_raw_sources(sheet, files, None, Some(sources))
 }
 
 fn build_disc_with_raw_sources(
     sheet: &CueSheet,
     files: &[FileBackedCueFile],
+    file_sha256: Option<&[[u8; 32]]>,
     raw_sources: Option<&[Arc<dyn CdTrackSource>]>,
 ) -> Result<CdDisc, PceCdLoadError> {
     if files.len() != sheet.files.len() {
         return Err(PceCdLoadError::MissingFile);
     }
     if raw_sources.is_some_and(|sources| sources.len() != files.len()) {
+        return Err(PceCdLoadError::MissingFile);
+    }
+    if file_sha256.is_some_and(|hashes| hashes.len() != files.len()) {
         return Err(PceCdLoadError::MissingFile);
     }
     let file_bytes = files.iter().map(|file| file.bytes).collect::<Vec<_>>();
@@ -317,6 +333,18 @@ fn build_disc_with_raw_sources(
             let source: Arc<dyn CdTrackSource> = if let Some(sources) = raw_sources {
                 slice_source(sources[file_index].clone(), start, bytes)
                     .ok_or(PceCdLoadError::TrackOutsideBin(track.number))?
+            } else if start == 0 && bytes == file.bytes {
+                FileSliceSource::open_prehashed(
+                    &file.path,
+                    file.identity,
+                    bytes,
+                    sector_bytes,
+                    file.reject_reparse,
+                    file_sha256
+                        .and_then(|hashes| hashes.get(file_index))
+                        .copied()
+                        .ok_or(PceCdLoadError::MissingFile)?,
+                )?
             } else {
                 FileSliceSource::open(
                     &file.path,
@@ -398,6 +426,13 @@ struct FileSliceSpec {
     sector_bytes: usize,
 }
 
+#[derive(Clone, Copy)]
+enum FileSliceHash {
+    Compute,
+    Precomputed([u8; 32]),
+    Unverified,
+}
+
 impl FileSliceSource {
     fn open(
         path: &Path,
@@ -416,7 +451,7 @@ impl FileSliceSource {
                 sector_bytes,
             },
             reject_reparse,
-            true,
+            FileSliceHash::Compute,
         )
     }
 
@@ -437,7 +472,28 @@ impl FileSliceSource {
                 sector_bytes,
             },
             reject_reparse,
-            false,
+            FileSliceHash::Unverified,
+        )
+    }
+
+    fn open_prehashed(
+        path: &Path,
+        identity: FileIdentity,
+        bytes: usize,
+        sector_bytes: usize,
+        reject_reparse: bool,
+        payload_hash: [u8; 32],
+    ) -> Result<Arc<Self>, PceCdLoadError> {
+        Self::open_with_hash(
+            path,
+            identity,
+            FileSliceSpec {
+                start: 0,
+                bytes,
+                sector_bytes,
+            },
+            reject_reparse,
+            FileSliceHash::Precomputed(payload_hash),
         )
     }
 
@@ -446,7 +502,7 @@ impl FileSliceSource {
         identity: FileIdentity,
         spec: FileSliceSpec,
         reject_reparse: bool,
-        hash: bool,
+        payload_hash: FileSliceHash,
     ) -> Result<Arc<Self>, PceCdLoadError> {
         let FileSliceSpec {
             start,
@@ -460,7 +516,7 @@ impl FileSliceSource {
             .filter(|&end| end <= identity.bytes)
             .ok_or_else(|| PceCdLoadError::BinUnreadable(path.into()))?;
         let mut hasher = Sha256::new();
-        if hash {
+        if matches!(payload_hash, FileSliceHash::Compute) {
             file.seek(SeekFrom::Start(start))
                 .map_err(|_| PceCdLoadError::BinUnreadable(path.into()))?;
             let mut remaining = bytes;
@@ -473,6 +529,11 @@ impl FileSliceSource {
                 remaining -= count;
             }
         }
+        let payload_hash = match payload_hash {
+            FileSliceHash::Compute => hasher.finalize().into(),
+            FileSliceHash::Precomputed(payload_hash) => payload_hash,
+            FileSliceHash::Unverified => [0; 32],
+        };
         Ok(Arc::new(Self {
             reader: Mutex::new(FileSliceReader {
                 file,
@@ -482,7 +543,7 @@ impl FileSliceSource {
                 cache: [0; 2_352],
             }),
             bytes,
-            payload_hash: hasher.finalize().into(),
+            payload_hash,
             sector_bytes,
             reject_reparse,
             #[cfg(test)]

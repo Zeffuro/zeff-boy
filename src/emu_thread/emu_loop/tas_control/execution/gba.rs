@@ -12,6 +12,7 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn execute_direct_gba_tas(
     runtime_fault: &mut WorkerRuntimeFault,
     request: &TasExecutionRequest,
     persistence: TasPersistenceContract,
+    discarded_audio_samples: &mut Vec<f32>,
 ) -> Result<TasExecutionResult, Rejected> {
     validate_gba_inputs(&request.input_prefix).map_err(|_| Rejected::InvalidInput)?;
     let transaction_frames =
@@ -48,7 +49,7 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn execute_direct_gba_tas(
     if advanced != frames.len() {
         return Err(Rejected::FrameProgressFailed);
     }
-    backend.drain_audio_samples_into(&mut Vec::new());
+    super::discard_audio(backend, discarded_audio_samples);
     capture_direct_gba_candidate(backend, expected_frame, persistence).map(
         |(frame_count, state_sha256)| TasExecutionResult {
             profile: TasExecutionProfile::DirectGbaCartridge,

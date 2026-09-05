@@ -36,6 +36,70 @@ fn decoder_rejects_duplicate_and_unsafe_entries() {
 }
 
 #[test]
+fn editor_history_encoding_matches_public_bytes_and_canonical_semantics() {
+    let mut source = project();
+    source.identity.firmware.push(TasFirmwareIdentity::Hle {
+        firmware_id: "aaa-firmware".to_owned(),
+        implementation: "synthetic-hle".to_owned(),
+        compatibility_version: 1,
+    });
+    source.identity.devices.push(TasDeviceIdentity {
+        port: "p0".to_owned(),
+        device: "gamepad".to_owned(),
+        configuration_sha256: TasDigest([0xA0; 32]),
+    });
+    source.validate().unwrap();
+
+    let public = source.encode().unwrap();
+    let history = source.encode_editor_history_snapshot().unwrap();
+    assert_eq!(history, public);
+
+    let decoded = TasProject::decode(&history).unwrap();
+    let mut canonical = source;
+    canonical.identity = canonical.canonical_identity();
+    assert_eq!(decoded, canonical);
+}
+
+#[test]
+fn editor_history_encoding_preserves_preflight_failures() {
+    let mut invalid = project();
+    invalid.start_state = vec![0x5A; invalid.start_state.len()].into();
+    assert_same_encoding_error(&invalid);
+
+    let mut text_limit = project();
+    text_limit.project_comment = "x".repeat(64 * 1024 + 1);
+    assert_same_encoding_error(&text_limit);
+
+    let mut manifest_limit = project();
+    manifest_limit.branches = (0..MAX_PROJECT_BRANCHES)
+        .map(|index| TasBranch {
+            id: format!("branch-{index}"),
+            name: format!("Branch {index}"),
+            comment: "x".repeat(64 * 1024),
+            parent: None,
+            frame_count: 0,
+            input_spans: Vec::new(),
+            events: Vec::new(),
+            verification: None,
+        })
+        .collect();
+    manifest_limit.active_branch_id = "branch-0".to_owned();
+    manifest_limit.markers.clear();
+    manifest_limit.annotations.clear();
+    manifest_limit.validate().unwrap();
+    assert_same_encoding_error(&manifest_limit);
+}
+
+fn assert_same_encoding_error(project: &TasProject) {
+    let public = project.encode().unwrap_err().to_string();
+    let history = project
+        .encode_editor_history_snapshot()
+        .unwrap_err()
+        .to_string();
+    assert_eq!(history, public);
+}
+
+#[test]
 fn event_stream_canonicalizes_and_rejects_trailing_bytes() {
     let stream = zeff_emu_common::replay::encode_replay_event_stream(&[
         ReplayEvent::FdsDiskSide { frame: 2, side: 0 },

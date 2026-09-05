@@ -207,6 +207,11 @@ impl StateWriter {
         }
     }
 
+    pub fn from_reused_bytes(mut bytes: Vec<u8>) -> Self {
+        bytes.clear();
+        Self { bytes }
+    }
+
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }

@@ -185,6 +185,8 @@ impl PceMachine {
             trace_scratch: TimedInstructionTrace::default(),
             trace_frame: 0,
             debug: AddressDebugController::new(),
+            #[cfg(feature = "profiling")]
+            profiling: PceProfiling::default(),
         };
         machine.reset();
         machine
@@ -225,6 +227,10 @@ impl PceMachine {
         self.instruction_trace.clear();
         self.trace_frame = 0;
         self.debug.clear_hits();
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling = PceProfiling::default();
+        }
         self.refresh_cdrom2_irq2();
     }
 }

@@ -6,14 +6,7 @@ use zeff_emu_common::memory::MemoryRegionKind;
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_memory_data(id: c_uint) -> *mut c_void {
     match id {
-        RETRO_MEMORY_SAVE_RAM => {
-            let mut buf = lock(&SRAM_BUF);
-            if !buf.is_empty() {
-                buf.as_mut_ptr() as *mut c_void
-            } else {
-                std::ptr::null_mut()
-            }
-        }
+        RETRO_MEMORY_SAVE_RAM => lock(&crate::sram::SRAM).data(),
         RETRO_MEMORY_SYSTEM_RAM => {
             let mut core = lock(&CORE);
             if let Some(state) = core.as_mut()
@@ -39,7 +32,7 @@ pub extern "C" fn retro_get_memory_data(id: c_uint) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_get_memory_size(id: c_uint) -> usize {
     match id {
-        RETRO_MEMORY_SAVE_RAM => lock(&SRAM_BUF).len(),
+        RETRO_MEMORY_SAVE_RAM => lock(&crate::sram::SRAM).len(),
         RETRO_MEMORY_SYSTEM_RAM => lock(&CORE)
             .as_ref()
             .map_or(0, |s| s.memory_region_size(MemoryRegionKind::SystemRam)),

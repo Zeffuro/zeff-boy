@@ -72,6 +72,8 @@ fn project_base(
     output: &mut [u8],
 ) {
     let source_height = row_end - first_row;
+    let mut mapped_visible_width = 0;
+    let mut source_x_by_destination = [0usize; PCE_HOST_FRAME_WIDTH];
     for destination_y in 0..PCE_HOST_FRAME_HEIGHT {
         let source_y = first_row + destination_y * source_height / PCE_HOST_FRAME_HEIGHT;
         let Some(row) = rows.get(source_y).copied().filter(|row| row.active) else {
@@ -81,10 +83,15 @@ fn project_base(
         if visible_width == 0 {
             continue;
         }
+        if mapped_visible_width != visible_width {
+            for (destination_x, source_x) in source_x_by_destination.iter_mut().enumerate() {
+                *source_x = destination_x * visible_width / PCE_HOST_FRAME_WIDTH;
+            }
+            mapped_visible_width = visible_width;
+        }
         let source_row_start = source_y * source_width * 4;
         let destination_row_start = destination_y * PCE_HOST_FRAME_WIDTH * 4;
-        for destination_x in 0..PCE_HOST_FRAME_WIDTH {
-            let source_x = destination_x * visible_width / PCE_HOST_FRAME_WIDTH;
+        for (destination_x, &source_x) in source_x_by_destination.iter().enumerate() {
             copy_pixel(
                 source,
                 source_row_start + source_x * 4,

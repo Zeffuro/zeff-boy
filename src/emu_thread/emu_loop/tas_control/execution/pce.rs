@@ -7,10 +7,27 @@ use crate::tas_project::{MAX_EDITOR_SEEK_EXECUTION_FRAMES, MAX_START_STATE_BYTES
 
 use super::{TasExecutionResult, replay_frame};
 
+#[derive(Default)]
+pub(in crate::emu_thread::emu_loop::tas_control) struct PceTasStateScratch {
+    core_state: Vec<u8>,
+    backend_state: Vec<u8>,
+}
+
+impl PceTasStateScratch {
+    pub(in crate::emu_thread::emu_loop::tas_control) fn encode(
+        &mut self,
+        backend: &EmuBackend,
+    ) -> anyhow::Result<&[u8]> {
+        backend.encode_pce_tas_state_bytes_into(&mut self.core_state, &mut self.backend_state)?;
+        Ok(&self.backend_state)
+    }
+}
+
 pub(in crate::emu_thread::emu_loop::tas_control) fn execute_direct_pce_tas(
     backend: &mut EmuBackend,
     runtime_fault: &mut WorkerRuntimeFault,
     request: &TasExecutionRequest,
+    discarded_audio_samples: &mut Vec<f32>,
 ) -> Result<TasExecutionResult, Rejected> {
     validate_pce_inputs(request.profile, &request.input_prefix)
         .map_err(|_| Rejected::InvalidInput)?;
@@ -48,7 +65,7 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn execute_direct_pce_tas(
     if advanced != frames.len() {
         return Err(Rejected::FrameProgressFailed);
     }
-    backend.drain_audio_samples_into(&mut Vec::new());
+    super::discard_audio(backend, discarded_audio_samples);
     capture_direct_pce_candidate(backend, request.profile, expected_frame).map(
         |(frame_count, state_sha256)| TasExecutionResult {
             profile: request.profile,
@@ -211,6 +228,25 @@ pub(in crate::emu_thread::emu_loop::tas_control) fn capture_direct_pce_candidate
         return Err(Rejected::StateFrameMismatch);
     }
     Ok((frame_count, TasDigest::from_bytes(&state)))
+}
+
+pub(in crate::emu_thread::emu_loop::tas_control) fn capture_direct_pce_candidate_with_scratch(
+    backend: &EmuBackend,
+    profile: TasExecutionProfile,
+    expected_frame: u64,
+    scratch: &mut PceTasStateScratch,
+) -> Result<(u64, TasDigest), Rejected> {
+    validate_pce_runtime(backend, profile).map_err(|_| Rejected::StateCaptureFailed)?;
+    let state = scratch
+        .encode(backend)
+        .map_err(|_| Rejected::StateCaptureFailed)?;
+    validate_direct_pce_start_state(backend, profile, state)
+        .map_err(|_| Rejected::StateCaptureFailed)?;
+    let frame_count = backend.frame_count();
+    if frame_count != expected_frame {
+        return Err(Rejected::StateFrameMismatch);
+    }
+    Ok((frame_count, TasDigest::from_bytes(state)))
 }
 
 fn validate_pce_runtime(backend: &EmuBackend, profile: TasExecutionProfile) -> anyhow::Result<()> {

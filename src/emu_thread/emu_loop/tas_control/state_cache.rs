@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 use crate::emu_thread::{TasExecutionCacheProof, TasExecutionProfile, TasExecutionRequest};
 use crate::tas_project::TasDigest;
@@ -25,7 +25,7 @@ struct CacheKey {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CacheEntry {
     key: CacheKey,
-    state: CachedTasState,
+    state: Arc<CachedTasState>,
 }
 
 pub(super) struct WorkerTasStateCache {
@@ -46,7 +46,7 @@ impl WorkerTasStateCache {
         profile: TasExecutionProfile,
         state_format_compatibility_id: &'static str,
         proof: TasExecutionCacheProof,
-    ) -> Option<CachedTasState> {
+    ) -> Option<Arc<CachedTasState>> {
         let index = self.entries.iter().position(|entry| {
             entry.key.profile == profile
                 && entry.key.state_format_compatibility_id == state_format_compatibility_id
@@ -57,7 +57,7 @@ impl WorkerTasStateCache {
             self.total_bytes = self.total_bytes.saturating_sub(entry.state.bytes.len());
             return None;
         }
-        let state = entry.state.clone();
+        let state = Arc::clone(&entry.state);
         self.entries.push_back(entry);
         Some(state)
     }
@@ -67,7 +67,7 @@ impl WorkerTasStateCache {
         profile: TasExecutionProfile,
         state_format_compatibility_id: &'static str,
         proofs: &[TasExecutionCacheProof],
-    ) -> Option<(TasExecutionCacheProof, CachedTasState)> {
+    ) -> Option<(TasExecutionCacheProof, Arc<CachedTasState>)> {
         proofs.iter().copied().find_map(|proof| {
             self.get(profile, state_format_compatibility_id, proof)
                 .map(|state| (proof, state))
@@ -95,7 +95,10 @@ impl WorkerTasStateCache {
             self.total_bytes = self.total_bytes.saturating_sub(replaced.state.bytes.len());
         }
         self.total_bytes = self.total_bytes.saturating_add(state.bytes.len());
-        self.entries.push_back(CacheEntry { key, state });
+        self.entries.push_back(CacheEntry {
+            key,
+            state: Arc::new(state),
+        });
         while self.entries.len() > MAX_ENTRIES || self.total_bytes > MAX_BYTES {
             let Some(evicted) = self.entries.pop_front() else {
                 break;
@@ -118,10 +121,17 @@ impl WorkerTasStateCache {
         }) else {
             return false;
         };
-        if let Some(byte) = entry.state.bytes.first_mut() {
-            *byte ^= 0xFF;
-        } else {
-            entry.state.bytes.push(0xFF);
+        let grew = {
+            let state = Arc::make_mut(&mut entry.state);
+            if let Some(byte) = state.bytes.first_mut() {
+                *byte ^= 0xFF;
+                false
+            } else {
+                state.bytes.push(0xFF);
+                true
+            }
+        };
+        if grew {
             self.total_bytes = self.total_bytes.saturating_add(1);
         }
         true
@@ -132,7 +142,7 @@ impl TasControl {
     pub(super) fn cached_state(
         &mut self,
         request: &TasExecutionRequest,
-    ) -> Option<(TasExecutionCacheProof, CachedTasState)> {
+    ) -> Option<(TasExecutionCacheProof, Arc<CachedTasState>)> {
         let BackendAuthority::Leased {
             lease_id,
             profile,
@@ -282,10 +292,14 @@ mod tests {
                 state(cursor as u8),
             );
         }
-        assert_eq!(
-            cache.get(TasExecutionProfile::DirectNesCartridge, "nes-v11", proof(0)),
-            Some(state(0))
-        );
+        let recent = cache
+            .get(TasExecutionProfile::DirectNesCartridge, "nes-v11", proof(0))
+            .expect("inserted state must be returned");
+        assert_eq!(recent.as_ref(), &state(0));
+        let same_state = cache
+            .get(TasExecutionProfile::DirectNesCartridge, "nes-v11", proof(0))
+            .expect("cache hit must retain state allocation");
+        assert!(Arc::ptr_eq(&recent, &same_state));
         cache.insert(
             TasExecutionProfile::DirectNesCartridge,
             "nes-v11",

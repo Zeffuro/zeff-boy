@@ -99,13 +99,14 @@ fn main() -> anyhow::Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<EmuBackend> {
     let path = Path::new(rom_path_arg);
-    let (rom_path, preloaded_data, system) = app::detect_and_extract_rom(path)?;
+    let detected = app::detect_and_extract_rom_with_zip_witness(path)?;
     let loaded = load_backend_from_rom_source(
-        system,
+        detected.system,
         path,
-        &rom_path,
-        preloaded_data,
+        &detected.rom_path,
+        detected.preloaded_data,
         BackendLoadConfig {
+            authenticated_zip_member: detected.authenticated_zip_member,
             gb_hardware_mode_preference: settings.emulation.hardware_mode_preference,
             sega8_video_standard: settings.emulation.sega8_video_standard.forced_standard(),
             sega8_console_region: settings.emulation.sega8_console_region.forced_region(),

@@ -186,6 +186,18 @@ impl Bus {
         self.sound_dma.cycle_accumulator = available;
     }
 
+    pub(crate) fn cycles_until_next_sound_dma_transfer(&self) -> Option<u32> {
+        let control = self.io[usize::from(SOUND_DMA_CONTROL_PORT)];
+        if control & SOUND_DMA_ENABLE == 0 {
+            return None;
+        }
+        Some(
+            sound_dma_cycle_period(control)
+                .saturating_sub(self.sound_dma.cycle_accumulator)
+                .max(1),
+        )
+    }
+
     fn transfer_sound_dma_byte(&mut self, control: u8) -> bool {
         let mut length = self.sound_dma_length();
         if length == 0 {

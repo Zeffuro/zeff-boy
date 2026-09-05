@@ -1,5 +1,6 @@
 use super::{
-    TILT_VERSION, VERSION, VERSION_11_TILT_EXECUTION_STATE_SIZE, encode_state,
+    LEGACY_TILT_VERSION, TILT_VERSION, VERSION_9_ROM_HASH_SIZE,
+    VERSION_11_TILT_EXECUTION_STATE_SIZE, VERSION_12_PSG_STATE_SIZE, encode_state,
     inspect_current_native_gba_tilt_tas_state,
 };
 use crate::emulator::Emulator;
@@ -24,7 +25,7 @@ fn dirty_tilt(emu: &mut Emulator) {
 }
 
 #[test]
-fn v11_roundtrips_complete_tilt_execution_state() {
+fn v13_roundtrips_complete_tilt_execution_state() {
     let mut source = Emulator::new(&tilt_rom(), 48_000).unwrap();
     dirty_tilt(&mut source);
     let state = encode_state(&source).unwrap();
@@ -48,9 +49,14 @@ fn v10_migration_resets_all_tilt_execution_state() {
     let mut source = Emulator::new(&tilt_rom(), 48_000).unwrap();
     dirty_tilt(&mut source);
     let mut legacy = encode_state(&source).unwrap();
-    let tilt_start = legacy.len() - 32 - VERSION_11_TILT_EXECUTION_STATE_SIZE;
-    legacy.drain(tilt_start..tilt_start + VERSION_11_TILT_EXECUTION_STATE_SIZE);
-    legacy[8..12].copy_from_slice(&VERSION.to_le_bytes());
+    let psg_start = legacy.len()
+        - VERSION_9_ROM_HASH_SIZE
+        - VERSION_11_TILT_EXECUTION_STATE_SIZE
+        - VERSION_12_PSG_STATE_SIZE;
+    legacy.drain(
+        psg_start..psg_start + VERSION_12_PSG_STATE_SIZE + VERSION_11_TILT_EXECUTION_STATE_SIZE,
+    );
+    legacy[8..12].copy_from_slice(&10u32.to_le_bytes());
 
     let mut target = Emulator::new(&tilt_rom(), 48_000).unwrap();
     dirty_tilt(&mut target);
@@ -68,7 +74,30 @@ fn v10_migration_resets_all_tilt_execution_state() {
 }
 
 #[test]
-fn malformed_v11_rejects_without_mutating_target() {
+fn legacy_v11_tilt_state_remains_loadable() {
+    let mut source = Emulator::new(&tilt_rom(), 48_000).unwrap();
+    dirty_tilt(&mut source);
+    super::psg_state_tests::seed_psg(&mut source, 5);
+    let source_tilt = source.tilt_state();
+    let wave_ram = source.apu_psg_wave_ram_snapshot();
+    let mut legacy = encode_state(&source).unwrap();
+    let psg_start = legacy.len()
+        - VERSION_9_ROM_HASH_SIZE
+        - VERSION_11_TILT_EXECUTION_STATE_SIZE
+        - VERSION_12_PSG_STATE_SIZE;
+    legacy.drain(psg_start..psg_start + VERSION_12_PSG_STATE_SIZE);
+    legacy[8..12].copy_from_slice(&LEGACY_TILT_VERSION.to_le_bytes());
+
+    let mut target = Emulator::new(&tilt_rom(), 48_000).unwrap();
+    super::psg_state_tests::seed_psg(&mut target, 9);
+    target.load_state(&legacy).unwrap();
+
+    assert_eq!(target.tilt_state(), source_tilt);
+    super::psg_state_tests::assert_legacy_psg_reconstructed(&target, 5, wave_ram);
+}
+
+#[test]
+fn malformed_v13_rejects_without_mutating_target() {
     let source = Emulator::new(&tilt_rom(), 48_000).unwrap();
     let state = encode_state(&source).unwrap();
     let tilt_start = state.len() - 32 - VERSION_11_TILT_EXECUTION_STATE_SIZE;

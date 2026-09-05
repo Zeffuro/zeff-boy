@@ -58,6 +58,7 @@ impl CoreState {
             ram_cheats: Vec::new(),
             gba_codebreaker_state: zeff_emu_common::cheats::GbaCodeBreakerState::default(),
             audio_buf: Vec::with_capacity(4096),
+            audio_i16_buf: Vec::with_capacity(4096),
             sample_rate,
             xrgb_buf: Vec::new(),
             rgb565_buf: Vec::new(),
@@ -67,17 +68,20 @@ impl CoreState {
         })
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self) -> anyhow::Result<()> {
+        let battery_sram = self.battery_sram();
         match &mut self.core {
             ActiveCore::Gb(_) => {
                 let pref = HardwareModePreference::Auto;
-                if let Ok(mut emu) =
-                    zeff_gb_core::emulator::Emulator::from_rom_data(&self.rom_data, pref)
-                {
-                    emu.set_sample_rate(self.sample_rate);
-                    emu.set_sgb_border_enabled(false);
-                    self.core = ActiveCore::Gb(Box::new(emu));
+                let mut emu =
+                    zeff_gb_core::emulator::Emulator::from_rom_data(&self.rom_data, pref)?;
+                emu.set_sample_rate(self.sample_rate);
+                emu.set_sgb_border_enabled(false);
+                if let Some(bytes) = &battery_sram {
+                    emu.load_battery_sram(bytes)?;
                 }
+                self.core = ActiveCore::Gb(Box::new(emu));
+                return Ok(());
             }
             ActiveCore::Gba(emu) => emu.reset(),
             ActiveCore::Nes(emu) => emu.reset(),
@@ -85,6 +89,10 @@ impl CoreState {
             ActiveCore::Sega8(emu) => emu.reset(),
             ActiveCore::Ws(emu) => emu.reset(),
         }
+        if let Some(bytes) = &battery_sram {
+            self.load_battery_sram(bytes)?;
+        }
+        Ok(())
     }
 }
 

@@ -72,13 +72,7 @@ pub extern "C" fn retro_load_game(info: *const retro_game_info) -> bool {
 
                 crate::options::apply_core_options(&mut state);
 
-                {
-                    let mut sram_buf = lock(&SRAM_BUF);
-                    sram_buf.clear();
-                    if let Some(sram) = state.battery_sram() {
-                        *sram_buf = sram;
-                    }
-                }
+                lock(&crate::sram::SRAM).initialize(&state);
                 *lock(&CORE) = Some(state);
                 *lock(&FRAME_COUNTER) = 0;
                 *lock(&MAX_SERIALIZE_SIZE) = fixed_serialize_size.unwrap_or(0);
@@ -112,8 +106,12 @@ pub extern "C" fn retro_load_game_special(
 pub extern "C" fn retro_unload_game() {
     retro_log_info("retro_unload_game");
     let mut core = lock(&CORE);
-    if let Some(state) = core.as_ref() {
-        state.sync_sram_to_buf(&mut lock(&SRAM_BUF));
+    if let Some(state) = core.as_mut()
+        && let Err(error) = crate::sram::import_and_publish(state)
+    {
+        retro_log_error(&format!(
+            "retro_unload_game: save RAM sync failed: {error:#}"
+        ));
     }
     *core = None;
 }

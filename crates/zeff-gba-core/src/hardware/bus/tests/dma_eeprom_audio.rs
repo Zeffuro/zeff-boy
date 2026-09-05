@@ -297,6 +297,55 @@ fn hblank_dma_does_not_run_during_hidden_vblank_lines() {
 }
 
 #[test]
+fn hblank_dma_timer_enable_services_same_chunk_fifo_overflow() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    let hblank_cycles = bus.ppu.cycles_until_next_status_event();
+    let reload = (0x1_0000 - (hblank_cycles - 1)) as u16;
+    bus.write32(0x0200_0000, u32::from(reload) | (0x0080 << 16));
+    bus.write16(0x0400_0082, (1 << 8) | (1 << 9));
+    bus.write16(0x0400_00A0, 0x2211);
+    bus.write32(0x0400_00B0, 0x0200_0000);
+    bus.write32(0x0400_00B4, 0x0400_0100);
+    bus.write16(0x0400_00B8, 1);
+    bus.write16(0x0400_00BA, 0xA400);
+
+    bus.step_cycles(hblank_cycles);
+
+    assert_eq!(bus.timers.read16(0, true), 0x0080);
+    assert_eq!(bus.timers.read16(0, false), reload);
+    assert_eq!(bus.apu.fifo_len(0), 1);
+    assert_eq!(bus.apu.debug_snapshot().current_sample[0], 0x11);
+}
+
+#[test]
+fn vblank_dma_timer_enable_services_same_chunk_fifo_overflow() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    let cycles_to_last_visible_hblank = crate::hardware::constants::CYCLES_PER_SCANLINE * 159
+        + crate::hardware::constants::HBLANK_START_CYCLE;
+    let vblank_chunk_cycles = crate::hardware::constants::CYCLES_PER_SCANLINE
+        - crate::hardware::constants::HBLANK_START_CYCLE;
+    let reload = (0x1_0000 - (vblank_chunk_cycles - 1)) as u16;
+    bus.write32(0x0200_0000, u32::from(reload) | (0x0080 << 16));
+    bus.write16(0x0400_0082, (1 << 8) | (1 << 9));
+    bus.write16(0x0400_00A0, 0x4433);
+    bus.write32(0x0400_00B0, 0x0200_0000);
+    bus.write32(0x0400_00B4, 0x0400_0100);
+    bus.write16(0x0400_00B8, 1);
+    bus.write16(0x0400_00BA, 0x9400);
+
+    bus.step_cycles(cycles_to_last_visible_hblank);
+    assert_eq!(bus.ppu.vcount(), 159);
+    assert!(bus.ppu.in_hblank());
+    bus.step_cycles(vblank_chunk_cycles);
+
+    assert!(bus.ppu.in_vblank());
+    assert_eq!(bus.read16(0x0400_0102), 0x0080);
+    assert_eq!(bus.read16(0x0400_0100), reload);
+    assert_eq!(bus.apu.fifo_len(0), 1);
+    assert_eq!(bus.apu.debug_snapshot().current_sample[0], 0x33);
+}
+
+#[test]
 fn vblank_dma_runs_on_vblank_entry() {
     let mut bus = Bus::new(cartridge(), 48_000);
     bus.write32(0x0200_0000, 0x5566_7788);

@@ -1,23 +1,23 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 
 use anyhow::Context;
-use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
-use zeff_pce_core::hardware::{
-    PceArcadeCardMode, PceConsoleWiring, PceControllerMode, PceHuCardBoard,
-};
-use zeff_sega8_core::hardware::cartridge::GameGearStandardMapperRamIdentity;
-use zeff_sega8_core::hardware::region::Sega8Region;
-use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
+use zeff_pce_core::hardware::PceControllerMode;
 
 use super::{ActiveSystem, EmuBackend};
+mod config;
 mod pce_cd;
 mod systems;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas;
 
+pub(crate) use config::BackendLoadConfig;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use pce_cd::{PreparedNativeArchiveBackend, prepare_native_archive_backend};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn is_direct_pce_cd_path(path: &Path) -> bool {
+    pce_cd::is_pce_cd_path(path)
+}
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use pce_cd::{
     PreparedSevenZipBackend, prepare_pce_cd_7z_backend, prepare_seven_zip_backend,
@@ -92,110 +92,6 @@ pub(crate) use tas::{
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use tas::{register_test_pce_cd_ppf_stack, register_test_pce_cd_system_card};
 
-#[derive(Clone, Debug)]
-pub(crate) struct BackendLoadConfig {
-    pub(crate) gb_hardware_mode_preference: HardwareModePreference,
-    pub(crate) sample_rate: Option<u32>,
-    pub(crate) apply_mods: bool,
-    pub(crate) initial_input: Option<(u8, u8)>,
-    pub(crate) gb_tas_source_media: Option<([u8; 32], usize, [u8; 32])>,
-    pub(crate) gb_load_battery_sram: bool,
-    pub(crate) gb_rtc_time_override: Option<u64>,
-    pub(crate) gba_load_battery_sram: bool,
-    pub(crate) gba_seed_rtc_from_host: bool,
-    pub(crate) nes_load_battery_sram: bool,
-    pub(crate) sega8_load_battery_sram: bool,
-    pub(crate) ws_load_battery_sram: bool,
-    pub(crate) game_gear_standard_mapper_ram_identity: Option<GameGearStandardMapperRamIdentity>,
-    pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
-    pub(crate) sega8_console_region: Option<Sega8Region>,
-    pub(crate) pce_console_wiring: Option<PceConsoleWiring>,
-    pub(crate) pce_hucard_board: Option<PceHuCardBoard>,
-    pub(crate) pce_cartridge_hardware: Option<zeff_pce_core::hardware::PceCartridgeHardware>,
-    pub(crate) pce_cd_tas_source_media: Option<([u8; 32], usize, [u8; 32])>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) pce_cd_tas_archive_cue:
-        Option<crate::emu_backend::pce_cd_archive::PceCdArchiveCueIdentity>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) pce_cd_tas_rar_cue:
-        Option<crate::emu_backend::pce_cd_archive::PceCdArchiveCueIdentity>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) pce_cd_tas_zip_cue:
-        Option<crate::emu_backend::pce_cd_archive::PceCdArchiveCueIdentity>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) pce_cd_tas_ppf_stack: Option<crate::emu_backend::pce_cd::PceCdTasPpfStack>,
-    pub(crate) pce_controller_mode: zeff_pce_core::hardware::PceControllerMode,
-    pub(crate) pce_memory_base_mode: zeff_pce_core::hardware::PceMemoryBaseMode,
-    pub(crate) pce_arcade_card_mode: PceArcadeCardMode,
-    pub(crate) pce_cd_archive_memory_limit_mib: usize,
-    pub(crate) pce_load_battery_bram: bool,
-    pub(crate) firmware_search_dirs: Vec<PathBuf>,
-    pub(crate) firmware_inventory: Option<Arc<zeff_firmware::FirmwareInventory>>,
-    pub(crate) gb_use_external_boot_rom: bool,
-    pub(crate) gba_use_external_bios: bool,
-    pub(crate) sega8_use_external_boot_rom: bool,
-    #[cfg(test)]
-    pub(crate) fds_bios_override: Option<&'static [u8]>,
-    #[cfg(test)]
-    pub(crate) coleco_bios_override: Option<&'static [u8]>,
-    #[cfg(test)]
-    pub(crate) pce_cd_system_card_override: Option<&'static [u8]>,
-    #[cfg(test)]
-    pub(crate) pce_cd_system_card_sha256_override: Option<[u8; 32]>,
-}
-
-impl Default for BackendLoadConfig {
-    fn default() -> Self {
-        Self {
-            gb_hardware_mode_preference: HardwareModePreference::Auto,
-            sample_rate: None,
-            apply_mods: false,
-            initial_input: None,
-            gb_tas_source_media: None,
-            gb_load_battery_sram: true,
-            gb_rtc_time_override: None,
-            gba_load_battery_sram: true,
-            gba_seed_rtc_from_host: true,
-            nes_load_battery_sram: true,
-            sega8_load_battery_sram: true,
-            ws_load_battery_sram: true,
-            game_gear_standard_mapper_ram_identity: None,
-            sega8_video_standard: None,
-            sega8_console_region: None,
-            pce_console_wiring: None,
-            pce_hucard_board: None,
-            pce_cartridge_hardware: None,
-            pce_cd_tas_source_media: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            pce_cd_tas_archive_cue: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            pce_cd_tas_rar_cue: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            pce_cd_tas_zip_cue: None,
-            #[cfg(not(target_arch = "wasm32"))]
-            pce_cd_tas_ppf_stack: None,
-            pce_controller_mode: zeff_pce_core::hardware::PceControllerMode::Automatic,
-            pce_memory_base_mode: zeff_pce_core::hardware::PceMemoryBaseMode::Automatic,
-            pce_arcade_card_mode: PceArcadeCardMode::Automatic,
-            pce_cd_archive_memory_limit_mib: 128,
-            pce_load_battery_bram: true,
-            firmware_search_dirs: Vec::new(),
-            firmware_inventory: None,
-            gb_use_external_boot_rom: false,
-            gba_use_external_bios: false,
-            sega8_use_external_boot_rom: false,
-            #[cfg(test)]
-            fds_bios_override: None,
-            #[cfg(test)]
-            coleco_bios_override: None,
-            #[cfg(test)]
-            pce_cd_system_card_override: None,
-            #[cfg(test)]
-            pce_cd_system_card_sha256_override: None,
-        }
-    }
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn zip_tas_source_media(
     source_path: &Path,
@@ -234,6 +130,16 @@ pub(crate) struct LoadedBackend {
     pub(crate) original_crc32: u32,
 }
 
+struct RomSource<'a> {
+    system: ActiveSystem,
+    source_path: &'a Path,
+    rom_path: &'a Path,
+    preloaded_data: Option<Vec<u8>>,
+    loaded_from_source_path: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    authenticated_gba_zip: bool,
+}
+
 pub(crate) fn load_backend_from_rom_source(
     system: ActiveSystem,
     source_path: &Path,
@@ -241,14 +147,44 @@ pub(crate) fn load_backend_from_rom_source(
     preloaded_data: Option<Vec<u8>>,
     config: BackendLoadConfig,
 ) -> anyhow::Result<LoadedBackend> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let (preloaded_data, authenticated_gba_zip) = if system == ActiveSystem::GameBoyAdvance
+        && has_extension(source_path, "zip")
+        && config.authenticated_zip_member.is_some()
+    {
+        let preloaded_matches_witness =
+            config
+                .authenticated_zip_member
+                .as_ref()
+                .is_some_and(|witness| {
+                    preloaded_data.as_ref().is_some_and(|data| {
+                        witness.matches_preloaded_rom(
+                            source_path,
+                            rom_path,
+                            zeff_firmware::sha256_bytes(data),
+                        ) && witness.archive_is_unchanged(128 * 1024 * 1024)
+                    })
+                });
+        if preloaded_matches_witness {
+            (preloaded_data, true)
+        } else {
+            (preloaded_data, false)
+        }
+    } else {
+        (preloaded_data, false)
+    };
     let loaded_from_source_path = preloaded_data.is_none();
     load_backend_from_rom_source_inner(
-        system,
-        source_path,
-        rom_path,
-        preloaded_data,
+        RomSource {
+            system,
+            source_path,
+            rom_path,
+            preloaded_data,
+            loaded_from_source_path,
+            #[cfg(not(target_arch = "wasm32"))]
+            authenticated_gba_zip,
+        },
         config,
-        loaded_from_source_path,
     )
 }
 
@@ -260,23 +196,31 @@ pub(in crate::emu_backend::loader) fn load_backend_from_bounded_direct_source(
     config: BackendLoadConfig,
 ) -> anyhow::Result<LoadedBackend> {
     load_backend_from_rom_source_inner(
-        system,
-        source_path,
-        source_path,
-        Some(source_data),
+        RomSource {
+            system,
+            source_path,
+            rom_path: source_path,
+            preloaded_data: Some(source_data),
+            loaded_from_source_path: true,
+            authenticated_gba_zip: false,
+        },
         config,
-        true,
     )
 }
 
 fn load_backend_from_rom_source_inner(
-    system: ActiveSystem,
-    source_path: &Path,
-    rom_path: &Path,
-    preloaded_data: Option<Vec<u8>>,
+    source: RomSource<'_>,
     config: BackendLoadConfig,
-    loaded_from_source_path: bool,
 ) -> anyhow::Result<LoadedBackend> {
+    let RomSource {
+        system,
+        source_path,
+        rom_path,
+        preloaded_data,
+        loaded_from_source_path,
+        #[cfg(not(target_arch = "wasm32"))]
+        authenticated_gba_zip,
+    } = source;
     if system == ActiveSystem::Pce && pce_cd::is_pce_cd_path(rom_path) {
         return pce_cd::load_pce_cd_backend(source_path, rom_path, preloaded_data, &config);
     }
@@ -358,6 +302,17 @@ fn load_backend_from_rom_source_inner(
             raw_source_media_sha256.expect("GBA source hash must exist for GBA"),
             raw_source_media_len,
             super::gba::direct_gba_tas_sync_config_sha256().0,
+        ))
+    } else if let Some(witness) = config
+        .authenticated_zip_member
+        .as_ref()
+        .filter(|_| authenticated_gba_zip)
+    {
+        let (archive_sha256, archive_len, member_name) = witness.archive_identity();
+        Some((
+            archive_sha256,
+            archive_len,
+            super::gba::zip_gba_tas_sync_config_sha256(member_name).0,
         ))
     } else if source_path
         .extension()

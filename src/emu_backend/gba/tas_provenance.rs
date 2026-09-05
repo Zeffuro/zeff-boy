@@ -231,4 +231,237 @@ mod tests {
             zeff_firmware::sha256_bytes(&rom)
         );
     }
+
+    #[test]
+    fn authenticated_zip_member_reuses_exact_tas_provenance() {
+        let directory = crate::test_support::test_directory("gba-tas-zip-provenance").unwrap();
+        let archive = directory.path().join("game.zip");
+        let rom = rom();
+        crate::test_support::write_zip(&archive, &[("nested/game.gba", rom.as_slice())]).unwrap();
+        let selected = crate::rom_archive::extract_authenticated_bounded_zip_member(
+            &archive,
+            Some(&archive.join("nested/game.gba")),
+            "gba",
+            128 * 1024 * 1024,
+            crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+        )
+        .unwrap();
+        let (archive_sha256, archive_len, member_name) = selected.witness.archive_identity();
+        let member_name = member_name.to_owned();
+        let backend = load_backend_from_rom_source(
+            ActiveSystem::GameBoyAdvance,
+            &archive,
+            &selected.rom_path,
+            Some(selected.bytes),
+            BackendLoadConfig {
+                gba_load_battery_sram: false,
+                authenticated_zip_member: Some(selected.witness),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap()
+        .backend;
+        let view = backend.gba_tas_load_provenance().unwrap();
+        assert!(view.load.direct_gba_file);
+        assert_eq!(
+            view.load.raw_source_media_sha256,
+            zeff_firmware::sha256_bytes(&rom)
+        );
+        assert_eq!(
+            backend.tas_source_media_identity().unwrap().sha256,
+            archive_sha256
+        );
+        assert_eq!(
+            backend.tas_source_media_identity().unwrap().byte_len,
+            archive_len
+        );
+        assert_eq!(
+            view.load.tas_sync_config_sha256,
+            crate::emu_backend::gba::zip_gba_tas_sync_config_sha256(&member_name).0
+        );
+    }
+
+    #[test]
+    fn stale_authenticated_zip_member_keeps_detected_snapshot_without_zip_provenance() {
+        let directory = crate::test_support::test_directory("gba-tas-zip-mutation").unwrap();
+        let archive = directory.path().join("game.zip");
+        let original_rom = rom();
+        crate::test_support::write_zip(&archive, &[("nested/game.gba", original_rom.as_slice())])
+            .unwrap();
+        let selected = crate::rom_archive::extract_authenticated_bounded_zip_member(
+            &archive,
+            Some(&archive.join("nested/game.gba")),
+            "gba",
+            128 * 1024 * 1024,
+            crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+        )
+        .unwrap();
+        let mut current_rom = original_rom.clone();
+        current_rom[0] = 0xA5;
+        crate::test_support::write_zip(&archive, &[("nested/game.gba", current_rom.as_slice())])
+            .unwrap();
+        let backend = load_backend_from_rom_source(
+            ActiveSystem::GameBoyAdvance,
+            &archive,
+            &selected.rom_path,
+            Some(selected.bytes),
+            BackendLoadConfig {
+                gba_load_battery_sram: false,
+                authenticated_zip_member: Some(selected.witness),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap()
+        .backend;
+        let view = backend.gba_tas_load_provenance().unwrap();
+        assert_eq!(
+            backend.gba().unwrap().emu.rom_hash(),
+            zeff_firmware::sha256_bytes(&original_rom)
+        );
+        assert!(!view.load.direct_gba_file);
+        assert_eq!(
+            backend.tas_source_media_identity().unwrap().sha256,
+            zeff_firmware::sha256_bytes(&original_rom)
+        );
+    }
+
+    #[test]
+    fn top_level_authenticated_zip_rejects_a_second_supported_rom() {
+        let directory = crate::test_support::test_directory("gba-top-level-zip-race").unwrap();
+        let archive = directory.path().join("game.zip");
+        let gba = rom();
+        crate::test_support::write_zip(
+            &archive,
+            &[("game.gba", gba.as_slice()), ("added.nes", b"NES\x1A")],
+        )
+        .unwrap();
+        assert!(
+            crate::rom_archive::extract_single_authenticated_bounded_zip_member(
+                &archive,
+                "gba",
+                128 * 1024 * 1024,
+                crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn changed_unrelated_zip_entry_uses_new_outer_digest_via_legacy_fallback() {
+        let directory = crate::test_support::test_directory("gba-zip-unrelated-change").unwrap();
+        let archive = directory.path().join("game.zip");
+        let gba = rom();
+        crate::test_support::write_zip(
+            &archive,
+            &[("game.gba", gba.as_slice()), ("note.txt", b"one")],
+        )
+        .unwrap();
+        let selected = crate::rom_archive::extract_authenticated_bounded_zip_member(
+            &archive,
+            Some(&archive.join("game.gba")),
+            "gba",
+            128 * 1024 * 1024,
+            crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+        )
+        .unwrap();
+        crate::test_support::write_zip(
+            &archive,
+            &[("game.gba", gba.as_slice()), ("note.txt", b"two")],
+        )
+        .unwrap();
+        let expected_archive_hash = zeff_firmware::sha256_bytes(&std::fs::read(&archive).unwrap());
+        let backend = load_backend_from_rom_source(
+            ActiveSystem::GameBoyAdvance,
+            &archive,
+            &selected.rom_path,
+            Some(selected.bytes),
+            BackendLoadConfig {
+                gba_load_battery_sram: false,
+                authenticated_zip_member: Some(selected.witness),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap()
+        .backend;
+        assert_eq!(
+            backend.tas_source_media_identity().unwrap().sha256,
+            expected_archive_hash
+        );
+    }
+
+    #[test]
+    fn missing_or_tampered_witness_inputs_never_get_zip_provenance() {
+        let directory = crate::test_support::test_directory("gba-zip-witness-failures").unwrap();
+        let archive = directory.path().join("game.zip");
+        let gba = rom();
+        crate::test_support::write_zip(&archive, &[("game.gba", gba.as_slice())]).unwrap();
+        let selected = crate::rom_archive::extract_authenticated_bounded_zip_member(
+            &archive,
+            Some(&archive.join("game.gba")),
+            "gba",
+            128 * 1024 * 1024,
+            crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+        )
+        .unwrap();
+        let mut tampered = selected.bytes.clone();
+        tampered[0] ^= 0xFF;
+        let backend = load_backend_from_rom_source(
+            ActiveSystem::GameBoyAdvance,
+            &archive,
+            &selected.rom_path,
+            Some(tampered.clone()),
+            BackendLoadConfig {
+                gba_load_battery_sram: false,
+                authenticated_zip_member: Some(selected.witness),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap()
+        .backend;
+        assert_eq!(
+            backend.tas_source_media_identity().unwrap().sha256,
+            zeff_firmware::sha256_bytes(&tampered)
+        );
+        assert!(
+            !backend
+                .gba_tas_load_provenance()
+                .unwrap()
+                .load
+                .direct_gba_file
+        );
+
+        let selected = crate::rom_archive::extract_authenticated_bounded_zip_member(
+            &archive,
+            Some(&archive.join("game.gba")),
+            "gba",
+            128 * 1024 * 1024,
+            crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+        )
+        .unwrap();
+        std::fs::remove_file(&archive).unwrap();
+        let backend = load_backend_from_rom_source(
+            ActiveSystem::GameBoyAdvance,
+            &archive,
+            &selected.rom_path,
+            Some(selected.bytes),
+            BackendLoadConfig {
+                gba_load_battery_sram: false,
+                authenticated_zip_member: Some(selected.witness),
+                ..BackendLoadConfig::default()
+            },
+        )
+        .unwrap()
+        .backend;
+        assert_eq!(
+            backend.tas_source_media_identity().unwrap().sha256,
+            zeff_firmware::sha256_bytes(&gba)
+        );
+        assert!(
+            !backend
+                .gba_tas_load_provenance()
+                .unwrap()
+                .load
+                .direct_gba_file
+        );
+    }
 }

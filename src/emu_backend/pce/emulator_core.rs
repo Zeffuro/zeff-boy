@@ -19,6 +19,34 @@ use super::{
 use crate::audio_tooling::{AudioSemanticFrame, AudioTopology};
 use crate::emu_core_trait::EmulatorCore;
 
+impl PceBackend {
+    pub(crate) fn encode_tas_state_bytes_into(
+        &self,
+        core_state: &mut Vec<u8>,
+        output: &mut Vec<u8>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.pending_runtime_fault.is_none(),
+            "faulted PC Engine backends cannot be saved"
+        );
+        zeff_pce_core::hardware::save_state::encode_state_into(&self.machine, core_state)
+            .context("failed to encode PC Engine core state")?;
+        let required_capacity = core_state.len() + 32;
+        let mut writer = if output.capacity() >= required_capacity {
+            StateWriter::from_reused_bytes(std::mem::take(output))
+        } else {
+            StateWriter::with_capacity(required_capacity)
+        };
+        writer.write_bytes(BACKEND_STATE_MAGIC);
+        writer.write_u32(BACKEND_STATE_VERSION);
+        writer.write_u64(self.frame_count);
+        writer.write_u8(self.mouse_host_buttons.bits());
+        writer.write_vec(core_state);
+        *output = writer.into_bytes();
+        Ok(())
+    }
+}
+
 impl EmulatorCore for PceBackend {
     fn framebuffer(&self) -> &[u8] {
         &self.framebuffer
@@ -132,19 +160,10 @@ impl EmulatorCore for PceBackend {
     }
 
     fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        anyhow::ensure!(
-            self.pending_runtime_fault.is_none(),
-            "faulted PC Engine backends cannot be saved"
-        );
-        let core_state = zeff_pce_core::hardware::save_state::encode_state(&self.machine)
-            .context("failed to encode PC Engine core state")?;
-        let mut writer = StateWriter::with_capacity(core_state.len() + 32);
-        writer.write_bytes(BACKEND_STATE_MAGIC);
-        writer.write_u32(BACKEND_STATE_VERSION);
-        writer.write_u64(self.frame_count);
-        writer.write_u8(self.mouse_host_buttons.bits());
-        writer.write_vec(&core_state);
-        Ok(writer.into_bytes())
+        let mut core_state = Vec::new();
+        let mut output = Vec::new();
+        self.encode_tas_state_bytes_into(&mut core_state, &mut output)?;
+        Ok(output)
     }
 
     fn load_state_from_bytes(

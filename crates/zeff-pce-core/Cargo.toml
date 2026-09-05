@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 description = "PC Engine / TurboGrafx-16 emulation core library."
 repository = "https://github.com/zeffuro/zeff-boy"
 
+[features]
+profiling = []
+
 [dependencies]
 anyhow = "1.0.104"
 bitflags = "2.13.1"

@@ -22,6 +22,8 @@ use super::cpu::{
     VdcPort,
 };
 use super::pce_devices::PceDevices;
+#[cfg(feature = "profiling")]
+use super::profiling::{PceProfiling, PceProfilingSnapshot};
 use super::psg::{MAX_PSG_STATE_SECTION_BYTES, PsgRevision};
 use super::save_state::{PceStateIdentity, read_section, write_section};
 use super::vdc::{HuC6270, VdcDmaError};
@@ -417,6 +419,8 @@ pub struct PceMachine {
     trace_scratch: TimedInstructionTrace,
     trace_frame: u64,
     debug: AddressDebugController,
+    #[cfg(feature = "profiling")]
+    profiling: PceProfiling,
 }
 
 impl CheatByteTarget<u16> for PceMachine {

@@ -98,6 +98,10 @@ impl EmuBackend {
                 nes.emu.set_palette_mode(config.nes_palette_mode);
                 nes.emu
                     .set_apu_debug_collection_enabled(config.apu_capture_enabled);
+                if !config.uncapped_mode {
+                    nes.emu
+                        .set_apu_sample_generation_enabled(!config.skip_audio);
+                }
                 if supports_debugger {
                     apply_debug_controls(&mut nes.emu, &config);
                 }

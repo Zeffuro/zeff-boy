@@ -404,7 +404,7 @@ impl TasEditorSession {
 
     fn capture_history_entry(&self) -> Result<TasEditorHistoryEntry> {
         let entry = TasEditorHistoryEntry {
-            project_bytes: self.project.encode()?,
+            project_bytes: self.project.encode_editor_history_snapshot()?,
             selected_branch_id: self.selected_branch_id.clone(),
             cursor: self.cursor,
         };
@@ -774,6 +774,84 @@ mod tests {
         assert_eq!(session.cursor(), 5);
         assert_eq!(session.project().active_branch_id(), "alternate");
         assert!(!session.redo().unwrap());
+    }
+
+    #[test]
+    fn corrupt_undo_and_redo_history_fail_atomically() {
+        let root =
+            crate::test_support::test_directory("tas-editor-session-history-corrupt").unwrap();
+
+        let undo_path = root.path().join("undo.ztas");
+        let (autosaves, seek_cache) = stores(root.path(), &undo_path);
+        let mut undo_session = TasEditorSession::new(
+            crate::tas_project::tests::project(),
+            &undo_path,
+            autosaves,
+            seek_cache,
+        )
+        .unwrap();
+        undo_session
+            .edit_transaction(|edit| {
+                edit.set_project_comment("undo target");
+                Ok(())
+            })
+            .unwrap();
+        assert_corrupt_history_restore_fails_atomically(&mut undo_session, true);
+
+        let redo_path = root.path().join("redo.ztas");
+        let (autosaves, seek_cache) = stores(root.path(), &redo_path);
+        let mut redo_session = TasEditorSession::new(
+            crate::tas_project::tests::project(),
+            &redo_path,
+            autosaves,
+            seek_cache,
+        )
+        .unwrap();
+        redo_session
+            .edit_transaction(|edit| {
+                edit.set_project_comment("redo target");
+                Ok(())
+            })
+            .unwrap();
+        assert!(redo_session.undo().unwrap());
+        assert_corrupt_history_restore_fails_atomically(&mut redo_session, false);
+    }
+
+    fn assert_corrupt_history_restore_fails_atomically(session: &mut TasEditorSession, undo: bool) {
+        let corrupted_entry = {
+            let entries = if undo {
+                &mut session.history.undo.entries
+            } else {
+                &mut session.history.redo.entries
+            };
+            let entry = entries.back_mut().expect("history entry should exist");
+            entry.project_bytes.truncate(8);
+            entry.project_bytes.clone()
+        };
+        let package = session.project().encode().unwrap();
+        let content_sha256 = session.project_content_sha256();
+        let selected_branch_id = session.selected_branch_id().to_owned();
+        let cursor = session.cursor();
+        let undo_count = session.undo_count();
+        let redo_count = session.redo_count();
+        let history_revision = session.history_revision;
+
+        let result = if undo { session.undo() } else { session.redo() };
+        assert!(result.is_err());
+        assert_eq!(session.project().encode().unwrap(), package);
+        assert_eq!(session.project_content_sha256(), content_sha256);
+        assert_eq!(session.selected_branch_id(), selected_branch_id);
+        assert_eq!(session.cursor(), cursor);
+        assert_eq!(session.undo_count(), undo_count);
+        assert_eq!(session.redo_count(), redo_count);
+        assert_eq!(session.history_revision, history_revision);
+        let retained_entry = if undo {
+            session.history.undo.entries.back()
+        } else {
+            session.history.redo.entries.back()
+        }
+        .expect("failed restore should retain its history entry");
+        assert_eq!(retained_entry.project_bytes, corrupted_entry);
     }
 
     #[test]

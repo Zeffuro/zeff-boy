@@ -257,6 +257,29 @@ fn roundtrips_full_base_state_and_continues_deterministically() {
 }
 
 #[test]
+fn encode_state_into_reuses_capacity_and_matches_owned_encoding() {
+    let mut machine = test_machine(test_rom());
+    run_boundaries(&mut machine, 17);
+    mutate_hardware_state(&mut machine);
+    let expected = encode_state(&machine).unwrap();
+
+    let mut reused = Vec::with_capacity(4_500_000);
+    let allocation = reused.as_ptr();
+    let capacity = reused.capacity();
+    encode_state_into(&machine, &mut reused).unwrap();
+    assert_eq!(reused, expected);
+    assert_eq!(reused.as_ptr(), allocation);
+    assert_eq!(reused.capacity(), capacity);
+
+    run_boundaries(&mut machine, 3);
+    let expected_after_step = encode_state(&machine).unwrap();
+    encode_state_into(&machine, &mut reused).unwrap();
+    assert_eq!(reused, expected_after_step);
+    assert_eq!(reused.as_ptr(), allocation);
+    assert_eq!(reused.capacity(), capacity);
+}
+
+#[test]
 fn current_state_roundtrips_and_legacy_versions_load_defaults() {
     let rom = io_latch_rom();
     let mut saved = test_machine(rom.clone());

@@ -238,6 +238,19 @@ impl Cpu {
         }
     }
 
+    pub(crate) fn can_fast_forward_halt(&self) -> bool {
+        self.state == CpuState::Halted
+            && self.flags & FLAG_BRK == 0
+            && self.interrupt_shadow == 0
+            && self.brk_shadow == 0
+    }
+
+    pub(crate) fn advance_halted_cycles(&mut self, bus: &mut Bus, cycles: u32) {
+        debug_assert!(self.can_fast_forward_halt());
+        debug_assert_ne!(cycles, 0);
+        self.add_cycles(bus, cycles);
+    }
+
     pub(crate) fn begin_guest_call(
         &mut self,
         bus: &mut Bus,

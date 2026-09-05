@@ -94,6 +94,16 @@ impl TasProject {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>> {
+        let bytes = self.encode_package_bytes()?;
+        self.verify_encoded_package(&bytes)?;
+        Ok(bytes)
+    }
+
+    pub(super) fn encode_editor_history_snapshot(&self) -> Result<Vec<u8>> {
+        self.encode_package_bytes()
+    }
+
+    fn encode_package_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
         let manifest = self.manifest();
 
@@ -167,13 +177,17 @@ impl TasProject {
         if bytes.len() as u64 > MAX_PACKAGE_BYTES {
             bail!("TAS project exceeds the {MAX_PACKAGE_BYTES}-byte package limit");
         }
-        let decoded = Self::decode(&bytes).context("encoded TAS project failed verification")?;
+        Ok(bytes)
+    }
+
+    fn verify_encoded_package(&self, bytes: &[u8]) -> Result<()> {
+        let decoded = Self::decode(bytes).context("encoded TAS project failed verification")?;
         let mut expected = self.clone();
         expected.identity = self.canonical_identity();
         if decoded != expected {
             bail!("encoded TAS project changed project semantics");
         }
-        Ok(bytes)
+        Ok(())
     }
 
     pub(super) fn editor_content_sha256(&self) -> Result<TasDigest> {

@@ -85,13 +85,10 @@ impl TasControlCoordinator {
         );
         let current =
             TasEditorControlSnapshot::capture_at(session, *candidate_executed_project_frames)?;
-        ensure!(
-            current == *project,
-            "the TAS project changed during playback"
-        );
         let input = TasEditorControlSnapshot::input_at_linked(
             session,
             project,
+            &current,
             *candidate_executed_project_frames,
         )?;
         let advance_id = *next_advance_id;

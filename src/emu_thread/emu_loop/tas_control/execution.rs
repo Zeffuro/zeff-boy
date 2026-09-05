@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use zeff_emu_common::replay::ReplayJoypadFrame;
 
 use crate::emu_backend::{ActiveSystem, EmuBackend};
@@ -34,29 +36,66 @@ pub(super) struct TasExecutionResult {
 pub(super) fn execute_tas(
     backend: &mut EmuBackend,
     runtime_fault: &mut WorkerRuntimeFault,
-    request: TasExecutionRequest,
-    cached_state: Option<(TasExecutionCacheProof, CachedTasState)>,
+    request: &TasExecutionRequest,
+    cached_state: Option<(TasExecutionCacheProof, Arc<CachedTasState>)>,
     persistence: TasPersistenceContract,
+    discarded_audio_samples: &mut Vec<f32>,
 ) -> Result<TasExecutionResult, Rejected> {
-    validate_request_for_cache(backend, &request, persistence)?;
+    validate_request_for_cache(backend, request, persistence)?;
     let result = if let Some((source_proof, cached_state)) = cached_state {
         if source_proof == request.cache_proof {
-            match restore_cached_tas(backend, &request, cached_state, persistence) {
+            match restore_cached_tas(backend, request, cached_state.as_ref(), persistence) {
                 Ok(result) => result,
-                Err(_) => execute_fresh_tas(backend, runtime_fault, &request, persistence)?,
+                Err(_) => execute_fresh_tas(
+                    backend,
+                    runtime_fault,
+                    request,
+                    persistence,
+                    discarded_audio_samples,
+                )?,
             }
-        } else if restore_cached_profile_state(backend, request.profile, cached_state, persistence)
-            .is_ok()
+        } else if restore_cached_profile_state(
+            backend,
+            request.profile,
+            cached_state.as_ref(),
+            persistence,
+        )
+        .is_ok()
         {
-            execute_cached_suffix(backend, runtime_fault, &request, source_proof, persistence)?
+            execute_cached_suffix(
+                backend,
+                runtime_fault,
+                request,
+                source_proof,
+                persistence,
+                discarded_audio_samples,
+            )?
         } else {
-            execute_fresh_tas(backend, runtime_fault, &request, persistence)?
+            execute_fresh_tas(
+                backend,
+                runtime_fault,
+                request,
+                persistence,
+                discarded_audio_samples,
+            )?
         }
     } else {
-        execute_fresh_tas(backend, runtime_fault, &request, persistence)?
+        execute_fresh_tas(
+            backend,
+            runtime_fault,
+            request,
+            persistence,
+            discarded_audio_samples,
+        )?
     };
-    backend.drain_audio_samples_into(&mut Vec::new());
+    discard_audio(backend, discarded_audio_samples);
     Ok(result)
+}
+
+pub(super) fn discard_audio(backend: &mut EmuBackend, discarded_audio_samples: &mut Vec<f32>) {
+    discarded_audio_samples.clear();
+    backend.drain_audio_samples_into(discarded_audio_samples);
+    discarded_audio_samples.clear();
 }
 
 fn execute_fresh_tas(
@@ -64,6 +103,7 @@ fn execute_fresh_tas(
     runtime_fault: &mut WorkerRuntimeFault,
     request: &TasExecutionRequest,
     persistence: TasPersistenceContract,
+    discarded_audio_samples: &mut Vec<f32>,
 ) -> Result<TasExecutionResult, Rejected> {
     match request.profile {
         TasExecutionProfile::DirectNesCartridge => {
@@ -84,9 +124,13 @@ fn execute_fresh_tas(
         TasExecutionProfile::DirectGameGearCartridge => {
             game_gear::execute_direct_game_gear_tas(backend, runtime_fault, request)
         }
-        TasExecutionProfile::DirectGbaCartridge => {
-            gba::execute_direct_gba_tas(backend, runtime_fault, request, persistence)
-        }
+        TasExecutionProfile::DirectGbaCartridge => gba::execute_direct_gba_tas(
+            backend,
+            runtime_fault,
+            request,
+            persistence,
+            discarded_audio_samples,
+        ),
         TasExecutionProfile::DirectSg1000Cartridge => {
             sg1000::execute_direct_sg1000_tas(backend, runtime_fault, request)
         }
@@ -98,7 +142,7 @@ fn execute_fresh_tas(
         | TasExecutionProfile::DirectPceMultitapHuCard
         | TasExecutionProfile::DirectPceCd
         | TasExecutionProfile::DirectPceMultitapCd => {
-            pce::execute_direct_pce_tas(backend, runtime_fault, request)
+            pce::execute_direct_pce_tas(backend, runtime_fault, request, discarded_audio_samples)
         }
     }
 }
@@ -109,6 +153,7 @@ fn execute_cached_suffix(
     request: &TasExecutionRequest,
     source_proof: TasExecutionCacheProof,
     persistence: TasPersistenceContract,
+    discarded_audio_samples: &mut Vec<f32>,
 ) -> Result<TasExecutionResult, Rejected> {
     let window = request
         .predecessor_window
@@ -206,6 +251,16 @@ fn execute_cached_suffix(
     } else if request.profile == TasExecutionProfile::DirectGbaCartridge {
         gba::validate_direct_gba_profile_runtime(backend, persistence)
             .map_err(|_| Rejected::StateCaptureFailed)?;
+    }
+    if matches!(
+        request.profile,
+        TasExecutionProfile::DirectPceHuCard
+            | TasExecutionProfile::DirectPceSixButtonHuCard
+            | TasExecutionProfile::DirectPceMultitapHuCard
+            | TasExecutionProfile::DirectPceCd
+            | TasExecutionProfile::DirectPceMultitapCd
+    ) {
+        discard_audio(backend, discarded_audio_samples);
     }
     let state_bytes = backend
         .encode_state_bytes()
@@ -582,7 +637,7 @@ fn validate_direct_coleco_start_state(backend: &EmuBackend, state: &[u8]) -> Res
 fn restore_cached_tas(
     backend: &mut EmuBackend,
     request: &TasExecutionRequest,
-    cached_state: CachedTasState,
+    cached_state: &CachedTasState,
     persistence: TasPersistenceContract,
 ) -> Result<TasExecutionResult, Rejected> {
     if cached_state.bytes.len() > MAX_START_STATE_BYTES {
@@ -593,7 +648,7 @@ fn restore_cached_tas(
             crate::emu_backend::loader::validate_current_nes_start_state(&cached_state.bytes)
                 .map_err(|_| Rejected::InvalidStartState)?;
             backend
-                .load_state_from_bytes(cached_state.bytes)
+                .load_state_from_bytes(cached_state.bytes.clone())
                 .map_err(|_| Rejected::StartStateRestoreFailed)?;
         }
         TasExecutionProfile::DirectFdsDisk => {
@@ -657,7 +712,7 @@ fn restore_cached_tas(
 fn restore_cached_profile_state(
     backend: &mut EmuBackend,
     profile: TasExecutionProfile,
-    cached_state: CachedTasState,
+    cached_state: &CachedTasState,
     persistence: TasPersistenceContract,
 ) -> Result<(), Rejected> {
     if cached_state.bytes.len() > MAX_START_STATE_BYTES
@@ -670,7 +725,7 @@ fn restore_cached_profile_state(
             crate::emu_backend::loader::validate_current_nes_start_state(&cached_state.bytes)
                 .map_err(|_| Rejected::InvalidStartState)?;
             backend
-                .load_state_from_bytes(cached_state.bytes)
+                .load_state_from_bytes(cached_state.bytes.clone())
                 .map_err(|_| Rejected::StartStateRestoreFailed)?;
         }
         TasExecutionProfile::DirectFdsDisk => {

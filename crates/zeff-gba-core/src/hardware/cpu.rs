@@ -361,6 +361,7 @@ pub struct Cpu {
     pipeline: PrefetchPipeline,
     pending_load_internal_cycle: bool,
     execution_state: CpuExecutionState,
+    active_decoded: Option<DecodedInstruction>,
     data_access_cursor: DataAccessCursor,
     instruction_fetch_cycles: u32,
     bus_phase_cycles: u32,
@@ -370,6 +371,8 @@ pub struct Cpu {
     instruction_timeline: CpuInstructionTimeline,
     data_access_timing_active: bool,
     hle_data_accesses: bool,
+    #[cfg(feature = "profiling")]
+    pub(crate) profiling: crate::hardware::profiling::CpuProfiling,
     pub(crate) banked_sp: [u32; CPU_BANKS],
     pub(crate) banked_lr: [u32; CPU_BANKS],
     pub(crate) banked_spsr: [u32; CPU_BANKS],
@@ -400,6 +403,7 @@ impl Cpu {
             pipeline: PrefetchPipeline::new(),
             pending_load_internal_cycle: false,
             execution_state: CpuExecutionState::default(),
+            active_decoded: None,
             data_access_cursor: DataAccessCursor::default(),
             instruction_fetch_cycles: 0,
             bus_phase_cycles: 0,
@@ -409,6 +413,8 @@ impl Cpu {
             instruction_timeline: CpuInstructionTimeline::default(),
             data_access_timing_active: false,
             hle_data_accesses: false,
+            #[cfg(feature = "profiling")]
+            profiling: crate::hardware::profiling::CpuProfiling::default(),
             banked_sp: [0; CPU_BANKS],
             banked_lr: [0; CPU_BANKS],
             banked_spsr: [0; CPU_BANKS],
@@ -544,6 +550,11 @@ impl Cpu {
     }
 
     fn step_cpu_phase(&mut self, bus: &mut Bus) -> Option<Option<FetchedInstruction>> {
+        #[cfg(feature = "profiling")]
+        {
+            let index = usize::from(self.execution_state.phase.tag());
+            self.profiling.phase_visits[index] = self.profiling.phase_visits[index].wrapping_add(1);
+        }
         match self.execution_state.phase {
             CpuExecutionPhase::Boundary => self.begin_instruction_phase(bus),
             CpuExecutionPhase::SequentialFetch => self.step_sequential_fetch_phase(bus),
@@ -569,6 +580,7 @@ impl Cpu {
 
     fn step_sequential_fetch_phase(&mut self, bus: &mut Bus) -> Option<Option<FetchedInstruction>> {
         let fetched = self.fetch_decode_stub(bus);
+        self.active_decoded = Some(fetched.decoded);
         self.execution_state = CpuExecutionState {
             phase: CpuExecutionPhase::Execute,
             instruction_active: true,
@@ -632,6 +644,14 @@ impl Cpu {
         } else {
             InstructionSet::Arm
         };
+        #[cfg(feature = "profiling")]
+        self.profile_instruction_fetch(
+            bus,
+            self.execution_state.refill_target,
+            instruction_set,
+            instruction_set.width_bytes(),
+            false,
+        );
         let fetched = fetch::fetch_instruction_at(
             bus,
             self.execution_state.refill_target,
@@ -664,6 +684,14 @@ impl Cpu {
             .execution_state
             .refill_target
             .wrapping_add(u32::from(instruction_set.width_bytes()));
+        #[cfg(feature = "profiling")]
+        self.profile_instruction_fetch(
+            bus,
+            address,
+            instruction_set,
+            instruction_set.width_bytes(),
+            true,
+        );
         let fetched = fetch::fetch_instruction_at(
             bus,
             address,
@@ -681,6 +709,7 @@ impl Cpu {
             self.complete_active_instruction(bus)
         } else {
             self.execution_state = CpuExecutionState::default();
+            self.active_decoded = None;
             None
         }
     }
@@ -711,6 +740,12 @@ impl Cpu {
             self.suspend();
         }
         self.execution_state = CpuExecutionState::default();
+        self.active_decoded = None;
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.completed_instructions =
+                self.profiling.completed_instructions.wrapping_add(1);
+        }
         Some(Some(fetched))
     }
 
@@ -726,7 +761,9 @@ impl Cpu {
             instruction_set,
             width_bytes: instruction_set.width_bytes(),
             fetch_cycles: self.execution_state.active_fetch_cycles,
-            decoded: decode::decode_stub(self.execution_state.active_raw, instruction_set),
+            decoded: self.active_decoded.unwrap_or_else(|| {
+                decode::decode_stub(self.execution_state.active_raw, instruction_set)
+            }),
         }
     }
 
@@ -795,6 +832,14 @@ impl Cpu {
             return false;
         }
         self.execution_state = state;
+        self.active_decoded = state.instruction_active.then(|| {
+            let instruction_set = if state.active_thumb {
+                InstructionSet::Thumb
+            } else {
+                InstructionSet::Arm
+            };
+            decode::decode_stub(state.active_raw, instruction_set)
+        });
         if state.instruction_active {
             self.last_fetch = Some(self.active_fetched_instruction());
         }
@@ -821,6 +866,7 @@ impl Cpu {
 
     pub(crate) fn migrate_legacy_execution_state(&mut self) {
         self.execution_state = CpuExecutionState::default();
+        self.active_decoded = None;
     }
 
     #[cfg(test)]
@@ -916,6 +962,7 @@ impl Cpu {
         self.next_fetch_sequential = false;
         self.state = CpuState::Running;
         self.execution_state = CpuExecutionState::default();
+        self.active_decoded = None;
         self.begin_refill_phases();
         true
     }

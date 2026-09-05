@@ -19,7 +19,7 @@ impl Bus {
             0x100..=0x10F => {
                 let timer = ((offset - 0x100) / 4) as usize;
                 let control = (offset & 0x2) != 0;
-                self.timers.read16(timer, control)
+                self.timer_read16(timer, control)
             }
             0x0B0..=0x0DF => {
                 let rel = offset - 0x0B0;
@@ -106,11 +106,13 @@ impl Bus {
                 self.write_io16_raw(offset, value & 0xFF38);
             }
             0x0400_0100..=0x0400_010F => {
+                self.materialize_timers_before_io_write();
                 self.write_io16_raw(offset, value);
                 let offset = addr & 0xF;
                 let timer = (offset / 4) as usize;
                 let control = (offset & 0x2) != 0;
                 self.timers.write16(timer, control, value);
+                self.invalidate_event_deadline(0);
             }
             KEYINPUT => {}
             0x0400_0132 => self.keypad.write_keycnt(value),

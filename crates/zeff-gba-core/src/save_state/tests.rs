@@ -1,5 +1,5 @@
 use super::*;
-use crate::hardware::bus::DebugTraceEvent;
+use crate::hardware::bus::{Bus, DebugTraceEvent};
 
 fn minimal_rom() -> Vec<u8> {
     let mut rom = vec![0; 0xC0];
@@ -41,8 +41,10 @@ fn seed_host_audio_output(emu: &mut Emulator) {
             .iter()
             .any(|&sample| sample != 0.0)
     );
-    let (sample_count, capture_remainder) = emu.bus.apu.psg_host_output_state_for_test();
+    let (sample_count, sample_remainder, capture_remainder) =
+        emu.bus.apu.psg_host_output_state_for_test();
     assert_ne!(sample_count, 0);
+    assert_ne!(sample_remainder, 0.0);
     assert_ne!(capture_remainder, 0);
 }
 
@@ -72,7 +74,7 @@ fn assert_host_audio_output_cleared(emu: &Emulator) {
             .iter()
             .all(|&sample| sample == 0.0)
     );
-    assert_eq!(emu.bus.apu.psg_host_output_state_for_test(), (0, 0));
+    assert_eq!(emu.bus.apu.psg_host_output_state_for_test(), (0, 0.0, 0));
 }
 
 fn assert_host_audio_output_eq(actual: &Emulator, expected: &Emulator) {
@@ -103,8 +105,12 @@ fn assert_host_audio_output_eq(actual: &Emulator, expected: &Emulator) {
     );
 }
 
-fn assert_timers_eq(actual: &Timers, expected: &Timers) {
-    for (actual, expected) in actual.all().iter().zip(expected.all().iter()) {
+fn assert_timers_eq(actual: &Bus, expected: &Bus) {
+    for (actual, expected) in actual
+        .timer_registers_snapshot()
+        .iter()
+        .zip(expected.timer_registers_snapshot().iter())
+    {
         assert_eq!(actual.reload, expected.reload);
         assert_eq!(actual.counter, expected.counter);
         assert_eq!(actual.control, expected.control);
@@ -283,7 +289,8 @@ fn roundtrips_rtc_gpio_state_and_v4_defaults() {
         - VERSION_7_RUNTIME_STATE_SIZE
         - VERSION_8_EXECUTION_STATE_SIZE
         - VERSION_9_ROM_HASH_SIZE
-        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE]
+        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE
+        - VERSION_12_PSG_STATE_SIZE]
         .to_vec();
     v4[8..12].copy_from_slice(&4u32.to_le_bytes());
     let mut legacy = Emulator::new(&rom, 48_000).unwrap();
@@ -309,20 +316,23 @@ fn roundtrips_timer_scheduler_phase_and_irq_timing() {
     let bytes = encode_state(&saved).unwrap();
 
     let mut restored = Emulator::new(&rom, 48_000).unwrap();
+    restored.bus.step_cycles(1);
+    assert!(!restored.bus.event_deadline_is_invalid_for_test());
     decode_state(&mut restored, &bytes).unwrap();
-    assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+    assert!(restored.bus.event_deadline_is_invalid_for_test());
+    assert_timers_eq(&restored.bus, &saved.bus);
     assert_eq!(
-        restored.bus.timers.timing_state(),
-        saved.bus.timers.timing_state()
+        restored.bus.timer_timing_state(),
+        saved.bus.timer_timing_state()
     );
     assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
     for cycles in [1, 7, 63, 64, 211] {
         saved.bus.step_cycles(cycles);
         restored.bus.step_cycles(cycles);
-        assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+        assert_timers_eq(&restored.bus, &saved.bus);
         assert_eq!(
-            restored.bus.timers.timing_state(),
-            saved.bus.timers.timing_state()
+            restored.bus.timer_timing_state(),
+            saved.bus.timer_timing_state()
         );
         assert_eq!(
             restored.bus.read16(0x0400_0202),
@@ -345,17 +355,17 @@ fn roundtrips_timer_global_divider_phase() {
     let mut restored = Emulator::new(&rom, 48_000).unwrap();
     decode_state(&mut restored, &bytes).unwrap();
     assert_eq!(
-        restored.bus.timers.timing_state(),
-        saved.bus.timers.timing_state()
+        restored.bus.timer_timing_state(),
+        saved.bus.timer_timing_state()
     );
 
     for cycles in [26, 1] {
         saved.bus.step_cycles(cycles);
         restored.bus.step_cycles(cycles);
-        assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+        assert_timers_eq(&restored.bus, &saved.bus);
         assert_eq!(
-            restored.bus.timers.timing_state(),
-            saved.bus.timers.timing_state()
+            restored.bus.timer_timing_state(),
+            saved.bus.timer_timing_state()
         );
     }
 }
@@ -367,23 +377,59 @@ fn roundtrips_pending_timer_start_delay() {
     saved.bus.step_cycles(16);
     saved.bus.write16(0x0400_0100, 0xFFFF);
     saved.bus.write16(0x0400_0102, 0x0080);
-    assert_eq!(saved.bus.timers.timing_state().start_delay_cycles[0], 1);
+    assert_eq!(saved.bus.timer_timing_state().start_delay_cycles[0], 1);
     let bytes = encode_state(&saved).unwrap();
 
     let mut restored = Emulator::new(&rom, 48_000).unwrap();
     decode_state(&mut restored, &bytes).unwrap();
     assert_eq!(
-        restored.bus.timers.timing_state(),
-        saved.bus.timers.timing_state()
+        restored.bus.timer_timing_state(),
+        saved.bus.timer_timing_state()
     );
 
     for cycles in [1, 1] {
         saved.bus.step_cycles(cycles);
         restored.bus.step_cycles(cycles);
-        assert_timers_eq(&restored.bus.timers, &saved.bus.timers);
+        assert_timers_eq(&restored.bus, &saved.bus);
         assert_eq!(
-            restored.bus.timers.timing_state(),
-            saved.bus.timers.timing_state()
+            restored.bus.timer_timing_state(),
+            saved.bus.timer_timing_state()
+        );
+    }
+}
+
+#[test]
+fn lazy_and_eager_timer_service_encode_identical_state_bytes() {
+    let rom = minimal_rom();
+    let mut lazy = Emulator::new(&rom, 48_000).unwrap();
+    lazy.bus.write16(0x0400_0100, 0xF123);
+    lazy.bus.write16(0x0400_0102, 0x0081);
+
+    let mut eager = lazy.clone();
+    eager.bus.set_eager_timer_materialization_for_test(true);
+    for cycles in [3, 11, 29, 7] {
+        lazy.bus.step_cycles(cycles);
+        eager.bus.step_cycles(cycles);
+    }
+    assert!(lazy.bus.timer_materialization_is_pending_for_test());
+
+    let lazy_bytes = encode_state(&lazy).unwrap();
+    let eager_bytes = encode_state(&eager).unwrap();
+    assert_eq!(lazy_bytes, eager_bytes);
+    assert!(lazy.bus.timer_materialization_is_pending_for_test());
+
+    let mut restored = Emulator::new(&rom, 48_000).unwrap();
+    decode_state(&mut restored, &lazy_bytes).unwrap();
+    assert_eq!(encode_state(&restored).unwrap(), lazy_bytes);
+
+    for cycles in [13, 64, 127] {
+        lazy.bus.step_cycles(cycles);
+        eager.bus.step_cycles(cycles);
+        restored.bus.step_cycles(cycles);
+        assert_eq!(encode_state(&lazy).unwrap(), encode_state(&eager).unwrap());
+        assert_eq!(
+            encode_state(&restored).unwrap(),
+            encode_state(&lazy).unwrap()
         );
     }
 }
@@ -467,7 +513,8 @@ fn migrates_version_7_at_an_instruction_boundary() {
     let mut v7 = state[..state.len()
         - VERSION_8_EXECUTION_STATE_SIZE
         - VERSION_9_ROM_HASH_SIZE
-        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE]
+        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE
+        - VERSION_12_PSG_STATE_SIZE]
         .to_vec();
     v7[8..12].copy_from_slice(&7u32.to_le_bytes());
 
@@ -514,8 +561,8 @@ fn assert_midphase_continuation(steps: usize, expected_phase: CpuExecutionPhase)
     assert_eq!(restored.cpu.cpsr, saved.cpu.cpsr);
     assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
     assert_eq!(
-        restored.bus.timers.timing_state(),
-        saved.bus.timers.timing_state()
+        restored.bus.timer_timing_state(),
+        saved.bus.timer_timing_state()
     );
     assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
 
@@ -528,8 +575,8 @@ fn assert_midphase_continuation(steps: usize, expected_phase: CpuExecutionPhase)
     assert_eq!(restored.cpu.cpsr, saved.cpu.cpsr);
     assert_eq!(restored.cpu.cycles, saved.cpu.cycles);
     assert_eq!(
-        restored.bus.timers.timing_state(),
-        saved.bus.timers.timing_state()
+        restored.bus.timer_timing_state(),
+        saved.bus.timer_timing_state()
     );
     assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
 }
@@ -625,8 +672,8 @@ fn assert_staged_transfer_continuation(
     assert_eq!(restored.cpu.pipeline_state(), saved.cpu.pipeline_state());
     assert_eq!(restored.bus.ewram, saved.bus.ewram);
     assert_eq!(
-        restored.bus.timers.timing_state(),
-        saved.bus.timers.timing_state()
+        restored.bus.timer_timing_state(),
+        saved.bus.timer_timing_state()
     );
     assert_eq!(restored.bus.irq_delay_state(), saved.bus.irq_delay_state());
 }
@@ -698,7 +745,8 @@ fn rejects_invalid_or_noncanonical_execution_state() {
     let execution_offset = bytes.len()
         - VERSION_8_EXECUTION_STATE_SIZE
         - VERSION_9_ROM_HASH_SIZE
-        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE;
+        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE
+        - VERSION_12_PSG_STATE_SIZE;
 
     let mut invalid_phase = bytes.clone();
     invalid_phase[execution_offset] = 8;
@@ -753,7 +801,8 @@ fn rejects_invalid_timer_and_irq_scheduler_state() {
         - VERSION_8_EXECUTION_STATE_SIZE
         - VERSION_7_RUNTIME_STATE_SIZE
         - VERSION_9_ROM_HASH_SIZE
-        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE;
+        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE
+        - VERSION_12_PSG_STATE_SIZE;
 
     let mut invalid_accum = bytes.clone();
     invalid_accum[runtime_offset..runtime_offset + 4].copy_from_slice(&0x400u32.to_le_bytes());
@@ -841,14 +890,15 @@ fn migrates_version_6_timer_and_irq_scheduler_state() {
         - VERSION_8_EXECUTION_STATE_SIZE
         - VERSION_7_RUNTIME_STATE_SIZE
         - VERSION_9_ROM_HASH_SIZE
-        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE]
+        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE
+        - VERSION_12_PSG_STATE_SIZE]
         .to_vec();
     v6[8..12].copy_from_slice(&6u32.to_le_bytes());
 
     let mut restored = Emulator::new(&rom, 48_000).unwrap();
     decode_state(&mut restored, &v6).unwrap();
 
-    let timing = restored.bus.timers.timing_state();
+    let timing = restored.bus.timer_timing_state();
     assert_eq!(timing.clock_phase, 321);
     assert_eq!(timing.cycle_accum[0], 1);
     assert_eq!(timing.start_delay_cycles, [0; 4]);
@@ -879,4 +929,15 @@ fn public_load_rejects_trailing_data_without_mutation() {
     emu.drain_audio_samples_into(&mut actual_audio);
     expected.drain_audio_samples_into(&mut expected_audio);
     assert_eq!(actual_audio, expected_audio);
+}
+
+#[test]
+fn direct_decode_failure_invalidates_derived_bus_deadline() {
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    emu.bus.step_cycles(1);
+    assert!(!emu.bus.event_deadline_is_invalid_for_test());
+
+    assert!(decode_state(&mut emu, b"invalid").is_err());
+
+    assert!(emu.bus.event_deadline_is_invalid_for_test());
 }

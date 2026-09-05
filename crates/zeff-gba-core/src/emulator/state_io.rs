@@ -27,6 +27,15 @@ impl Emulator {
         self.bus.cartridge.dump_battery_data()
     }
 
+    pub fn copy_battery_sram_into(&self, output: &mut Vec<u8>) -> bool {
+        let Some(bytes) = self.bus.cartridge.battery_data() else {
+            return false;
+        };
+        output.resize(bytes.len(), 0);
+        output.copy_from_slice(bytes);
+        true
+    }
+
     pub fn dump_rtc_persistence_state(&self) -> Option<Vec<u8>> {
         self.bus.cartridge.dump_rtc_persistence_state()
     }

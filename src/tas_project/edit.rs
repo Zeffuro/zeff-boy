@@ -43,9 +43,7 @@ impl TasProject {
         F: FnOnce(&mut TasProjectEdit<'_>) -> Result<()>,
     {
         self.validate()?;
-        let sync_identity = self.sync_identity_sha256_from_validated()?;
-        let before_hashes = branch_hashes(self, sync_identity)?;
-        let before_ids = before_hashes.keys().cloned().collect::<BTreeSet<_>>();
+        let before_ids = branch_ids(self);
 
         let mut candidate = self.clone();
         let timeline_earliest_cursors = {
@@ -58,25 +56,20 @@ impl TasProject {
         };
 
         let changed = candidate != *self;
-        let after_hashes = branch_hashes(&candidate, sync_identity)?;
-        let after_ids = after_hashes.keys().cloned().collect::<BTreeSet<_>>();
+        let after_ids = branch_ids(&candidate);
         let created_ids = after_ids
             .difference(&before_ids)
             .cloned()
             .collect::<BTreeSet<_>>();
-        let changed_existing_ids = before_ids
-            .intersection(&after_ids)
-            .filter(|id| before_hashes.get(*id) != after_hashes.get(*id))
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let divergent_fork_created = created_ids.iter().any(|branch_id| {
-            let branch = candidate
-                .branch(branch_id)
-                .expect("created branch was collected from the candidate project");
-            branch.parent.as_ref().is_some_and(|parent| {
-                after_hashes.get(branch_id) != Some(&parent.branch_movie_sha256)
-            })
-        });
+        let branch_changes = classify_branch_changes_structural(
+            self,
+            &candidate,
+            &before_ids,
+            &after_ids,
+            &created_ids,
+        )?;
+        let changed_existing_ids = branch_changes.changed_existing_ids;
+        let divergent_fork_created = branch_changes.divergent_fork_created;
 
         for branch in &mut candidate.branches {
             if created_ids.contains(&branch.id) || changed_existing_ids.contains(&branch.id) {
@@ -601,6 +594,121 @@ fn set_event_frame(event: &mut ReplayEvent, new_frame: u64) {
     }
 }
 
+pub(super) struct BranchChanges {
+    pub(super) changed_existing_ids: BTreeSet<String>,
+    pub(super) divergent_fork_created: bool,
+}
+
+pub(super) fn branch_ids(project: &TasProject) -> BTreeSet<String> {
+    project
+        .branches
+        .iter()
+        .map(|branch| branch.id.clone())
+        .collect()
+}
+
+pub(super) fn classify_branch_changes_structural(
+    before: &TasProject,
+    after: &TasProject,
+    before_ids: &BTreeSet<String>,
+    after_ids: &BTreeSet<String>,
+    created_ids: &BTreeSet<String>,
+) -> Result<BranchChanges> {
+    let changed_existing_ids = before_ids
+        .intersection(after_ids)
+        .filter(|branch_id| {
+            let before = before
+                .branch(branch_id)
+                .expect("existing branch ID was collected from the original project");
+            let after = after
+                .branch(branch_id)
+                .expect("existing branch ID was collected from the candidate project");
+            !same_branch_movie(before, after)
+        })
+        .cloned()
+        .collect();
+    let mut divergent_fork_created = false;
+    if !created_ids.is_empty() {
+        let sync_identity = before.sync_identity_sha256_from_validated()?;
+        for branch_id in created_ids {
+            let branch = after
+                .branch(branch_id)
+                .expect("created branch ID was collected from the candidate project");
+            if let Some(parent) = &branch.parent
+                && hash_branch(sync_identity, branch, branch.frame_count, true)?
+                    != parent.branch_movie_sha256
+            {
+                divergent_fork_created = true;
+                break;
+            }
+        }
+    }
+    Ok(BranchChanges {
+        changed_existing_ids,
+        divergent_fork_created,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn classify_branch_changes_hashed(
+    project: &TasProject,
+    after: &TasProject,
+    before_ids: &BTreeSet<String>,
+    after_ids: &BTreeSet<String>,
+    created_ids: &BTreeSet<String>,
+) -> Result<BranchChanges> {
+    let sync_identity = project.sync_identity_sha256_from_validated()?;
+    let before_hashes = branch_hashes(project, sync_identity)?;
+    let after_hashes = branch_hashes(after, sync_identity)?;
+    let changed_existing_ids = before_ids
+        .intersection(after_ids)
+        .filter(|id| before_hashes.get(*id) != after_hashes.get(*id))
+        .cloned()
+        .collect();
+    let divergent_fork_created = created_ids.iter().any(|branch_id| {
+        let branch = after
+            .branch(branch_id)
+            .expect("created branch ID was collected from the candidate project");
+        branch
+            .parent
+            .as_ref()
+            .is_some_and(|parent| after_hashes.get(branch_id) != Some(&parent.branch_movie_sha256))
+    });
+    Ok(BranchChanges {
+        changed_existing_ids,
+        divergent_fork_created,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn classify_branch_changes_for_test<F>(
+    before: &TasProject,
+    edit: F,
+) -> Result<(BranchChanges, BranchChanges)>
+where
+    F: FnOnce(&mut TasProjectEdit<'_>) -> Result<()>,
+{
+    let before_ids = branch_ids(before);
+    let mut after = before.clone();
+    {
+        let mut editor = TasProjectEdit {
+            project: &mut after,
+            timeline_earliest_cursors: BTreeMap::new(),
+        };
+        edit(&mut editor)?;
+    }
+    let after_ids = branch_ids(&after);
+    let created_ids = after_ids
+        .difference(&before_ids)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    Ok((
+        classify_branch_changes_structural(before, &after, &before_ids, &after_ids, &created_ids)?,
+        classify_branch_changes_hashed(before, &after, &before_ids, &after_ids, &created_ids)?,
+    ))
+}
+
+#[cfg(test)]
 fn branch_hashes(
     project: &TasProject,
     sync_identity: TasDigest,
@@ -615,6 +723,12 @@ fn branch_hashes(
             ))
         })
         .collect()
+}
+
+fn same_branch_movie(left: &TasBranch, right: &TasBranch) -> bool {
+    left.frame_count == right.frame_count
+        && left.input_spans == right.input_spans
+        && left.events == right.events
 }
 
 fn normalize_spans(spans: &mut Vec<TasInputSpan>) {

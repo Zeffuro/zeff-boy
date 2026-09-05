@@ -17,13 +17,18 @@ pub(super) struct TasFrameAdvanceResult {
     pub(super) ui_data: Option<Box<crate::ui::UiFrameData>>,
 }
 
+pub(super) struct TasFrameAdvanceContext<'a> {
+    pub(super) backend: &'a mut crate::emu_backend::EmuBackend,
+    pub(super) runtime_fault: &'a mut WorkerRuntimeFault,
+    pub(super) persistence: TasPersistenceContract,
+    pub(super) pce_state_scratch: &'a mut super::execution::pce::PceTasStateScratch,
+}
+
 pub(super) fn advance_tas_frame(
-    backend: &mut crate::emu_backend::EmuBackend,
-    runtime_fault: &mut WorkerRuntimeFault,
+    context: &mut TasFrameAdvanceContext<'_>,
     candidate: TasExecutionResult,
     input: TasInputFrame,
     snapshot: Option<TasFrameAdvanceSnapshot>,
-    persistence: TasPersistenceContract,
 ) -> Result<TasFrameAdvanceResult, Rejected> {
     if candidate.profile != TasExecutionProfile::DirectFdsDisk
         && (input.fds_disk_side.is_some()
@@ -45,52 +50,85 @@ pub(super) fn advance_tas_frame(
         return Err(Rejected::InvalidInput);
     }
     match candidate.profile {
-        TasExecutionProfile::DirectNesCartridge => {
-            advance_direct_nes_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
-        TasExecutionProfile::DirectFdsDisk => {
-            advance_direct_nes_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
-        TasExecutionProfile::DirectGbCartridgeDmg | TasExecutionProfile::DirectGbCartridgeCgb => {
-            advance_direct_gb_tas_frame(
-                backend,
-                runtime_fault,
-                candidate,
-                input,
-                snapshot,
-                persistence,
-            )
-        }
-        TasExecutionProfile::DirectColecoCartridge => {
-            advance_direct_coleco_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
-        TasExecutionProfile::DirectSmsCartridge => {
-            advance_direct_sms_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
-        TasExecutionProfile::DirectGameGearCartridge => {
-            advance_direct_game_gear_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
-        TasExecutionProfile::DirectGbaCartridge => {
-            advance_direct_gba_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
-        TasExecutionProfile::DirectSg1000Cartridge => {
-            advance_direct_sg1000_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
-        TasExecutionProfile::DirectWsCartridge => advance_direct_ws_tas_frame(
-            backend,
-            runtime_fault,
+        TasExecutionProfile::DirectNesCartridge => advance_direct_nes_tas_frame(
+            context.backend,
+            context.runtime_fault,
             candidate,
             input,
             snapshot,
-            persistence,
+        ),
+        TasExecutionProfile::DirectFdsDisk => advance_direct_nes_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+        ),
+        TasExecutionProfile::DirectGbCartridgeDmg | TasExecutionProfile::DirectGbCartridgeCgb => {
+            advance_direct_gb_tas_frame(
+                context.backend,
+                context.runtime_fault,
+                candidate,
+                input,
+                snapshot,
+                context.persistence,
+            )
+        }
+        TasExecutionProfile::DirectColecoCartridge => advance_direct_coleco_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+        ),
+        TasExecutionProfile::DirectSmsCartridge => advance_direct_sms_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+        ),
+        TasExecutionProfile::DirectGameGearCartridge => advance_direct_game_gear_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+        ),
+        TasExecutionProfile::DirectGbaCartridge => advance_direct_gba_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+        ),
+        TasExecutionProfile::DirectSg1000Cartridge => advance_direct_sg1000_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+        ),
+        TasExecutionProfile::DirectWsCartridge => advance_direct_ws_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+            context.persistence,
         ),
         TasExecutionProfile::DirectPceHuCard
         | TasExecutionProfile::DirectPceSixButtonHuCard
         | TasExecutionProfile::DirectPceMultitapHuCard
         | TasExecutionProfile::DirectPceCd
-        | TasExecutionProfile::DirectPceMultitapCd => {
-            advance_direct_pce_tas_frame(backend, runtime_fault, candidate, input, snapshot)
-        }
+        | TasExecutionProfile::DirectPceMultitapCd => advance_direct_pce_tas_frame(
+            context.backend,
+            context.runtime_fault,
+            candidate,
+            input,
+            snapshot,
+            context.pce_state_scratch,
+        ),
     }
 }
 
@@ -559,13 +597,14 @@ fn advance_direct_pce_tas_frame(
     candidate: TasExecutionResult,
     input: TasInputFrame,
     snapshot: Option<TasFrameAdvanceSnapshot>,
+    state_scratch: &mut super::execution::pce::PceTasStateScratch,
 ) -> Result<TasFrameAdvanceResult, Rejected> {
     super::execution::pce::validate_pce_input(candidate.profile, input)
         .map_err(|_| Rejected::InvalidInput)?;
-    let state = backend
-        .encode_state_bytes()
+    let state = state_scratch
+        .encode(backend)
         .map_err(|_| Rejected::StateVerificationUnavailable)?;
-    if TasDigest::from_bytes(&state) != candidate.state_sha256 {
+    if TasDigest::from_bytes(state) != candidate.state_sha256 {
         return Err(Rejected::CandidateStateDigestMismatch);
     }
     if backend.frame_count() != candidate.frame_count {
@@ -593,21 +632,26 @@ fn advance_direct_pce_tas_frame(
     }
     let mut audio_samples = Vec::new();
     backend.drain_audio_samples_into(&mut audio_samples);
-    super::execution::pce::capture_direct_pce_candidate(backend, candidate.profile, expected_frame)
-        .map_err(|_| Rejected::StateCaptureFailed)
-        .map(|(frame_count, state_sha256)| TasFrameAdvanceResult {
-            frame_count,
-            state_sha256,
-            rumble: backend.rumble_active(),
-            audio_samples,
-            ui_data: snapshot.map(|snapshot| {
-                Box::new(EmuThread::collect_ui_snapshot(
-                    backend,
-                    &snapshot.request,
-                    snapshot.buffers,
-                ))
-            }),
-        })
+    super::execution::pce::capture_direct_pce_candidate_with_scratch(
+        backend,
+        candidate.profile,
+        expected_frame,
+        state_scratch,
+    )
+    .map_err(|_| Rejected::StateCaptureFailed)
+    .map(|(frame_count, state_sha256)| TasFrameAdvanceResult {
+        frame_count,
+        state_sha256,
+        rumble: backend.rumble_active(),
+        audio_samples,
+        ui_data: snapshot.map(|snapshot| {
+            Box::new(EmuThread::collect_ui_snapshot(
+                backend,
+                &snapshot.request,
+                snapshot.buffers,
+            ))
+        }),
+    })
 }
 
 fn map_coleco_advance_error(reason: crate::emu_thread::TasExecutionRejectedReason) -> Rejected {

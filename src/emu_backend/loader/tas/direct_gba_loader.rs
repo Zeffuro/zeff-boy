@@ -193,7 +193,7 @@ impl DirectGbaTasExecutionLoader {
     }
 
     fn load_backend(&self, load_battery_sram: bool) -> Result<(EmuBackend, GbaTasMediaIdentity)> {
-        let config = BackendLoadConfig {
+        let mut config = BackendLoadConfig {
             sample_rate: Some(DIRECT_GBA_SAMPLE_RATE),
             apply_mods: false,
             initial_input: Some((0, 0)),
@@ -218,7 +218,7 @@ impl DirectGbaTasExecutionLoader {
             .backend;
             (backend, media)
         } else if has_extension(&self.source_path, "zip") {
-            let selected = crate::rom_archive::extract_bounded_zip_member(
+            let selected = crate::rom_archive::extract_authenticated_bounded_zip_member(
                 &self.source_path,
                 self.rom_path.as_deref(),
                 "gba",
@@ -226,11 +226,13 @@ impl DirectGbaTasExecutionLoader {
                 MAX_DIRECT_GBA_ROM_BYTES,
             )?;
             ensure!(selected.bytes.len() >= 0xC0, "GBA ZIP member is too small");
+            let (archive_sha256, _, member_name) = selected.witness.archive_identity();
             let media = GbaTasMediaIdentity {
-                source_media_sha256: TasDigest(selected.archive_sha256),
-                sync_config_sha256: zip_gba_tas_sync_config_sha256(&selected.member_name),
-                zip_member_name: Some(selected.member_name),
+                source_media_sha256: TasDigest(archive_sha256),
+                sync_config_sha256: zip_gba_tas_sync_config_sha256(member_name),
+                zip_member_name: Some(member_name.to_owned()),
             };
+            config.authenticated_zip_member = Some(selected.witness);
             let backend = super::load_backend_from_rom_source(
                 ActiveSystem::GameBoyAdvance,
                 &self.source_path,

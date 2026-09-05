@@ -101,15 +101,20 @@ impl App {
             }
         };
 
-        let (backend, _original_crc) =
-            match self.init_backend(system, &path, &rom_path, Some(rom_data)) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::error!("Failed to load ROM '{}': {}", name, e);
-                    self.toast_manager.error(format!("Failed to load ROM: {e}"));
-                    return;
-                }
-            };
+        let (backend, _original_crc) = match self.init_backend(
+            system,
+            &path,
+            &rom_path,
+            Some(rom_data),
+            self.backend_load_config(system),
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to load ROM '{}': {}", name, e);
+                self.toast_manager.error(format!("Failed to load ROM: {e}"));
+                return;
+            }
+        };
 
         let rom_name = path
             .file_name()

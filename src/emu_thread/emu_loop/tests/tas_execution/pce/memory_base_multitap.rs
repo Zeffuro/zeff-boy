@@ -135,15 +135,23 @@ fn direct_pce_cd_memory_base_multitap_worker_reuses_cache_and_rolls_back() {
             },
         )))
     );
-    assert!(matches!(
-        responses.recv().unwrap(),
+    let state_sha256 = match responses.recv().unwrap() {
         EmuResponse::TasExecutionCompleted {
             profile: TasExecutionProfile::DirectPceMultitapCd,
             segment_frame_count: 1,
             executed_project_frames: 2,
+            state_sha256,
             ..
-        }
-    ));
+        } => state_sha256,
+        _ => panic!("unexpected execution response"),
+    };
+    let state_bytes = emu_loop.backend.encode_state_bytes().unwrap();
+    assert_eq!(state_sha256, TasDigest::from_bytes(&state_bytes));
+    let mut residual_audio = Vec::new();
+    emu_loop
+        .backend
+        .drain_audio_samples_into(&mut residual_audio);
+    assert!(residual_audio.is_empty());
     for input in inputs {
         expected.set_input(input.p1_buttons, input.p1_dpad);
         expected.set_input_p2(input.p2_buttons, input.p2_dpad);

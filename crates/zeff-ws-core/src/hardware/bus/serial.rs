@@ -114,6 +114,11 @@ impl Uart {
         });
     }
 
+    pub(super) fn cycles_until_tx_complete(&self, control: u8) -> Option<u32> {
+        (control & SERIAL_CONTROL_ENABLE != 0 && self.tx_pending)
+            .then_some(self.tx_cycles_remaining.max(1))
+    }
+
     pub(super) fn receive_byte(&mut self, value: u8, control: u8) {
         if control & SERIAL_CONTROL_ENABLE == 0 {
             return;

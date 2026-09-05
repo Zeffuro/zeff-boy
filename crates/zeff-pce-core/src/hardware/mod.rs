@@ -12,6 +12,8 @@ mod host_video;
 mod hucard_host;
 mod machine;
 mod pce_devices;
+#[cfg(feature = "profiling")]
+mod profiling;
 mod psg;
 pub mod save_state;
 mod vce;
@@ -94,6 +96,8 @@ pub use pce_devices::{
     BASE_TURBOGRAFX16_CDROM2_CONTROLLER_UPPER_BITS, BASE_TURBOGRAFX16_NO_CD_CONTROLLER_UPPER_BITS,
     PceDevices, PceHardwareDebugSnapshot, SuperGrafxVideo,
 };
+#[cfg(feature = "profiling")]
+pub use profiling::PceProfilingSnapshot;
 pub use psg::{
     DEFAULT_PSG_SAMPLE_RATE, DETERMINISTIC_PSG_RESET_ATTENUATION_SLOT,
     DETERMINISTIC_PSG_RESET_CLEARS_WAVE_RAM, DETERMINISTIC_PSG_RESET_VALUE, HuC6280Psg,

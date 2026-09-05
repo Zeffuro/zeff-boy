@@ -44,6 +44,22 @@ pub(crate) struct BoundedZipMember {
     pub(crate) archive_len: usize,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct AuthenticatedZipMember {
+    archive_path: PathBuf,
+    rom_path: PathBuf,
+    member_name: String,
+    archive_sha256: [u8; 32],
+    archive_len: usize,
+    member_sha256: [u8; 32],
+}
+
+pub(crate) struct AuthenticatedZipExtraction {
+    pub(crate) rom_path: PathBuf,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) witness: AuthenticatedZipMember,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct BoundedZipMemberEntry {
     pub(crate) rom_path: PathBuf,
@@ -117,6 +133,25 @@ pub(crate) fn extract_bounded_zip_member(
     archive_limit: u64,
     member_limit: u64,
 ) -> Result<BoundedZipMember> {
+    extract_bounded_zip_member_inner(
+        archive_path,
+        expected_rom_path,
+        extension,
+        archive_limit,
+        member_limit,
+        false,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn extract_bounded_zip_member_inner(
+    archive_path: &Path,
+    expected_rom_path: Option<&Path>,
+    extension: &str,
+    archive_limit: u64,
+    member_limit: u64,
+    require_single_supported_rom: bool,
+) -> Result<BoundedZipMember> {
     let archive_bytes = read_file_bounded(archive_path, archive_limit)?;
     let archive_sha256 = zeff_firmware::sha256_bytes(&archive_bytes);
     let archive_len = archive_bytes.len();
@@ -128,6 +163,7 @@ pub(crate) fn extract_bounded_zip_member(
         .map(|path| zip_member_name(archive_path, path))
         .transpose()?;
     let mut candidates = Vec::new();
+    let mut supported_roms = 0;
     let mut names = std::collections::BTreeSet::new();
     for index in 0..archive.len() {
         let entry = archive
@@ -142,6 +178,9 @@ pub(crate) fn extract_bounded_zip_member(
             names.insert(name.clone()),
             "ZIP contains duplicate member {name:?}"
         );
+        if ActiveSystem::from_path(Path::new(&name)).is_some() {
+            supported_roms += 1;
+        }
         let is_candidate = Path::new(&name)
             .extension()
             .and_then(|candidate| candidate.to_str())
@@ -159,6 +198,11 @@ pub(crate) fn extract_bounded_zip_member(
             candidates.push(index);
         }
     }
+
+    ensure!(
+        !require_single_supported_rom || supported_roms == 1,
+        "ZIP must contain exactly one supported ROM"
+    );
 
     ensure!(
         candidates.len() == 1,
@@ -181,13 +225,100 @@ pub(crate) fn extract_bounded_zip_member(
         bytes.len() as u64 <= member_limit,
         "ZIP member exceeds the {member_limit}-byte media limit"
     );
-    Ok(BoundedZipMember {
+    let selected = BoundedZipMember {
         rom_path: archive_path.join(relative_path),
         member_name,
         bytes,
         archive_sha256,
         archive_len,
+    };
+    Ok(selected)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn extract_authenticated_bounded_zip_member(
+    archive_path: &Path,
+    expected_rom_path: Option<&Path>,
+    extension: &str,
+    archive_limit: u64,
+    member_limit: u64,
+) -> Result<AuthenticatedZipExtraction> {
+    let selected = extract_bounded_zip_member_inner(
+        archive_path,
+        expected_rom_path,
+        extension,
+        archive_limit,
+        member_limit,
+        false,
+    )?;
+    let witness = AuthenticatedZipMember {
+        archive_path: archive_path.to_path_buf(),
+        rom_path: selected.rom_path.clone(),
+        member_name: selected.member_name,
+        archive_sha256: selected.archive_sha256,
+        archive_len: selected.archive_len,
+        member_sha256: zeff_firmware::sha256_bytes(&selected.bytes),
+    };
+    Ok(AuthenticatedZipExtraction {
+        rom_path: selected.rom_path,
+        bytes: selected.bytes,
+        witness,
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn extract_single_authenticated_bounded_zip_member(
+    archive_path: &Path,
+    extension: &str,
+    archive_limit: u64,
+    member_limit: u64,
+) -> Result<AuthenticatedZipExtraction> {
+    let selected = extract_bounded_zip_member_inner(
+        archive_path,
+        None,
+        extension,
+        archive_limit,
+        member_limit,
+        true,
+    )?;
+    let witness = AuthenticatedZipMember {
+        archive_path: archive_path.to_path_buf(),
+        rom_path: selected.rom_path.clone(),
+        member_name: selected.member_name,
+        archive_sha256: selected.archive_sha256,
+        archive_len: selected.archive_len,
+        member_sha256: zeff_firmware::sha256_bytes(&selected.bytes),
+    };
+    Ok(AuthenticatedZipExtraction {
+        rom_path: selected.rom_path,
+        bytes: selected.bytes,
+        witness,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AuthenticatedZipMember {
+    pub(crate) fn matches_preloaded_rom(
+        &self,
+        archive_path: &Path,
+        rom_path: &Path,
+        raw_sha256: [u8; 32],
+    ) -> bool {
+        self.archive_path == archive_path
+            && self.rom_path == rom_path
+            && self.member_sha256 == raw_sha256
+    }
+
+    pub(crate) fn archive_is_unchanged(&self, archive_limit: u64) -> bool {
+        read_file_bounded(&self.archive_path, archive_limit).is_ok_and(|bytes| {
+            bytes.len() == self.archive_len
+                && zeff_firmware::sha256_bytes(&bytes) == self.archive_sha256
+        })
+    }
+
+    pub(crate) fn archive_identity(&self) -> ([u8; 32], usize, &str) {
+        (self.archive_sha256, self.archive_len, &self.member_name)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

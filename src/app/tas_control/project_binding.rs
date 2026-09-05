@@ -154,11 +154,24 @@ impl TasEditorControlSnapshot {
         let input_prefix = (0..initial_input_frames)
             .map(|cursor| materialize_profile_input(branch, cursor, snapshot.profile))
             .collect::<Result<Vec<_>>>()?;
-        let predecessor_window = cache_candidate_cursors
+        let predecessor_cursor = cache_candidate_cursors
             .iter()
             .copied()
             .filter(|cursor| *cursor > 0 && *cursor < prefix_len)
-            .max()
+            .max();
+        let intermediate_cursors = tas_intermediate_cache_cursors(prefix_len);
+        let mut proof_cursors = Vec::with_capacity(
+            intermediate_cursors.len() + usize::from(predecessor_cursor.is_some()),
+        );
+        if let Some(source_cursor) = predecessor_cursor {
+            proof_cursors.push(source_cursor);
+        }
+        proof_cursors.extend(intermediate_cursors.iter().copied());
+        let mut proof_hashes = session
+            .project()
+            .branch_prefix_sha256_many_from_validated(&snapshot.branch_id, &proof_cursors)?
+            .into_iter();
+        let predecessor_window = predecessor_cursor
             .map(|source_cursor| {
                 let input_end_cursor = source_cursor
                     .saturating_add(MAX_EDITOR_SEEK_EXECUTION_FRAMES)
@@ -166,18 +179,16 @@ impl TasEditorControlSnapshot {
                 let input_frames = (source_cursor..input_end_cursor)
                     .map(|cursor| materialize_profile_input(branch, cursor, snapshot.profile))
                     .collect::<Result<Vec<_>>>()?;
-                let source_proofs = [prefix_len, source_cursor]
-                    .into_iter()
-                    .map(|cursor| {
-                        Ok(TasExecutionCacheProof {
-                            sync_identity_sha256: snapshot.sync_identity_sha256,
-                            branch_prefix_sha256: session
-                                .project()
-                                .branch_prefix_sha256(&snapshot.branch_id, cursor)?,
-                            target_cursor: cursor,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                let source_proofs = vec![
+                    snapshot.cache_proof(),
+                    TasExecutionCacheProof {
+                        sync_identity_sha256: snapshot.sync_identity_sha256,
+                        branch_prefix_sha256: proof_hashes
+                            .next()
+                            .expect("source proof hash was batched"),
+                        target_cursor: source_cursor,
+                    },
+                ];
                 Ok::<_, anyhow::Error>(TasExecutionPredecessorWindow {
                     source_proofs,
                     input_start_cursor: source_cursor,
@@ -185,18 +196,16 @@ impl TasEditorControlSnapshot {
                 })
             })
             .transpose()?;
-        let intermediate_cache_proofs = tas_intermediate_cache_cursors(prefix_len)
+        let intermediate_cache_proofs = intermediate_cursors
             .into_iter()
-            .map(|cursor| {
-                Ok(TasExecutionCacheProof {
-                    sync_identity_sha256: snapshot.sync_identity_sha256,
-                    branch_prefix_sha256: session
-                        .project()
-                        .branch_prefix_sha256(&snapshot.branch_id, cursor)?,
-                    target_cursor: cursor,
-                })
+            .map(|target_cursor| TasExecutionCacheProof {
+                sync_identity_sha256: snapshot.sync_identity_sha256,
+                branch_prefix_sha256: proof_hashes
+                    .next()
+                    .expect("intermediate proof hash was batched"),
+                target_cursor,
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
         Ok(TasAcquiredProjectBinding {
             snapshot,
             intermediate_cache_proofs,
@@ -226,11 +235,12 @@ impl TasEditorControlSnapshot {
     pub(super) fn input_at_linked(
         session: &TasEditorSession,
         snapshot: &TasEditorControlSnapshot,
+        current: &TasEditorControlSnapshot,
         cursor: u64,
     ) -> Result<TasInputFrame> {
         ensure!(
-            Self::capture_at(session, cursor)? == *snapshot,
-            "the TAS project changed during linked playback"
+            current == snapshot,
+            "the TAS project changed during playback"
         );
         ensure!(
             cursor < snapshot.branch_frame_count,
@@ -243,6 +253,13 @@ impl TasEditorControlSnapshot {
         session.project().edit_generation() == self.edit_generation
             && session.selected_branch_id() == self.branch_id
             && session.cursor() == self.cursor
+    }
+
+    pub(super) fn matches_project_revision(&self, session: &TasEditorSession) -> bool {
+        self.project_content_sha256 == session.project_content_sha256()
+            && self.edit_generation == session.project().edit_generation()
+            && self.branch_id == session.selected_branch_id()
+            && self.branch_frame_count == session.selected_branch().frame_count()
     }
 
     pub(super) fn matches_linked_project(&self, current: Option<&Self>) -> bool {

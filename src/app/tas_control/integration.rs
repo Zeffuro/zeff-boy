@@ -235,17 +235,22 @@ impl App {
     }
 
     pub(in crate::app) fn reconcile_tas_control_project_binding(&mut self) {
+        if !self.tas_control.requires_project_reconciliation() {
+            return;
+        }
+        let Some(session) = self.debug_windows.tas_editor.active_session() else {
+            if let Some(command) = self.tas_control.reconcile_project(None) {
+                self.send_tas_control_command(command);
+            }
+            return;
+        };
+        if self.tas_control.matches_project_revision(session) {
+            return;
+        }
         let current = self
-            .debug_windows
-            .tas_editor
-            .active_session()
-            .and_then(|session| {
-                let cursor = self
-                    .tas_control
-                    .project_binding_cursor()
-                    .unwrap_or(session.cursor());
-                TasEditorControlSnapshot::capture_at(session, cursor).ok()
-            });
+            .tas_control
+            .project_binding_cursor()
+            .and_then(|cursor| TasEditorControlSnapshot::capture_at(session, cursor).ok());
         if let Some(command) = self.tas_control.reconcile_project(current.as_ref()) {
             self.send_tas_control_command(command);
         }

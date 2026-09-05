@@ -17,6 +17,7 @@ pub(crate) struct CoreState {
     pub ram_cheats: Vec<zeff_emu_common::cheats::CheatPatch>,
     pub gba_codebreaker_state: zeff_emu_common::cheats::GbaCodeBreakerState,
     pub audio_buf: Vec<f32>,
+    pub audio_i16_buf: Vec<i16>,
     pub sample_rate: u32,
     pub xrgb_buf: Vec<u8>,
     pub rgb565_buf: Vec<u8>,

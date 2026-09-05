@@ -25,9 +25,19 @@ pub(super) struct PceStateIdentity {
 }
 
 pub fn encode_state(machine: &PceMachine) -> anyhow::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    encode_state_into(machine, &mut bytes)?;
+    Ok(bytes)
+}
+
+pub fn encode_state_into(machine: &PceMachine, output: &mut Vec<u8>) -> anyhow::Result<()> {
     machine.validate_v1_encode_state()?;
 
-    let mut writer = StateWriter::with_capacity(4_500_000);
+    let mut writer = if output.capacity() >= 4_500_000 {
+        StateWriter::from_reused_bytes(std::mem::take(output))
+    } else {
+        StateWriter::with_capacity(4_500_000)
+    };
     writer.write_bytes(PCE_SAVE_STATE_MAGIC);
     writer.write_u32(PCE_SAVE_STATE_FORMAT_VERSION);
     let cdrom2 = machine.devices().cdrom2();
@@ -48,7 +58,8 @@ pub fn encode_state(machine: &PceMachine) -> anyhow::Result<Vec<u8>> {
     write_section(&mut writer, |section| {
         machine.write_state(section, PCE_SAVE_STATE_FORMAT_VERSION)
     });
-    Ok(writer.into_bytes())
+    *output = writer.into_bytes();
+    Ok(())
 }
 
 pub fn decode_state(machine: &mut PceMachine, data: &[u8]) -> anyhow::Result<()> {

@@ -123,18 +123,11 @@ fn firmware() -> Vec<TasFirmwareIdentity> {
 }
 
 fn current_state_rom_sha256(state: &[u8], tilt: bool) -> Result<[u8; 32]> {
-    ensure!(
-        state.len() >= 44 && state[..8] == *b"ZBGBAST\0",
-        "TAS requires a native GBA save state"
-    );
-    ensure!(
-        u32::from_le_bytes(state[8..12].try_into().expect("length checked"))
-            == if tilt { 11 } else { 10 },
-        "TAS requires current native GBA state"
-    );
-    Ok(state[state.len() - 32..]
-        .try_into()
-        .expect("length checked"))
+    if tilt {
+        zeff_gba_core::save_state::current_native_gba_tilt_tas_state_rom_sha256(state)
+    } else {
+        zeff_gba_core::save_state::current_native_gba_tas_state_rom_sha256(state)
+    }
 }
 
 pub(crate) fn direct_gba_tas_identity(

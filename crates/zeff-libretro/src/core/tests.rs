@@ -35,6 +35,12 @@ fn emerald_flash1m_rom() -> Vec<u8> {
     rom
 }
 
+fn gba_backup_rom(marker: &[u8]) -> Vec<u8> {
+    let mut rom = gba_rom();
+    rom.extend_from_slice(marker);
+    rom
+}
+
 fn nes_rom() -> Vec<u8> {
     let mut rom = vec![0u8; 16 + 0x4000 + 0x2000];
     rom[0..4].copy_from_slice(b"NES\x1A");
@@ -481,13 +487,47 @@ fn gba_libretro_reset_preserves_backup_and_rtc() {
         assert!(emu.set_rtc_date_time(date_time));
     }
 
-    state.reset();
+    state.reset().unwrap();
 
     let ActiveCore::Gba(emu) = &state.core else {
         panic!("expected GBA core");
     };
     assert_eq!(emu.dump_battery_sram(), Some(backup));
     assert_eq!(emu.rtc_date_time(), Some(date_time));
+}
+
+#[test]
+fn gba_sync_sram_to_buf_matches_owned_backup_for_all_kinds() {
+    let cases: &[(&str, &[u8])] = &[
+        ("none.gba", b""),
+        ("sram.gba", b"SRAM_V113"),
+        ("flash512.gba", b"FLASH512_V131"),
+        ("flash1m.gba", b"FLASH1M_V103"),
+        ("eeprom.gba", b"EEPROM_V122"),
+    ];
+
+    for &(path, marker) in cases {
+        let mut state =
+            CoreState::from_rom(&gba_backup_rom(marker), path).expect("GBA ROM should load");
+        let expected = state.battery_sram();
+        let mut output = expected
+            .as_ref()
+            .map_or_else(Vec::new, |bytes| vec![0xA5; bytes.len()]);
+        if let Some(expected) = &expected {
+            let mut data = expected.clone();
+            for (index, byte) in data.iter_mut().enumerate() {
+                *byte = index as u8;
+            }
+            state.load_battery_sram(&data).unwrap();
+        }
+
+        let expected = state.battery_sram();
+        state.sync_sram_to_buf(&mut output).unwrap();
+        match expected {
+            Some(expected) => assert_eq!(output, expected),
+            None => assert!(output.is_empty()),
+        }
+    }
 }
 
 #[test]
@@ -671,7 +711,7 @@ fn pce_libretro_roundtrips_serialize_payload_above_four_mib() {
         _ => unreachable!(),
     };
 
-    state.reset();
+    state.reset().unwrap();
     state.load_state(&encoded).unwrap();
 
     assert_eq!(state.encode_state().unwrap(), encoded);
@@ -715,6 +755,7 @@ fn failed_unserialize_preserves_continuing_session() {
 
 #[test]
 fn pce_libretro_abi_serialization_roundtrips_above_four_mib() {
+    let _abi = crate::callbacks::lock(&crate::callbacks::ABI_TEST_LOCK);
     let mut state = CoreState::from_rom(&pce_rom(), "abi-state.pce").unwrap();
     state.step_frame();
     let expected = state.encode_state().unwrap();
@@ -736,7 +777,8 @@ fn pce_libretro_abi_serialization_roundtrips_above_four_mib() {
     crate::callbacks::lock(&crate::callbacks::CORE)
         .as_mut()
         .unwrap()
-        .reset();
+        .reset()
+        .unwrap();
     assert!(crate::serialization::retro_unserialize(
         buffer.as_ptr().cast(),
         buffer.len()

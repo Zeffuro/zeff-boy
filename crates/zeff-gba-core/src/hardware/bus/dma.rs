@@ -59,6 +59,13 @@ impl Bus {
             let src_mode = (ch.control >> 7) & 0x3;
             let mut src = ch.active_source;
             let mut transfer_cycles = 0u32;
+            #[cfg(feature = "profiling")]
+            {
+                self.profiling.dma_starts[channel] =
+                    self.profiling.dma_starts[channel].wrapping_add(1);
+                self.profiling.dma_units[channel] =
+                    self.profiling.dma_units[channel].wrapping_add(4);
+            }
             let waitcnt = self.waitcnt();
             for index in 0..4 {
                 let access_type = if index == 0 {
@@ -123,6 +130,12 @@ impl Bus {
         let mut count = u32::from(ch.count);
         if count == 0 {
             count = if channel == 3 { 0x1_0000 } else { 0x4000 };
+        }
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.dma_starts[channel] = self.profiling.dma_starts[channel].wrapping_add(1);
+            self.profiling.dma_units[channel] =
+                self.profiling.dma_units[channel].wrapping_add(u64::from(count));
         }
 
         let dest_mode = (ch.control >> 5) & 0x3;

@@ -8,6 +8,9 @@ use psg::Psg;
 const FIFO_CAPACITY: usize = 32;
 const DEBUG_SAMPLE_HISTORY_LEN: usize = 512;
 
+#[cfg(test)]
+pub(crate) const PSG_SAVE_STATE_SIZE: usize = psg::state::SAVE_STATE_SIZE;
+
 #[derive(Clone, Copy, Debug)]
 struct DebugSamples {
     samples: [f32; DEBUG_SAMPLE_HISTORY_LEN],
@@ -322,6 +325,21 @@ impl Apu {
         self.psg_pairs_generated = state.psg_pairs_generated;
     }
 
+    pub(crate) fn write_psg_state(&self, writer: &mut zeff_emu_common::save_state::StateWriter) {
+        self.psg.write_state(writer);
+    }
+
+    pub(crate) fn read_psg_state(
+        &mut self,
+        reader: &mut zeff_emu_common::save_state::StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        self.psg.read_state(reader)
+    }
+
+    pub(crate) fn migrate_legacy_psg_state(&mut self, io: &[u8]) {
+        self.psg.migrate_legacy_state(io);
+    }
+
     pub(crate) fn clear_host_output_after_state_load(&mut self) {
         self.sample_buffer.clear();
         for history in &mut self.direct_debug_history {
@@ -342,7 +360,7 @@ impl Apu {
     }
 
     #[cfg(test)]
-    pub(crate) fn psg_host_output_state_for_test(&self) -> (usize, u64) {
+    pub(crate) fn psg_host_output_state_for_test(&self) -> (usize, f64, u64) {
         self.psg.host_output_state_for_test()
     }
 }
@@ -357,7 +375,6 @@ pub(crate) struct FifoDmaRequests {
 mod tests {
     use super::*;
     use crate::hardware::constants::CYCLES_PER_FRAME;
-
     #[test]
     fn fifo_timer_pop_requests_dma_at_half_empty() {
         let mut apu = Apu::new(48_000);

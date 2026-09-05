@@ -127,14 +127,15 @@ impl Emulator {
             self.opcode_log.push(instruction.into());
         }
         let dma_cycles = self.bus.take_pending_dma_cycles();
-        self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(dma_cycles));
-        self.bus.step_cycles(dma_cycles);
-        if dma_cycles != 0
-            && self
+        if dma_cycles != 0 {
+            self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(dma_cycles));
+            self.bus.step_cycles(dma_cycles);
+            if self
                 .debug
                 .check_event(zeff_emu_common::debug::DebugEvent::Dma)
-        {
-            self.cpu.suspend();
+            {
+                self.cpu.suspend();
+            }
         }
 
         let mut bus_trace_events = if collect_bus_trace {
@@ -203,6 +204,10 @@ impl Emulator {
             self.bus.render_frame();
         }
         self.frame_count = self.frame_count.wrapping_add(1);
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling_frames = self.profiling_frames.wrapping_add(1);
+        }
     }
 
     fn gba_rom_offset(&self, address: u32) -> Option<u64> {

@@ -151,6 +151,21 @@ impl Cartridge {
         self.rtc.is_some()
     }
 
+    #[cfg(feature = "profiling")]
+    pub(crate) fn instruction_fetch_overlaps_rtc_gpio(&self, addr: u32, width: u8) -> bool {
+        self.rtc.is_some() && rtc::instruction_fetch_overlaps_gpio(addr, width)
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn instruction_fetch_uses_open_bus(&self, addr: u32, width: u8) -> bool {
+        let Some(offset) = gba_rom_offset(addr) else {
+            return false;
+        };
+        offset
+            .checked_add(usize::from(width))
+            .is_none_or(|end| end > self.rom.len())
+    }
+
     pub fn sensor_kind(&self) -> SensorKind {
         if self.tilt.is_some() {
             SensorKind::Tilt
@@ -188,7 +203,11 @@ impl Cartridge {
     }
 
     pub fn dump_battery_data(&self) -> Option<Vec<u8>> {
-        self.has_battery().then(|| self.backup.clone())
+        self.battery_data().map(|bytes| bytes.to_vec())
+    }
+
+    pub(crate) fn battery_data(&self) -> Option<&[u8]> {
+        self.has_battery().then_some(&self.backup)
     }
 
     pub(crate) fn dump_rtc_persistence_state(&self) -> Option<Vec<u8>> {
@@ -605,5 +624,25 @@ mod tests {
         assert_eq!(cart.backup_read8(0x0E00_0000), 0xFF);
         assert_eq!(cart.backup_read8(0x0E00_0001), 0xFF);
         assert_eq!(cart.dump_battery_data().unwrap(), vec![0xFF; EEPROM_SIZE]);
+    }
+
+    #[test]
+    fn battery_data_borrow_matches_owned_dump_for_all_backup_kinds() {
+        let carts = [
+            Cartridge::load(&minimal_rom()).unwrap(),
+            {
+                let mut rom = minimal_rom();
+                rom.extend_from_slice(b"SRAM_V113");
+                Cartridge::load(&rom).unwrap()
+            },
+            flash512_cart(),
+            flash1m_cart(),
+            eeprom_cart(),
+        ];
+
+        for cart in carts {
+            let owned = cart.dump_battery_data();
+            assert_eq!(cart.battery_data(), owned.as_deref());
+        }
     }
 }

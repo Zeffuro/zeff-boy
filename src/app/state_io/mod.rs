@@ -18,6 +18,8 @@ pub(super) use archive_and_slots::{
 };
 pub(crate) use rom_loading::detect_and_extract_rom;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use rom_loading::detect_and_extract_rom_with_zip_witness;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use rom_loading::is_native_archive_path;
 
 use crate::debug::{DebugUiActions, DebugWindowState, FpsTracker};

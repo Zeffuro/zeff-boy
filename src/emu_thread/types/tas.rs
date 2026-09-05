@@ -437,7 +437,6 @@ pub(crate) enum TasFdsMediaEvent {
     Insert { side: u8, write_protected: bool },
 }
 
-#[derive(Clone)]
 pub(crate) struct TasExecutionRequest {
     pub(crate) profile: TasExecutionProfile,
     pub(crate) lease_id: u64,
@@ -449,7 +448,6 @@ pub(crate) struct TasExecutionRequest {
     pub(crate) input_prefix: Vec<TasInputFrame>,
 }
 
-#[derive(Clone)]
 pub(crate) struct TasExecutionPredecessorWindow {
     pub(crate) source_proofs: Vec<TasExecutionCacheProof>,
     pub(crate) input_start_cursor: u64,

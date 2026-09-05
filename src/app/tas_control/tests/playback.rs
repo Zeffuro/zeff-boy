@@ -203,3 +203,97 @@ fn stale_project_during_playback_rolls_back_original_lease_checkpoint() {
         } if checkpoint_sha256 == TasDigest([0x11; 32])
     ));
 }
+
+#[test]
+fn changed_project_before_next_playback_frame_is_rejected() {
+    let directory = crate::test_support::test_directory("tas-linked-playback-changed").unwrap();
+    let mut session = playback_session(directory.path());
+    let mut coordinator = linked_at(&session, 1);
+    coordinator.start_playback(&session).unwrap();
+    session
+        .edit_transaction(|edit| {
+            edit.set_input_range(
+                "main",
+                2,
+                1,
+                TasInputFrame {
+                    players: [
+                        crate::tas_project::TasControllerInput {
+                            buttons: 0x40,
+                            dpad: 0,
+                        },
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                    ],
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+
+    let Err(error) = coordinator.begin_playback_frame(&session) else {
+        panic!("changed TAS project must stop playback preparation");
+    };
+    assert_eq!(error.to_string(), "the TAS project changed during playback");
+}
+
+#[test]
+fn changed_linked_prefix_digest_is_rejected() {
+    let directory = crate::test_support::test_directory("tas-linked-playback-prefix").unwrap();
+    let mut session = playback_session(directory.path());
+    let mut coordinator = linked_at(&session, 1);
+    coordinator.start_playback(&session).unwrap();
+    let original_prefix = session.project().branch_prefix_sha256("main", 1).unwrap();
+    session
+        .edit_transaction(|edit| {
+            edit.set_input_range(
+                "main",
+                0,
+                1,
+                TasInputFrame {
+                    players: [
+                        crate::tas_project::TasControllerInput {
+                            buttons: 0x20,
+                            dpad: 0,
+                        },
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                    ],
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    assert_ne!(
+        session.project().branch_prefix_sha256("main", 1).unwrap(),
+        original_prefix
+    );
+
+    let Err(error) = coordinator.begin_playback_frame(&session) else {
+        panic!("changed TAS prefix must stop playback preparation");
+    };
+    assert_eq!(error.to_string(), "the TAS project changed during playback");
+}
+
+#[test]
+fn playback_materializes_the_execution_cursor_when_selection_differs() {
+    let directory = crate::test_support::test_directory("tas-linked-playback-selection").unwrap();
+    let mut session = playback_session(directory.path());
+    let mut coordinator = linked_at(&session, 1);
+    session.set_cursor(2).unwrap();
+    coordinator.start_playback(&session).unwrap();
+
+    let command = coordinator.begin_playback_frame(&session).unwrap();
+    assert!(matches!(
+        command.into_parts_for_worker(WORKER_GENERATION),
+        Some((WORKER_GENERATION, EmuCommand::AdvanceTasControl(request)))
+            if request.expected_executed_project_frames == 1
+                && request.input.p1_buttons == 0x03
+                && request.input.p1_dpad == 0x04
+    ));
+    assert_eq!(session.cursor(), 2);
+}

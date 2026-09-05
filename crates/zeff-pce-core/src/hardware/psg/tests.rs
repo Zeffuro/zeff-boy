@@ -9,6 +9,9 @@ use super::{
 use crate::hardware::PsgPort;
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
+#[path = "tests/batching.rs"]
+mod batching;
+
 fn phase_state(psg: &HuC6280Psg) -> [(u8, i32, u16, u32); 6] {
     std::array::from_fn(|index| {
         let channel = &psg.channels[index];

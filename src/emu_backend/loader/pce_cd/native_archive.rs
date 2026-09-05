@@ -137,6 +137,16 @@ pub(crate) fn prepare_native_archive_backend(
     cancel: &Arc<AtomicBool>,
     progress: &Arc<super::super::super::pce_cd_archive::PceCdPackageProgress>,
 ) -> anyhow::Result<PreparedNativeArchiveBackend> {
+    if super::is_pce_cd_path(source_path) {
+        return prepare_direct_pce_cd_backend(
+            source_path,
+            selected_entry_index,
+            expected_rom_path,
+            config,
+            cancel,
+            progress,
+        );
+    }
     if super::path_extension_is(source_path, "7z") {
         return Ok(
             match prepare_seven_zip_backend(
@@ -247,6 +257,37 @@ pub(crate) fn prepare_native_archive_backend(
             })
         }
     }
+}
+
+fn prepare_direct_pce_cd_backend(
+    source_path: &Path,
+    selected_entry_index: Option<usize>,
+    expected_rom_path: Option<&Path>,
+    config: &BackendLoadConfig,
+    cancel: &AtomicBool,
+    progress: &super::super::super::pce_cd_archive::PceCdPackageProgress,
+) -> anyhow::Result<PreparedNativeArchiveBackend> {
+    if selected_entry_index.is_some()
+        || expected_rom_path.is_some_and(|expected| expected != source_path)
+    {
+        return Err(super::super::super::pce_cd::PceCdLoadError::ArchiveChanged.into());
+    }
+    check_package_cancel(cancel)?;
+    progress.set_phase(super::super::super::pce_cd_archive::PceCdPackageLoadPhase::Building);
+    let loaded = super::super::load_backend_from_rom_source(
+        super::super::super::ActiveSystem::Pce,
+        source_path,
+        source_path,
+        None,
+        config.clone(),
+    )?;
+    check_package_cancel(cancel)?;
+    progress.set_phase(super::super::super::pce_cd_archive::PceCdPackageLoadPhase::Complete);
+    Ok(PreparedNativeArchiveBackend::Ready {
+        rom_path: source_path.to_path_buf(),
+        system: super::super::super::ActiveSystem::Pce,
+        loaded,
+    })
 }
 
 fn prepare_zip_backend(
@@ -378,5 +419,82 @@ fn select_archive_cue_member<'a>(
         (Some(selected), _) | (_, Some(selected)) => Ok(Some(selected)),
         (None, None) if cue_members.len() == 1 => Ok(cue_members.first().map(String::as_str)),
         (None, None) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+    use crate::emu_backend::pce_cd::PceCdLoadError;
+    use crate::emu_backend::pce_cd_archive::{PceCdPackageLoadPhase, PceCdPackageProgress};
+    use zeff_pce_core::hardware::PceConsoleWiring;
+
+    fn test_pce_cd_config() -> BackendLoadConfig {
+        let system_card: &'static [u8] = Box::leak(vec![0; 262_144].into_boxed_slice());
+        BackendLoadConfig {
+            pce_cd_system_card_override: Some(system_card),
+            pce_cd_system_card_sha256_override: Some(zeff_firmware::PCE_SYSTEM_CARD_V3_USA_SHA256),
+            pce_console_wiring: Some(PceConsoleWiring::TurboGrafx16),
+            ..BackendLoadConfig::default()
+        }
+    }
+
+    #[test]
+    fn direct_chd_preparation_returns_pce_ready_for_its_source_path() -> anyhow::Result<()> {
+        let directory = crate::test_support::test_directory("native-direct-pce-chd")?;
+        let chd_path = directory.path().join("disc.chd");
+        crate::emu_backend::pce_cd_chd::write_synthetic_uncompressed_v5_chd(&chd_path)?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(PceCdPackageProgress::default());
+
+        let prepared = prepare_native_archive_backend(
+            &chd_path,
+            None,
+            None,
+            &test_pce_cd_config(),
+            &cancel,
+            &progress,
+        )?;
+
+        let PreparedNativeArchiveBackend::Ready {
+            rom_path, system, ..
+        } = prepared
+        else {
+            panic!("direct CHD did not prepare a PC Engine CD backend");
+        };
+        assert_eq!(rom_path, chd_path);
+        assert_eq!(system, super::super::super::ActiveSystem::Pce);
+        assert_eq!(progress.phase(), PceCdPackageLoadPhase::Complete);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_pce_cd_preparation_honors_cancellation_and_fails_for_missing_media() {
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let progress = Arc::new(PceCdPackageProgress::default());
+        let config = test_pce_cd_config();
+        let path = std::path::Path::new("missing.chd");
+
+        let cancelled_result =
+            prepare_native_archive_backend(path, None, None, &config, &cancelled, &progress);
+        let Err(cancelled_error) = cancelled_result else {
+            panic!("cancelled direct PC Engine CD preparation unexpectedly succeeded");
+        };
+        assert!(matches!(
+            cancelled_error.downcast_ref::<PceCdLoadError>(),
+            Some(PceCdLoadError::ArchiveCancelled)
+        ));
+
+        let failure_result = prepare_native_archive_backend(
+            path,
+            None,
+            None,
+            &config,
+            &Arc::new(AtomicBool::new(false)),
+            &progress,
+        );
+        assert!(failure_result.is_err());
     }
 }

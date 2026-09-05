@@ -211,6 +211,26 @@ fn pce_runtime_only_collects_waveforms_while_apu_capture_is_requested() {
     assert_eq!(pce.psg_master_debug_samples_ordered().len(), retained);
 }
 
+#[test]
+fn nes_runtime_skip_audio_controls_pcm_generation() {
+    let mut backend = build_nes_backend();
+    let actions = DebugUiActions::none();
+    let mut muted = BackendRuntimeConfig::new(&actions);
+    muted.apu_capture_enabled = true;
+    muted.skip_audio = true;
+    backend.apply_runtime_config(muted);
+    backend.step_frame();
+
+    let mut samples = Vec::new();
+    backend.drain_audio_samples_into(&mut samples);
+    assert!(samples.is_empty());
+
+    backend.apply_runtime_config(BackendRuntimeConfig::new(&actions));
+    backend.step_frame();
+    backend.drain_audio_samples_into(&mut samples);
+    assert!(!samples.is_empty());
+}
+
 fn assert_debuggable_cpu_byte_access(
     emu: &mut impl DebuggableEmulator,
     address: zeff_emu_common::address::Address,

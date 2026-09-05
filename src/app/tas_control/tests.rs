@@ -19,6 +19,7 @@ mod playback;
 mod playback_roundtrip;
 mod project_binding;
 mod repair_roundtrip;
+mod rom_load_transaction;
 mod sg1000_recording_roundtrip;
 mod sms_recording_roundtrip;
 mod unavailability;

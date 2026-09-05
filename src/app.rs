@@ -59,6 +59,8 @@ type PendingGfx = Option<std::rc::Rc<std::cell::RefCell<Option<anyhow::Result<Gr
 
 pub(crate) use state_io::detect_and_extract_rom;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use state_io::detect_and_extract_rom_with_zip_witness;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state_io::is_native_archive_path;
 
 pub(crate) fn run(

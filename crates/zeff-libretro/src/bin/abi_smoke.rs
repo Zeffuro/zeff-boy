@@ -111,6 +111,7 @@ mod native {
             frame_capture: None,
             audio_frame_csv: None,
             audio_s16le: None,
+            blackhole_output: false,
         })?;
         assert_eq!(
             (result.geometry.base_width, result.geometry.base_height),

@@ -59,17 +59,26 @@ fn version_9_migration_resets_dirty_target_backup_execution_state() {
     program(&mut source, 0x11);
     select_bank(&mut source, 1);
     program(&mut source, 0x22);
+    super::psg_state_tests::seed_psg(&mut source, 5);
+    let wave_ram = source.apu_psg_wave_ram_snapshot();
     let mut state = encode_state(&source).unwrap();
-    let backup_start =
-        state.len() - VERSION_9_ROM_HASH_SIZE - VERSION_10_BACKUP_EXECUTION_STATE_SIZE;
-    state.drain(backup_start..backup_start + VERSION_10_BACKUP_EXECUTION_STATE_SIZE);
+    let backup_start = state.len()
+        - VERSION_9_ROM_HASH_SIZE
+        - VERSION_12_PSG_STATE_SIZE
+        - VERSION_10_BACKUP_EXECUTION_STATE_SIZE;
+    state.drain(
+        backup_start
+            ..backup_start + VERSION_10_BACKUP_EXECUTION_STATE_SIZE + VERSION_12_PSG_STATE_SIZE,
+    );
     state[8..12].copy_from_slice(&9u32.to_le_bytes());
 
     let mut restored = Emulator::new(&rom, 48_000).unwrap();
+    super::psg_state_tests::seed_psg(&mut restored, 9);
     select_bank(&mut restored, 1);
     restored.bus.write8(0x0E00_5555, 0xAA);
     decode_state(&mut restored, &state).unwrap();
     assert_eq!(restored.bus.read8(0x0E00_1234), 0x11);
     select_bank(&mut restored, 1);
     assert_eq!(restored.bus.read8(0x0E00_1234), 0x22);
+    super::psg_state_tests::assert_legacy_psg_reconstructed(&restored, 5, wave_ram);
 }

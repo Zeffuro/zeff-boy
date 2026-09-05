@@ -8,6 +8,10 @@ mod input;
 mod memory;
 mod options;
 mod serialization;
+mod sram;
+
+#[cfg(test)]
+mod sram_tests;
 
 use api::*;
 use callbacks::*;
@@ -85,8 +89,15 @@ pub extern "C" fn retro_init() {
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_deinit() {
     retro_log_info("retro_deinit");
-    *lock(&CORE) = None;
-    lock(&SRAM_BUF).clear();
+    let mut core = lock(&CORE);
+    if let Some(state) = core.as_mut()
+        && let Err(error) = sram::import_and_publish(state)
+    {
+        retro_log_error(&format!("retro_deinit: save RAM sync failed: {error:#}"));
+    }
+    *core = None;
+    drop(core);
+    lock(&sram::SRAM).clear();
     *lock(&MAX_SERIALIZE_SIZE) = 0;
     *lock(&CB_LOG) = None;
     *lock(&CB_RUMBLE) = None;
@@ -167,8 +178,18 @@ pub extern "C" fn retro_reset() {
     let _ = catch_unwind(|| {
         let mut core = lock(&CORE);
         if let Some(state) = core.as_mut() {
-            state.reset();
+            if let Err(error) = sram::import_external(state) {
+                retro_log_error(&format!("retro_reset: save RAM import failed: {error:#}"));
+                return;
+            }
+            if let Err(error) = state.reset() {
+                retro_log_error(&format!("retro_reset failed: {error:#}"));
+                return;
+            }
             options::apply_core_options(state);
+            if let Err(error) = sram::publish(state) {
+                retro_log_error(&format!("retro_reset: save RAM publish failed: {error:#}"));
+            }
         }
     });
 }
@@ -180,6 +201,10 @@ pub extern "C" fn retro_run() {
         let Some(state) = core.as_mut() else {
             return;
         };
+        if let Err(error) = sram::import_external(state) {
+            retro_log_error(&format!("retro_run: save RAM import failed: {error:#}"));
+            return;
+        }
 
         {
             let mut counter = lock(&FRAME_COUNTER);
@@ -205,9 +230,17 @@ pub extern "C" fn retro_run() {
             state.set_input_p2(b2, d2);
         }
 
+        if let Err(error) = sram::import_external(state) {
+            retro_log_error(&format!("retro_run: save RAM import failed: {error:#}"));
+            return;
+        }
         state.step_frame();
         if let Some(fault) = state.take_runtime_fault() {
             retro_log_error(&format!("PC Engine runtime fault: {fault}"));
+        }
+        if let Err(error) = sram::publish(state) {
+            retro_log_error(&format!("retro_run: save RAM publish failed: {error:#}"));
+            return;
         }
 
         let geometry = state.video_geometry();
@@ -233,18 +266,18 @@ pub extern "C" fn retro_run() {
         let samples = &state.audio_buf;
 
         if !samples.is_empty() {
-            let i16_buf: Vec<i16> = samples
-                .iter()
-                .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-                .collect();
-            let frames = i16_buf.len() / 2;
+            state.audio_i16_buf.clear();
+            state.audio_i16_buf.extend(
+                samples
+                    .iter()
+                    .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16),
+            );
+            let frames = state.audio_i16_buf.len() / 2;
 
             if let Some(cb) = *lock(&CB_AUDIO_SAMPLE_BATCH) {
-                unsafe { cb(i16_buf.as_ptr(), frames) };
+                unsafe { cb(state.audio_i16_buf.as_ptr(), frames) };
             }
         }
-
-        state.sync_sram_to_buf(&mut lock(&SRAM_BUF));
 
         state.refresh_system_ram();
         state.refresh_video_ram();

@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use zeff_emu_common::time::FrameLifecycle;
 
+#[path = "profile_cores/pce_audio.rs"]
+mod pce_audio;
+
 const DEFAULT_FRAMES: u32 = 3_000;
 
 struct CountingAllocator;
@@ -89,7 +92,11 @@ fn profile_frames_with_prepare<M: FrameLifecycle>(
     machine: &mut M,
     prepare: impl FnOnce(&mut M),
 ) {
-    for _ in 0..10 {
+    let warmup_frames = std::env::var("ZEFF_PROFILE_WARMUP_FRAMES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(10);
+    for _ in 0..warmup_frames {
         machine.step_frame();
     }
 
@@ -183,13 +190,56 @@ fn profile_gba_synthetic(
         gba.set_apu_sample_generation_enabled(sample_generation_enabled);
         gba.set_apu_debug_capture_enabled(false);
         gba.set_instruction_trace_enabled(instruction_trace_enabled);
-        profile_frames(&format!("{label}{suffix}"), frames, &mut gba);
+        profile_gba_frames(&format!("{label}{suffix}"), frames, &mut gba);
 
         let state = gba.encode_state().expect("encode synthetic GBA state");
         let mut audio = Vec::new();
         gba.drain_audio_samples_into(&mut audio);
         print_accuracy_hashes(gba.framebuffer(), &state, &audio);
     }
+}
+
+fn profile_gba_frames(label: &str, frames: u32, machine: &mut zeff_gba_core::emulator::Emulator) {
+    profile_frames_with_prepare(label, frames, machine, |machine| machine.reset_profiling());
+    let snapshot = machine.profiling_snapshot();
+    println!(
+        "  GBA work: {} frames  {} instructions  {} bus calls  {} chunks  {} cycles",
+        snapshot.frames,
+        snapshot.completed_instructions,
+        snapshot.bus_step_calls,
+        snapshot.bus_chunks,
+        snapshot.bus_requested_cycles,
+    );
+    println!(
+        "  GBA phases: {:?}  scanlines {}  HBlank {}  VBlank {}  timer {:?}  DMA {:?}/{:?}",
+        snapshot.cpu_phase_visits,
+        snapshot.rendered_scanlines,
+        snapshot.visible_hblank_events,
+        snapshot.vblank_events,
+        snapshot.timer_overflows,
+        snapshot.dma_starts,
+        snapshot.dma_units,
+    );
+    println!(
+        "  GBA deadlines: {} hits  {} recomputes  expiries PPU/IRQ/T0/T1/T2/T3 {:?}  invalidations timer/IRQ/load {:?}",
+        snapshot.bus_deadline_hits,
+        snapshot.bus_deadline_recomputes,
+        snapshot.bus_deadline_expiries,
+        snapshot.bus_deadline_invalidations,
+    );
+    println!(
+        "  GBA fetch: {} total  ARM/Thumb {:?}  nonseq/seq {:?}  regions BIOS/EWRAM/IWRAM/GP0/GP1/GP2/other {:?}",
+        snapshot.instruction_fetches,
+        snapshot.instruction_fetch_modes,
+        snapshot.instruction_fetch_accesses,
+        snapshot.instruction_fetch_regions,
+    );
+    println!(
+        "  GBA fetch gate: {} compatible  fallbacks EEPROM/RTC/open-bus/unsupported/debug {:?}  WAITCNT changes {}",
+        snapshot.instruction_fetch_descriptor_compatible,
+        snapshot.instruction_fetch_fallbacks,
+        snapshot.instruction_fetch_waitcnt_changes,
+    );
 }
 
 fn profile_coleco_synthetic(
@@ -258,7 +308,7 @@ fn profile_gba_active_video(frames: u32, sample_generation_enabled: bool) {
 
     gba.set_apu_sample_generation_enabled(sample_generation_enabled);
     gba.set_apu_debug_capture_enabled(false);
-    profile_frames(
+    profile_gba_frames(
         if sample_generation_enabled {
             "GBA active video + DMA + timers + audio"
         } else {
@@ -424,44 +474,6 @@ fn profile_sega8_sprites(frames: u32, sample_generation_enabled: bool) {
     let mut audio = Vec::new();
     sega.drain_audio_samples_into(&mut audio);
     print_accuracy_hashes(sega.framebuffer(), &state, &audio);
-}
-
-fn profile_pce_frames(label: &str, frames: u32, machine: &mut zeff_pce_core::hardware::PceMachine) {
-    for _ in 0..10 {
-        machine.run_until_frame().expect("synthetic PCE frame");
-    }
-
-    reset_allocation_counts();
-    let start = Instant::now();
-    let mut master_ticks = 0_u64;
-    for _ in 0..frames {
-        master_ticks += machine
-            .run_until_frame()
-            .expect("synthetic PCE frame")
-            .master_ticks();
-    }
-    let elapsed = start.elapsed();
-    let (allocations, reallocations, allocated_bytes) = allocation_counts();
-    let fps = f64::from(frames) / elapsed.as_secs_f64();
-    let million_ticks_per_second = master_ticks as f64 / elapsed.as_secs_f64() / 1_000_000.0;
-    println!(
-        "{label:30} {frames:5} frames  {elapsed:>9.2?}  {fps:>8.0} fps  {million_ticks_per_second:>8.2} M master ticks / s"
-    );
-    println!(
-        "{:30} {:9} alloc  {:7} realloc  {:9.1} KiB",
-        "",
-        allocations,
-        reallocations,
-        allocated_bytes as f64 / 1024.0
-    );
-}
-
-fn print_pce_accuracy_hashes(machine: &mut zeff_pce_core::hardware::PceMachine) {
-    let state = zeff_pce_core::hardware::save_state::encode_state(machine)
-        .expect("encode synthetic PCE state");
-    let mut audio = Vec::new();
-    machine.drain_audio_samples_into(&mut audio);
-    print_accuracy_hashes(machine.framebuffer(), &state, &audio);
 }
 
 fn profile_pce_state(iterations: u32) {
@@ -659,6 +671,11 @@ fn pce_write_rom() -> Vec<u8> {
     ]);
     rom[0x1FFE..].copy_from_slice(&0xE000_u16.to_le_bytes());
     rom
+}
+
+fn supplied_pce_profile_rom() -> Option<Vec<u8>> {
+    let path = std::env::var_os("ZEFF_PROFILE_PCE_ROM_PATH")?;
+    Some(std::fs::read(path).expect("read supplied PCE profile ROM"))
 }
 
 fn ws_rom() -> Vec<u8> {
@@ -879,23 +896,33 @@ fn profile_pce_synthetic(
 ) {
     let video_only = std::env::var("ZEFF_PROFILE_PCE_VIDEO_ONLY").as_deref() == Ok("1");
     if !video_only {
-        let mut pce =
-            zeff_pce_core::hardware::PceMachine::new(pce_rom()).expect("synthetic PCE ROM");
-        pce.set_sample_generation_enabled(sample_generation_enabled);
-        pce.set_instruction_trace_enabled(instruction_trace_enabled);
-        profile_pce_frames(&format!("PC Engine synthetic{suffix}"), frames, &mut pce);
-        print_pce_accuracy_hashes(&mut pce);
-
-        let mut pce_writes = zeff_pce_core::hardware::PceMachine::new(pce_write_rom())
-            .expect("synthetic PCE write ROM");
-        pce_writes.set_sample_generation_enabled(sample_generation_enabled);
-        pce_writes.set_instruction_trace_enabled(instruction_trace_enabled);
-        profile_pce_frames(
-            &format!("PC Engine RAM writes{suffix}"),
-            frames,
-            &mut pce_writes,
-        );
-        print_pce_accuracy_hashes(&mut pce_writes);
+        if let Some(rom) = supplied_pce_profile_rom() {
+            profile_pce_rom(
+                &format!("PC Engine supplied ROM{suffix}"),
+                rom,
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                "supplied PCE profile ROM",
+            );
+        } else {
+            profile_pce_rom(
+                &format!("PC Engine synthetic{suffix}"),
+                pce_rom(),
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                "synthetic PCE ROM",
+            );
+            profile_pce_rom(
+                &format!("PC Engine RAM writes{suffix}"),
+                pce_write_rom(),
+                frames,
+                sample_generation_enabled,
+                instruction_trace_enabled,
+                "synthetic PCE write ROM",
+            );
+        }
     }
 
     if video_only || std::env::var("ZEFF_PROFILE_PCE_VIDEO").as_deref() == Ok("1") {
@@ -918,12 +945,13 @@ fn profile_pce_synthetic(
         }
         pce_video.set_sample_generation_enabled(sample_generation_enabled);
         pce_video.set_instruction_trace_enabled(instruction_trace_enabled);
-        profile_pce_frames(
+        let audio = pce_audio::profile_frames(
             &format!("PC Engine 240-line video{suffix}"),
             frames,
             &mut pce_video,
+            sample_generation_enabled,
         );
-        print_pce_accuracy_hashes(&mut pce_video);
+        pce_audio::print_accuracy_hashes(&mut pce_video, audio);
     }
 
     if std::env::var("ZEFF_PROFILE_PCE_SPRITES").as_deref() == Ok("1") {
@@ -982,10 +1010,11 @@ fn profile_pce_synthetic(
         }
         pce_sprites.set_sample_generation_enabled(sample_generation_enabled);
         pce_sprites.set_instruction_trace_enabled(instruction_trace_enabled);
-        profile_pce_frames(
+        let audio = pce_audio::profile_frames(
             &format!("PC Engine 240-line sprites{suffix}"),
             frames,
             &mut pce_sprites,
+            sample_generation_enabled,
         );
         assert!(
             pce_sprites
@@ -996,8 +1025,23 @@ fn profile_pce_synthetic(
                 .any(|pixel| pixel[..3] != [0, 0, 0]),
             "synthetic PCE sprite fixture did not produce visible pixels"
         );
-        print_pce_accuracy_hashes(&mut pce_sprites);
+        pce_audio::print_accuracy_hashes(&mut pce_sprites, audio);
     }
+}
+
+fn profile_pce_rom(
+    label: &str,
+    rom: Vec<u8>,
+    frames: u32,
+    sample_generation_enabled: bool,
+    instruction_trace_enabled: bool,
+    load_error: &str,
+) {
+    let mut pce = zeff_pce_core::hardware::PceMachine::new(rom).expect(load_error);
+    pce.set_sample_generation_enabled(sample_generation_enabled);
+    pce.set_instruction_trace_enabled(instruction_trace_enabled);
+    let audio = pce_audio::profile_frames(label, frames, &mut pce, sample_generation_enabled);
+    pce_audio::print_accuracy_hashes(&mut pce, audio);
 }
 
 fn profile_manifest_roms(frames: u32) {
@@ -1031,6 +1075,34 @@ fn profile_manifest_roms(frames: u32) {
         emulator.set_apu_sample_generation_enabled(false);
         profile_frames(&label, frames, &mut emulator);
     }
+
+    profile_gba_manifest_roms(frames);
+}
+
+fn profile_gba_manifest_roms(frames: u32) {
+    let test_roms = Path::new(env!("CARGO_MANIFEST_DIR")).join("test-roms");
+    let gba_bios = std::env::var_os("ZEFF_GBA_BIOS_PATH").and_then(|path| std::fs::read(path).ok());
+    for (label, rom_path) in load_manifest("gba-bench-roms.txt") {
+        let Ok(data) = std::fs::read(test_roms.join(rom_path)) else {
+            eprintln!("skip {label}: not found");
+            continue;
+        };
+        let emulator = if let Some(bios) = gba_bios.as_deref() {
+            zeff_gba_core::emulator::Emulator::new_with_bios(&data, bios, 48_000)
+        } else {
+            zeff_gba_core::emulator::Emulator::from_rom_data(&data)
+        };
+        let Ok(mut emulator) = emulator else {
+            eprintln!("skip {label}: load failed");
+            continue;
+        };
+        emulator.set_apu_sample_generation_enabled(false);
+        profile_gba_frames(&label, frames, &mut emulator);
+        let state = emulator.encode_state().expect("encode manifest GBA state");
+        let mut audio = Vec::new();
+        emulator.drain_audio_samples_into(&mut audio);
+        print_accuracy_hashes(emulator.framebuffer(), &state, &audio);
+    }
 }
 
 fn main() {
@@ -1047,6 +1119,11 @@ fn main() {
             .filter(|&value| value > 0)
             .unwrap_or(100);
         profile_pce_state(iterations);
+        return;
+    }
+
+    if std::env::var("ZEFF_PROFILE_GBA_MANIFEST_ONLY").as_deref() == Ok("1") {
+        profile_gba_manifest_roms(frames);
         return;
     }
 

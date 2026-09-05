@@ -15,8 +15,16 @@ use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
 pub use zeff_emu_common::debug::BusAccessEvent as DebugTraceEvent;
 
+mod deadline;
 mod dma;
+mod event_service;
 mod io;
+
+#[cfg(test)]
+use deadline::DEADLINE_IRQ;
+use deadline::{BusDeadline, DEADLINE_PPU, DEADLINE_TIMER_SHIFT};
+
+const DEADLINE_TIMERS: u8 = 0x0F << DEADLINE_TIMER_SHIFT;
 
 const DISPSTAT: usize = 0x004;
 const VCOUNT: usize = 0x006;
@@ -34,16 +42,14 @@ const BIOS_IRQ_FLAGS: u32 = 0x0300_7FF8;
 const INT_VBLANK: u16 = 1 << 0;
 const INT_HBLANK: u16 = 1 << 1;
 const INT_VCOUNT: u16 = 1 << 2;
-const IRQ_DELAY_CYCLES: u32 = 7;
-const IRQ_SAMPLE_LOOKAHEAD_CYCLES: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct Bus {
     pub cartridge: Cartridge,
-    pub ppu: Ppu,
+    pub(crate) ppu: Ppu,
     pub apu: Apu,
     pub keypad: Keypad,
-    pub timers: Timers,
+    pub(crate) timers: Timers,
     pub dma: DmaController,
     pub ewram: Vec<u8>,
     pub iwram: Vec<u8>,
@@ -54,11 +60,19 @@ pub struct Bus {
     bios: Option<Box<[u8]>>,
     pending_dma_cycles: u32,
     irq_delay_cycles: Option<u32>,
+    event_deadline: BusDeadline,
+    master_cycles: u64,
+    timer_materialized_cycles: u64,
+    timer_observation_cycles: u64,
     halt_requested: bool,
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_reads: bool,
     pub(crate) debug_trace_writes: bool,
     pub(crate) debug_trace_events: RefCell<Vec<DebugTraceEvent>>,
+    #[cfg(feature = "profiling")]
+    pub(crate) profiling: crate::hardware::profiling::BusProfiling,
+    #[cfg(test)]
+    eager_timer_materialization: bool,
 }
 
 impl Bus {
@@ -105,11 +119,19 @@ impl Bus {
             bios,
             pending_dma_cycles: 0,
             irq_delay_cycles: None,
+            event_deadline: BusDeadline::default(),
+            master_cycles: 0,
+            timer_materialized_cycles: 0,
+            timer_observation_cycles: 0,
             halt_requested: false,
             debug_trace_enabled: false,
             debug_trace_reads: false,
             debug_trace_writes: false,
             debug_trace_events: RefCell::new(Vec::new()),
+            #[cfg(feature = "profiling")]
+            profiling: crate::hardware::profiling::BusProfiling::default(),
+            #[cfg(test)]
+            eager_timer_materialization: false,
         };
         if initialize_post_boot {
             bus.initialize_post_boot_io_defaults();
@@ -139,11 +161,19 @@ impl Bus {
         self.oam.fill(0);
         self.pending_dma_cycles = 0;
         self.irq_delay_cycles = None;
+        self.event_deadline = BusDeadline::default();
+        self.master_cycles = 0;
+        self.timer_materialized_cycles = 0;
+        self.timer_observation_cycles = 0;
         self.halt_requested = false;
         self.debug_trace_enabled = false;
         self.debug_trace_reads = false;
         self.debug_trace_writes = false;
         self.debug_trace_events.borrow_mut().clear();
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling = crate::hardware::profiling::BusProfiling::default();
+        }
         self.cartridge.reset_hardware_execution_state();
         if !self.has_external_bios() {
             self.initialize_post_boot_io_defaults();
@@ -565,59 +595,6 @@ impl Bus {
         }
     }
 
-    pub fn step_cycles(&mut self, mut cycles: u32) {
-        while cycles > 0 {
-            let was_in_vblank = self.ppu.in_vblank();
-            let was_in_hblank = self.ppu.in_hblank();
-            let old_vcount = self.ppu.vcount();
-            let soundcnt_h = read_io16(&self.io, 0x82);
-            let mut step = cycles
-                .min(self.ppu.cycles_until_next_status_event().max(1))
-                .min(self.cycles_until_irq_event());
-            if self.timers.has_clocked_timers() {
-                for timer in 0..4 {
-                    if let Some(next) = self.timers.cycles_until_overflow(timer) {
-                        step = step.min(next.max(1));
-                    }
-                }
-            }
-
-            self.step_irq_event(step);
-            self.ppu.step_cycles(step);
-            self.cartridge.step_cycles(step);
-            cycles -= step;
-
-            if !was_in_hblank && self.ppu.in_hblank() && self.ppu.in_visible_scanline() {
-                self.ppu.render_current_scanline(
-                    &self.io,
-                    &self.palette_ram,
-                    &self.vram,
-                    &self.oam,
-                );
-                self.run_dma_start_timing(2);
-            }
-            if !was_in_vblank && self.ppu.in_vblank() {
-                self.ppu.mark_frame_ready();
-                self.run_dma_start_timing(1);
-            }
-            self.update_lcd_interrupts(was_in_vblank, was_in_hblank, old_vcount);
-            self.apu.step_output(
-                step,
-                soundcnt_h,
-                read_io16(&self.io, 0x84),
-                read_io16(&self.io, SOUNDBIAS),
-            );
-            let (timer_interrupts, timer_overflows, timer_irq_extra_delays) =
-                self.timers.step_with_overflows(step);
-            if timer_overflows.iter().any(|&count| count != 0) {
-                self.service_sound_timer_overflows(timer_overflows, soundcnt_h);
-            }
-            if timer_interrupts != 0 {
-                self.request_timer_interrupts(timer_interrupts, timer_irq_extra_delays);
-            }
-        }
-    }
-
     pub fn take_pending_dma_cycles(&mut self) -> u32 {
         std::mem::take(&mut self.pending_dma_cycles)
     }
@@ -626,91 +603,8 @@ impl Bus {
         std::mem::take(&mut self.halt_requested)
     }
 
-    pub fn cycles_until_next_halt_check(&self) -> u32 {
-        let mut cycles = 64;
-        cycles = cycles.min(self.ppu.cycles_until_next_status_event().max(1));
-        cycles = cycles.min(self.cycles_until_irq_event());
-        if self.timers.has_clocked_timers() {
-            for timer in 0..4 {
-                if let Some(next) = self.timers.cycles_until_overflow(timer) {
-                    cycles = cycles.min(next.max(1));
-                }
-            }
-        }
-        cycles.max(1)
-    }
-
-    pub(crate) fn interrupt_ready(&self) -> bool {
-        self.interrupt_pending()
-            && self
-                .irq_delay_cycles
-                .is_some_and(|cycles| cycles <= IRQ_SAMPLE_LOOKAHEAD_CYCLES)
-    }
-
     pub(crate) fn waitcnt(&self) -> u16 {
         read_io16(&self.io, WAITCNT)
-    }
-
-    pub(crate) fn take_irq_sample_delay_cycles(&mut self) -> u32 {
-        let Some(cycles) = self.irq_delay_cycles else {
-            return 0;
-        };
-        if cycles > IRQ_SAMPLE_LOOKAHEAD_CYCLES {
-            return 0;
-        }
-        self.irq_delay_cycles = Some(0);
-        cycles
-    }
-
-    pub(crate) fn irq_delay_state(&self) -> Option<u32> {
-        self.irq_delay_cycles
-    }
-
-    pub(crate) fn set_irq_delay_state(&mut self, delay: Option<u32>) -> bool {
-        if delay.is_some_and(|delay| delay > IRQ_DELAY_CYCLES) {
-            return false;
-        }
-        self.irq_delay_cycles = delay;
-        true
-    }
-
-    pub(crate) fn migrate_legacy_irq_delay(&mut self) {
-        self.irq_delay_cycles = self.irq_line_asserted().then_some(IRQ_DELAY_CYCLES);
-    }
-
-    pub(crate) fn test_irq_signal(&mut self, cycles_late: u32) {
-        self.test_irq_signal_with_extra_delay(cycles_late, 0);
-    }
-
-    pub(crate) fn test_irq_signal_with_extra_delay(&mut self, cycles_late: u32, extra_delay: u32) {
-        if self.irq_line_asserted() && self.irq_delay_cycles.is_none() {
-            self.irq_delay_cycles = Some(
-                IRQ_DELAY_CYCLES
-                    .saturating_add(extra_delay)
-                    .saturating_sub(cycles_late),
-            );
-        }
-    }
-
-    fn cycles_until_irq_event(&self) -> u32 {
-        self.irq_delay_cycles
-            .filter(|&cycles| cycles > 0)
-            .unwrap_or(u32::MAX)
-    }
-
-    fn step_irq_event(&mut self, cycles: u32) {
-        if let Some(delay) = self.irq_delay_cycles {
-            let next = delay.saturating_sub(cycles);
-            self.irq_delay_cycles = if next == 0 && !self.irq_line_asserted() {
-                None
-            } else {
-                Some(next)
-            };
-        }
-    }
-
-    fn irq_line_asserted(&self) -> bool {
-        read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x3FFF != 0
     }
 
     pub fn render_frame(&mut self) {
@@ -757,6 +651,9 @@ impl Bus {
             self.io.fill(0);
             self.dma = DmaController::default();
             self.timers = Timers::default();
+            self.timer_materialized_cycles = self.master_cycles;
+            self.timer_observation_cycles = self.master_cycles;
+            self.invalidate_event_deadline(0);
             self.apu = Apu::new(sample_rate);
             self.pending_dma_cycles = 0;
         } else {

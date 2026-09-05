@@ -21,7 +21,7 @@ exclude = ["fuzz"]
 default = ["camera", "audio-recording"]
 camera = ["dep:nokhwa", "dep:image"]
 audio-recording = ["dep:vorbis-encoder"]
-profile-cores = ["zeff-ws-core/profiling"]
+profile-cores = ["zeff-gba-core/profiling", "zeff-pce-core/profiling", "zeff-ws-core/profiling"]
 wasm-browser-tests = []
 
 [package]

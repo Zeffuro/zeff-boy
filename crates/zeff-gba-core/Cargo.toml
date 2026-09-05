@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 description = "Game Boy Advance emulation core library."
 repository = "https://github.com/zeffuro/zeff-boy"
 
+[features]
+profiling = []
+
 [dependencies]
 zeff-emu-common = { path = "../zeff-emu-common" }
 anyhow = "1.0.104"

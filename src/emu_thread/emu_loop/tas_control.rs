@@ -17,9 +17,9 @@ mod retirement;
 mod state_cache;
 pub(in crate::emu_thread) mod witness;
 
-use advance::TasFrameAdvanceResult;
+use advance::{TasFrameAdvanceContext, TasFrameAdvanceResult};
 use checkpoint::{restore_backend_checkpoint, verify_tas_execution_candidate};
-use execution::TasExecutionResult;
+use execution::{TasExecutionResult, pce::PceTasStateScratch};
 use state_cache::WorkerTasStateCache;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +69,8 @@ pub(super) struct TasControl {
     next_lease_id: u64,
     replay_activity_unwitnessed: bool,
     state_cache: WorkerTasStateCache,
+    pce_state_scratch: PceTasStateScratch,
+    discarded_audio_samples: Vec<f32>,
 }
 
 pub(super) struct TasControlContext {
@@ -146,15 +148,18 @@ impl EmuLoop {
                     crate::emu_thread::TasPersistenceContract::Absent,
                     |identity| identity.persistence,
                 );
-                let response = self.tas_control.execute(request.clone(), || {
-                    execution::execute_tas(
-                        backend,
-                        runtime_fault,
-                        request,
-                        cached_state,
-                        persistence,
-                    )
-                });
+                let response =
+                    self.tas_control
+                        .execute(request, |request, discarded_audio_samples| {
+                            execution::execute_tas(
+                                backend,
+                                runtime_fault,
+                                request,
+                                cached_state,
+                                persistence,
+                                discarded_audio_samples,
+                            )
+                        });
                 if matches!(response, EmuResponse::TasExecutionCompleted { .. }) {
                     if self.tas_control.candidate_is_cacheable()
                         && let Ok(state_bytes) = self.backend.encode_state_bytes()
@@ -173,18 +178,18 @@ impl EmuLoop {
                     crate::emu_thread::TasPersistenceContract::Absent,
                     |identity| identity.persistence,
                 );
-                let response = self
-                    .tas_control
-                    .advance(request, |candidate, input, snapshot| {
-                        advance::advance_tas_frame(
+                let response = self.tas_control.advance(
+                    request,
+                    |candidate, input, snapshot, pce_state_scratch| {
+                        let mut context = TasFrameAdvanceContext {
                             backend,
                             runtime_fault,
-                            candidate,
-                            input,
-                            snapshot,
                             persistence,
-                        )
-                    });
+                            pce_state_scratch,
+                        };
+                        advance::advance_tas_frame(&mut context, candidate, input, snapshot)
+                    },
+                );
                 if matches!(response, EmuResponse::TasFrameAdvanced { .. }) {
                     if self.tas_control.candidate_is_cacheable()
                         && let Ok(state_bytes) = self.backend.encode_state_bytes()
@@ -205,21 +210,24 @@ impl EmuLoop {
                     verify_tas_execution_candidate(backend, candidate, persistence)
                 }))
             }
-            command => self.tas_control.dispatch(command, context, |profile| {
-                if profile == TasExecutionProfile::DirectGbaCartridge {
-                    self.backend.drain_audio_samples_into(&mut Vec::new());
-                }
-                if let Some(identity) = self.tas_repair.identity {
-                    witness::build_tas_witness_for_persistence(
-                        &self.backend,
-                        cheats_present,
-                        profile,
-                        identity.persistence,
-                    )
-                } else {
-                    witness::build_tas_witness(&self.backend, cheats_present, profile)
-                }
-            }),
+            command => {
+                self.tas_control
+                    .dispatch(command, context, |profile, discarded_audio_samples| {
+                        if profile == TasExecutionProfile::DirectGbaCartridge {
+                            execution::discard_audio(&mut self.backend, discarded_audio_samples);
+                        }
+                        if let Some(identity) = self.tas_repair.identity {
+                            witness::build_tas_witness_for_persistence(
+                                &self.backend,
+                                cheats_present,
+                                profile,
+                                identity.persistence,
+                            )
+                        } else {
+                            witness::build_tas_witness(&self.backend, cheats_present, profile)
+                        }
+                    })
+            }
         };
         match dispatch {
             ControlFlow::Continue(command) => ControlFlow::Continue(command),
@@ -235,6 +243,8 @@ impl TasControl {
             next_lease_id: 1,
             replay_activity_unwitnessed: false,
             state_cache: WorkerTasStateCache::new(),
+            pce_state_scratch: PceTasStateScratch::default(),
+            discarded_audio_samples: Vec::new(),
         }
     }
 
@@ -247,6 +257,7 @@ impl TasControl {
     where
         F: FnOnce(
             TasExecutionProfile,
+            &mut Vec<f32>,
         ) -> Result<TasControlLeaseWitness, TasControlAcquireRejectedReason>,
     {
         match command {
@@ -307,6 +318,7 @@ impl TasControl {
     where
         F: FnOnce(
             TasExecutionProfile,
+            &mut Vec<f32>,
         ) -> Result<TasControlLeaseWitness, TasControlAcquireRejectedReason>,
     {
         if let Some(reason) = self.acquire_blocker(&context) {
@@ -320,7 +332,7 @@ impl TasControl {
                 reason: TasControlAcquireRejectedReason::LeaseIdExhausted,
             };
         };
-        let witness = match build_witness(profile) {
+        let witness = match build_witness(profile, &mut self.discarded_audio_samples) {
             Ok(witness) => witness,
             Err(reason) => {
                 return EmuResponse::TasControlAcquireRejected { request_id, reason };
@@ -364,62 +376,53 @@ impl TasControl {
         }
     }
 
-    fn execute<F>(&mut self, request: TasExecutionRequest, execute: F) -> EmuResponse
+    fn execute<F>(&mut self, mut request: TasExecutionRequest, execute: F) -> EmuResponse
     where
-        F: FnOnce() -> Result<TasExecutionResult, TasExecutionRejectedReason>,
+        F: FnOnce(
+            &TasExecutionRequest,
+            &mut Vec<f32>,
+        ) -> Result<TasExecutionResult, TasExecutionRejectedReason>,
     {
         let lease_id = request.lease_id;
         let run_id = request.run_id;
         let profile = request.profile;
-        let (attempted_run_id, execution_failed, candidate, intermediate_cache_proofs) =
-            match &mut self.authority {
-                BackendAuthority::Gameplay => {
-                    return EmuResponse::TasExecutionRejected {
-                        profile,
-                        requested_lease_id: lease_id,
-                        run_id,
-                        reason: TasExecutionRejectedReason::NoActiveLease,
-                    };
-                }
-                BackendAuthority::Leased {
-                    lease_id: active_lease_id,
-                    ..
-                } if *active_lease_id != lease_id => {
-                    return EmuResponse::TasExecutionRejected {
-                        profile,
-                        requested_lease_id: lease_id,
-                        run_id,
-                        reason: TasExecutionRejectedReason::WrongLease {
-                            active_lease_id: *active_lease_id,
-                        },
-                    };
-                }
-                BackendAuthority::Leased {
-                    profile: active_profile,
-                    ..
-                } if *active_profile != profile => {
-                    return EmuResponse::TasExecutionRejected {
-                        profile,
-                        requested_lease_id: lease_id,
-                        run_id,
-                        reason: TasExecutionRejectedReason::WrongExecutionProfile {
-                            active_profile: *active_profile,
-                        },
-                    };
-                }
-                BackendAuthority::Leased {
-                    attempted_run_id,
-                    execution_failed,
-                    candidate,
-                    intermediate_cache_proofs,
-                    ..
-                } => (
-                    attempted_run_id,
-                    execution_failed,
-                    candidate,
-                    intermediate_cache_proofs,
-                ),
-            };
+        match &self.authority {
+            BackendAuthority::Gameplay => {
+                return EmuResponse::TasExecutionRejected {
+                    profile,
+                    requested_lease_id: lease_id,
+                    run_id,
+                    reason: TasExecutionRejectedReason::NoActiveLease,
+                };
+            }
+            BackendAuthority::Leased {
+                lease_id: active_lease_id,
+                ..
+            } if *active_lease_id != lease_id => {
+                return EmuResponse::TasExecutionRejected {
+                    profile,
+                    requested_lease_id: lease_id,
+                    run_id,
+                    reason: TasExecutionRejectedReason::WrongLease {
+                        active_lease_id: *active_lease_id,
+                    },
+                };
+            }
+            BackendAuthority::Leased {
+                profile: active_profile,
+                ..
+            } if *active_profile != profile => {
+                return EmuResponse::TasExecutionRejected {
+                    profile,
+                    requested_lease_id: lease_id,
+                    run_id,
+                    reason: TasExecutionRejectedReason::WrongExecutionProfile {
+                        active_profile: *active_profile,
+                    },
+                };
+            }
+            BackendAuthority::Leased { .. } => {}
+        }
         if run_id == 0 {
             return EmuResponse::TasExecutionRejected {
                 profile,
@@ -428,6 +431,15 @@ impl TasControl {
                 reason: TasExecutionRejectedReason::InvalidRunId,
             };
         }
+        let BackendAuthority::Leased {
+            attempted_run_id,
+            execution_failed,
+            candidate,
+            ..
+        } = &mut self.authority
+        else {
+            unreachable!("active TAS lease changed during execution validation");
+        };
         if *execution_failed {
             return EmuResponse::TasExecutionRejected {
                 profile,
@@ -453,8 +465,19 @@ impl TasControl {
         }
         *attempted_run_id = Some(run_id);
         *candidate = None;
-        *intermediate_cache_proofs = request.intermediate_cache_proofs.clone();
-        match execute() {
+        let execution = execute(&request, &mut self.discarded_audio_samples);
+        let intermediate_cache_proofs = std::mem::take(&mut request.intermediate_cache_proofs);
+        let BackendAuthority::Leased {
+            execution_failed,
+            candidate,
+            intermediate_cache_proofs: lease_intermediate_cache_proofs,
+            ..
+        } = &mut self.authority
+        else {
+            unreachable!("active TAS lease changed during execution");
+        };
+        *lease_intermediate_cache_proofs = intermediate_cache_proofs;
+        match execution {
             Ok(result) => {
                 *candidate = Some(Box::new(result));
                 EmuResponse::TasExecutionCompleted {
@@ -486,6 +509,7 @@ impl TasControl {
             TasExecutionResult,
             TasInputFrame,
             Option<crate::emu_thread::TasFrameAdvanceSnapshot>,
+            &mut PceTasStateScratch,
         ) -> Result<TasFrameAdvanceResult, TasFrameAdvanceRejectedReason>,
     {
         let candidate = match &mut self.authority {
@@ -602,7 +626,12 @@ impl TasControl {
         let Some(executed_project_frames) = candidate.executed_project_frames.checked_add(1) else {
             return reject_advance(&request, TasFrameAdvanceRejectedReason::FrameLimitExceeded);
         };
-        match advance(**candidate, request.input, request.snapshot) {
+        match advance(
+            **candidate,
+            request.input,
+            request.snapshot,
+            &mut self.pce_state_scratch,
+        ) {
             Ok(result) => {
                 **candidate = TasExecutionResult {
                     profile: request.profile,

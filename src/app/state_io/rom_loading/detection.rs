@@ -4,6 +4,14 @@ use anyhow::Context;
 
 use crate::emu_backend::ActiveSystem;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct AuthenticatedDetectedRom {
+    pub(crate) rom_path: PathBuf,
+    pub(crate) preloaded_data: Option<Vec<u8>>,
+    pub(crate) system: ActiveSystem,
+    pub(crate) authenticated_zip_member: Option<crate::rom_archive::AuthenticatedZipMember>,
+}
+
 pub(super) fn is_zip_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -93,6 +101,45 @@ pub(crate) fn detect_and_extract_rom(
     detect_system_for_loaded_path(rom_path, preloaded_data)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn detect_and_extract_rom_with_zip_witness(
+    path: &Path,
+) -> anyhow::Result<AuthenticatedDetectedRom> {
+    if !is_zip_path(path) {
+        let (rom_path, preloaded_data, system) = detect_and_extract_rom(path)?;
+        return Ok(AuthenticatedDetectedRom {
+            rom_path,
+            preloaded_data,
+            system,
+            authenticated_zip_member: None,
+        });
+    }
+    let entries = super::super::list_rom_entries_in_zip(path)?;
+    if let [entry] = entries.as_slice()
+        && entry.system == ActiveSystem::GameBoyAdvance
+        && let Ok(extraction) = crate::rom_archive::extract_single_authenticated_bounded_zip_member(
+            path,
+            "gba",
+            128 * 1024 * 1024,
+            crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+        )
+    {
+        return Ok(AuthenticatedDetectedRom {
+            rom_path: extraction.rom_path,
+            preloaded_data: Some(extraction.bytes),
+            system: ActiveSystem::GameBoyAdvance,
+            authenticated_zip_member: Some(extraction.witness),
+        });
+    }
+    let (rom_path, preloaded_data, system) = detect_and_extract_rom(path)?;
+    Ok(AuthenticatedDetectedRom {
+        rom_path,
+        preloaded_data,
+        system,
+        authenticated_zip_member: None,
+    })
+}
+
 pub(super) fn detect_and_extract_archive_entry(
     archive_path: &Path,
     entry_index: usize,
@@ -110,6 +157,37 @@ pub(super) fn detect_and_extract_archive_entry_path(
         super::super::extract_rom_entry_path_from_zip(archive_path, virtual_rom_path)
             .with_context(|| format!("Failed to extract ROM from '{}'", archive_path.display()))?;
     detect_system_for_loaded_path(rom_path, Some(data))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn detect_and_extract_archive_entry_path_with_zip_witness(
+    archive_path: &Path,
+    virtual_rom_path: &Path,
+) -> anyhow::Result<AuthenticatedDetectedRom> {
+    if ActiveSystem::from_path(virtual_rom_path) == Some(ActiveSystem::GameBoyAdvance)
+        && let Ok(extraction) = crate::rom_archive::extract_authenticated_bounded_zip_member(
+            archive_path,
+            Some(virtual_rom_path),
+            "gba",
+            128 * 1024 * 1024,
+            crate::emu_backend::gba::MAX_DIRECT_GBA_ROM_BYTES,
+        )
+    {
+        return Ok(AuthenticatedDetectedRom {
+            rom_path: extraction.rom_path,
+            preloaded_data: Some(extraction.bytes),
+            system: ActiveSystem::GameBoyAdvance,
+            authenticated_zip_member: Some(extraction.witness),
+        });
+    }
+    let (rom_path, preloaded_data, system) =
+        detect_and_extract_archive_entry_path(archive_path, virtual_rom_path)?;
+    Ok(AuthenticatedDetectedRom {
+        rom_path,
+        preloaded_data,
+        system,
+        authenticated_zip_member: None,
+    })
 }
 
 fn detect_system_for_loaded_path(
@@ -178,6 +256,19 @@ mod tests {
         )?;
         assert_eq!(loaded_path, archive.join("game.pce"));
         assert_eq!(loaded, vec![0; 64]);
+        Ok(())
+    }
+
+    #[test]
+    fn top_level_gba_zip_with_another_supported_rom_does_not_authorize_witness()
+    -> anyhow::Result<()> {
+        let directory = crate::test_support::test_directory("top-level-gba-zip-selection")?;
+        let archive = directory.path().join("mixed.zip");
+        crate::test_support::write_zip(
+            &archive,
+            &[("game.gba", &[0; 0xC0]), ("other.nes", b"NES\x1A")],
+        )?;
+        assert!(detect_and_extract_rom_with_zip_witness(&archive).is_err());
         Ok(())
     }
 }

@@ -142,6 +142,45 @@ impl Emulator {
     pub fn ppu_debug_snapshot(&self) -> crate::hardware::ppu::PpuDebugSnapshot {
         self.bus.ppu_debug_snapshot()
     }
+
+    #[cfg(feature = "profiling")]
+    pub fn profiling_snapshot(&self) -> crate::hardware::profiling::ProfilingSnapshot {
+        crate::hardware::profiling::ProfilingSnapshot {
+            frames: self.profiling_frames,
+            completed_instructions: self.cpu.profiling.completed_instructions,
+            cpu_phase_visits: self.cpu.profiling.phase_visits,
+            instruction_fetches: self.cpu.profiling.instruction_fetches,
+            instruction_fetch_modes: self.cpu.profiling.instruction_fetch_modes,
+            instruction_fetch_accesses: self.cpu.profiling.instruction_fetch_accesses,
+            instruction_fetch_regions: self.cpu.profiling.instruction_fetch_regions,
+            instruction_fetch_descriptor_compatible: self
+                .cpu
+                .profiling
+                .instruction_fetch_descriptor_compatible,
+            instruction_fetch_fallbacks: self.cpu.profiling.instruction_fetch_fallbacks,
+            instruction_fetch_waitcnt_changes: self.cpu.profiling.instruction_fetch_waitcnt_changes,
+            bus_step_calls: self.bus.profiling.step_calls,
+            bus_requested_cycles: self.bus.profiling.requested_cycles,
+            bus_chunks: self.bus.profiling.chunks,
+            bus_deadline_hits: self.bus.profiling.deadline_hits,
+            bus_deadline_recomputes: self.bus.profiling.deadline_recomputes,
+            bus_deadline_expiries: self.bus.profiling.deadline_expiries,
+            bus_deadline_invalidations: self.bus.profiling.deadline_invalidations,
+            visible_hblank_events: self.bus.profiling.visible_hblank_events,
+            vblank_events: self.bus.profiling.vblank_events,
+            rendered_scanlines: self.bus.profiling.rendered_scanlines,
+            timer_overflows: self.bus.profiling.timer_overflows,
+            dma_starts: self.bus.profiling.dma_starts,
+            dma_units: self.bus.profiling.dma_units,
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    pub fn reset_profiling(&mut self) {
+        self.profiling_frames = 0;
+        self.cpu.profiling = crate::hardware::profiling::CpuProfiling::default();
+        self.bus.profiling = crate::hardware::profiling::BusProfiling::default();
+    }
 }
 
 impl MachineTiming for Emulator {

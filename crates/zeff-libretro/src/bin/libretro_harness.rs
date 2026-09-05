@@ -40,6 +40,7 @@ mod native {
         let mut capture_png = None;
         let mut audio_frame_csv = None;
         let mut audio_s16le = None;
+        let mut blackhole_output = false;
         while let Some(option) = args.next() {
             match option.as_str() {
                 "--warmup" => warmup_frames = parse_usize(args.next(), "--warmup")?,
@@ -84,6 +85,7 @@ mod native {
                         args.next().ok_or("--audio-s16le requires a path")?,
                     ));
                 }
+                "--blackhole-output" => blackhole_output = true,
                 "--help" | "-h" => {
                     println!("{}", usage());
                     return Ok(());
@@ -112,28 +114,30 @@ mod native {
                 frame_capture,
                 audio_frame_csv,
                 audio_s16le,
+                blackhole_output,
             },
             repeats,
         )?;
         let run = result.runs.last().expect("nonzero repeats has a result");
         println!(
-            "runs={} fps_p50={:.2} fps_p95={:.2} elapsed_ms_p50={:.3} elapsed_ms_p95={:.3} video_calls={} video_bytes={} visible_video_bytes={} video_pixel_format={} video_sha256={} audio_sample_calls={} audio_batch_calls={} audio_frames={} audio_bytes={} invalid_audio_buffer_len={} audio_sha256={} input_polls={} input_queries={} geometry={}x{} max={}x{} aspect={} advertised_fps={} advertised_sample_rate={} last_video={}x{} pitch={} serialize_size={} serialize_sha256={} state_roundtrip={} undersized_serialize_rejected={} repeated_state_hashes_match={} repeated_video_hashes_match={} repeated_audio_hashes_match={} repeated_callback_counts_match={} unsupported_environment_commands={}",
+            "runs={} fps_p50={:.2} fps_p95={:.2} elapsed_ms_p50={:.3} elapsed_ms_p95={:.3} callback_payload_hashing={} video_calls={} video_bytes={} visible_video_bytes={} video_pixel_format={} video_sha256={} audio_sample_calls={} audio_batch_calls={} audio_frames={} audio_bytes={} invalid_audio_buffer_len={} audio_sha256={} input_polls={} input_queries={} geometry={}x{} max={}x{} aspect={} advertised_fps={} advertised_sample_rate={} last_video={}x{} pitch={} serialize_size={} serialize_sha256={} save_ram_size={} save_ram_nonnull={} save_ram_sha256={} save_ram_post_roundtrip_sha256={} state_roundtrip={} undersized_serialize_rejected={} repeated_state_hashes_match={} repeated_video_hashes_match={} repeated_audio_hashes_match={} repeated_callback_counts_match={} unsupported_environment_commands={}",
             result.runs.len(),
             result.fps_p50,
             result.fps_p95,
             result.elapsed_ms_p50,
             result.elapsed_ms_p95,
+            run.callback_payload_hashing,
             run.callbacks.video_calls,
             run.callbacks.video_bytes,
             run.callbacks.visible_video_bytes,
             run.video_pixel_format,
-            hex(&run.video_hash),
+            callback_hash(run.video_hash.as_ref()),
             run.callbacks.audio_sample_calls,
             run.callbacks.audio_batch_calls,
             run.callbacks.audio_frames,
             run.callbacks.audio_bytes,
             run.invalid_audio_buffer_len,
-            hex(&run.audio_hash),
+            callback_hash(run.audio_hash.as_ref()),
             run.callbacks.input_poll_calls,
             run.callbacks.input_state_calls,
             run.geometry.base_width,
@@ -148,11 +152,15 @@ mod native {
             run.last_video.pitch,
             run.serialize_size,
             hex(&run.serialize_hash),
+            run.save_ram_size,
+            run.save_ram_nonnull,
+            save_ram_hash(run.save_ram_sha256.as_ref()),
+            save_ram_hash(run.save_ram_post_roundtrip_sha256.as_ref()),
             run.state_roundtrip,
             run.undersized_serialize_rejected,
             result.state_hashes_match,
-            result.video_hashes_match,
-            result.audio_hashes_match,
+            evaluated(result.video_hashes_match),
+            evaluated(result.audio_hashes_match),
             result.callback_counts_match,
             comma_separated(&run.unsupported_environment_commands),
         );
@@ -203,6 +211,22 @@ mod native {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
+    fn callback_hash(hash: Option<&[u8; 32]>) -> String {
+        hash.map_or_else(|| "disabled".into(), |hash| hex(hash))
+    }
+
+    fn save_ram_hash(hash: Option<&[u8; 32]>) -> String {
+        hash.map_or_else(|| "empty".into(), |hash| hex(hash))
+    }
+
+    fn evaluated(value: Option<bool>) -> &'static str {
+        match value {
+            Some(true) => "true",
+            Some(false) => "false",
+            None => "not_evaluated",
+        }
+    }
+
     fn comma_separated(values: &[u32]) -> String {
         if values.is_empty() {
             return "none".into();
@@ -215,7 +239,26 @@ mod native {
     }
 
     fn usage() -> &'static str {
-        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path] [--capture-frame N --capture-png path] [--audio-frame-csv path] [--audio-s16le path]"
+        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path] [--capture-frame N --capture-png path] [--audio-frame-csv path] [--audio-s16le path] [--blackhole-output]"
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{callback_hash, evaluated, save_ram_hash};
+
+        #[test]
+        fn disabled_callback_hashes_are_explicit() {
+            assert_eq!(callback_hash(None), "disabled");
+            assert_eq!(save_ram_hash(None), "empty");
+            assert_eq!(evaluated(None), "not_evaluated");
+        }
+
+        #[test]
+        fn enabled_callback_hash_results_remain_machine_parseable() {
+            assert_eq!(callback_hash(Some(&[0xAB; 32])), "ab".repeat(32));
+            assert_eq!(evaluated(Some(true)), "true");
+            assert_eq!(evaluated(Some(false)), "false");
+        }
     }
 }
 

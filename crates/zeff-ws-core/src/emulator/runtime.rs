@@ -10,20 +10,73 @@ use zeff_emu_common::debug::{
 
 impl Emulator {
     pub fn step_frame(&mut self) {
+        self.step_frame_inner(true);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn eager_hlt_step_frame(&mut self) {
+        self.step_frame_inner(false);
+    }
+
+    fn step_frame_inner(&mut self, allow_hlt_fast_forward: bool) {
         if self.cpu.is_suspended() {
             return;
         }
+        let hlt_fast_forward_enabled =
+            allow_hlt_fast_forward && self.hlt_fast_forward_observers_inactive();
         self.clear_frame_ready();
         let guard = self
             .cpu
             .cycles
             .wrapping_add(u64::from(CYCLES_PER_FRAME) * 2);
         while !self.frame_ready() && self.cpu.cycles < guard {
-            if self.step_instruction().is_none() && self.cpu.is_suspended() {
+            if self.step_instruction().is_none()
+                && self.step_frame_after_empty_instruction(hlt_fast_forward_enabled, guard)
+            {
                 break;
             }
         }
         self.finish_frame();
+    }
+
+    #[inline(never)]
+    fn step_frame_after_empty_instruction(
+        &mut self,
+        hlt_fast_forward_enabled: bool,
+        guard: u64,
+    ) -> bool {
+        if self.cpu.is_suspended() {
+            return true;
+        }
+        if hlt_fast_forward_enabled
+            && self.cpu.state == crate::hardware::cpu::CpuState::Halted
+            && !self.frame_ready()
+            && self.cpu.cycles < guard
+            && self.cpu.can_fast_forward_halt()
+            && !self.bus.has_pending_interrupt_signal()
+        {
+            let advance = u64::from(self.bus.halted_cpu_next_event_cycles())
+                .min(guard.wrapping_sub(self.cpu.cycles)) as u32;
+            if advance != 0 {
+                self.cpu.advance_halted_cycles(&mut self.bus, advance);
+                #[cfg(test)]
+                {
+                    self.hlt_fast_forward_calls = self.hlt_fast_forward_calls.wrapping_add(1);
+                }
+            }
+        }
+
+        false
+    }
+
+    fn hlt_fast_forward_observers_inactive(&self) -> bool {
+        !self.debug.break_on_next
+            && self.debug.iter_breakpoints().next().is_none()
+            && self.debug.watchpoints.is_empty()
+            && self.debug.iter_event_breakpoints().next().is_none()
+            && !self.opcode_log.enabled
+            && !self.instruction_trace.is_enabled()
+            && self.bus.debug_trace_mode == DebugTraceMode::None
     }
 
     pub fn step_instruction(&mut self) -> Option<FetchedInstruction> {

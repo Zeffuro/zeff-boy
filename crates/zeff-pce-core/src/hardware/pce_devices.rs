@@ -210,6 +210,21 @@ impl PceDevices {
         }
     }
 
+    #[cfg(feature = "profiling")]
+    pub(crate) fn advance_master_ticks_profiled(
+        &mut self,
+        master_ticks: u64,
+        profiling: &mut crate::hardware::profiling::PceProfiling,
+    ) {
+        self.psg
+            .advance_master_ticks_profiled(master_ticks, profiling);
+        self.controller.advance_master_ticks(master_ticks);
+        if let Some(cdrom2) = &mut self.cdrom2 {
+            cdrom2.advance_master_ticks(master_ticks);
+            self.debug_dma_completed |= cdrom2.take_debug_dma_completed();
+        }
+    }
+
     pub(crate) fn take_debug_dma_completed(&mut self) -> bool {
         if let Some(cdrom2) = &mut self.cdrom2 {
             self.debug_dma_completed |= cdrom2.take_debug_dma_completed();

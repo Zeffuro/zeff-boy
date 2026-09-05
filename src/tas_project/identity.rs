@@ -65,6 +65,27 @@ impl TasProject {
         )
     }
 
+    pub(crate) fn branch_prefix_sha256_many_from_validated(
+        &self,
+        branch_id: &str,
+        cursors: &[u64],
+    ) -> Result<Vec<TasDigest>> {
+        let branch = self
+            .branch(branch_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown TAS branch {branch_id:?}"))?;
+        if cursors.iter().any(|&cursor| cursor > branch.frame_count) {
+            bail!("TAS cursor is past branch end");
+        }
+        if cursors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sync_identity = self.sync_identity_sha256_from_validated()?;
+        cursors
+            .iter()
+            .map(|&cursor| hash_branch(sync_identity, branch, cursor, false))
+            .collect()
+    }
+
     pub fn seek_cache_identity(
         &self,
         branch_id: &str,

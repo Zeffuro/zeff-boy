@@ -1,7 +1,7 @@
 use anyhow::{Result, bail, ensure};
 
 use crate::emu_thread::TasExecutionRequest;
-use crate::tas_project::TasDigest;
+use crate::tas_project::{TasDigest, TasEditorSession};
 
 use super::lifecycle::WorkerBoundCommand;
 use super::{
@@ -47,6 +47,40 @@ impl TasControlCoordinator {
             | TasControlState::RollbackPending { .. }
             | TasControlState::CommitPending { .. }
             | TasControlState::Terminal { .. } => None,
+        }
+    }
+
+    pub(in crate::app) fn requires_project_reconciliation(&self) -> bool {
+        matches!(
+            self.state,
+            TasControlState::AcquireQueued { .. }
+                | TasControlState::AcquirePending { .. }
+                | TasControlState::ExecutionPending { .. }
+                | TasControlState::ExecutionReplayReady { .. }
+                | TasControlState::ExecutionReplayPending { .. }
+                | TasControlState::AwaitingDecision { .. }
+                | TasControlState::FrameAdvancePending { .. }
+                | TasControlState::PlaybackPending { .. }
+        )
+    }
+
+    pub(in crate::app) fn matches_project_revision(&self, session: &TasEditorSession) -> bool {
+        match &self.state {
+            TasControlState::AcquireQueued { project, .. }
+            | TasControlState::AcquirePending { project, .. }
+            | TasControlState::ExecutionPending { project, .. }
+            | TasControlState::ExecutionReplayReady { project, .. }
+            | TasControlState::ExecutionReplayPending { project, .. }
+            | TasControlState::AwaitingDecision { project, .. }
+            | TasControlState::FrameAdvancePending { project, .. }
+            | TasControlState::PlaybackPending { project, .. } => {
+                project.matches_project_revision(session)
+            }
+            TasControlState::Detached
+            | TasControlState::FrameRecordCommitPending { .. }
+            | TasControlState::RollbackPending { .. }
+            | TasControlState::CommitPending { .. }
+            | TasControlState::Terminal { .. } => false,
         }
     }
 

@@ -10,6 +10,76 @@ fn minimal_rom() -> Vec<u8> {
     rom
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_counts_frame_work_and_resets() {
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    emu.reset_profiling();
+
+    emu.step_frame();
+
+    let snapshot = emu.profiling_snapshot();
+    assert_eq!(snapshot.frames, 1);
+    assert!(snapshot.completed_instructions > 0);
+    assert_eq!(
+        snapshot.cpu_phase_visits[..3],
+        [snapshot.completed_instructions; 3]
+    );
+    assert!(snapshot.cpu_phase_visits.iter().sum::<u64>() >= snapshot.completed_instructions);
+    assert!(snapshot.instruction_fetches >= snapshot.completed_instructions);
+    assert_eq!(
+        snapshot.instruction_fetch_modes.iter().sum::<u64>(),
+        snapshot.instruction_fetches
+    );
+    assert_eq!(
+        snapshot.instruction_fetch_accesses.iter().sum::<u64>(),
+        snapshot.instruction_fetches
+    );
+    assert_eq!(
+        snapshot.instruction_fetch_regions.iter().sum::<u64>(),
+        snapshot.instruction_fetches
+    );
+    assert_eq!(
+        snapshot.instruction_fetch_descriptor_compatible
+            + snapshot.instruction_fetch_fallbacks.iter().sum::<u64>(),
+        snapshot.instruction_fetches
+    );
+    assert!(snapshot.bus_step_calls > 0);
+    assert!(snapshot.bus_requested_cycles > 0);
+    assert!(snapshot.bus_chunks > 0);
+    assert_eq!(
+        snapshot.bus_deadline_hits + snapshot.bus_deadline_recomputes,
+        snapshot.bus_chunks
+    );
+    assert!(snapshot.bus_deadline_hits > snapshot.bus_deadline_recomputes);
+    assert!(snapshot.bus_deadline_expiries[0] > 0);
+    assert_eq!(snapshot.visible_hblank_events, 160);
+    assert_eq!(snapshot.vblank_events, 1);
+    assert_eq!(snapshot.rendered_scanlines, 160);
+
+    emu.reset_profiling();
+    assert_eq!(
+        emu.profiling_snapshot(),
+        crate::hardware::profiling::ProfilingSnapshot::default()
+    );
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_counts_immediate_dma_units() {
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    emu.reset_profiling();
+    emu.cpu_write32(0x0400_00B0, 0x0200_0000);
+    emu.cpu_write32(0x0400_00B4, 0x0300_0000);
+    emu.cpu_write16(0x0400_00B8, 3);
+
+    emu.cpu_write16(0x0400_00BA, 0x8400);
+
+    let snapshot = emu.profiling_snapshot();
+    assert_eq!(snapshot.dma_starts, [1, 0, 0, 0]);
+    assert_eq!(snapshot.dma_units, [3, 0, 0, 0]);
+}
+
 #[test]
 fn external_bios_starts_at_reset_vector_and_can_enter_game_pak_rom() {
     let mut bios = vec![0; crate::hardware::constants::BIOS_SIZE];

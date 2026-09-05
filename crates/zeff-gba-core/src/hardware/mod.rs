@@ -6,5 +6,7 @@ pub mod cpu;
 pub mod dma;
 pub mod keypad;
 pub mod ppu;
+#[cfg(feature = "profiling")]
+pub mod profiling;
 pub mod timer;
 pub mod timing;

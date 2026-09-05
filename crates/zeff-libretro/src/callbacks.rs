@@ -9,9 +9,10 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 pub(crate) static CORE: Mutex<Option<super::core::CoreState>> = Mutex::new(None);
-pub(crate) static SRAM_BUF: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 pub(crate) static MAX_SERIALIZE_SIZE: Mutex<usize> = Mutex::new(0);
 pub(crate) static FRAME_COUNTER: Mutex<u64> = Mutex::new(0);
+#[cfg(test)]
+pub(crate) static ABI_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) static CB_ENVIRONMENT: Mutex<Option<retro_environment_t>> = Mutex::new(None);
 pub(crate) static CB_VIDEO_REFRESH: Mutex<Option<retro_video_refresh_t>> = Mutex::new(None);

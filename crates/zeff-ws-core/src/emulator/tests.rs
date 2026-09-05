@@ -7,6 +7,8 @@ use zeff_emu_common::debug::{
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{ClockRate, MasterTicks};
 
+mod hlt_fast_forward;
+
 fn rom_with_reset_code(code: &[u8]) -> Vec<u8> {
     let mut rom = vec![0xFF; 0x10000];
     rom[..code.len()].copy_from_slice(code);

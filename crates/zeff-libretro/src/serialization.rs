@@ -32,10 +32,16 @@ pub extern "C" fn retro_serialize(data: *mut c_void, size: usize) -> bool {
         return false;
     }
     catch_unwind(|| {
-        let core = lock(&CORE);
-        let Some(state) = core.as_ref() else {
+        let mut core = lock(&CORE);
+        let Some(state) = core.as_mut() else {
             return false;
         };
+        if let Err(error) = crate::sram::import_external(state) {
+            retro_log_error(&format!(
+                "retro_serialize: save RAM import failed: {error:#}"
+            ));
+            return false;
+        }
         let required_size = {
             let maximum = *lock(&MAX_SERIALIZE_SIZE);
             if maximum == 0 {
@@ -82,6 +88,12 @@ pub extern "C" fn retro_unserialize(data: *const c_void, size: usize) -> bool {
         let Some(state) = core.as_mut() else {
             return false;
         };
+        if let Err(error) = crate::sram::import_external(state) {
+            retro_log_error(&format!(
+                "retro_unserialize: save RAM import failed: {error:#}"
+            ));
+            return false;
+        }
         let all_bytes = unsafe { std::slice::from_raw_parts(data as *const u8, size) };
         let Ok(len_bytes) = all_bytes[..4].try_into() else {
             return false;
@@ -91,7 +103,16 @@ pub extern "C" fn retro_unserialize(data: *const c_void, size: usize) -> bool {
             return false;
         }
         let payload = &all_bytes[SERIALIZE_LENGTH_PREFIX..SERIALIZE_LENGTH_PREFIX + payload_len];
-        state.load_state(payload).is_ok()
+        if state.load_state(payload).is_err() {
+            return false;
+        }
+        if let Err(error) = crate::sram::publish(state) {
+            retro_log_error(&format!(
+                "retro_unserialize: save RAM publish failed: {error:#}"
+            ));
+            return false;
+        }
+        true
     })
     .unwrap_or(false)
 }

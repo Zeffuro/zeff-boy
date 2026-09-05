@@ -28,40 +28,43 @@ impl CoreState {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn load_battery_sram(&mut self, data: &[u8]) {
+    pub fn load_battery_sram(&mut self, data: &[u8]) -> anyhow::Result<()> {
         match &mut self.core {
-            ActiveCore::Gb(emu) => {
-                let _ = emu.load_battery_sram(data);
-            }
-            ActiveCore::Gba(emu) => {
-                let _ = emu.load_battery_sram(data);
-            }
-            ActiveCore::Nes(emu) => {
-                let _ = emu.load_battery_sram(data);
-            }
-            ActiveCore::Pce(_) => {}
-            ActiveCore::Sega8(emu) => {
-                let _ = emu.load_battery_sram(data);
-            }
-            ActiveCore::Ws(emu) => {
-                let _ = emu.load_battery_sram(data);
-            }
+            ActiveCore::Gb(emu) => emu.load_battery_sram(data),
+            ActiveCore::Gba(emu) => emu.load_battery_sram(data),
+            ActiveCore::Nes(emu) => emu.load_battery_sram(data),
+            ActiveCore::Pce(_) => anyhow::bail!("PC Engine HuCards do not expose save RAM"),
+            ActiveCore::Sega8(emu) => emu.load_battery_sram(data),
+            ActiveCore::Ws(emu) => emu.load_battery_sram(data),
         }
     }
 
-    pub fn sync_sram_to_buf(&self, buf: &mut Vec<u8>) {
-        if let Some(sram) = self.battery_sram() {
-            buf.resize(sram.len(), 0);
-            buf.copy_from_slice(&sram);
+    pub fn sync_sram_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<()> {
+        if let ActiveCore::Gba(emu) = &self.core {
+            let expected_len = emu.save_ram_kind().size();
+            anyhow::ensure!(buf.len() == expected_len, "save RAM size changed");
+            let copied = emu.copy_battery_sram_into(buf);
+            anyhow::ensure!(
+                copied == (expected_len != 0),
+                "save RAM availability changed"
+            );
+            return Ok(());
         }
+        if let Some(sram) = self.battery_sram() {
+            anyhow::ensure!(buf.len() == sram.len(), "save RAM size changed");
+            buf.copy_from_slice(&sram);
+        } else {
+            anyhow::ensure!(buf.is_empty(), "save RAM is no longer available");
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]
-    pub fn load_sram_from_buf(&mut self, buf: &[u8]) {
+    pub fn load_sram_from_buf(&mut self, buf: &[u8]) -> anyhow::Result<()> {
         if !buf.is_empty() {
-            self.load_battery_sram(buf);
+            self.load_battery_sram(buf)?;
         }
+        Ok(())
     }
 
     pub fn sram_size(&self) -> usize {

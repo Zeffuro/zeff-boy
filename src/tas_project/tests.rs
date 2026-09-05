@@ -4,6 +4,7 @@ use zeff_emu_common::replay::{ReplayEvent, ReplayStartMetadata};
 
 use super::*;
 
+mod branch_classification;
 mod branch_deletion;
 mod branch_diff;
 mod cache_persistence;

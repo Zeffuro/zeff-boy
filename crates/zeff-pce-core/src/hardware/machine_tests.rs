@@ -39,6 +39,34 @@ fn set_vector(rom: &mut [u8], offset: usize, address: u16) {
     rom[offset + 1] = high;
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_is_resettable_and_not_serialized() {
+    let rom = rom_with_program(&[0xEA]);
+    let mut source = PceMachine::new(rom.clone()).unwrap();
+    source.reset_profiling();
+    source.step_boundary().unwrap();
+    assert!(source.profiling_snapshot().cpu_boundaries != 0);
+
+    let state = crate::hardware::save_state::encode_state(&source).unwrap();
+    let mut restored = PceMachine::new(rom).unwrap();
+    crate::hardware::save_state::decode_state(&mut restored, &state).unwrap();
+    assert_eq!(
+        restored.profiling_snapshot(),
+        crate::hardware::PceProfilingSnapshot::default()
+    );
+    assert_eq!(
+        crate::hardware::save_state::encode_state(&restored).unwrap(),
+        state
+    );
+
+    source.reset_profiling();
+    assert_eq!(
+        source.profiling_snapshot(),
+        crate::hardware::PceProfilingSnapshot::default()
+    );
+}
+
 fn sha256(hex: &str) -> [u8; 32] {
     let mut hash = [0; 32];
     for (byte, digits) in hash.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {

@@ -4,6 +4,7 @@ use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 use super::*;
 use crate::hardware::cartridge::RomHeader;
 use crate::hardware::constants::{CYCLES_PER_FRAME, SCREEN_WIDTH};
+use crate::hardware::timer::TimerTimingState;
 
 fn cartridge() -> Cartridge {
     let mut rom = vec![0; 0xC0];
@@ -49,6 +50,136 @@ fn poke_vram8(bus: &mut Bus, addr: u32, value: u8) {
 fn framebuffer_pixel(bus: &Bus, x: usize, y: usize) -> &[u8] {
     let offset = (y * SCREEN_WIDTH + x) * 4;
     &bus.ppu.framebuffer()[offset..offset + 4]
+}
+
+#[test]
+fn deadline_cache_handles_before_equal_and_across_ppu_boundary() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    let first = bus.fresh_event_deadline();
+    assert_eq!(first.sources, DEADLINE_PPU);
+
+    bus.step_cycles(first.remaining - 1);
+    assert_eq!(
+        bus.event_deadline,
+        BusDeadline {
+            remaining: 1,
+            sources: DEADLINE_PPU,
+        }
+    );
+    assert!(!bus.ppu.in_hblank());
+
+    bus.step_cycles(1);
+    assert!(bus.event_deadline_is_invalid_for_test());
+    assert!(bus.ppu.in_hblank());
+
+    let next = bus.fresh_event_deadline();
+    bus.step_cycles(next.remaining + 1);
+    assert_eq!(bus.event_deadline, bus.fresh_event_deadline());
+}
+
+#[test]
+fn deadline_cache_preserves_tied_ppu_and_timer_events() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    let ppu_cycles = bus.ppu.cycles_until_next_status_event();
+    let reload = (0x1_0000 - (ppu_cycles - 1)) as u16;
+    bus.write16(0x0400_0100, reload);
+    bus.write16(0x0400_0102, 0x00C0);
+    let deadline = bus.fresh_event_deadline();
+
+    assert_eq!(deadline.remaining, ppu_cycles);
+    assert_eq!(deadline.sources, DEADLINE_PPU | (1 << DEADLINE_TIMER_SHIFT));
+
+    bus.step_cycles(deadline.remaining);
+
+    assert!(bus.ppu.in_hblank());
+    assert_eq!(bus.timers.read16(0, false), reload);
+    assert_ne!(bus.read16(0x0400_0202) & (1 << 3), 0);
+    assert!(bus.event_deadline_is_invalid_for_test());
+}
+
+#[test]
+fn deadline_cache_invalidates_for_timer_irq_and_reset_mutations() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    bus.step_cycles(1);
+    assert!(!bus.event_deadline_is_invalid_for_test());
+
+    bus.write16(0x0400_0100, 0xFFFF);
+    assert!(bus.event_deadline_is_invalid_for_test());
+    bus.step_cycles(1);
+    bus.write16(0x0400_0200, 1);
+    bus.request_interrupt(1);
+    assert!(bus.event_deadline_is_invalid_for_test());
+    assert_eq!(bus.fresh_event_deadline().sources, DEADLINE_IRQ);
+
+    bus.step_cycles(4);
+    assert_eq!(bus.take_irq_sample_delay_cycles(), 3);
+    assert!(bus.event_deadline_is_invalid_for_test());
+    bus.step_cycles(1);
+    bus.reset_hardware();
+    assert!(bus.event_deadline_is_invalid_for_test());
+}
+
+#[test]
+fn lazy_timer_materialization_matches_eager_service_across_partitions() {
+    let mut lazy = Bus::new(cartridge(), 48_000);
+    lazy.write16(0x0400_0200, 0x0078);
+    lazy.write16(0x0400_0208, 1);
+    lazy.write16(0x0400_0082, (1 << 8) | (1 << 12) | (1 << 14));
+    for sample in 0..16u16 {
+        lazy.write16(
+            0x0400_00A0,
+            sample.wrapping_mul(0x0202).wrapping_add(0x0201),
+        );
+        lazy.write16(
+            0x0400_00A4,
+            sample.wrapping_mul(0x0202).wrapping_add(0x4241),
+        );
+    }
+    lazy.write16(0x0400_0100, 0xFFF0);
+    lazy.write16(0x0400_0102, 0x00C0);
+    lazy.write16(0x0400_0104, 0xFFF0);
+    lazy.write16(0x0400_0106, 0x00C1);
+    lazy.write16(0x0400_0108, 0xFFFE);
+    lazy.write16(0x0400_010A, 0x00C4);
+    lazy.write16(0x0400_010C, 0xFFFB);
+    lazy.write16(0x0400_010E, 0x00C2);
+    assert!(lazy.timers.set_timing_state(TimerTimingState {
+        cycle_accum: [31, 127, 0x03FF, 341],
+        start_delay_cycles: [1, 0, 1, 0],
+        clock_phase: 0x03FF,
+    }));
+
+    let mut eager = lazy.clone();
+    eager.set_eager_timer_materialization_for_test(true);
+
+    let mut saw_deferred_timer_cycles = false;
+    for index in 0..160u32 {
+        let cycles = index.wrapping_mul(37) % 97 + 1;
+        lazy.step_cycles(cycles);
+        eager.step_cycles(cycles);
+        saw_deferred_timer_cycles |= lazy.timer_materialization_is_pending_for_test();
+
+        for timer in 0..4 {
+            assert_eq!(
+                lazy.read16(0x0400_0100 + timer * 4),
+                eager.read16(0x0400_0100 + timer * 4)
+            );
+            assert_eq!(
+                lazy.read16(0x0400_0102 + timer * 4),
+                eager.read16(0x0400_0102 + timer * 4)
+            );
+        }
+        assert_eq!(lazy.timer_timing_state(), eager.timer_timing_state());
+        assert_eq!(lazy.fresh_event_deadline(), eager.fresh_event_deadline());
+        assert_eq!(lazy.read16(0x0400_0202), eager.read16(0x0400_0202));
+        assert_eq!(lazy.ppu.state(), eager.ppu.state());
+        assert_eq!(lazy.apu.save_state(), eager.apu.save_state());
+    }
+
+    assert!(saw_deferred_timer_cycles);
+    assert!(!eager.timer_materialization_is_pending_for_test());
+    assert!(lazy.apu.fifo_len(0) < 32);
+    assert!(lazy.apu.fifo_len(1) < 32);
 }
 
 fn fill_obj_tiles(bus: &mut Bus, tile_count: u32, value: u8) {

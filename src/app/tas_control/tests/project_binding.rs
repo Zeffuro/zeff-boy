@@ -24,6 +24,156 @@ fn acquired_with(
     )
 }
 
+fn editor_session(name: &str) -> TasEditorSession {
+    let directory = crate::test_support::test_directory(name).unwrap();
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, crate::test_support::build_nes_test_rom()).unwrap();
+    let project = DirectNesTasExecutionLoader::new(source_path, Vec::new())
+        .create_project()
+        .unwrap();
+    let manual_path = directory.path().join("movie.ztas");
+    let autosaves =
+        TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default()).unwrap();
+    let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache")).unwrap();
+    TasEditorSession::new(project, manual_path, autosaves, seek_cache).unwrap()
+}
+
+#[test]
+fn project_revision_guard_ignores_cursor_but_detects_branch_and_edit_changes() {
+    let mut session = editor_session("tas-control-project-revision-guard");
+    session
+        .edit_transaction(|edit| edit.insert_frames("main", 0, 3))
+        .unwrap();
+    let snapshot = TasEditorControlSnapshot::capture(&session).unwrap();
+    session.set_cursor(3).unwrap();
+    assert!(snapshot.matches_project_revision(&session));
+
+    session
+        .edit_transaction(|edit| edit.fork_branch("main", 2, "alternate", "Alternate"))
+        .unwrap();
+    let branch_snapshot = TasEditorControlSnapshot::capture(&session).unwrap();
+    session.select_branch("alternate").unwrap();
+    assert!(!branch_snapshot.matches_project_revision(&session));
+
+    let edited_snapshot = TasEditorControlSnapshot::capture(&session).unwrap();
+    session
+        .edit_transaction(|edit| edit.insert_frames("alternate", 0, 1))
+        .unwrap();
+    assert!(!edited_snapshot.matches_project_revision(&session));
+}
+
+#[test]
+fn reconciliation_guard_skips_detached_and_preserves_pending_closure_handling() {
+    let mut coordinator = TasControlCoordinator::new();
+    assert!(!coordinator.requires_project_reconciliation());
+
+    let request_id = acquire(&mut coordinator);
+    assert!(coordinator.requires_project_reconciliation());
+    let current = snapshot(0, "main", 0);
+    assert!(coordinator.reconcile_project(Some(&current)).is_none());
+    assert!(matches!(
+        coordinator.state,
+        TasControlState::AcquirePending {
+            request_id: actual_request_id,
+            cancelled: false,
+            ..
+        } if actual_request_id == request_id
+    ));
+
+    assert!(coordinator.reconcile_project(None).is_none());
+    assert!(matches!(
+        coordinator.state,
+        TasControlState::AcquirePending {
+            request_id: actual_request_id,
+            cancelled: true,
+            ..
+        } if actual_request_id == request_id
+    ));
+
+    let mut linked = TasControlCoordinator::new();
+    let request_id = acquire(&mut linked);
+    consume(&mut linked, acquired(request_id, 61));
+    let rollback = linked.reconcile_project(None).unwrap();
+    assert!(matches!(
+        rollback.into_parts_for_worker(WORKER_GENERATION),
+        Some((
+            WORKER_GENERATION,
+            EmuCommand::RollbackTasControl { lease_id: 61 }
+        ))
+    ));
+    assert!(matches!(
+        linked.state,
+        TasControlState::RollbackPending { .. }
+    ));
+}
+
+#[test]
+fn reconciliation_guard_skips_every_state_without_a_project_binding() {
+    let states = [
+        TasControlState::Detached,
+        TasControlState::FrameRecordCommitPending {
+            worker_generation: WORKER_GENERATION,
+            lease_id: 61,
+            run_id: 1,
+            advance_id: 1,
+            next_advance_id: 2,
+            candidate_segment_id: 1,
+            candidate_segment_frame_count: 1,
+            candidate_executed_project_frames: 1,
+            proof: TasControlHeldProof {
+                frame_count: 3,
+                current_state_sha256: crate::tas_project::TasDigest([0x51; 32]),
+            },
+            candidate_frame_count: 4,
+            candidate_state_sha256: crate::tas_project::TasDigest([0x52; 32]),
+        },
+        TasControlState::RollbackPending {
+            worker_generation: WORKER_GENERATION,
+            lease_id: 61,
+            checkpoint_sha256: crate::tas_project::TasDigest([0x53; 32]),
+            checkpoint_frame_count: 3,
+        },
+        TasControlState::CommitPending {
+            worker_generation: WORKER_GENERATION,
+            lease_id: 61,
+        },
+        TasControlState::Terminal {
+            worker_generation: WORKER_GENERATION,
+            reason: super::super::TasControlTerminalReason::RuntimeFault,
+        },
+    ];
+    for state in states {
+        let mut coordinator = TasControlCoordinator::new();
+        coordinator.state = state;
+        assert!(!coordinator.requires_project_reconciliation());
+    }
+}
+
+#[test]
+fn project_revision_guard_rejects_divergent_reused_edit_generation() {
+    let mut session = editor_session("tas-control-project-revision-generation");
+    session
+        .edit_transaction(|edit| {
+            edit.set_project_comment("first future");
+            Ok(())
+        })
+        .unwrap();
+    let snapshot = TasEditorControlSnapshot::capture(&session).unwrap();
+    assert!(session.undo().unwrap());
+    session
+        .edit_transaction(|edit| {
+            edit.set_project_comment("different future");
+            Ok(())
+        })
+        .unwrap();
+
+    assert_eq!(
+        session.project().edit_generation(),
+        snapshot.edit_generation
+    );
+    assert!(!snapshot.matches_project_revision(&session));
+}
+
 #[test]
 fn every_snapshot_field_participates_in_pending_acquire_correlation() {
     let baseline = snapshot(0, "main", 3);
@@ -379,4 +529,61 @@ fn linked_binding_materializes_both_semantic_coleco_controllers() {
 
     assert_eq!(binding.snapshot.profile, profile);
     assert_eq!(binding.input_prefix[0].coleco, controllers);
+}
+
+#[test]
+fn linked_proof_batch_preserves_predecessor_order_and_ignores_invalid_candidates() {
+    let directory = crate::test_support::test_directory("tas-control-linked-proof-batch").unwrap();
+    let source_path = directory.path().join("game.nes");
+    std::fs::write(&source_path, crate::test_support::build_nes_test_rom()).unwrap();
+    let mut project = DirectNesTasExecutionLoader::new(source_path, Vec::new())
+        .create_project()
+        .unwrap();
+    project
+        .edit_transaction(|edit| edit.insert_frames("main", 0, 1_800))
+        .unwrap();
+    let manual_path = directory.path().join("movie.ztas");
+    let autosaves =
+        TasAutosaveStore::beside_manual_save(&manual_path, TasAutosaveConfig::default()).unwrap();
+    let seek_cache = TasSeekStateCache::open(directory.path().join("seek-cache")).unwrap();
+    let session = TasEditorSession::new(project, manual_path, autosaves, seek_cache).unwrap();
+    let target_cursor = 1_800;
+    let binding = TasEditorControlSnapshot::prepare_linked_seek_at(
+        &session,
+        target_cursor,
+        TasExecutionProfile::DirectNesCartridge,
+        session.project().sync_identity_sha256().unwrap(),
+        &[0, target_cursor, target_cursor + 1, 600, 1_200, 1_200],
+    )
+    .unwrap();
+
+    let predecessor = binding.predecessor_window.as_ref().unwrap();
+    assert_eq!(predecessor.input_start_cursor, 1_200);
+    assert_eq!(predecessor.source_proofs[0], binding.snapshot.cache_proof());
+    assert_eq!(predecessor.source_proofs[1].target_cursor, 1_200);
+    assert_eq!(
+        predecessor.source_proofs[1].branch_prefix_sha256,
+        session
+            .project()
+            .branch_prefix_sha256("main", 1_200)
+            .unwrap()
+    );
+    let expected_intermediates = crate::emu_thread::tas_intermediate_cache_cursors(target_cursor);
+    assert_eq!(
+        binding
+            .intermediate_cache_proofs
+            .iter()
+            .map(|proof| proof.target_cursor)
+            .collect::<Vec<_>>(),
+        expected_intermediates
+    );
+    for proof in &binding.intermediate_cache_proofs {
+        assert_eq!(
+            proof.branch_prefix_sha256,
+            session
+                .project()
+                .branch_prefix_sha256("main", proof.target_cursor)
+                .unwrap()
+        );
+    }
 }

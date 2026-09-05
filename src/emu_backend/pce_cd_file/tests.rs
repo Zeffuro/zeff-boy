@@ -93,6 +93,81 @@ fn disc_hash_streams_file_sources_without_sector_reads() {
 }
 
 #[test]
+fn content_identity_retains_file_hashes_and_progress() {
+    let bytes = (0..5 * 2_048).map(|index| index as u8).collect::<Vec<_>>();
+    let path = temp_file("identity-hash", &bytes);
+    let cue = b"FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n";
+    let sheet = parse_cue_bytes(cue).unwrap();
+    let metadata = std::fs::metadata(&path).unwrap();
+    let expected = <[u8; 32]>::from(Sha256::digest(&bytes));
+    let files = [FileBackedCueFile {
+        path,
+        bytes: bytes.len(),
+        identity: FileIdentity::from_metadata(&metadata),
+        expected_sha256: Some(expected),
+        reject_reparse: false,
+    }];
+    let mut completed = 0;
+
+    let (_, _, hashes) = content_identity(cue, &sheet, &files, |count| {
+        completed += count;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(hashes, [expected]);
+    assert_eq!(completed, bytes.len() as u64);
+}
+
+#[test]
+fn full_file_precomputed_hash_is_verified() {
+    let bytes = vec![0x5A; 2 * 2_048];
+    let path = temp_file("prehashed-mismatch", &bytes);
+    let metadata = std::fs::metadata(&path).unwrap();
+    let source: Arc<dyn CdTrackSource> = FileSliceSource::open_prehashed(
+        &path,
+        FileIdentity::from_metadata(&metadata),
+        bytes.len(),
+        2_048,
+        false,
+        [0; 32],
+    )
+    .unwrap();
+    let track =
+        CdTrack::from_index1_source(1, 4, None, 0, CdTrackMode::Mode1_2048, source).unwrap();
+
+    assert!(matches!(
+        CdDisc::new(vec![track]).err(),
+        Some(zeff_pce_core::hardware::CdDiscError::PayloadHashMismatch(1))
+    ));
+}
+
+#[test]
+fn split_file_tracks_compute_slice_hashes() {
+    let root = std::env::temp_dir().join(format!("zeff-pce-cd-file-{}-split", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let cue = b"FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nTRACK 02 MODE1/2048\nINDEX 01 00:00:02\n";
+    let cue_path = root.join("disc.cue");
+    let bytes = (0..4 * 2_048).map(|index| index as u8).collect::<Vec<_>>();
+    std::fs::write(&cue_path, cue).unwrap();
+    std::fs::write(root.join("disc.bin"), &bytes).unwrap();
+    let sheet = parse_cue_bytes(cue).unwrap();
+    let files = open_files(&cue_path, &sheet).unwrap();
+
+    let disc = super::build_disc(&sheet, &files, &[[0; 32]]).unwrap();
+
+    assert_eq!(
+        disc.track(1).unwrap().payload_hash(),
+        <[u8; 32]>::from(Sha256::digest(&bytes[..2 * 2_048]))
+    );
+    assert_eq!(
+        disc.track(2).unwrap().payload_hash(),
+        <[u8; 32]>::from(Sha256::digest(&bytes[2 * 2_048..]))
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn direct_cue_file_sources_preserve_owned_identity_and_bytes() {
     let root =
         std::env::temp_dir().join(format!("zeff-pce-cd-file-{}-identity", std::process::id()));
