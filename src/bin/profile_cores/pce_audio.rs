@@ -95,6 +95,62 @@ pub(super) fn profile_frames(
         snapshot.device_advance_calls,
         snapshot.device_advance_chunks,
     );
+    let bus_accesses = snapshot.bus_hucard_accesses
+        + snapshot.bus_work_ram_accesses
+        + snapshot.bus_vdc_accesses
+        + snapshot.bus_vpc_accesses
+        + snapshot.bus_vdc2_accesses
+        + snapshot.bus_vce_accesses
+        + snapshot.bus_psg_accesses
+        + snapshot.bus_timer_accesses
+        + snapshot.bus_controller_accesses
+        + snapshot.bus_irq_accesses
+        + snapshot.bus_unmapped_accesses;
+    let timing_mmio_accesses = snapshot.bus_vdc_accesses
+        + snapshot.bus_vpc_accesses
+        + snapshot.bus_vdc2_accesses
+        + snapshot.bus_vce_accesses
+        + snapshot.bus_psg_accesses
+        + snapshot.bus_timer_accesses
+        + snapshot.bus_controller_accesses
+        + snapshot.bus_irq_accesses
+        + snapshot.bus_cdrom2_accesses;
+    println!(
+        "  PCE access: {} total  HuCard {} plain (R {} D {})  system {}  WRAM {} (R {} D {})  timing MMIO {}  CD {}",
+        bus_accesses,
+        snapshot.bus_plain_hucard_accesses,
+        snapshot.bus_hucard_reads,
+        snapshot.bus_hucard_dummy_reads,
+        snapshot.bus_system_card_accesses,
+        snapshot.bus_work_ram_accesses,
+        snapshot.bus_work_ram_reads,
+        snapshot.bus_work_ram_dummy_reads,
+        timing_mmio_accesses,
+        snapshot.bus_cdrom2_accesses,
+    );
+    println!(
+        "  PCE plain lane: {} attempts  {} direct  {} fallback",
+        snapshot.plain_memory_lane_attempts,
+        snapshot.plain_memory_lane_direct_accesses,
+        snapshot.plain_memory_lane_fallback_accesses,
+    );
+    let average_ticks = snapshot
+        .device_materialized_master_ticks
+        .checked_div(snapshot.device_materializations)
+        .unwrap_or(0);
+    println!(
+        "  PCE materialization: {} attempts {} zero  {} calls {} ticks ({} avg)  finish {} MMIO {} line {} DMA {} direct VDC {}",
+        snapshot.device_materialization_attempts,
+        snapshot.device_materializations_zero_pending,
+        snapshot.device_materializations,
+        snapshot.device_materialized_master_ticks,
+        average_ticks,
+        snapshot.device_materializations_action_finish,
+        snapshot.device_materializations_timing_mmio,
+        snapshot.device_materializations_line_horizon,
+        snapshot.device_materializations_dma_horizon,
+        snapshot.device_materializations_direct_vdc,
+    );
     println!(
         "  PCE video: VDC {} calls {} pixels {} phases DMA {}/{} active  raster {} lines {} pixels  PSG {} clocks {} mixes source checks/changes {}/{}",
         snapshot.vdc_advance_calls,

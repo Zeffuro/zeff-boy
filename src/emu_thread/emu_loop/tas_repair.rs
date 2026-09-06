@@ -296,6 +296,7 @@ impl EmuLoop {
             frame_count,
             framebuffer_sha256: TasDigest::from_bytes(framebuffer.as_slice()),
             framebuffer_len: framebuffer.len(),
+            framebuffer_dimensions: framebuffer.dimensions(),
             loaded_profile,
         })
     }
@@ -809,6 +810,7 @@ fn proof_mismatch_reason(
         TasRepairActionRejectedReason::FrameCountMismatch
     } else if expected.framebuffer_sha256 != actual.framebuffer_sha256
         || expected.framebuffer_len != actual.framebuffer_len
+        || expected.framebuffer_dimensions != actual.framebuffer_dimensions
     {
         TasRepairActionRejectedReason::FramebufferMismatch
     } else {

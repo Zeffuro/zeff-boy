@@ -24,6 +24,8 @@ pub(crate) struct CoreState {
     pub system_ram_buf: Vec<u8>,
     pub video_ram_buf: Vec<u8>,
     pub port_device: [u32; 2],
+    pub pce_native_output_dimensions: Option<(usize, usize)>,
+    pub pce_native_output_rejected: bool,
 }
 
 mod cheats;

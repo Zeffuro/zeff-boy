@@ -179,10 +179,7 @@ impl CommonCommandContext<'_> {
                         error: error.to_string(),
                     },
                 };
-                super::types::publish_framebuffer(
-                    self.shared_framebuffer,
-                    self.backend.framebuffer(),
-                );
+                super::types::publish_backend_framebuffer(self.shared_framebuffer, self.backend);
                 if matches!(&response, EmuResponse::GuestCallCompleted { .. }) {
                     effects.potentially_dirty = true;
                     self.mark_audio_discontinuity(
@@ -202,10 +199,7 @@ impl CommonCommandContext<'_> {
                         "guest calls are not supported by this core".to_string(),
                     )
                 };
-                super::types::publish_framebuffer(
-                    self.shared_framebuffer,
-                    self.backend.framebuffer(),
-                );
+                super::types::publish_backend_framebuffer(self.shared_framebuffer, self.backend);
                 if matches!(&response, EmuResponse::GuestCallUndone) {
                     self.backend.discard_game_boy_printer_jobs();
                     effects.potentially_dirty = true;

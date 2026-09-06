@@ -4,8 +4,28 @@ use super::frame_seq::{
 use super::*;
 
 impl Psg {
+    pub(in crate::hardware::apu) fn merge_horizon_t_cycles(&self) -> u64 {
+        if !self.apu_enabled || self.debug_capture_enabled || self.sample_generation_enabled {
+            return 0;
+        }
+        let mut horizon = if self.powered() {
+            FRAME_SEQUENCER_PERIOD_CYCLES.saturating_sub(self.frame_seq_cycle_accum)
+        } else {
+            FRAME_SEQUENCER_PERIOD_CYCLES
+        };
+        for delay in [
+            self.ch1_sweep_pending_disable_delay,
+            self.ch1_sweep_trigger_visibility_delay,
+        ] {
+            if delay != 0 {
+                horizon = horizon.min(delay);
+            }
+        }
+        horizon
+    }
+
     #[inline]
-    pub(super) fn step(&mut self, t_cycles: u64) {
+    pub(in crate::hardware::apu) fn step(&mut self, t_cycles: u64) {
         if !self.apu_enabled {
             return;
         }

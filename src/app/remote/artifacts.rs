@@ -12,7 +12,7 @@ impl App {
             .latest_display_frame_snapshot()
             .ok_or_else(|| anyhow::anyhow!("no framebuffer is available yet"))?;
         let (width, height) = self
-            .display_size_for_frame_len(frame.len())
+            .display_size_for_frame(&frame)
             .ok_or_else(|| anyhow::anyhow!("unexpected framebuffer size: {} bytes", frame.len()))?;
 
         let path = resolve_screenshot_path(requested_path)?;

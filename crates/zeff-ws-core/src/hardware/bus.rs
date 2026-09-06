@@ -10,6 +10,9 @@ mod dma;
 use dma::SoundDma;
 mod eeprom;
 use eeprom::{EepromCommand, decode_eeprom_command};
+mod frame_service;
+#[cfg(test)]
+mod frame_service_tests;
 mod interrupts;
 mod io;
 mod ports;
@@ -34,6 +37,13 @@ pub type DebugTraceEvent = BusAccessEvent;
 pub struct ProfilingSnapshot {
     pub bus_step_calls: u64,
     pub master_cycles: u64,
+    pub frame_service_frames: u64,
+    pub frame_service_deferred_calls: u64,
+    pub frame_service_deferred_cycles: u64,
+    pub frame_service_materializations: u64,
+    pub frame_service_horizon_crossings: u64,
+    pub frame_service_io_fences: u64,
+    pub frame_service_max_pending_cycles: u32,
     pub uart_step_calls: u64,
     pub apu_step_calls: u64,
     pub sound_dma_step_calls: u64,
@@ -72,6 +82,9 @@ pub struct Bus {
     cartridge_eeprom_write_enabled: bool,
     pending_linear_bank: Option<DeferredLinearBank>,
     pub cycles: u64,
+    frame_service_deferred: bool,
+    frame_service_pending_cycles: u32,
+    frame_service_horizon: u32,
     pub(crate) debug_trace_mode: DebugTraceMode,
     pub(crate) debug_trace_events: Vec<BusAccessEvent>,
     #[cfg(feature = "profiling")]
@@ -105,6 +118,9 @@ impl Bus {
             cartridge_eeprom_write_enabled: false,
             pending_linear_bank: None,
             cycles: 0,
+            frame_service_deferred: false,
+            frame_service_pending_cycles: 0,
+            frame_service_horizon: 0,
             debug_trace_mode: DebugTraceMode::None,
             debug_trace_events: Vec::new(),
             #[cfg(feature = "profiling")]
@@ -125,6 +141,9 @@ impl Bus {
         self.cartridge_eeprom_write_enabled = false;
         self.pending_linear_bank = None;
         self.cycles = 0;
+        self.frame_service_deferred = false;
+        self.frame_service_pending_cycles = 0;
+        self.frame_service_horizon = 0;
         self.cartridge.reset_banks();
         self.ppu.reset();
         self.apu.reset();
@@ -200,13 +219,30 @@ impl Bus {
             self.profiling.bus_step_calls = self.profiling.bus_step_calls.wrapping_add(1);
             self.profiling.master_cycles =
                 self.profiling.master_cycles.wrapping_add(u64::from(cycles));
+        }
+        if self.frame_service_deferred && cycles != 0 {
+            if self.defer_frame_service(cycles) {
+                self.cycles = self.cycles.wrapping_add(u64::from(cycles));
+                return;
+            }
+            self.materialize_frame_service();
+        } else if self.frame_service_pending_cycles != 0 {
+            self.materialize_frame_service();
+        }
+
+        self.cycles = self.cycles.wrapping_add(u64::from(cycles));
+        self.service_cycles(cycles);
+    }
+
+    fn service_cycles(&mut self, cycles: u32) {
+        #[cfg(feature = "profiling")]
+        {
             self.profiling.uart_step_calls = self.profiling.uart_step_calls.wrapping_add(1);
             self.profiling.apu_step_calls = self.profiling.apu_step_calls.wrapping_add(1);
             self.profiling.sound_dma_step_calls =
                 self.profiling.sound_dma_step_calls.wrapping_add(1);
             self.profiling.ppu_step_calls = self.profiling.ppu_step_calls.wrapping_add(1);
         }
-        self.cycles = self.cycles.wrapping_add(u64::from(cycles));
         if self.cartridge.footer().rtc_present {
             self.rtc.step_cycles(cycles);
         }
@@ -271,6 +307,7 @@ impl Bus {
     }
 
     pub fn render_frame(&mut self) {
+        self.materialize_frame_service();
         self.ppu.render_frame(&self.ram, &self.io);
         self.ppu.frame_ready = true;
     }
@@ -399,6 +436,8 @@ impl Bus {
     }
 
     pub fn sync_wonder_swan_link_peer(&mut self, peer: &mut Bus) {
+        self.materialize_frame_service();
+        peer.materialize_frame_service();
         let self_control = self.io[usize::from(SERIAL_CONTROL_PORT)];
         let peer_control = peer.io[usize::from(SERIAL_CONTROL_PORT)];
         while let Some(event) = self.uart.take_completed_tx() {
@@ -412,10 +451,12 @@ impl Bus {
     }
 
     pub fn take_wonder_swan_link_tx_event(&mut self) -> Option<WonderSwanTxEvent> {
+        self.materialize_frame_service();
         self.uart.take_completed_tx()
     }
 
     pub fn receive_wonder_swan_link_byte(&mut self, value: u8) {
+        self.materialize_frame_service();
         let control = self.io[usize::from(SERIAL_CONTROL_PORT)];
         self.uart.receive_byte(value, control);
         self.refresh_level_interrupts();

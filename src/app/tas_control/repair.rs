@@ -625,6 +625,7 @@ impl App {
                 let latest_frame = restored.worker.shared_framebuffer().load_full();
                 let framebuffer_matches = latest_frame.as_ref().is_some_and(|frame| {
                     frame.len() == restored.original_proof.framebuffer_len
+                        && frame.dimensions() == restored.original_proof.framebuffer_dimensions
                         && TasDigest::from_bytes(frame.as_slice())
                             == restored.original_proof.framebuffer_sha256
                 });

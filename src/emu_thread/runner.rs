@@ -6,7 +6,7 @@ use crate::link::transport::TcpLinkTransport;
 use crate::ui;
 
 use super::AudioRecordingCapture;
-use super::types::publish_framebuffer;
+use super::types::publish_backend_framebuffer;
 use super::{EmuThread, FrameResult, SharedFramebuffer, WorkerRuntimeFault};
 
 impl EmuThread {
@@ -113,7 +113,7 @@ impl EmuThread {
         runtime_fault.latch(backend.take_runtime_fault());
         if !runtime_fault.can_step() {
             if let Some(fault) = runtime_fault.take_pending_delivery() {
-                publish_framebuffer(shared_fb, backend.framebuffer());
+                publish_backend_framebuffer(shared_fb, backend);
                 let result = Self::build_uncapped_frame_result(
                     backend,
                     rewind_buffer,
@@ -155,7 +155,7 @@ impl EmuThread {
             )
         };
 
-        publish_framebuffer(shared_fb, backend.framebuffer());
+        publish_backend_framebuffer(shared_fb, backend);
 
         let mut result = Self::build_uncapped_frame_result(
             backend,

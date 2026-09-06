@@ -18,8 +18,8 @@ use super::cartridge::{
 use super::cd_media::CdDisc;
 use super::controller::{ControllerPort, MAX_CONTROLLER_STATE_SECTION_BYTES};
 use super::cpu::{
-    CpuBus, CpuStep, CpuTrap, HuC6280, InterruptStep, LineLevel, Registers, SpeedMode, StatusFlags,
-    VdcPort,
+    CpuBus, CpuStep, CpuTrap, HuC6280, InterruptStep, LineLevel, PlainMemoryCpuBus, Registers,
+    SpeedMode, StatusFlags, VdcPort,
 };
 use super::pce_devices::PceDevices;
 #[cfg(feature = "profiling")]
@@ -419,6 +419,10 @@ pub struct PceMachine {
     trace_scratch: TimedInstructionTrace,
     trace_frame: u64,
     debug: AddressDebugController,
+    #[cfg(test)]
+    plain_memory_lane_enabled: bool,
+    #[cfg(test)]
+    coalesce_device_advancement: bool,
     #[cfg(feature = "profiling")]
     profiling: PceProfiling,
 }

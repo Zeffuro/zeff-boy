@@ -536,12 +536,14 @@ impl App {
         let tcp_link_active = self.tcp_link_active;
         #[cfg(target_arch = "wasm32")]
         let tcp_link_active = false;
-        let framebuffer_bytes = self
+        let display_frame = self
             .last_displayed_frame
             .as_ref()
-            .or(self.latest_frame.as_ref())
-            .map_or(0, |frame| frame.len());
-        let (screen_width, screen_height) = self.active_display_size();
+            .or(self.latest_frame.as_ref());
+        let framebuffer_bytes = display_frame.map_or(0, |frame| frame.len());
+        let (screen_width, screen_height) = display_frame
+            .and_then(|frame| self.display_size_for_frame(frame))
+            .unwrap_or_else(|| self.active_display_size());
         json!({
             "enabled": self.live_control.is_enabled(),
             "addr": self.live_control.addr().map(|addr| addr.to_string()),

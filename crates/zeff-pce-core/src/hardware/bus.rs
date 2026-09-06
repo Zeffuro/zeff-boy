@@ -15,7 +15,14 @@ pub const WORK_RAM_LEN: usize = 0x2000;
 pub const SUPERGRAFX_WORK_RAM_LEN: usize = 0x8000;
 pub const OPEN_BUS_VALUE: u8 = 0xFF;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlainMemoryTarget {
+    HuCard(usize),
+    WorkRam(usize),
+}
+
 const HUCARD_END: u32 = 0x0F_FFFF;
+const PLAIN_MEMORY_PAGE_LEN: u32 = 0x2000;
 const VDC_START: u32 = 0x1F_E000;
 const VDC_END: u32 = 0x1F_E3FF;
 const VCE_START: u32 = 0x1F_E400;
@@ -301,6 +308,7 @@ impl Error for BaseBusError {}
 #[derive(Debug)]
 pub struct BaseBus<D> {
     hucard: PceHuCard,
+    plain_hucard_page_targets: [Option<usize>; 128],
     work_ram: WorkRam,
     topology: PceHardwareTopology,
     devices: D,
@@ -404,8 +412,11 @@ impl<D> BaseBus<D> {
                 kind: BaseBusErrorKind::InvalidHuCard,
             });
         }
+        let hucard = PceHuCard::new(hucard_rom, board);
+        let plain_hucard_page_targets = plain_hucard_page_targets(&hucard);
         Ok(Self {
-            hucard: PceHuCard::new(hucard_rom, board),
+            hucard,
+            plain_hucard_page_targets,
             work_ram: WorkRam::new(topology),
             topology,
             devices,
@@ -511,6 +522,71 @@ impl<D> BaseBus<D> {
         reader.read_exact(self.work_ram.mapped_mut())?;
         self.hucard.read_state(reader)
     }
+
+    #[cfg(test)]
+    pub(crate) fn plain_memory_read_target(&self, physical_addr: u32) -> Option<PlainMemoryTarget> {
+        if !matches!(self.hucard.board(), PceHuCardBoard::Plain) {
+            return None;
+        }
+        self.plain_memory_target_for_region(self.decode_physical_region(physical_addr))
+    }
+
+    #[inline]
+    pub(crate) fn plain_memory_target_for_region(
+        &self,
+        region: PhysicalRegion,
+    ) -> Option<PlainMemoryTarget> {
+        match region {
+            PhysicalRegion::HuCard(offset) => self.plain_hucard_page_targets
+                [(offset / PLAIN_MEMORY_PAGE_LEN) as usize]
+                .map(|page_start| {
+                    PlainMemoryTarget::HuCard(
+                        page_start + (offset & (PLAIN_MEMORY_PAGE_LEN - 1)) as usize,
+                    )
+                }),
+            PhysicalRegion::WorkRam(offset) => {
+                Some(PlainMemoryTarget::WorkRam(usize::from(offset)))
+            }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn read_plain_memory_target(&self, target: PlainMemoryTarget) -> u8 {
+        match target {
+            PlainMemoryTarget::HuCard(offset) => self.hucard.image()[offset],
+            PlainMemoryTarget::WorkRam(offset) => self.work_ram.mapped()[offset],
+        }
+    }
+
+    #[inline]
+    pub(crate) fn write_plain_memory_target(&mut self, target: PlainMemoryTarget, value: u8) {
+        match target {
+            PlainMemoryTarget::HuCard(_) => unreachable!("plain HuCard ROM is immutable"),
+            PlainMemoryTarget::WorkRam(offset) => self.work_ram.mapped_mut()[offset] = value,
+        }
+    }
+}
+
+fn plain_hucard_page_targets(hucard: &PceHuCard) -> [Option<usize>; 128] {
+    let mut targets = [None; 128];
+    if !matches!(hucard.board(), PceHuCardBoard::Plain) {
+        return targets;
+    }
+    for (page, target) in targets.iter_mut().enumerate() {
+        let physical_start = page as u32 * PLAIN_MEMORY_PAGE_LEN;
+        let physical_end = physical_start + PLAIN_MEMORY_PAGE_LEN - 1;
+        let Some(mapped_start) = hucard.rom_offset(physical_start) else {
+            continue;
+        };
+        let Some(mapped_end) = hucard.rom_offset(physical_end) else {
+            continue;
+        };
+        if mapped_end == mapped_start + PLAIN_MEMORY_PAGE_LEN - 1 {
+            *target = Some(mapped_start as usize);
+        }
+    }
+    targets
 }
 
 impl<D: BaseBusDevices> BaseBus<D> {

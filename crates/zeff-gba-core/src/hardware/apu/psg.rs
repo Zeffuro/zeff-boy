@@ -293,23 +293,25 @@ impl fmt::Debug for Psg {
 
 impl Apu {
     pub(crate) fn read_psg(&self, addr: u16) -> u8 {
-        self.psg.read(addr)
+        self.observed_psg().read(addr)
     }
 
     pub(crate) fn write_psg(&mut self, addr: u16, value: u8) {
+        self.flush_pending_psg();
         self.psg.write(addr, value);
+        self.refresh_psg_merge_horizon();
     }
 
-    pub(super) fn step_psg(&mut self, cycles: u32) {
+    pub(super) fn consume_psg_cycles(&mut self, cycles: u32) -> u64 {
         let total = self.psg_cycle_accum.saturating_add(cycles);
         let psg_cycles = total / 4;
         self.psg_cycle_accum = total & 3;
-        if psg_cycles == 0 {
-            return;
-        }
-        self.psg.step(u64::from(psg_cycles));
+        u64::from(psg_cycles)
     }
 }
+
+#[cfg(test)]
+mod materialization_tests;
 
 #[cfg(test)]
 mod tests {

@@ -109,13 +109,13 @@ fn content_identity_retains_file_hashes_and_progress() {
     }];
     let mut completed = 0;
 
-    let (_, _, hashes) = content_identity(cue, &sheet, &files, |count| {
+    let identity = content_identity(cue, &sheet, &files, |count| {
         completed += count;
         Ok(())
     })
     .unwrap();
 
-    assert_eq!(hashes, [expected]);
+    assert_eq!(identity.file_sha256, [expected]);
     assert_eq!(completed, bytes.len() as u64);
 }
 

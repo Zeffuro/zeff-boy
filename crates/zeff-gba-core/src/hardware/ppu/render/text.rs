@@ -6,6 +6,10 @@ use super::{bg_pixel_is_on_top, draw_bg_color, draw_bg_color_line, read_le16};
 use crate::hardware::constants::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::hardware::ppu::Ppu;
 
+#[cfg(test)]
+mod row_tests;
+mod rows;
+
 impl Ppu {
     pub(super) fn render_text_mode(
         &mut self,
@@ -96,6 +100,34 @@ impl Ppu {
             layer_count += 1;
         }
         layers[..layer_count].sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+
+        #[cfg(test)]
+        let render_rows = rows::enabled_for_test();
+        #[cfg(not(test))]
+        let render_rows = true;
+
+        if render_rows
+            && self.try_render_text_rows_line(
+                &layers[..layer_count],
+                io,
+                palette_ram,
+                vram,
+                y,
+                bg_priorities,
+                bg_layers,
+                bg_second_priorities,
+                bg_second_layers,
+                bg_second_colors,
+                pixel_layers,
+                pixel_colors,
+                effects,
+                windows,
+                #[cfg(test)]
+                &mut rows::TextRowWork::default(),
+            )
+        {
+            return;
+        }
 
         for &(priority, bg, control) in &layers[..layer_count] {
             self.render_text_bg_line(

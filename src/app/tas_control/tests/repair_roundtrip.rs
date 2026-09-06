@@ -288,7 +288,7 @@ fn current_framebuffer(app: &App) -> Vec<u8> {
         .load_full()
         .unwrap()
         .as_ref()
-        .clone()
+        .to_vec()
 }
 
 struct BatteryRepairHarness {

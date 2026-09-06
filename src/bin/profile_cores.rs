@@ -1,11 +1,14 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::mem::size_of;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use zeff_emu_common::time::FrameLifecycle;
 
+#[path = "profile_cores/gba.rs"]
+mod gba;
+#[path = "profile_cores/manifests.rs"]
+mod manifests;
 #[path = "profile_cores/pce_audio.rs"]
 mod pce_audio;
 
@@ -128,6 +131,10 @@ fn profile_frames_with_prepare<M: FrameLifecycle>(
     );
 }
 
+fn profile_gba_frames(label: &str, frames: u32, machine: &mut zeff_gba_core::emulator::Emulator) {
+    gba::profile_frames(label, frames, machine);
+}
+
 fn profile_wonderswan_frames(
     label: &str,
     frames: u32,
@@ -142,6 +149,16 @@ fn profile_wonderswan_frames(
         snapshot.apu_step_calls,
         snapshot.sound_dma_step_calls,
         snapshot.ppu_step_calls,
+    );
+    println!(
+        "  WonderSwan frame service: {} frames  {} deferred calls / {} cycles  {} materializations  {} horizon crossings  {} IO fences  {} max pending",
+        snapshot.frame_service_frames,
+        snapshot.frame_service_deferred_calls,
+        snapshot.frame_service_deferred_cycles,
+        snapshot.frame_service_materializations,
+        snapshot.frame_service_horizon_crossings,
+        snapshot.frame_service_io_fences,
+        snapshot.frame_service_max_pending_cycles,
     );
     println!(
         "  WonderSwan transitions: {} cycles  {} scanlines  {} vblank  {} line compare  {} hblank timer  {} vblank timer",
@@ -175,73 +192,6 @@ fn profile_gb_synthetic(
     print_accuracy_hashes(gb.framebuffer(), &state, &audio);
 }
 
-fn profile_gba_synthetic(
-    frames: u32,
-    sample_generation_enabled: bool,
-    instruction_trace_enabled: bool,
-    suffix: &str,
-) {
-    for (label, rom) in [
-        ("GBA synthetic", gba_rom()),
-        ("GBA RAM writes", gba_write_rom()),
-    ] {
-        let mut gba =
-            zeff_gba_core::emulator::Emulator::from_rom_data(&rom).expect("synthetic GBA ROM");
-        gba.set_apu_sample_generation_enabled(sample_generation_enabled);
-        gba.set_apu_debug_capture_enabled(false);
-        gba.set_instruction_trace_enabled(instruction_trace_enabled);
-        profile_gba_frames(&format!("{label}{suffix}"), frames, &mut gba);
-
-        let state = gba.encode_state().expect("encode synthetic GBA state");
-        let mut audio = Vec::new();
-        gba.drain_audio_samples_into(&mut audio);
-        print_accuracy_hashes(gba.framebuffer(), &state, &audio);
-    }
-}
-
-fn profile_gba_frames(label: &str, frames: u32, machine: &mut zeff_gba_core::emulator::Emulator) {
-    profile_frames_with_prepare(label, frames, machine, |machine| machine.reset_profiling());
-    let snapshot = machine.profiling_snapshot();
-    println!(
-        "  GBA work: {} frames  {} instructions  {} bus calls  {} chunks  {} cycles",
-        snapshot.frames,
-        snapshot.completed_instructions,
-        snapshot.bus_step_calls,
-        snapshot.bus_chunks,
-        snapshot.bus_requested_cycles,
-    );
-    println!(
-        "  GBA phases: {:?}  scanlines {}  HBlank {}  VBlank {}  timer {:?}  DMA {:?}/{:?}",
-        snapshot.cpu_phase_visits,
-        snapshot.rendered_scanlines,
-        snapshot.visible_hblank_events,
-        snapshot.vblank_events,
-        snapshot.timer_overflows,
-        snapshot.dma_starts,
-        snapshot.dma_units,
-    );
-    println!(
-        "  GBA deadlines: {} hits  {} recomputes  expiries PPU/IRQ/T0/T1/T2/T3 {:?}  invalidations timer/IRQ/load {:?}",
-        snapshot.bus_deadline_hits,
-        snapshot.bus_deadline_recomputes,
-        snapshot.bus_deadline_expiries,
-        snapshot.bus_deadline_invalidations,
-    );
-    println!(
-        "  GBA fetch: {} total  ARM/Thumb {:?}  nonseq/seq {:?}  regions BIOS/EWRAM/IWRAM/GP0/GP1/GP2/other {:?}",
-        snapshot.instruction_fetches,
-        snapshot.instruction_fetch_modes,
-        snapshot.instruction_fetch_accesses,
-        snapshot.instruction_fetch_regions,
-    );
-    println!(
-        "  GBA fetch gate: {} compatible  fallbacks EEPROM/RTC/open-bus/unsupported/debug {:?}  WAITCNT changes {}",
-        snapshot.instruction_fetch_descriptor_compatible,
-        snapshot.instruction_fetch_fallbacks,
-        snapshot.instruction_fetch_waitcnt_changes,
-    );
-}
-
 fn profile_coleco_synthetic(
     frames: u32,
     sample_generation_enabled: bool,
@@ -272,69 +222,6 @@ fn profile_coleco_synthetic(
     let mut audio = Vec::new();
     coleco.drain_audio_samples_into(&mut audio);
     print_accuracy_hashes(coleco.framebuffer(), &state, &audio);
-}
-
-fn profile_gba_active_video(frames: u32, sample_generation_enabled: bool) {
-    let mut gba =
-        zeff_gba_core::emulator::Emulator::from_rom_data(&gba_rom()).expect("synthetic GBA ROM");
-    let mut pattern = 0xA5A5_5A5A_u32;
-    for offset in (0..0x4000_u32).step_by(2) {
-        pattern = pattern.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        gba.cpu_write16(0x0600_0000 + offset, (pattern >> 16) as u16);
-    }
-    for index in 0..(32 * 32_u32) {
-        let tile = (index * 13) & 0x01FF;
-        let attributes = ((index & 0x0F) << 12) | ((index & 1) << 10) | ((index & 2) << 10);
-        gba.cpu_write16(0x0600_4000 + index * 2, (tile | attributes) as u16);
-    }
-    for color in 0..256_u32 {
-        let r = color & 0x1F;
-        let g = (color * 3) & 0x1F;
-        let b = (color * 7) & 0x1F;
-        gba.cpu_write16(0x0500_0000 + color * 2, (r | (g << 5) | (b << 10)) as u16);
-    }
-
-    gba.cpu_write16(0x0200_0000, 0x03FF);
-    gba.cpu_write32(0x0400_00B0, 0x0200_0000);
-    gba.cpu_write32(0x0400_00B4, 0x0500_0002);
-    gba.cpu_write16(0x0400_00B8, 1);
-    gba.cpu_write16(0x0400_00BA, 0xA340);
-    gba.cpu_write16(0x0400_0100, 0xFFC0);
-    gba.cpu_write16(0x0400_0102, 0x0081);
-    gba.cpu_write16(0x0400_0104, 0xFFF0);
-    gba.cpu_write16(0x0400_0106, 0x0084);
-    gba.cpu_write16(0x0400_0008, 8 << 8);
-    gba.cpu_write16(0x0400_0000, 1 << 8);
-
-    gba.set_apu_sample_generation_enabled(sample_generation_enabled);
-    gba.set_apu_debug_capture_enabled(false);
-    profile_gba_frames(
-        if sample_generation_enabled {
-            "GBA active video + DMA + timers + audio"
-        } else {
-            "GBA active video + DMA + timers"
-        },
-        frames,
-        &mut gba,
-    );
-    assert_eq!(
-        gba.cpu_peek16(0x0500_0002),
-        0x03FF,
-        "synthetic GBA HBlank DMA did not update palette RAM"
-    );
-    let first_pixel = &gba.framebuffer()[..4];
-    assert!(
-        gba.framebuffer()
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .any(|pixel| pixel != first_pixel),
-        "synthetic GBA active-video fixture produced a flat frame"
-    );
-    let state = gba.encode_state().expect("encode GBA active-video state");
-    let mut audio = Vec::new();
-    gba.drain_audio_samples_into(&mut audio);
-    print_accuracy_hashes(gba.framebuffer(), &state, &audio);
 }
 
 fn profile_sega8_video(frames: u32, sample_generation_enabled: bool) {
@@ -575,24 +462,6 @@ fn profile_trace_store() {
     black_box(store);
 }
 
-fn load_manifest(name: &str) -> Vec<(String, String)> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("test-roms")
-        .join(name);
-    let Ok(contents) = std::fs::read_to_string(&manifest) else {
-        eprintln!("manifest not found: {}", manifest.display());
-        return Vec::new();
-    };
-    contents
-        .lines()
-        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
-        .filter_map(|line| {
-            let (label, path) = line.split_once('\t')?;
-            Some((label.trim().to_owned(), path.trim().to_owned()))
-        })
-        .collect()
-}
-
 fn gb_rom() -> Vec<u8> {
     let mut rom = vec![0; 0x8000];
     rom[0x150..0x154].copy_from_slice(&[0x00, 0x00, 0x18, 0xFC]);
@@ -601,26 +470,6 @@ fn gb_rom() -> Vec<u8> {
         checksum = checksum.wrapping_sub(byte).wrapping_sub(1);
     }
     rom[0x14D] = checksum;
-    rom
-}
-
-fn gba_rom() -> Vec<u8> {
-    let mut rom = vec![0; 0xC0];
-    rom[..4].copy_from_slice(&0xEAFF_FFFE_u32.to_le_bytes());
-    rom[0xA0..0xA7].copy_from_slice(b"PROFILE");
-    rom[0xB2] = 0x96;
-    rom
-}
-
-fn gba_write_rom() -> Vec<u8> {
-    let mut rom = gba_rom();
-    for (offset, instruction) in [0xE3A0_0402_u32, 0xE580_1000, 0xE281_1001, 0xEAFF_FFFC]
-        .into_iter()
-        .enumerate()
-    {
-        let start = offset * 4;
-        rom[start..start + 4].copy_from_slice(&instruction.to_le_bytes());
-    }
     rom
 }
 
@@ -715,7 +564,7 @@ fn profile_synthetic(
         suffix,
     );
 
-    profile_gba_synthetic(
+    gba::profile_synthetic(
         frames,
         sample_generation_enabled,
         instruction_trace_enabled,
@@ -1044,67 +893,6 @@ fn profile_pce_rom(
     pce_audio::print_accuracy_hashes(&mut pce, audio);
 }
 
-fn profile_manifest_roms(frames: u32) {
-    use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
-
-    let test_roms = Path::new(env!("CARGO_MANIFEST_DIR")).join("test-roms");
-    for (label, rom_path) in load_manifest("gb-bench-roms.txt") {
-        let Ok(data) = std::fs::read(test_roms.join(rom_path)) else {
-            eprintln!("skip {label}: not found");
-            continue;
-        };
-        let Ok(mut emulator) =
-            zeff_gb_core::emulator::Emulator::from_rom_data(&data, HardwareModePreference::Auto)
-        else {
-            eprintln!("skip {label}: load failed");
-            continue;
-        };
-        emulator.set_apu_sample_generation_enabled(false);
-        profile_frames(&label, frames, &mut emulator);
-    }
-
-    for (label, rom_path) in load_manifest("nes-bench-roms.txt") {
-        let Ok(data) = std::fs::read(test_roms.join(rom_path)) else {
-            eprintln!("skip {label}: not found");
-            continue;
-        };
-        let Ok(mut emulator) = zeff_nes_core::emulator::Emulator::from_rom_data(&data) else {
-            eprintln!("skip {label}: load failed");
-            continue;
-        };
-        emulator.set_apu_sample_generation_enabled(false);
-        profile_frames(&label, frames, &mut emulator);
-    }
-
-    profile_gba_manifest_roms(frames);
-}
-
-fn profile_gba_manifest_roms(frames: u32) {
-    let test_roms = Path::new(env!("CARGO_MANIFEST_DIR")).join("test-roms");
-    let gba_bios = std::env::var_os("ZEFF_GBA_BIOS_PATH").and_then(|path| std::fs::read(path).ok());
-    for (label, rom_path) in load_manifest("gba-bench-roms.txt") {
-        let Ok(data) = std::fs::read(test_roms.join(rom_path)) else {
-            eprintln!("skip {label}: not found");
-            continue;
-        };
-        let emulator = if let Some(bios) = gba_bios.as_deref() {
-            zeff_gba_core::emulator::Emulator::new_with_bios(&data, bios, 48_000)
-        } else {
-            zeff_gba_core::emulator::Emulator::from_rom_data(&data)
-        };
-        let Ok(mut emulator) = emulator else {
-            eprintln!("skip {label}: load failed");
-            continue;
-        };
-        emulator.set_apu_sample_generation_enabled(false);
-        profile_gba_frames(&label, frames, &mut emulator);
-        let state = emulator.encode_state().expect("encode manifest GBA state");
-        let mut audio = Vec::new();
-        emulator.drain_audio_samples_into(&mut audio);
-        print_accuracy_hashes(emulator.framebuffer(), &state, &audio);
-    }
-}
-
 fn main() {
     let frames = std::env::var("ZEFF_PROFILE_FRAMES")
         .ok()
@@ -1123,7 +911,7 @@ fn main() {
     }
 
     if std::env::var("ZEFF_PROFILE_GBA_MANIFEST_ONLY").as_deref() == Ok("1") {
-        profile_gba_manifest_roms(frames);
+        manifests::profile_gba_manifest_roms(frames);
         return;
     }
 
@@ -1144,7 +932,7 @@ fn main() {
     }
 
     if std::env::var("ZEFF_PROFILE_GBA_ACTIVE_VIDEO_ONLY").as_deref() == Ok("1") {
-        profile_gba_active_video(
+        gba::profile_active_video(
             frames,
             std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1"),
         );
@@ -1174,7 +962,7 @@ fn main() {
                 instruction_trace_enabled,
                 suffix,
             ),
-            "gba" => profile_gba_synthetic(
+            "gba" => gba::profile_synthetic(
                 frames,
                 sample_generation_enabled,
                 instruction_trace_enabled,
@@ -1253,7 +1041,7 @@ fn main() {
 
     if std::env::var("ZEFF_PROFILE_GBA_ONLY").as_deref() == Ok("1") {
         let sample_generation_enabled = std::env::var("ZEFF_PROFILE_AUDIO").as_deref() == Ok("1");
-        profile_gba_synthetic(
+        gba::profile_synthetic(
             frames,
             sample_generation_enabled,
             false,
@@ -1282,6 +1070,6 @@ fn main() {
     }
     if std::env::var("ZEFF_PROFILE_MANIFESTS").as_deref() == Ok("1") {
         println!("\n=== Manifest ROM baseline ===");
-        profile_manifest_roms(frames);
+        manifests::profile_manifest_roms(frames);
     }
 }

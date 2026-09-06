@@ -6,6 +6,16 @@ impl PceMachine {
     }
 
     pub fn run_until_frame(&mut self) -> Result<PceFrameRun, PceMachineError> {
+        if self.frame_plain_memory_lane_eligible() {
+            self.run_until_frame_with_lane::<true>()
+        } else {
+            self.run_until_frame_with_lane::<false>()
+        }
+    }
+
+    fn run_until_frame_with_lane<const PLAIN_MEMORY: bool>(
+        &mut self,
+    ) -> Result<PceFrameRun, PceMachineError> {
         let starting_ticks = self.master_ticks;
         let mut cpu_boundaries = 0_u64;
         loop {
@@ -29,7 +39,7 @@ impl PceMachine {
                     });
                 }
             }
-            let step = self.step_boundary_faulting()?;
+            let step = self.step_boundary_faulting_with_plain_memory_lane::<PLAIN_MEMORY>()?;
             cpu_boundaries += 1;
             if self.suspend_after_instruction && matches!(step.action, PceCpuAction::Instruction(_))
             {
@@ -49,6 +59,32 @@ impl PceMachine {
                 });
             }
         }
+    }
+
+    fn frame_plain_memory_lane_eligible(&self) -> bool {
+        #[cfg(test)]
+        if !self.plain_memory_lane_enabled {
+            return false;
+        }
+        matches!(self.execution_state, PceExecutionState::Running)
+            && !self.faulted
+            && !self.suspend_after_instruction
+            && !self.skip_breakpoint_once
+            && !self.opcode_history.enabled
+            && !self.instruction_trace.is_enabled()
+            && matches!(self.bus.devices().topology(), PceHardwareTopology::Base)
+            && matches!(self.bus.hucard_board(), PceHuCardBoard::Plain)
+            && self.bus.devices().cdrom2().is_none()
+            && self.bus.devices().arcade_card().is_none()
+            && self.debug.iter_breakpoints().next().is_none()
+            && self.debug.iter_one_shot_breakpoints().next().is_none()
+            && self.debug.iter_breakpoint_hit_conditions().next().is_none()
+            && self.debug.iter_event_breakpoints().next().is_none()
+            && self.debug.watchpoints.is_empty()
+            && !self.debug.break_on_next
+            && self.debug.hit_breakpoint.is_none()
+            && self.debug.hit_watchpoint.is_none()
+            && self.debug.hit_event.is_none()
     }
 
     #[inline]
@@ -144,15 +180,36 @@ impl PceMachine {
     }
 
     pub(super) fn step_boundary_faulting(&mut self) -> Result<PceMachineStep, PceMachineError> {
-        self.step_boundary_faulting_with(|cpu, bus| {
-            Ok(match cpu.service_interrupt_boundary(bus) {
-                Some(step) => PceCpuAction::Interrupt(step),
-                None => PceCpuAction::Instruction(cpu.step_instruction(bus)?),
+        self.step_boundary_faulting_with_plain_memory_lane::<false>()
+    }
+
+    fn step_boundary_faulting_with_plain_memory_lane<const PLAIN_MEMORY: bool>(
+        &mut self,
+    ) -> Result<PceMachineStep, PceMachineError> {
+        self.step_boundary_faulting_with_lane(|cpu, bus| {
+            Ok(if PLAIN_MEMORY {
+                match cpu.service_interrupt_boundary_plain(bus) {
+                    Some(step) => PceCpuAction::Interrupt(step),
+                    None => PceCpuAction::Instruction(cpu.step_instruction_plain(bus)?),
+                }
+            } else {
+                match cpu.service_interrupt_boundary(bus) {
+                    Some(step) => PceCpuAction::Interrupt(step),
+                    None => PceCpuAction::Instruction(cpu.step_instruction(bus)?),
+                }
             })
         })
     }
 
+    #[cfg(test)]
     pub(super) fn step_boundary_faulting_with(
+        &mut self,
+        execute: impl FnOnce(&mut HuC6280, &mut TimedMachineBus<'_>) -> Result<PceCpuAction, CpuTrap>,
+    ) -> Result<PceMachineStep, PceMachineError> {
+        self.step_boundary_faulting_with_lane(execute)
+    }
+
+    fn step_boundary_faulting_with_lane(
         &mut self,
         execute: impl FnOnce(&mut HuC6280, &mut TimedMachineBus<'_>) -> Result<PceCpuAction, CpuTrap>,
     ) -> Result<PceMachineStep, PceMachineError> {
@@ -206,6 +263,8 @@ impl PceMachine {
                 master_ticks_per_cycle,
                 trace_enabled.then_some(&mut self.trace_scratch),
                 &mut self.debug,
+                #[cfg(test)]
+                self.coalesce_device_advancement,
                 #[cfg(feature = "profiling")]
                 &mut self.profiling,
             );
@@ -219,6 +278,7 @@ impl PceMachine {
                 },
                 Err(cpu_trap) => trap = Some(cpu_trap),
             }
+            bus.finish_action();
             self.cpu
                 .advance_master_ticks(bus.take_elapsed_master_ticks());
             error = bus.fault.or(error);
@@ -381,6 +441,8 @@ impl PceMachine {
                 1,
                 None,
                 &mut self.debug,
+                #[cfg(test)]
+                self.coalesce_device_advancement,
                 #[cfg(feature = "profiling")]
                 &mut self.profiling,
             );

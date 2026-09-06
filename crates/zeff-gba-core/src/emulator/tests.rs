@@ -3,6 +3,8 @@ use zeff_emu_common::debug::{DebugEvent, WatchType};
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{ClockRate, MasterTicks};
 
+mod frame_service;
+
 fn minimal_rom() -> Vec<u8> {
     let mut rom = vec![0; 0xC0];
     rom[0xA0..0xA4].copy_from_slice(b"TEST");
@@ -21,11 +23,32 @@ fn profiling_counts_frame_work_and_resets() {
     let snapshot = emu.profiling_snapshot();
     assert_eq!(snapshot.frames, 1);
     assert!(snapshot.completed_instructions > 0);
-    assert_eq!(
-        snapshot.cpu_phase_visits[..3],
-        [snapshot.completed_instructions; 3]
+    for visits in &snapshot.cpu_phase_visits[..3] {
+        assert_eq!(
+            visits + snapshot.frame_cpu_direct_instructions,
+            snapshot.completed_instructions
+        );
+    }
+    assert!(
+        snapshot.cpu_phase_visits.iter().sum::<u64>() + snapshot.frame_cpu_direct_instructions
+            >= snapshot.completed_instructions
     );
-    assert!(snapshot.cpu_phase_visits.iter().sum::<u64>() >= snapshot.completed_instructions);
+    assert_eq!(
+        snapshot.instruction_classes_arm.iter().sum::<u64>()
+            + snapshot.instruction_classes_thumb.iter().sum::<u64>(),
+        snapshot.completed_instructions
+    );
+    assert_eq!(
+        snapshot.frame_kernel_candidates.iter().sum::<u64>(),
+        snapshot.frame_kernel_fetch_gates.iter().sum::<u64>()
+    );
+    assert_eq!(
+        snapshot.frame_kernel_fetch_eligible.iter().sum::<u64>(),
+        snapshot.frame_kernel_fetch_gates[0]
+    );
+    assert!(snapshot.frame_kernel_quiet_instructions <= snapshot.frame_kernel_fetch_gates[0]);
+    assert!(snapshot.frame_kernel_quiet_runs <= snapshot.frame_kernel_quiet_instructions);
+    assert!(snapshot.frame_kernel_quiet_longest_run <= snapshot.frame_kernel_quiet_instructions);
     assert!(snapshot.instruction_fetches >= snapshot.completed_instructions);
     assert_eq!(
         snapshot.instruction_fetch_modes.iter().sum::<u64>(),
@@ -47,6 +70,25 @@ fn profiling_counts_frame_work_and_resets() {
     assert!(snapshot.bus_step_calls > 0);
     assert!(snapshot.bus_requested_cycles > 0);
     assert!(snapshot.bus_chunks > 0);
+    assert_eq!(snapshot.apu_step_output_calls, snapshot.bus_chunks);
+    assert_eq!(
+        snapshot.apu_step_output_cycles,
+        snapshot.bus_requested_cycles
+    );
+    assert!(snapshot.apu_non_observation_chunks <= snapshot.apu_step_output_calls);
+    assert!(snapshot.apu_non_observation_cycles <= snapshot.apu_step_output_cycles);
+    assert!(snapshot.apu_ppu_only_non_observation_chunks <= snapshot.apu_non_observation_chunks);
+    assert!(snapshot.apu_ppu_only_non_observation_cycles <= snapshot.apu_non_observation_cycles);
+    assert!(snapshot.apu_timer_overflow_ordering_cases <= snapshot.apu_step_output_calls);
+    assert_eq!(
+        snapshot
+            .frame_service_pending_span_buckets
+            .iter()
+            .sum::<u64>(),
+        snapshot.frame_service_pending_spans
+    );
+    assert!(snapshot.frame_service_pending_cycles >= snapshot.frame_service_pending_spans);
+    assert!(snapshot.frame_service_pending_max_cycles > 0);
     assert_eq!(
         snapshot.bus_deadline_hits + snapshot.bus_deadline_recomputes,
         snapshot.bus_chunks
@@ -78,6 +120,25 @@ fn profiling_counts_immediate_dma_units() {
     let snapshot = emu.profiling_snapshot();
     assert_eq!(snapshot.dma_starts, [1, 0, 0, 0]);
     assert_eq!(snapshot.dma_units, [3, 0, 0, 0]);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_counts_audio_before_timer_overflow_service() {
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    emu.bus.write16(0x0400_0084, 0x0080);
+    emu.bus.write16(0x0400_0082, (1 << 2) | (1 << 8) | (1 << 9));
+    emu.bus.write16(0x0400_00A0, 0x7F80);
+    emu.bus.write16(0x0400_0100, 0xFFFF);
+    emu.bus.write16(0x0400_0102, 0x0080);
+    emu.reset_profiling();
+
+    emu.bus.step_cycles(2);
+
+    let snapshot = emu.profiling_snapshot();
+    assert_eq!(snapshot.apu_timer_overflow_ordering_cases, 1);
+    assert_eq!(snapshot.apu_timer_overflow_ordering_count, 1);
+    assert!(snapshot.apu_step_output_calls > 0);
 }
 
 #[test]

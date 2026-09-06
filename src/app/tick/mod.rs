@@ -551,8 +551,7 @@ impl App {
                 return;
             };
 
-            let Some((native_w, native_h)) = self.display_size_for_frame_len(display_frame.len())
-            else {
+            let Some((native_w, native_h)) = self.display_size_for_frame(&display_frame) else {
                 log::warn!(
                     "Skipping frame upload with unexpected size: {} bytes for {:?}",
                     display_frame.len(),
@@ -563,6 +562,9 @@ impl App {
 
             if let Some(gfx) = self.gfx.as_mut() {
                 gfx.set_native_size(native_w, native_h);
+                if self.active_system == crate::app::ActiveSystem::Pce {
+                    gfx.set_presentation_size(640, 480);
+                }
                 gfx.upload_framebuffer(&display_frame);
             }
             self.last_displayed_frame = Some(display_frame);

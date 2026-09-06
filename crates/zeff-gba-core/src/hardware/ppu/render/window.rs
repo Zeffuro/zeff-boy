@@ -111,6 +111,13 @@ impl Windows {
         !self.enabled()
     }
 
+    pub(super) fn scanline_controls(&self, y: usize) -> [u8; SCREEN_WIDTH] {
+        if !self.enabled() {
+            return [0x3F; SCREEN_WIDTH];
+        }
+        std::array::from_fn(|x| self.control(x, y) as u8)
+    }
+
     fn enabled(&self) -> bool {
         self.win0_enabled || self.win1_enabled || self.obj_window_enabled
     }

@@ -85,23 +85,26 @@ impl Timers {
             if count_cycles == 0 {
                 continue;
             }
-            self.cycle_accum[index] = self.cycle_accum[index].saturating_add(count_cycles);
             let period = timer_period(timer.control);
-            while self.cycle_accum[index] >= period {
-                self.cycle_accum[index] -= period;
-                if self.increment_timer(
-                    index,
+            let total = (u64::from(self.cycle_accum[index]) + u64::from(count_cycles))
+                .min(u64::from(u32::MAX));
+            let increments = u32::try_from(total / u64::from(period)).unwrap_or(u32::MAX);
+            self.cycle_accum[index] = u32::try_from(total % u64::from(period)).unwrap_or_default();
+            let cascades = self.increment_timer_by(
+                index,
+                increments,
+                &mut irq_flags,
+                &mut overflow_counts,
+                &mut irq_extra_delays,
+            );
+            if cascades != 0 {
+                self.increment_cascade_by(
+                    index + 1,
+                    cascades,
                     &mut irq_flags,
                     &mut overflow_counts,
                     &mut irq_extra_delays,
-                ) {
-                    self.increment_cascade(
-                        index + 1,
-                        &mut irq_flags,
-                        &mut overflow_counts,
-                        &mut irq_extra_delays,
-                    );
-                }
+                );
             }
         }
         (irq_flags, overflow_counts, irq_extra_delays)
@@ -196,7 +199,119 @@ impl Timers {
         }
     }
 
-    fn increment_cascade(
+    fn increment_cascade_by(
+        &mut self,
+        index: usize,
+        increments: u32,
+        irq_flags: &mut u16,
+        overflow_counts: &mut TimerOverflowCounts,
+        irq_extra_delays: &mut TimerIrqExtraDelays,
+    ) {
+        if index >= self.timers.len() {
+            return;
+        }
+        let timer = self.timers[index];
+        if timer.control & 0x0080 == 0 || timer.control & 0x0004 == 0 {
+            return;
+        }
+        let cascades = self.increment_timer_by(
+            index,
+            increments,
+            irq_flags,
+            overflow_counts,
+            irq_extra_delays,
+        );
+        if cascades != 0 {
+            self.increment_cascade_by(
+                index + 1,
+                cascades,
+                irq_flags,
+                overflow_counts,
+                irq_extra_delays,
+            );
+        }
+    }
+
+    fn increment_timer_by(
+        &mut self,
+        index: usize,
+        increments: u32,
+        irq_flags: &mut u16,
+        overflow_counts: &mut TimerOverflowCounts,
+        irq_extra_delays: &mut TimerIrqExtraDelays,
+    ) -> u32 {
+        if increments == 0 {
+            return 0;
+        }
+        let timer = &mut self.timers[index];
+        let increments = u64::from(increments);
+        let first_overflow = 0x1_0000 - u64::from(timer.counter);
+        if increments < first_overflow {
+            timer.counter = timer.counter.wrapping_add(increments as u16);
+            return 0;
+        }
+
+        let remaining = increments - first_overflow;
+        let reload_span = 0x1_0000 - u64::from(timer.reload);
+        let overflows = 1 + remaining / reload_span;
+        timer.counter = timer.reload.wrapping_add((remaining % reload_span) as u16);
+        let overflows = u32::try_from(overflows).unwrap_or(u32::MAX);
+        overflow_counts[index] = overflow_counts[index].saturating_add(overflows);
+        if timer.control & 0x0040 != 0 {
+            *irq_flags |= 1 << (3 + index);
+            irq_extra_delays[index] = 0;
+        }
+        overflows
+    }
+
+    #[cfg(test)]
+    fn step_with_overflows_scalar(
+        &mut self,
+        cycles: u32,
+    ) -> (u16, TimerOverflowCounts, TimerIrqExtraDelays) {
+        self.clock_phase = self.clock_phase.wrapping_add(cycles as u16) & 0x03FF;
+        if self.clocked_timer_mask == 0 {
+            return (0, [0; 4], [0; 4]);
+        }
+        let mut irq_flags = 0u16;
+        let mut overflow_counts = [0u32; 4];
+        let mut irq_extra_delays = [0u32; 4];
+        for index in 0..4 {
+            let timer = self.timers[index];
+            if timer.control & 0x0080 == 0 || timer.control & 0x0004 != 0 {
+                continue;
+            }
+
+            let delay = u32::from(self.start_delay_cycles[index]).min(cycles);
+            self.start_delay_cycles[index] -= delay as u8;
+            let count_cycles = cycles - delay;
+            if count_cycles == 0 {
+                continue;
+            }
+            self.cycle_accum[index] = self.cycle_accum[index].saturating_add(count_cycles);
+            let period = timer_period(timer.control);
+            while self.cycle_accum[index] >= period {
+                self.cycle_accum[index] -= period;
+                if self.increment_timer_scalar(
+                    index,
+                    &mut irq_flags,
+                    &mut overflow_counts,
+                    &mut irq_extra_delays,
+                ) {
+                    self.increment_cascade_scalar(
+                        index + 1,
+                        &mut irq_flags,
+                        &mut overflow_counts,
+                        &mut irq_extra_delays,
+                    );
+                }
+            }
+        }
+        (irq_flags, overflow_counts, irq_extra_delays)
+    }
+
+    #[cfg(test)]
+    fn increment_cascade_scalar(
         &mut self,
         index: usize,
         irq_flags: &mut u16,
@@ -210,12 +325,13 @@ impl Timers {
         if timer.control & 0x0080 == 0 || timer.control & 0x0004 == 0 {
             return;
         }
-        if self.increment_timer(index, irq_flags, overflow_counts, irq_extra_delays) {
-            self.increment_cascade(index + 1, irq_flags, overflow_counts, irq_extra_delays);
+        if self.increment_timer_scalar(index, irq_flags, overflow_counts, irq_extra_delays) {
+            self.increment_cascade_scalar(index + 1, irq_flags, overflow_counts, irq_extra_delays);
         }
     }
 
-    fn increment_timer(
+    #[cfg(test)]
+    fn increment_timer_scalar(
         &mut self,
         index: usize,
         irq_flags: &mut u16,
@@ -224,18 +340,17 @@ impl Timers {
     ) -> bool {
         let timer = &mut self.timers[index];
         let (counter, overflowed) = timer.counter.overflowing_add(1);
-        if overflowed {
-            timer.counter = timer.reload;
-            overflow_counts[index] = overflow_counts[index].saturating_add(1);
-            if timer.control & 0x0040 != 0 {
-                *irq_flags |= 1 << (3 + index);
-                irq_extra_delays[index] = 0;
-            }
-            true
-        } else {
+        if !overflowed {
             timer.counter = counter;
-            false
+            return false;
         }
+        timer.counter = timer.reload;
+        overflow_counts[index] = overflow_counts[index].saturating_add(1);
+        if timer.control & 0x0040 != 0 {
+            *irq_flags |= 1 << (3 + index);
+            irq_extra_delays[index] = 0;
+        }
+        true
     }
 }
 
@@ -251,6 +366,57 @@ fn timer_period(control: u16) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_timer_state_eq(first: &Timers, second: &Timers) {
+        for index in 0..4 {
+            assert_eq!(first.read16(index, false), second.read16(index, false));
+            assert_eq!(first.read16(index, true), second.read16(index, true));
+        }
+        assert_eq!(first.timing_state(), second.timing_state());
+        assert_eq!(first.clocked_timer_mask, second.clocked_timer_mask);
+    }
+
+    fn assert_bulk_matches_scalar(source: Timers, cycles: u32) {
+        let mut bulk = source;
+        let mut scalar = source;
+        assert_eq!(
+            bulk.step_with_overflows(cycles),
+            scalar.step_with_overflows_scalar(cycles)
+        );
+        assert_timer_state_eq(&bulk, &scalar);
+    }
+
+    fn next_random(state: &mut u64) -> u32 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (*state >> 32) as u32
+    }
+
+    fn random_timers(state: &mut u64) -> Timers {
+        let mut registers = [Timer::default(); 4];
+        for timer in &mut registers {
+            let control = next_random(state);
+            *timer = Timer {
+                reload: next_random(state) as u16,
+                counter: next_random(state) as u16,
+                control: (control as u16 & 0x0003)
+                    | (u16::from(control & (1 << 8) != 0) << 2)
+                    | (u16::from(control & (1 << 9) != 0) << 6)
+                    | (u16::from(control & (1 << 10) != 0) << 7),
+            };
+        }
+        let mut timers = Timers::default();
+        timers.set_all(registers);
+        let mut timing = TimerTimingState::default();
+        for index in 0..4 {
+            timing.cycle_accum[index] = next_random(state) & 0x03FF;
+            timing.start_delay_cycles[index] = (next_random(state) & 1) as u8;
+        }
+        timing.clock_phase = (next_random(state) & 0x03FF) as u16;
+        assert!(timers.set_timing_state(timing));
+        timers
+    }
 
     #[test]
     fn start_copies_reload_to_counter() {
@@ -362,5 +528,184 @@ mod tests {
         assert_eq!(timers.cycles_until_overflow(0), Some(2));
         assert_eq!(timers.step_with_overflows(1).1[0], 0);
         assert_eq!(timers.step_with_overflows(1).1[0], 2);
+    }
+
+    #[test]
+    fn bulk_step_matches_scalar_for_every_enable_cascade_irq_topology() {
+        let reloads = [0, 1, 0x7FFF, 0xFFFE, 0xFFFF];
+        let counters = [0, 1, 0x8000, 0xFFFD, 0xFFFF];
+        for enabled in 0u8..16 {
+            for cascade in 0u8..16 {
+                for irq in 0u8..16 {
+                    let mut registers = [Timer::default(); 4];
+                    let mut timing = TimerTimingState {
+                        clock_phase: u16::from(enabled)
+                            | (u16::from(cascade) << 4)
+                            | (u16::from(irq) << 8),
+                        ..TimerTimingState::default()
+                    };
+                    timing.clock_phase &= 0x03FF;
+                    for index in 0..4 {
+                        let period_bits = ((usize::from(enabled)
+                            + usize::from(cascade)
+                            + usize::from(irq)
+                            + index)
+                            & 3) as u16;
+                        registers[index] = Timer {
+                            reload: reloads[(usize::from(cascade) + index) % reloads.len()],
+                            counter: counters[(usize::from(irq) + index) % counters.len()],
+                            control: period_bits
+                                | (u16::from(enabled & (1 << index) != 0) << 7)
+                                | (u16::from(cascade & (1 << index) != 0) << 2)
+                                | (u16::from(irq & (1 << index) != 0) << 6),
+                        };
+                        let period = timer_period(registers[index].control);
+                        timing.cycle_accum[index] =
+                            (u32::from(enabled) * 17 + u32::from(cascade) * 5 + index as u32)
+                                & (period - 1);
+                        timing.start_delay_cycles[index] = (irq >> index) & 1;
+                    }
+                    let mut source = Timers::default();
+                    source.set_all(registers);
+                    assert!(source.set_timing_state(timing));
+                    for cycles in [0, 1, 2, 3, 7, 64, 257] {
+                        assert_bulk_matches_scalar(source, cycles);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bulk_step_matches_scalar_for_all_accepted_accumulators() {
+        for period_bits in 0..4u16 {
+            for accum in 0..=0x03FF {
+                for delay in 0..=1 {
+                    let mut timers = Timers::default();
+                    timers.set_all([
+                        Timer {
+                            reload: (accum as u16).rotate_left(5),
+                            counter: !(accum as u16),
+                            control: 0x00C0 | period_bits,
+                        },
+                        Timer::default(),
+                        Timer::default(),
+                        Timer::default(),
+                    ]);
+                    assert!(timers.set_timing_state(TimerTimingState {
+                        cycle_accum: [accum, 0, 0, 0],
+                        start_delay_cycles: [delay, 0, 0, 0],
+                        clock_phase: (accum & 0x03FF) as u16,
+                    }));
+                    for cycles in [0, 1, 2, 3, 63, 64, 255] {
+                        assert_bulk_matches_scalar(timers, cycles);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bulk_step_matches_scalar_for_deterministic_random_states() {
+        let mut random = 0xD1B5_4A32_D192_ED03;
+        for _ in 0..2048 {
+            let timers = random_timers(&mut random);
+            let cycles = next_random(&mut random) & 0x3FFF;
+            assert_bulk_matches_scalar(timers, cycles);
+        }
+    }
+
+    #[test]
+    fn random_cycle_partitions_preserve_bulk_results_and_state() {
+        let mut random = 0x8A5C_93E7_4B21_60DF;
+        for _ in 0..512 {
+            let source = random_timers(&mut random);
+            let total_cycles = next_random(&mut random) & 0xFFFF;
+            let mut whole = source;
+            let expected = whole.step_with_overflows(total_cycles);
+
+            let mut partitioned = source;
+            let mut flags = 0u16;
+            let mut overflows = [0u32; 4];
+            let mut remaining = total_cycles;
+            while remaining != 0 {
+                if next_random(&mut random) & 3 == 0 {
+                    assert_eq!(partitioned.step_with_overflows(0), (0, [0; 4], [0; 4]));
+                }
+                let limit = remaining.min(1024);
+                let cycles = 1 + next_random(&mut random) % limit;
+                let (next_flags, next_overflows, extra_delays) =
+                    partitioned.step_with_overflows(cycles);
+                flags |= next_flags;
+                for index in 0..4 {
+                    overflows[index] = overflows[index].saturating_add(next_overflows[index]);
+                }
+                assert_eq!(extra_delays, [0; 4]);
+                remaining -= cycles;
+            }
+            assert_eq!((flags, overflows, [0; 4]), expected);
+            assert_timer_state_eq(&whole, &partitioned);
+        }
+    }
+
+    #[test]
+    fn maximum_cycle_span_saturates_counts_through_four_timer_cascade() {
+        let mut timers = Timers::default();
+        timers.set_all([
+            Timer {
+                reload: 0xFFFF,
+                counter: 0xFFFF,
+                control: 0x00C0,
+            },
+            Timer {
+                reload: 0xFFFF,
+                counter: 0xFFFF,
+                control: 0x00C4,
+            },
+            Timer {
+                reload: 0xFFFF,
+                counter: 0xFFFF,
+                control: 0x00C4,
+            },
+            Timer {
+                reload: 0xFFFF,
+                counter: 0xFFFF,
+                control: 0x00C4,
+            },
+        ]);
+
+        let (flags, overflows, extra_delays) = timers.step_with_overflows(u32::MAX);
+
+        assert_eq!(flags, 0x0078);
+        assert_eq!(overflows, [u32::MAX; 4]);
+        assert_eq!(extra_delays, [0; 4]);
+        assert_eq!(timers.all().map(|timer| timer.counter), [0xFFFF; 4]);
+        assert_eq!(timers.timing_state().clock_phase, 0x03FF);
+    }
+
+    #[test]
+    fn maximum_cycle_span_preserves_scalar_accumulator_saturation() {
+        let mut timers = Timers::default();
+        timers.set_all([
+            Timer {
+                reload: 0,
+                counter: 0,
+                control: 0x0083,
+            },
+            Timer::default(),
+            Timer::default(),
+            Timer::default(),
+        ]);
+        assert!(timers.set_timing_state(TimerTimingState {
+            cycle_accum: [0x03FF, 0, 0, 0],
+            start_delay_cycles: [0; 4],
+            clock_phase: 0,
+        }));
+
+        let (_, overflows, _) = timers.step_with_overflows(u32::MAX);
+
+        assert_eq!(overflows, [63, 0, 0, 0]);
+        assert_eq!(timers.read16(0, false), 0xFFFF);
+        assert_eq!(timers.timing_state().cycle_accum[0], 0x03FF);
     }
 }

@@ -10,21 +10,34 @@ use zeff_emu_common::debug::{
 
 impl Emulator {
     pub fn step_frame(&mut self) {
-        self.step_frame_inner(true);
+        self.step_frame_inner(true, true);
     }
 
     #[cfg(test)]
     pub(crate) fn eager_hlt_step_frame(&mut self) {
-        self.step_frame_inner(false);
+        self.step_frame_inner(false, false);
     }
 
-    fn step_frame_inner(&mut self, allow_hlt_fast_forward: bool) {
+    #[cfg(test)]
+    pub(crate) fn eager_service_step_frame(&mut self) {
+        self.step_frame_inner(true, false);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn deferred_service_step_frame(&mut self) {
+        self.step_frame_inner(true, true);
+    }
+
+    fn step_frame_inner(&mut self, allow_hlt_fast_forward: bool, allow_deferred_service: bool) {
         if self.cpu.is_suspended() {
             return;
         }
         let hlt_fast_forward_enabled =
-            allow_hlt_fast_forward && self.hlt_fast_forward_observers_inactive();
+            allow_hlt_fast_forward && self.frame_service_observers_inactive();
         self.clear_frame_ready();
+        if allow_deferred_service && self.frame_service_observers_inactive() {
+            self.bus.begin_frame_service();
+        }
         let guard = self
             .cpu
             .cycles
@@ -36,6 +49,7 @@ impl Emulator {
                 break;
             }
         }
+        self.bus.end_frame_service();
         self.finish_frame();
     }
 
@@ -45,6 +59,7 @@ impl Emulator {
         hlt_fast_forward_enabled: bool,
         guard: u64,
     ) -> bool {
+        self.bus.materialize_frame_service();
         if self.cpu.is_suspended() {
             return true;
         }
@@ -69,7 +84,7 @@ impl Emulator {
         false
     }
 
-    fn hlt_fast_forward_observers_inactive(&self) -> bool {
+    fn frame_service_observers_inactive(&self) -> bool {
         !self.debug.break_on_next
             && self.debug.iter_breakpoints().next().is_none()
             && self.debug.watchpoints.is_empty()

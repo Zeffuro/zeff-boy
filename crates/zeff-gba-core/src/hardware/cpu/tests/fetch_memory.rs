@@ -39,6 +39,48 @@ fn thumb_fetch_reads_16_bits_and_advances_pc() {
 }
 
 #[test]
+fn warm_pipeline_rejects_public_cpsr_isa_changes() {
+    let bytes = (0u8..16).collect::<Vec<_>>();
+    let bus = bus_with_rom(&bytes);
+
+    let mut arm_to_thumb = Cpu::new();
+    arm_to_thumb.reset();
+    arm_to_thumb.fetch_decode_stub(&bus);
+    arm_to_thumb.cpsr |= CPSR_THUMB;
+    let fetched = arm_to_thumb.fetch_decode_stub(&bus);
+    assert_eq!(fetched.instruction_set, InstructionSet::Thumb);
+    assert_eq!(fetched.pc, RESET_VECTOR + 4);
+    assert_eq!(fetched.raw, u32::from(u16::from_le_bytes([4, 5])));
+    assert!(
+        arm_to_thumb
+            .pipeline_state()
+            .entries
+            .iter()
+            .take(2)
+            .all(|entry| entry.thumb)
+    );
+
+    let mut thumb_to_arm = Cpu::new();
+    thumb_to_arm.reset();
+    thumb_to_arm.regs[15] = RESET_VECTOR + 2;
+    thumb_to_arm.cpsr |= CPSR_THUMB;
+    thumb_to_arm.fetch_decode_stub(&bus);
+    thumb_to_arm.cpsr &= !CPSR_THUMB;
+    let fetched = thumb_to_arm.fetch_decode_stub(&bus);
+    assert_eq!(fetched.instruction_set, InstructionSet::Arm);
+    assert_eq!(fetched.pc, RESET_VECTOR + 4);
+    assert_eq!(fetched.raw, u32::from_le_bytes([4, 5, 6, 7]));
+    assert!(
+        thumb_to_arm
+            .pipeline_state()
+            .entries
+            .iter()
+            .take(2)
+            .all(|entry| !entry.thumb)
+    );
+}
+
+#[test]
 fn cpu_data_reads_from_bios_outside_bios_return_post_startup_latch() {
     let mut bus = bus_with_rom(&[0x00, 0x00, 0xA0, 0xE1]); // mov r0, r0
     let mut cpu = Cpu::new();

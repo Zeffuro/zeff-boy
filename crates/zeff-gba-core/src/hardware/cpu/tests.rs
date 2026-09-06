@@ -13,6 +13,22 @@ fn bus_with_rom(rom_body: &[u8]) -> Bus {
 mod arm;
 #[path = "tests/fetch_memory.rs"]
 mod fetch_memory;
+#[path = "tests/frame_direct.rs"]
+mod frame_direct;
+#[path = "tests/frame_direct_block.rs"]
+mod frame_direct_block;
+#[path = "tests/frame_fetch.rs"]
+mod frame_fetch;
+#[path = "tests/frame_fetch_ram.rs"]
+mod frame_fetch_ram;
+#[path = "tests/frame_mixed.rs"]
+mod frame_mixed;
+#[path = "tests/frame_multiply.rs"]
+mod frame_multiply;
+#[path = "tests/frame_pure.rs"]
+mod frame_pure;
+#[path = "tests/frame_thumb.rs"]
+mod frame_thumb;
 #[path = "tests/irq.rs"]
 mod irq;
 #[path = "tests/phases.rs"]

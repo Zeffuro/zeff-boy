@@ -15,8 +15,11 @@ impl Bus {
     }
 
     pub(super) fn timer_read16(&self, index: usize, control: bool) -> u16 {
-        self.projected_timers_at(self.timer_observation_cycles)
-            .read16(index, control)
+        self.projected_timers_at(
+            self.timer_observation_cycles
+                .wrapping_add(u64::from(self.frame_service_pending_cycles)),
+        )
+        .read16(index, control)
     }
 
     pub(super) fn timer_cycles_until_overflow(&self, index: usize) -> Option<u32> {
@@ -77,7 +80,8 @@ impl Bus {
         self.timer_materialized_cycles != self.master_cycles
     }
 
-    pub fn step_cycles(&mut self, mut cycles: u32) {
+    #[inline]
+    pub fn step_cycles(&mut self, cycles: u32) {
         #[cfg(feature = "profiling")]
         {
             self.profiling.step_calls = self.profiling.step_calls.wrapping_add(1);
@@ -85,6 +89,18 @@ impl Bus {
                 .profiling
                 .requested_cycles
                 .wrapping_add(u64::from(cycles));
+        }
+        if self.frame_service_deferred && self.defer_frame_service(cycles) {
+            return;
+        }
+        self.step_cycles_eager(cycles);
+    }
+
+    pub(super) fn step_cycles_eager(&mut self, mut cycles: u32) {
+        self.frame_service_observed = true;
+        #[cfg(feature = "profiling")]
+        if cycles != 0 {
+            self.profiling.service_entries = self.profiling.service_entries.wrapping_add(1);
         }
         while cycles > 0 {
             #[cfg(feature = "profiling")]
@@ -114,6 +130,10 @@ impl Bus {
             } else {
                 0
             };
+            #[cfg(feature = "profiling")]
+            let apu_observation = self
+                .apu
+                .cycles_until_observation(read_io16(&self.io, SOUNDBIAS));
             let ppu_before = (due_sources & DEADLINE_PPU != 0).then(|| {
                 (
                     self.ppu.in_vblank(),
@@ -180,6 +200,33 @@ impl Bus {
                 self.update_lcd_interrupts(was_in_vblank, was_in_hblank, old_vcount);
             }
             self.timer_observation_cycles = self.master_cycles;
+            #[cfg(feature = "profiling")]
+            {
+                self.profiling.apu_step_output_calls =
+                    self.profiling.apu_step_output_calls.wrapping_add(1);
+                self.profiling.apu_step_output_cycles = self
+                    .profiling
+                    .apu_step_output_cycles
+                    .wrapping_add(u64::from(step));
+                if step < apu_observation {
+                    self.profiling.apu_non_observation_chunks =
+                        self.profiling.apu_non_observation_chunks.wrapping_add(1);
+                    self.profiling.apu_non_observation_cycles = self
+                        .profiling
+                        .apu_non_observation_cycles
+                        .wrapping_add(u64::from(step));
+                    if due_sources == DEADLINE_PPU {
+                        self.profiling.apu_ppu_only_non_observation_chunks = self
+                            .profiling
+                            .apu_ppu_only_non_observation_chunks
+                            .wrapping_add(1);
+                        self.profiling.apu_ppu_only_non_observation_cycles = self
+                            .profiling
+                            .apu_ppu_only_non_observation_cycles
+                            .wrapping_add(u64::from(step));
+                    }
+                }
+            }
             self.apu.step_output(
                 step,
                 soundcnt_h,
@@ -205,6 +252,17 @@ impl Bus {
                 *total = total.wrapping_add(u64::from(count));
             }
             if timer_overflows.iter().any(|&count| count != 0) {
+                #[cfg(feature = "profiling")]
+                {
+                    self.profiling.apu_timer_overflow_ordering_cases = self
+                        .profiling
+                        .apu_timer_overflow_ordering_cases
+                        .wrapping_add(1);
+                    self.profiling.apu_timer_overflow_ordering_count = self
+                        .profiling
+                        .apu_timer_overflow_ordering_count
+                        .wrapping_add(timer_overflows.into_iter().map(u64::from).sum::<u64>());
+                }
                 self.service_sound_timer_overflows(timer_overflows, soundcnt_h);
             }
             if timer_interrupts != 0 {

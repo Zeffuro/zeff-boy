@@ -9,11 +9,24 @@ use super::timing::{CpuInstructionTimeline, TimerIoCompletionEvent};
 mod arm;
 mod decode;
 mod fetch;
+mod frame_direct;
+mod frame_fetch;
+#[cfg(feature = "profiling")]
+mod frame_profile;
+mod frame_run;
+mod instruction_timing;
 mod memory;
 mod ops;
 mod swi;
 mod thumb;
+#[cfg(feature = "profiling")]
+mod thumb_profile;
 mod transfer;
+
+use frame_fetch::{EMPTY_PREFETCHED_INSTRUCTION, PrefetchedInstruction};
+use instruction_timing::{
+    DataAccessCharge, instruction_base_cycles, instruction_has_load_final_internal_cycle,
+};
 
 pub const RESET_VECTOR: u32 = GAMEPAK0_START;
 pub const CPSR_MODE_MASK: u32 = 0x1F;
@@ -84,44 +97,34 @@ pub use decode::{
     ArmInstructionClass, DecodedInstruction, FetchedInstruction, ThumbInstructionClass,
 };
 
-const EMPTY_FETCHED_INSTRUCTION: FetchedInstruction = FetchedInstruction {
-    pc: 0,
-    raw: 0,
-    instruction_set: InstructionSet::Arm,
-    width_bytes: 4,
-    fetch_cycles: 0,
-    decoded: DecodedInstruction::Arm {
-        condition: 0,
-        class: ArmInstructionClass::DataProcessing,
-    },
-};
-
 #[derive(Clone, Debug)]
 struct PrefetchPipeline {
-    entries: [FetchedInstruction; PREFETCH_QUEUE_LEN],
+    entries: [PrefetchedInstruction; PREFETCH_QUEUE_LEN],
     len: u8,
+    instruction_set: InstructionSet,
 }
 
 impl PrefetchPipeline {
     fn new() -> Self {
         Self {
-            entries: [EMPTY_FETCHED_INSTRUCTION; PREFETCH_QUEUE_LEN],
+            entries: [EMPTY_PREFETCHED_INSTRUCTION; PREFETCH_QUEUE_LEN],
             len: 0,
+            instruction_set: InstructionSet::Arm,
         }
     }
 
     #[inline]
-    fn front(&self) -> Option<&FetchedInstruction> {
+    fn front(&self) -> Option<&PrefetchedInstruction> {
         (self.len != 0).then(|| &self.entries[0])
     }
 
     #[inline]
-    fn back(&self) -> Option<&FetchedInstruction> {
+    fn back(&self) -> Option<&PrefetchedInstruction> {
         (self.len != 0).then(|| &self.entries[usize::from(self.len - 1)])
     }
 
     #[inline]
-    fn pop_front(&mut self) -> Option<FetchedInstruction> {
+    fn pop_front(&mut self) -> Option<PrefetchedInstruction> {
         if self.len == 0 {
             return None;
         }
@@ -135,8 +138,13 @@ impl PrefetchPipeline {
     }
 
     #[inline]
-    fn push_back(&mut self, fetched: FetchedInstruction) {
+    fn push_back(&mut self, fetched: PrefetchedInstruction, instruction_set: InstructionSet) {
         debug_assert!(usize::from(self.len) < PREFETCH_QUEUE_LEN);
+        if self.len == 0 {
+            self.instruction_set = instruction_set;
+        } else {
+            debug_assert_eq!(self.instruction_set, instruction_set);
+        }
         self.entries[usize::from(self.len)] = fetched;
         self.len += 1;
     }
@@ -369,6 +377,10 @@ pub struct Cpu {
     timer_io_completion_events: Vec<TimerIoCompletionEvent>,
     #[cfg(test)]
     instruction_timeline: CpuInstructionTimeline,
+    #[cfg(test)]
+    gamepak_block_fetches: u64,
+    #[cfg(test)]
+    ram_block_fetches: [u64; 2],
     data_access_timing_active: bool,
     hle_data_accesses: bool,
     #[cfg(feature = "profiling")]
@@ -411,6 +423,10 @@ impl Cpu {
             timer_io_completion_events: Vec::new(),
             #[cfg(test)]
             instruction_timeline: CpuInstructionTimeline::default(),
+            #[cfg(test)]
+            gamepak_block_fetches: 0,
+            #[cfg(test)]
+            ram_block_fetches: [0; 2],
             data_access_timing_active: false,
             hle_data_accesses: false,
             #[cfg(feature = "profiling")]
@@ -579,7 +595,11 @@ impl Cpu {
     }
 
     fn step_sequential_fetch_phase(&mut self, bus: &mut Bus) -> Option<Option<FetchedInstruction>> {
+        #[cfg(feature = "profiling")]
+        let frame_kernel_fetch_gate = self.profile_frame_kernel_fetch_gate(bus);
         let fetched = self.fetch_decode_stub(bus);
+        #[cfg(feature = "profiling")]
+        self.profile_frame_kernel_instruction(bus, fetched, frame_kernel_fetch_gate);
         self.active_decoded = Some(fetched.decoded);
         self.execution_state = CpuExecutionState {
             phase: CpuExecutionPhase::Execute,
@@ -652,17 +672,17 @@ impl Cpu {
             instruction_set.width_bytes(),
             false,
         );
-        let fetched = fetch::fetch_instruction_at(
+        let (fetched, fetch_cycles) = fetch::fetch_prefetched_at(
             bus,
             self.execution_state.refill_target,
             instruction_set,
             instruction_set.width_bytes(),
             false,
         );
-        self.track_bios_fetch(fetched);
-        self.pipeline.push_back(fetched);
+        self.track_bios_fetch(fetched.pc, fetched.raw, instruction_set);
+        self.pipeline.push_back(fetched, instruction_set);
         let pending_internal_cycles = u32::from(self.take_pending_load_internal_cycle());
-        let cycles = fetched.fetch_cycles.max(pending_internal_cycles);
+        let cycles = fetch_cycles.max(pending_internal_cycles);
         self.cycles = self.cycles.wrapping_add(u64::from(cycles));
         bus.step_cycles(cycles);
         self.add_refill_timeline_cycles(cycles);
@@ -692,18 +712,18 @@ impl Cpu {
             instruction_set.width_bytes(),
             true,
         );
-        let fetched = fetch::fetch_instruction_at(
+        let (fetched, fetch_cycles) = fetch::fetch_prefetched_at(
             bus,
             address,
             instruction_set,
             instruction_set.width_bytes(),
             true,
         );
-        self.track_bios_fetch(fetched);
-        self.pipeline.push_back(fetched);
-        self.cycles = self.cycles.wrapping_add(u64::from(fetched.fetch_cycles));
-        bus.step_cycles(fetched.fetch_cycles);
-        self.add_refill_timeline_cycles(fetched.fetch_cycles);
+        self.track_bios_fetch(fetched.pc, fetched.raw, instruction_set);
+        self.pipeline.push_back(fetched, instruction_set);
+        self.cycles = self.cycles.wrapping_add(u64::from(fetch_cycles));
+        bus.step_cycles(fetch_cycles);
+        self.add_refill_timeline_cycles(fetch_cycles);
         self.execution_state.refill_index = 2;
         if self.execution_state.instruction_active {
             self.complete_active_instruction(bus)
@@ -717,21 +737,37 @@ impl Cpu {
     fn add_refill_timeline_cycles(&mut self, cycles: u32) {
         #[cfg(test)]
         if self.execution_state.instruction_active {
-            self.instruction_timeline.total_cycles = self
-                .instruction_timeline
-                .total_cycles
-                .saturating_add(cycles);
-            self.instruction_timeline.required_cycles = self
-                .instruction_timeline
-                .required_cycles
-                .saturating_add(cycles);
+            self.add_instruction_refill_cycles(cycles);
         }
         #[cfg(not(test))]
         let _ = cycles;
     }
 
+    #[cfg(test)]
+    fn add_instruction_refill_cycles(&mut self, cycles: u32) {
+        self.instruction_timeline.total_cycles = self
+            .instruction_timeline
+            .total_cycles
+            .saturating_add(cycles);
+        self.instruction_timeline.required_cycles = self
+            .instruction_timeline
+            .required_cycles
+            .saturating_add(cycles);
+    }
+
     fn complete_active_instruction(&mut self, bus: &mut Bus) -> Option<Option<FetchedInstruction>> {
         let fetched = self.active_fetched_instruction();
+        let fetched = self.complete_instruction(bus, fetched);
+        self.execution_state = CpuExecutionState::default();
+        self.active_decoded = None;
+        Some(Some(fetched))
+    }
+
+    fn complete_instruction(
+        &mut self,
+        bus: &mut Bus,
+        fetched: FetchedInstruction,
+    ) -> FetchedInstruction {
         if bus.take_halt_request() {
             self.state = CpuState::Halted;
         }
@@ -739,14 +775,13 @@ impl Cpu {
             self.break_after_next_stub = false;
             self.suspend();
         }
-        self.execution_state = CpuExecutionState::default();
-        self.active_decoded = None;
         #[cfg(feature = "profiling")]
         {
+            self.profile_frame_kernel_completion(bus);
             self.profiling.completed_instructions =
                 self.profiling.completed_instructions.wrapping_add(1);
         }
-        Some(Some(fetched))
+        fetched
     }
 
     fn active_fetched_instruction(&self) -> FetchedInstruction {
@@ -906,35 +941,36 @@ impl Cpu {
     }
 
     fn finish_data_access_timing(&mut self, bus: &mut Bus, total_cycles: u32) {
-        let data_access_count = self.data_access_cursor.access_count();
-        let incremental_cycles = total_cycles.saturating_sub(self.instruction_fetch_cycles);
-        let replaced_legacy_data_cycles = if self.hle_data_accesses {
-            0
-        } else {
-            data_access_count.min(incremental_cycles)
-        };
-        let incremental_non_data_cycles =
-            incremental_cycles.saturating_sub(replaced_legacy_data_cycles);
-        let data_access_cycles = self.data_access_cursor.elapsed_cycles();
-        let required_cycles = self
-            .instruction_fetch_cycles
-            .saturating_add(incremental_non_data_cycles)
-            .saturating_add(data_access_cycles);
-        let charged_cycles = total_cycles.max(required_cycles);
+        let cycles = self.settle_data_access_timing(total_cycles);
+        if cycles != 0 {
+            bus.step_cycles(cycles);
+        }
+    }
+
+    fn settle_data_access_timing(&mut self, total_cycles: u32) -> u32 {
+        let charge = DataAccessCharge::new(
+            self.instruction_fetch_cycles,
+            total_cycles,
+            self.data_access_cursor,
+            self.hle_data_accesses,
+        );
+        let charged_cycles = charge.cycles;
         self.cycles = self
             .cycles
             .wrapping_add(u64::from(charged_cycles.saturating_sub(total_cycles)));
-        self.advance_bus_phase(bus, charged_cycles);
+        let cycles = charged_cycles.saturating_sub(self.bus_phase_cycles);
+        self.bus_phase_cycles = charged_cycles;
         #[cfg(test)]
         {
             self.instruction_timeline.total_cycles = total_cycles;
-            self.instruction_timeline.data_access_cycles = data_access_cycles;
-            self.instruction_timeline.data_access_count = data_access_count;
-            self.instruction_timeline.replaced_legacy_data_cycles = replaced_legacy_data_cycles;
-            self.instruction_timeline.incremental_non_data_cycles = incremental_non_data_cycles;
-            self.instruction_timeline.required_cycles = required_cycles;
+            self.instruction_timeline.data_access_cycles = self.data_access_cursor.elapsed_cycles();
+            self.instruction_timeline.data_access_count = self.data_access_cursor.access_count();
+            self.instruction_timeline.replaced_legacy_data_cycles = charge.replaced_legacy_cycles;
+            self.instruction_timeline.incremental_non_data_cycles = charge.non_data_cycles;
+            self.instruction_timeline.required_cycles = charge.required_cycles;
         }
         self.data_access_timing_active = false;
+        cycles
     }
 
     fn advance_bus_phase(&mut self, bus: &mut Bus, target_cycle: u32) {
@@ -1145,109 +1181,6 @@ impl Cpu {
             0xE => true,
             _ => false,
         }
-    }
-}
-
-fn instruction_base_cycles(fetched: FetchedInstruction, condition_passed: bool) -> u32 {
-    if !condition_passed {
-        return 0;
-    }
-
-    match fetched.decoded {
-        DecodedInstruction::Arm {
-            class: ArmInstructionClass::DataProcessing,
-            ..
-        } => {
-            if fetched.raw & (1 << 25) == 0 && fetched.raw & (1 << 4) != 0 {
-                1
-            } else {
-                0
-            }
-        }
-        DecodedInstruction::Arm {
-            class: ArmInstructionClass::Branch | ArmInstructionClass::BranchExchange,
-            ..
-        } => 0,
-        DecodedInstruction::Arm {
-            class: ArmInstructionClass::SingleDataTransfer,
-            ..
-        } => {
-            if fetched.raw & (1 << 20) != 0 {
-                2
-            } else {
-                1
-            }
-        }
-        DecodedInstruction::Arm {
-            class: ArmInstructionClass::BlockDataTransfer,
-            ..
-        } => {
-            let register_count = block_transfer_register_count(fetched.raw);
-            if fetched.raw & (1 << 20) != 0 {
-                register_count + 1
-            } else {
-                register_count
-            }
-        }
-        DecodedInstruction::Arm {
-            class: ArmInstructionClass::SingleDataSwap,
-            ..
-        } => 3,
-        DecodedInstruction::Thumb {
-            class:
-                ThumbInstructionClass::MoveShiftedRegister
-                | ThumbInstructionClass::AddSubtract
-                | ThumbInstructionClass::Immediate
-                | ThumbInstructionClass::LoadAddress
-                | ThumbInstructionClass::AddOffsetSp
-                | ThumbInstructionClass::HiRegisterBranchExchange
-                | ThumbInstructionClass::UnconditionalBranch
-                | ThumbInstructionClass::LongBranchWithLink,
-        } => 0,
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::Alu,
-        } => match (fetched.raw >> 6) & 0xF {
-            0x2 | 0x3 | 0x4 | 0x7 | 0xD => 1,
-            _ => 0,
-        },
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::ConditionalBranchOrSwi,
-        } if fetched.raw as u16 & 0x0F00 != 0x0F00 => 0,
-        _ => 1,
-    }
-}
-
-fn block_transfer_register_count(raw: u32) -> u32 {
-    let count = (raw & 0xFFFF).count_ones();
-    if count == 0 { 16 } else { count }
-}
-
-fn instruction_has_load_final_internal_cycle(
-    fetched: FetchedInstruction,
-    condition_passed: bool,
-) -> bool {
-    if !condition_passed {
-        return false;
-    }
-
-    match fetched.decoded {
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::PcRelativeLoad,
-        } => true,
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::LoadStore,
-        } => {
-            let raw = fetched.raw as u16;
-            if raw & 0xF000 == 0x5000 {
-                (raw >> 9) & 0x7 >= 0b011
-            } else {
-                raw & (1 << 11) != 0
-            }
-        }
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::LoadStoreHalfword | ThumbInstructionClass::SpRelativeLoad,
-        } => fetched.raw & (1 << 11) != 0,
-        _ => false,
     }
 }
 

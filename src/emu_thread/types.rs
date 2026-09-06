@@ -1,46 +1,17 @@
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use arc_swap::ArcSwapOption;
 
 use crate::debug::DebugUiActions;
 use crate::ui;
 use zeff_emu_common::address::Address;
 
-pub(crate) type SharedFramebuffer = Arc<ArcSwapOption<Vec<u8>>>;
-
-pub(crate) fn new_shared_framebuffer() -> SharedFramebuffer {
-    Arc::new(ArcSwapOption::empty())
-}
-
-pub(crate) fn publish_framebuffer(shared_fb: &SharedFramebuffer, framebuffer: &[u8]) {
-    shared_fb.store(Some(Arc::new(framebuffer.to_vec())));
-}
-
-pub(crate) fn publish_owned_framebuffer(shared_fb: &SharedFramebuffer, framebuffer: Vec<u8>) {
-    shared_fb.store(Some(Arc::new(framebuffer)));
-}
-
 #[cfg(feature = "profile-cores")]
-pub(crate) fn profile_frame_publication(framebuffer: &[u8], iterations: u32) {
-    use std::hint::black_box;
-    use std::time::Instant;
-
-    let shared = new_shared_framebuffer();
-    for _ in 0..10 {
-        publish_framebuffer(&shared, framebuffer);
-    }
-    let start = Instant::now();
-    for _ in 0..iterations {
-        publish_framebuffer(&shared, black_box(framebuffer));
-    }
-    let elapsed = start.elapsed();
-    let frames_per_second = f64::from(iterations) / elapsed.as_secs_f64();
-    black_box(shared.load_full());
-    println!(
-        "frame publication                {iterations:5} frames  {elapsed:>9.2?}  {frames_per_second:>8.1} fps"
-    );
-}
+pub(crate) use super::framebuffer::profile_frame_publication;
+#[cfg(test)]
+use super::framebuffer::publish_framebuffer;
+pub(crate) use super::framebuffer::{
+    PublishedFramebuffer, SharedFramebuffer, new_shared_framebuffer, publish_backend_framebuffer,
+    publish_owned_framebuffer,
+};
 
 pub(crate) struct RenderSettings {
     pub(crate) color_correction: crate::settings::ColorCorrection,
@@ -776,7 +747,7 @@ mod tests {
         source.fill(0);
 
         let stored = shared_fb.load_full().expect("framebuffer should be stored");
-        assert_eq!(&**stored, &[1, 2, 3, 4]);
+        assert_eq!(stored.as_slice(), &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -786,7 +757,25 @@ mod tests {
         publish_owned_framebuffer(&shared_fb, vec![5, 6, 7, 8]);
 
         let stored = shared_fb.load_full().expect("framebuffer should be stored");
-        assert_eq!(&**stored, &[5, 6, 7, 8]);
+        assert_eq!(stored.as_slice(), &[5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn publish_framebuffer_preserves_held_snapshots() {
+        let shared_fb = new_shared_framebuffer();
+
+        publish_framebuffer(&shared_fb, &[1, 2, 3, 4]);
+        let held = shared_fb.load_full().expect("framebuffer should be stored");
+        publish_framebuffer(&shared_fb, &[5, 6, 7, 8]);
+
+        assert_eq!(held.as_slice(), &[1, 2, 3, 4]);
+        assert_eq!(
+            shared_fb
+                .load_full()
+                .expect("framebuffer should be stored")
+                .as_slice(),
+            &[5, 6, 7, 8]
+        );
     }
 
     #[test]

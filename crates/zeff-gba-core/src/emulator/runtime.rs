@@ -8,24 +8,74 @@ use zeff_emu_common::debug::{
 
 impl Emulator {
     pub fn step_frame(&mut self) {
+        self.step_frame_inner(true, true, true, true);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn eager_service_step_frame(&mut self) {
+        self.step_frame_inner(false, false, false, false);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_frame_service_step_frame(&mut self, allow_direct: bool) {
+        self.step_frame_inner(true, true, allow_direct, true);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_frame_multiply_step_frame(&mut self, allow_multiply: bool) {
+        self.step_frame_inner(true, true, true, allow_multiply);
+    }
+
+    fn step_frame_inner(
+        &mut self,
+        allow_deferred_service: bool,
+        allow_cpu_run: bool,
+        allow_direct: bool,
+        allow_multiply: bool,
+    ) {
         if self.cpu.is_suspended() {
             return;
         }
         self.clear_frame_ready();
+        if allow_deferred_service && self.frame_service_observers_inactive() {
+            self.bus.begin_frame_service();
+        }
         let guard = self
             .cpu
             .cycles
             .wrapping_add(u64::from(CYCLES_PER_FRAME) * 2);
+        let run_guard = (allow_cpu_run && self.bus.frame_service_active()).then_some((
+            guard,
+            allow_direct,
+            allow_multiply,
+        ));
         while !self.frame_ready() && self.cpu.cycles < guard {
-            if self.step_instruction().is_none() && self.cpu.is_suspended() {
+            if self
+                .step_instruction_inner(false, false, false, run_guard)
+                .0
+                .is_none()
+                && self.cpu.is_suspended()
+            {
                 break;
             }
         }
+        self.bus.end_frame_service();
         self.finish_frame();
     }
 
+    fn frame_service_observers_inactive(&self) -> bool {
+        !self.cpu.break_after_next_stub
+            && !self.debug.break_on_next
+            && self.debug.iter_breakpoints().next().is_none()
+            && self.debug.watchpoints.is_empty()
+            && self.debug.iter_event_breakpoints().next().is_none()
+            && !self.opcode_log.enabled
+            && !self.instruction_trace.is_enabled()
+            && !self.bus.debug_trace_enabled
+    }
+
     pub fn step_instruction(&mut self) -> Option<FetchedInstruction> {
-        self.step_instruction_inner(false, false, false).0
+        self.step_instruction_inner(false, false, false, None).0
     }
 
     pub fn step_instruction_with_bus_trace(
@@ -33,7 +83,7 @@ impl Emulator {
         trace_reads: bool,
         trace_writes: bool,
     ) -> (Option<FetchedInstruction>, Vec<DebugTraceEvent>) {
-        self.step_instruction_inner(trace_reads || trace_writes, trace_reads, trace_writes)
+        self.step_instruction_inner(trace_reads || trace_writes, trace_reads, trace_writes, None)
     }
 
     fn step_instruction_inner(
@@ -41,6 +91,7 @@ impl Emulator {
         collect_bus_trace: bool,
         trace_reads: bool,
         trace_writes: bool,
+        frame_run_guard: Option<(u64, bool, bool)>,
     ) -> (Option<FetchedInstruction>, Vec<DebugTraceEvent>) {
         if self.cpu.is_suspended() {
             return (None, Vec::new());
@@ -99,6 +150,7 @@ impl Emulator {
             return (None, Vec::new());
         }
         if self.cpu.state == CpuState::Halted {
+            self.bus.materialize_frame_service();
             let cycles = self.bus.cycles_until_next_halt_check();
             self.cpu.cycles = self.cpu.cycles.wrapping_add(u64::from(cycles));
             self.bus.step_cycles(cycles);
@@ -122,7 +174,12 @@ impl Emulator {
         }
 
         let before_cycles = self.cpu.cycles;
-        let fetched = self.cpu.step(&mut self.bus);
+        let fetched = if let Some((guard, allow_direct, allow_multiply)) = frame_run_guard {
+            self.cpu
+                .run_frame_service(&mut self.bus, guard, allow_direct, allow_multiply)
+        } else {
+            self.cpu.step(&mut self.bus)
+        };
         if let Some(instruction) = fetched {
             self.opcode_log.push(instruction.into());
         }

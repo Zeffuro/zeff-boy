@@ -72,6 +72,7 @@ struct OffscreenTarget {
 
 pub(crate) struct FramebufferRenderer {
     screen: ScreenInput,
+    presentation_size: (u32, u32),
     shader: ShaderState,
     sampler: SamplerResources,
     offscreen: OffscreenTarget,
@@ -205,6 +206,7 @@ impl FramebufferRenderer {
         );
 
         Ok(Self {
+            presentation_size: (MIN_OFFSCREEN_WIDTH, MIN_OFFSCREEN_HEIGHT),
             screen: ScreenInput {
                 texture: screen_texture,
                 view: screen_view,
@@ -247,7 +249,16 @@ impl FramebufferRenderer {
         (self.screen.native_width, self.screen.native_height)
     }
 
+    pub(crate) fn presentation_size(&self) -> (u32, u32) {
+        self.presentation_size
+    }
+
+    pub(crate) fn set_presentation_size(&mut self, width: u32, height: u32) {
+        self.presentation_size = (width, height);
+    }
+
     pub(crate) fn set_native_size(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        self.presentation_size = (width, height);
         if self.screen.native_width == width && self.screen.native_height == height {
             return;
         }

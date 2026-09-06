@@ -1,4 +1,21 @@
-use super::{PceHardwareTopology, PhysicalRegion, decode_physical_region_for};
+use super::{PceHardwareTopology, PceHuCardBoard, PhysicalRegion, decode_physical_region_for};
+
+#[derive(Clone, Copy)]
+pub(crate) enum PceBusAccessKind {
+    Read,
+    Write,
+    DummyRead,
+    DummyWrite,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PceDeviceMaterializationCause {
+    ActionFinish,
+    TimingMmio,
+    LineHorizon,
+    DmaHorizon,
+    DirectVdc,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PceProfilingSnapshot {
@@ -13,7 +30,14 @@ pub struct PceProfilingSnapshot {
     pub bus_dummy_writes: u64,
     pub bus_idle_cycles: u64,
     pub bus_hucard_accesses: u64,
+    pub bus_plain_hucard_accesses: u64,
+    pub bus_system_card_accesses: u64,
+    pub bus_hucard_reads: u64,
+    pub bus_hucard_dummy_reads: u64,
     pub bus_work_ram_accesses: u64,
+    pub bus_work_ram_reads: u64,
+    pub bus_work_ram_dummy_reads: u64,
+    pub bus_cdrom2_accesses: u64,
     pub bus_vdc_accesses: u64,
     pub bus_vpc_accesses: u64,
     pub bus_vdc2_accesses: u64,
@@ -23,9 +47,21 @@ pub struct PceProfilingSnapshot {
     pub bus_controller_accesses: u64,
     pub bus_irq_accesses: u64,
     pub bus_unmapped_accesses: u64,
+    pub plain_memory_lane_attempts: u64,
+    pub plain_memory_lane_direct_accesses: u64,
+    pub plain_memory_lane_fallback_accesses: u64,
     pub device_advance_calls: u64,
     pub device_advance_chunks: u64,
     pub device_advance_master_ticks: u64,
+    pub device_materialization_attempts: u64,
+    pub device_materializations_zero_pending: u64,
+    pub device_materializations: u64,
+    pub device_materialized_master_ticks: u64,
+    pub device_materializations_action_finish: u64,
+    pub device_materializations_timing_mmio: u64,
+    pub device_materializations_line_horizon: u64,
+    pub device_materializations_dma_horizon: u64,
+    pub device_materializations_direct_vdc: u64,
     pub vdc_advance_calls: u64,
     pub vdc_pixel_clocks: u64,
     pub vdc_phase_transitions: u64,
@@ -52,10 +88,42 @@ pub(crate) struct PceProfiling {
 }
 
 impl PceProfiling {
-    pub(crate) fn record_bus_access(&mut self, topology: PceHardwareTopology, physical_addr: u32) {
+    pub(crate) fn record_bus_access(
+        &mut self,
+        topology: PceHardwareTopology,
+        board: PceHuCardBoard,
+        physical_addr: u32,
+        kind: PceBusAccessKind,
+    ) {
+        if (super::cdrom2::CDROM2_REGISTER_START..=super::cdrom2::CDROM2_REGISTER_END)
+            .contains(&(physical_addr & super::cpu::PHYSICAL_ADDRESS_MASK))
+        {
+            self.snapshot.bus_cdrom2_accesses += 1;
+        }
         match decode_physical_region_for(topology, physical_addr) {
-            PhysicalRegion::HuCard(_) => self.snapshot.bus_hucard_accesses += 1,
-            PhysicalRegion::WorkRam(_) => self.snapshot.bus_work_ram_accesses += 1,
+            PhysicalRegion::HuCard(_) => {
+                self.snapshot.bus_hucard_accesses += 1;
+                match board {
+                    PceHuCardBoard::Plain => self.snapshot.bus_plain_hucard_accesses += 1,
+                    PceHuCardBoard::SystemCardV1V2 | PceHuCardBoard::SystemCardV3 => {
+                        self.snapshot.bus_system_card_accesses += 1;
+                    }
+                    PceHuCardBoard::Sf2Ce | PceHuCardBoard::Populous => {}
+                }
+                match kind {
+                    PceBusAccessKind::Read => self.snapshot.bus_hucard_reads += 1,
+                    PceBusAccessKind::DummyRead => self.snapshot.bus_hucard_dummy_reads += 1,
+                    PceBusAccessKind::Write | PceBusAccessKind::DummyWrite => {}
+                }
+            }
+            PhysicalRegion::WorkRam(_) => {
+                self.snapshot.bus_work_ram_accesses += 1;
+                match kind {
+                    PceBusAccessKind::Read => self.snapshot.bus_work_ram_reads += 1,
+                    PceBusAccessKind::DummyRead => self.snapshot.bus_work_ram_dummy_reads += 1,
+                    PceBusAccessKind::Write | PceBusAccessKind::DummyWrite => {}
+                }
+            }
             PhysicalRegion::Vdc(_) => self.snapshot.bus_vdc_accesses += 1,
             PhysicalRegion::Vpc(_) => self.snapshot.bus_vpc_accesses += 1,
             PhysicalRegion::Vdc2(_) => self.snapshot.bus_vdc2_accesses += 1,
@@ -65,6 +133,37 @@ impl PceProfiling {
             PhysicalRegion::Controller => self.snapshot.bus_controller_accesses += 1,
             PhysicalRegion::Irq(_) => self.snapshot.bus_irq_accesses += 1,
             PhysicalRegion::Unmapped => self.snapshot.bus_unmapped_accesses += 1,
+        }
+    }
+
+    pub(crate) fn record_device_materialization(
+        &mut self,
+        cause: PceDeviceMaterializationCause,
+        master_ticks: u64,
+    ) {
+        self.snapshot.device_materialization_attempts += 1;
+        if master_ticks == 0 {
+            self.snapshot.device_materializations_zero_pending += 1;
+            return;
+        }
+        self.snapshot.device_materializations += 1;
+        self.snapshot.device_materialized_master_ticks += master_ticks;
+        match cause {
+            PceDeviceMaterializationCause::ActionFinish => {
+                self.snapshot.device_materializations_action_finish += 1;
+            }
+            PceDeviceMaterializationCause::TimingMmio => {
+                self.snapshot.device_materializations_timing_mmio += 1;
+            }
+            PceDeviceMaterializationCause::LineHorizon => {
+                self.snapshot.device_materializations_line_horizon += 1;
+            }
+            PceDeviceMaterializationCause::DmaHorizon => {
+                self.snapshot.device_materializations_dma_horizon += 1;
+            }
+            PceDeviceMaterializationCause::DirectVdc => {
+                self.snapshot.device_materializations_direct_vdc += 1;
+            }
         }
     }
 

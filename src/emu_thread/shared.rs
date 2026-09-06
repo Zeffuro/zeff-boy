@@ -1,7 +1,7 @@
 use crate::emu_backend::{BackendRuntimeConfig, EmuBackend};
 use crate::ui;
 
-use super::types::{publish_framebuffer, publish_owned_framebuffer};
+use super::types::{publish_backend_framebuffer, publish_owned_framebuffer};
 use super::{
     EmuResponse, EmuThread, FrameInput, FrameResult, ReplayJoypadFrame, SharedFramebuffer,
     WorkerRuntimeFault,
@@ -383,7 +383,7 @@ impl EmuThread {
         match result {
             Ok(outcome) => {
                 backend.set_input(buttons_pressed, dpad_pressed);
-                publish_framebuffer(shared_fb, backend.framebuffer());
+                publish_backend_framebuffer(shared_fb, backend);
                 EmuResponse::LoadStateOk {
                     path: path_label,
                     warning: match outcome {
@@ -427,12 +427,11 @@ impl EmuThread {
         if let Some(rewind_frame) = rewind_buffer.pop_steps(steps.max(1)) {
             match backend.load_state_from_bytes(rewind_frame.state_bytes) {
                 Ok(_) => {
-                    let fb = if rewind_frame.framebuffer.is_empty() {
-                        backend.framebuffer().to_vec()
+                    if rewind_frame.framebuffer.is_empty() {
+                        publish_backend_framebuffer(shared_fb, backend);
                     } else {
-                        rewind_frame.framebuffer
-                    };
-                    publish_owned_framebuffer(shared_fb, fb);
+                        publish_owned_framebuffer(shared_fb, rewind_frame.framebuffer);
+                    }
                     return EmuResponse::RewindOk {
                         media_slot_snapshot: backend.media_slot_snapshot(),
                         game_boy_serial_device: backend.game_boy_serial_device(),

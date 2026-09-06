@@ -28,7 +28,7 @@ impl PceBackend {
     }
 
     pub(crate) fn tas_presented_frame_is_current(&self) -> bool {
-        let mut expected = vec![0; self.framebuffer.len()];
+        let mut expected = vec![0; super::PCE_PRESENTED_RGBA_BYTES];
         project_presented_frame(
             self.machine.presented_frame(),
             self.machine.hardware_topology(),
@@ -36,7 +36,7 @@ impl PceBackend {
             self.palette_mode,
             &mut expected,
         );
-        expected.as_slice() == self.framebuffer.as_ref()
+        expected.as_slice() == self.canonical_framebuffer()
     }
 
     pub(crate) fn inspect_current_native_tas_state(
@@ -136,7 +136,7 @@ impl PceBackend {
         self.pce_memory_base_mode = PceMemoryBaseMode::Disabled;
         self.pending_runtime_fault = None;
         self.memory_base_force_flush = false;
-        self.project_presented_frame();
+        self.invalidate_frame_output();
         ensure!(
             projection.framebuffer.as_ref() == self.machine.framebuffer()
                 && self.tas_presented_frame_is_current(),
@@ -201,7 +201,7 @@ impl PceBackend {
         };
         self.pending_runtime_fault = None;
         self.memory_base_force_flush = false;
-        self.project_presented_frame();
+        self.invalidate_frame_output();
         ensure!(
             projection.framebuffer.as_ref() == self.machine.framebuffer()
                 && self.tas_presented_frame_is_current(),

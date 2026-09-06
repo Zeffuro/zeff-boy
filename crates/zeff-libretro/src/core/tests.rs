@@ -3,6 +3,9 @@ use zeff_emu_common::cheats::{CheatPatch, CheatValue};
 use zeff_emu_common::memory::MemoryRegionKind;
 use zeff_emu_common::system::{CoreFamily, System};
 
+#[path = "tests/pce_host.rs"]
+mod pce_host;
+
 fn load_sega8(ext: &str) -> CoreState {
     CoreState::from_rom(&[0x76], &format!("test.{ext}")).expect("Sega 8-bit ROM should load")
 }
@@ -632,81 +635,13 @@ fn libretro_rejects_deferred_coleco_roms() {
 }
 
 #[test]
-fn libretro_registers_pce_hucards_with_fixed_host_geometry() {
-    let extensions = crate::callbacks::VALID_EXTENSIONS
-        .to_str()
-        .expect("valid extensions should be UTF-8");
-
-    assert!(extensions.split('|').any(|entry| entry == "pce"));
-    let state = CoreState::from_rom(&pce_rom(), "test.pce").expect("PCE HuCard should load");
-    assert!(matches!(state.core, ActiveCore::Pce(_)));
-    assert_eq!(state.system_label(), "PC Engine");
-    assert_eq!(state.video_geometry().base_width, 640);
-    assert_eq!(state.video_geometry().base_height, 480);
-    assert_eq!(state.video_geometry().max_width, 640);
-    assert_eq!(state.video_geometry().max_height, 480);
-    assert_eq!(state.video_geometry().aspect_ratio, 4.0 / 3.0);
-}
-
-#[test]
-fn pce_libretro_normalizes_pceas_headers_before_catalog_hashing() {
-    let rom = pce_rom();
-    let plain = CoreState::from_rom(&rom, "plain.pce").unwrap();
-    let mut headered = vec![0; 0x200];
-    headered[0] = 1;
-    headered.extend_from_slice(&rom);
-    let headered = CoreState::from_rom(&headered, "headered.pce").unwrap();
-
-    let (ActiveCore::Pce(plain), ActiveCore::Pce(headered)) = (&plain.core, &headered.core) else {
-        panic!("expected PCE hosts");
-    };
-    assert_eq!(headered.image_sha256(), plain.image_sha256());
-    assert_eq!(
-        headered.machine().hucard_board(),
-        plain.machine().hucard_board()
-    );
-    assert_eq!(
-        headered.machine().hardware_topology(),
-        plain.machine().hardware_topology()
-    );
-}
-
-#[test]
-fn pce_libretro_formats_exact_640_by_480_xrgb8888_and_rgb565_frames() {
-    let mut state = CoreState::from_rom(&pce_rom(), "video.pce").unwrap();
-    state.step_frame();
-    let ActiveCore::Pce(host) = &state.core else {
-        panic!("expected PCE host");
-    };
-    let rgba = host.framebuffer().to_vec();
-
-    let xrgb = state.framebuffer_as_xrgb8888().to_vec();
-    let rgb565 = state.framebuffer_as_rgb565().to_vec();
-    assert_eq!(xrgb.len(), 640 * 480 * 4);
-    assert_eq!(rgb565.len(), 640 * 480 * 2);
-
-    for index in [0, 319, 640 * 240, 640 * 480 - 1] {
-        let source = &rgba[index * 4..index * 4 + 4];
-        assert_eq!(
-            &xrgb[index * 4..index * 4 + 4],
-            &[source[2], source[1], source[0], 0]
-        );
-        let expected = (((u16::from(source[0]) >> 3) << 11)
-            | ((u16::from(source[1]) >> 2) << 5)
-            | (u16::from(source[2]) >> 3))
-            .to_le_bytes();
-        assert_eq!(&rgb565[index * 2..index * 2 + 2], &expected);
-    }
-}
-
-#[test]
 fn pce_libretro_roundtrips_serialize_payload_above_four_mib() {
     let mut state = CoreState::from_rom(&pce_rom(), "state.pce").unwrap();
     state.set_input(0x0F, 0x09);
     state.step_frame();
     let encoded = state.encode_state().unwrap();
     assert!(encoded.len() > 4 * 1024 * 1024);
-    let expected_frame = match &state.core {
+    let expected_frame = match &mut state.core {
         ActiveCore::Pce(host) => host.framebuffer().to_vec(),
         _ => unreachable!(),
     };
@@ -715,7 +650,7 @@ fn pce_libretro_roundtrips_serialize_payload_above_four_mib() {
     state.load_state(&encoded).unwrap();
 
     assert_eq!(state.encode_state().unwrap(), encoded);
-    let ActiveCore::Pce(host) = &state.core else {
+    let ActiveCore::Pce(host) = &mut state.core else {
         panic!("expected PCE host");
     };
     assert_eq!(host.framebuffer(), expected_frame);

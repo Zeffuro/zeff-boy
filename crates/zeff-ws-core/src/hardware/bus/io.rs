@@ -2,6 +2,7 @@ use super::*;
 
 impl Bus {
     pub fn io_read8(&mut self, port: u16) -> u8 {
+        self.fence_frame_service_io();
         let value = match port {
             CURRENT_LINE_PORT => self.ppu.vcount() as u8,
             port if !self.is_color_model() && color_only_port(port) => self.io_open_bus(),
@@ -113,6 +114,7 @@ impl Bus {
     }
 
     pub fn io_write8(&mut self, port: u16, value: u8) {
+        self.fence_frame_service_io();
         let old_value = self.io_peek8(port);
         match port {
             CURRENT_LINE_PORT => {}

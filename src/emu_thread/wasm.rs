@@ -63,7 +63,7 @@ impl EmuThread {
                     clock_rate: backend.timing_snapshot().rate(),
                 });
         let shared_framebuffer = types::new_shared_framebuffer();
-        types::publish_framebuffer(&shared_framebuffer, backend.framebuffer());
+        types::publish_backend_framebuffer(&shared_framebuffer, &backend);
         let recovery = RecoveryCoordinator::new(&backend);
         Self {
             inner: RefCell::new(Inner {
@@ -251,11 +251,7 @@ impl EmuThread {
                     &result,
                     runtime_fault.can_step(),
                 );
-                speculation.commit_primary_frame(
-                    &self.shared_framebuffer,
-                    backend.framebuffer(),
-                    detached_frame,
-                );
+                speculation.commit_primary_frame(&self.shared_framebuffer, backend, detached_frame);
                 let potentially_dirty = super::commands::finalize_step_result(
                     &mut result,
                     debugger_mutation,

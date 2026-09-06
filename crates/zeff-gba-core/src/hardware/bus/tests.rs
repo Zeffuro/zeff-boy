@@ -6,6 +6,9 @@ use crate::hardware::cartridge::RomHeader;
 use crate::hardware::constants::{CYCLES_PER_FRAME, SCREEN_WIDTH};
 use crate::hardware::timer::TimerTimingState;
 
+#[path = "tests/frame_service.rs"]
+mod frame_service;
+
 fn cartridge() -> Cartridge {
     let mut rom = vec![0; 0xC0];
     rom[0xB2] = 0x96;
@@ -368,3 +371,5 @@ mod interrupts_misc;
 mod memory_bitmap;
 #[path = "tests/obj_blend_affine.rs"]
 mod obj_blend_affine;
+#[path = "tests/psg_materialization.rs"]
+mod psg_materialization;

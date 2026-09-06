@@ -2,14 +2,13 @@ use super::App;
 
 impl App {
     pub(in crate::app) fn take_screenshot(&mut self) {
-        let (native_w, native_h) = self.active_display_size();
-        let expected_len = (native_w * native_h * 4) as usize;
-        let fb = match &self.last_displayed_frame {
-            Some(fb) if fb.len() == expected_len => fb,
-            _ => {
-                self.toast_manager.error("No framebuffer available");
-                return;
-            }
+        let Some((fb, (native_w, native_h))) = self
+            .last_displayed_frame
+            .as_ref()
+            .and_then(|fb| self.display_size_for_frame(fb).map(|size| (fb, size)))
+        else {
+            self.toast_manager.error("No framebuffer available");
+            return;
         };
 
         let game_name = self

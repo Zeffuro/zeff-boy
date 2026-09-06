@@ -7,6 +7,33 @@ const GBA_MASTER_OUTPUT_GAIN: f32 = 0.75;
 const GBA_OUTPUT_LOW_PASS_CUTOFF_HZ: f32 = 8_000.0;
 
 impl Apu {
+    pub(crate) fn cycles_until_observation(&mut self, soundbias: u16) -> u32 {
+        if self.debug_capture_enabled {
+            return 1;
+        }
+        if self.psg_merge_horizon_t_cycles == 0 {
+            self.refresh_psg_merge_horizon();
+        }
+        let psg_cycles = self
+            .psg_merge_horizon_t_cycles
+            .saturating_sub(self.psg_pending_t_cycles)
+            .saturating_mul(4)
+            .saturating_sub(u64::from(self.psg_cycle_accum))
+            .min(u64::from(u32::MAX)) as u32;
+        if !self.sample_generation_enabled {
+            return psg_cycles.max(1);
+        }
+        // Only canonical integer phases can be merged exactly.
+        let dac_rate = CPU_CLOCK_HZ / soundbias_sample_interval(soundbias).max(1);
+        psg_cycles
+            .min(cycles_until_phase_observation(self.dac_phase, dac_rate))
+            .min(cycles_until_phase_observation(
+                self.output_phase,
+                self.sample_rate,
+            ))
+            .max(1)
+    }
+
     pub(crate) fn write_fifo_halfword(&mut self, fifo: usize, value: u16) {
         self.write_fifo_byte(fifo, value as u8);
         self.write_fifo_byte(fifo, (value >> 8) as u8);
@@ -29,12 +56,45 @@ impl Apu {
         soundcnt_x: u16,
         soundbias: u16,
     ) {
-        self.step_psg(cycles);
+        #[cfg(test)]
+        if !self.deferred_psg_enabled {
+            self.step_output_eager_for_test(cycles, soundcnt_h, soundcnt_x, soundbias);
+            return;
+        }
+        let mut dac_phase = self.dac_phase;
+        let dac_samples = if self.sample_generation_enabled {
+            let dac_rate = CPU_CLOCK_HZ / soundbias_sample_interval(soundbias).max(1);
+            advance_phase(&mut dac_phase, cycles, dac_rate)
+        } else {
+            0
+        };
+        self.step_psg_deferred(cycles, dac_samples == 0);
+        self.dac_phase = dac_phase;
         if !self.sample_generation_enabled {
             return;
         }
 
-        let dac_samples = self.advance_dac_phase(cycles, soundbias);
+        self.mix_dac_samples(dac_samples, soundcnt_h, soundcnt_x);
+
+        let output_pairs = advance_phase(&mut self.output_phase, cycles, self.sample_rate);
+        self.emit_host_samples(output_pairs, soundcnt_h, soundcnt_x);
+    }
+
+    #[cfg(test)]
+    fn step_output_eager_for_test(
+        &mut self,
+        cycles: u32,
+        soundcnt_h: u16,
+        soundcnt_x: u16,
+        soundbias: u16,
+    ) {
+        self.step_psg_eager(cycles);
+        if !self.sample_generation_enabled {
+            return;
+        }
+
+        let dac_rate = CPU_CLOCK_HZ / soundbias_sample_interval(soundbias).max(1);
+        let dac_samples = advance_phase(&mut self.dac_phase, cycles, dac_rate);
         self.mix_dac_samples(dac_samples, soundcnt_h, soundcnt_x);
 
         let output_pairs = advance_phase(&mut self.output_phase, cycles, self.sample_rate);
@@ -69,11 +129,6 @@ impl Apu {
             }
         }
         requests
-    }
-
-    fn advance_dac_phase(&mut self, cycles: u32, soundbias: u16) -> usize {
-        let dac_rate = CPU_CLOCK_HZ / soundbias_sample_interval(soundbias).max(1);
-        advance_phase(&mut self.dac_phase, cycles, dac_rate)
     }
 
     fn mix_dac_samples(&mut self, samples: usize, soundcnt_h: u16, soundcnt_x: u16) {
@@ -229,6 +284,14 @@ fn advance_phase(phase: &mut f64, cycles: u32, rate: u32) -> usize {
         samples += 1;
     }
     samples
+}
+
+fn cycles_until_phase_observation(phase: f64, rate: u32) -> u32 {
+    if !phase.is_finite() || phase < 0.0 || phase >= f64::from(CPU_CLOCK_HZ) || phase.fract() != 0.0
+    {
+        return 1;
+    }
+    (CPU_CLOCK_HZ - phase as u32).div_ceil(rate.max(1)).max(1)
 }
 
 fn soundbias_sample_interval(soundbias: u16) -> u32 {

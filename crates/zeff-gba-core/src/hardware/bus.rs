@@ -18,6 +18,7 @@ pub use zeff_emu_common::debug::BusAccessEvent as DebugTraceEvent;
 mod deadline;
 mod dma;
 mod event_service;
+mod frame_service;
 mod io;
 
 #[cfg(test)]
@@ -64,6 +65,12 @@ pub struct Bus {
     master_cycles: u64,
     timer_materialized_cycles: u64,
     timer_observation_cycles: u64,
+    frame_service_deferred: bool,
+    frame_service_pending_cycles: u32,
+    frame_service_horizon: u32,
+    frame_service_observed: bool,
+    #[cfg(test)]
+    frame_service_deferred_calls: u64,
     halt_requested: bool,
     pub(crate) debug_trace_enabled: bool,
     pub(crate) debug_trace_reads: bool,
@@ -123,6 +130,12 @@ impl Bus {
             master_cycles: 0,
             timer_materialized_cycles: 0,
             timer_observation_cycles: 0,
+            frame_service_deferred: false,
+            frame_service_pending_cycles: 0,
+            frame_service_horizon: 0,
+            frame_service_observed: false,
+            #[cfg(test)]
+            frame_service_deferred_calls: 0,
             halt_requested: false,
             debug_trace_enabled: false,
             debug_trace_reads: false,
@@ -165,6 +178,10 @@ impl Bus {
         self.master_cycles = 0;
         self.timer_materialized_cycles = 0;
         self.timer_observation_cycles = 0;
+        self.frame_service_deferred = false;
+        self.frame_service_pending_cycles = 0;
+        self.frame_service_horizon = 0;
+        self.frame_service_observed = false;
         self.halt_requested = false;
         self.debug_trace_enabled = false;
         self.debug_trace_reads = false;
@@ -603,6 +620,10 @@ impl Bus {
         std::mem::take(&mut self.halt_requested)
     }
 
+    pub(crate) fn halt_request_pending(&self) -> bool {
+        self.halt_requested
+    }
+
     pub(crate) fn waitcnt(&self) -> u16 {
         read_io16(&self.io, WAITCNT)
     }
@@ -629,6 +650,7 @@ impl Bus {
     }
 
     pub fn register_ram_reset(&mut self, flags: u8) {
+        self.materialize_frame_service();
         if flags & (1 << 0) != 0 {
             self.ewram.fill(0);
         }

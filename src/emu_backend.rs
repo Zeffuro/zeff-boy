@@ -408,6 +408,14 @@ impl EmuBackend {
         dispatch!(self, framebuffer())
     }
 
+    pub(crate) fn display_framebuffer(&self) -> (&[u8], Option<(u32, u32)>) {
+        if let Self::Pce(backend) = self {
+            backend.display_framebuffer()
+        } else {
+            (self.framebuffer(), None)
+        }
+    }
+
     #[inline]
     pub(crate) fn is_suspended(&self) -> bool {
         dispatch!(self, is_suspended())

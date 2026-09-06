@@ -207,3 +207,148 @@ fn psg_codec_is_fixed_and_excludes_host_audio_state() {
     changed_host.bus.apu.seed_host_output_for_state_load_test();
     assert_eq!(encode_state(&changed_host).unwrap(), state);
 }
+
+#[test]
+fn deferred_psg_native_tas_state_and_cpu_phase_continuation_match_eager() {
+    for tilt in [false, true] {
+        let mut media = rom();
+        if tilt {
+            media[0xAC..0xB0].copy_from_slice(b"KYGE");
+            media[0xB0..0xB2].copy_from_slice(b"01");
+            media.extend_from_slice(b"EEPROM_V122");
+        }
+        let mut eager = Emulator::new(&media, 48_000).unwrap();
+        eager.bus.apu.set_deferred_psg_for_test(false);
+        for (offset, value) in [(0x84, 0x80), (0x80, 0xFF77), (0x68, 0xF080), (0x6C, 0x87C3)] {
+            eager.bus.write16(0x0400_0000 + offset, value);
+        }
+        for (index, instruction) in [0xE590_1000, 0xE281_1001, 0xE580_1000, 0xEAFF_FFFB]
+            .into_iter()
+            .enumerate()
+        {
+            eager
+                .bus
+                .write32(0x0300_0000 + index as u32 * 4, instruction);
+        }
+        eager.cpu.set_pc(0x0300_0000);
+        eager.cpu.regs[0] = 0x0200_0000;
+        let mut deferred = eager.clone();
+        deferred.bus.apu.set_deferred_psg_for_test(true);
+        eager.bus.step_cycles(13);
+        deferred.bus.step_cycles(13);
+        eager.cpu.cycles += 13;
+        deferred.cpu.cycles += 13;
+        assert_ne!(deferred.bus.apu.deferred_psg_pending_t_cycles_for_test(), 0);
+        let mut visited_phases = 0u16;
+        for _ in 0..48 {
+            visited_phases |= 1 << eager.cpu.execution_state().phase.tag();
+            let state = encode_state(&eager).unwrap();
+            assert_eq!(encode_state(&deferred).unwrap(), state);
+            let mut restored_eager = eager.clone();
+            let mut restored_deferred = deferred.clone();
+            restored_eager.load_state(&state).unwrap();
+            restored_deferred.load_state(&state).unwrap();
+            assert_eq!(
+                restored_deferred
+                    .bus
+                    .apu
+                    .deferred_psg_pending_t_cycles_for_test(),
+                0
+            );
+            for _ in 0..3 {
+                assert_eq!(
+                    restored_eager.step_instruction(),
+                    restored_deferred.step_instruction()
+                );
+                assert_eq!(
+                    encode_state(&restored_eager).unwrap(),
+                    encode_state(&restored_deferred).unwrap()
+                );
+            }
+            assert_eq!(
+                eager.cpu.step_cpu_phase_for_test(&mut eager.bus),
+                deferred.cpu.step_cpu_phase_for_test(&mut deferred.bus)
+            );
+        }
+        assert_eq!(visited_phases, 0xFF);
+        let state = encode_state(&deferred).unwrap();
+        assert_eq!(encode_state(&eager).unwrap(), state);
+        if tilt {
+            assert_eq!(
+                inspect_current_native_gba_tilt_tas_state(&eager, &state)
+                    .unwrap()
+                    .projection,
+                inspect_current_native_gba_tilt_tas_state(&deferred, &state)
+                    .unwrap()
+                    .projection
+            );
+        } else {
+            assert_eq!(
+                inspect_current_native_gba_tas_state(&eager, &state)
+                    .unwrap()
+                    .projection,
+                inspect_current_native_gba_tas_state(&deferred, &state)
+                    .unwrap()
+                    .projection
+            );
+        }
+        let pending = deferred.bus.apu.deferred_psg_pending_t_cycles_for_test();
+        let psg_start = state.len()
+            - VERSION_9_ROM_HASH_SIZE
+            - VERSION_12_PSG_STATE_SIZE
+            - if tilt {
+                VERSION_11_TILT_EXECUTION_STATE_SIZE
+            } else {
+                0
+            };
+        let mut malformed = state.clone();
+        malformed[psg_start + 120] = 8;
+        assert!(eager.load_state(&malformed).is_err());
+        assert!(deferred.load_state(&malformed).is_err());
+        assert_eq!(encode_state(&eager).unwrap(), state);
+        assert_eq!(encode_state(&deferred).unwrap(), state);
+        assert_eq!(
+            deferred.bus.apu.deferred_psg_pending_t_cycles_for_test(),
+            pending
+        );
+
+        eager.load_state(&state).unwrap();
+        deferred.load_state(&state).unwrap();
+        for _ in 0..128 {
+            eager.debug_step();
+            deferred.debug_step();
+            assert_eq!(
+                eager.step_instruction_with_bus_trace(true, true),
+                deferred.step_instruction_with_bus_trace(true, true)
+            );
+            assert_eq!(
+                encode_state(&eager).unwrap(),
+                encode_state(&deferred).unwrap()
+            );
+        }
+        let mut first_audio = Vec::new();
+        let mut second_audio = Vec::new();
+        eager.drain_audio_samples_into(&mut first_audio);
+        deferred.drain_audio_samples_into(&mut second_audio);
+        assert!(!first_audio.is_empty());
+        assert_eq!(
+            first_audio
+                .iter()
+                .map(|sample| sample.to_bits())
+                .collect::<Vec<_>>(),
+            second_audio
+                .iter()
+                .map(|sample| sample.to_bits())
+                .collect::<Vec<_>>()
+        );
+        let mut legacy = state;
+        legacy.drain(psg_start..psg_start + VERSION_12_PSG_STATE_SIZE);
+        legacy[8..12].copy_from_slice(&if tilt { 11u32 } else { 10u32 }.to_le_bytes());
+        eager.load_state(&legacy).unwrap();
+        deferred.load_state(&legacy).unwrap();
+        assert_eq!(
+            encode_state(&eager).unwrap(),
+            encode_state(&deferred).unwrap()
+        );
+    }
+}

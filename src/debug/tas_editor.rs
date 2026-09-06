@@ -826,10 +826,14 @@ fn source_label(source: TasEditorSessionSource) -> &'static str {
 }
 
 fn default_seek_cache_root() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("zeff-boy")
-        .join("tas-seek-v1")
+    #[cfg(not(test))]
+    {
+        crate::platform::cache_dir().join("tas-seek-v1")
+    }
+    #[cfg(test)]
+    {
+        PathBuf::from(".").join("zeff-boy").join("tas-seek-v1")
+    }
 }
 
 #[cfg(test)]

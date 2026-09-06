@@ -10,6 +10,7 @@ pub(super) struct TasEditorExecutionPreview {
     cursor: Option<u64>,
     requested_cursor: Option<u64>,
     frame: Option<TasEditorFramebuffer>,
+    presentation_size: Option<(u32, u32)>,
     textures: HashMap<usize, egui::TextureHandle>,
 }
 
@@ -20,6 +21,7 @@ impl TasEditorExecutionPreview {
             cursor: None,
             requested_cursor: None,
             frame: None,
+            presentation_size: None,
             textures: HashMap::new(),
         }
     }
@@ -29,6 +31,7 @@ impl TasEditorExecutionPreview {
         self.cursor = None;
         self.requested_cursor = None;
         self.frame = None;
+        self.presentation_size = None;
         self.textures.clear();
     }
 
@@ -37,14 +40,22 @@ impl TasEditorExecutionPreview {
         self.cursor = Some(outcome.cursor);
         self.requested_cursor = Some(outcome.requested_cursor);
         self.frame = Some(outcome.framebuffer);
+        self.presentation_size = None;
         self.textures.clear();
     }
 
-    fn install_linked(&mut self, branch_id: String, cursor: u64, frame: TasEditorFramebuffer) {
+    fn install_linked(
+        &mut self,
+        branch_id: String,
+        cursor: u64,
+        frame: TasEditorFramebuffer,
+        presentation_size: (u32, u32),
+    ) {
         self.branch_id = Some(branch_id);
         self.cursor = Some(cursor);
         self.requested_cursor = Some(cursor);
         self.frame = Some(frame);
+        self.presentation_size = Some(presentation_size);
         self.textures.clear();
     }
 
@@ -89,7 +100,12 @@ impl TasEditorWindowState {
         width: u32,
         height: u32,
         rgba: Vec<u8>,
+        presentation_size: (u32, u32),
     ) -> Result<()> {
+        anyhow::ensure!(
+            presentation_size.0 != 0 && presentation_size.1 != 0,
+            "invalid preview dimensions"
+        );
         let branch_id = self
             .session
             .as_ref()
@@ -98,7 +114,7 @@ impl TasEditorWindowState {
             .to_owned();
         let frame = TasEditorFramebuffer::from_rgba(width, height, rgba)?;
         self.execution_preview
-            .install_linked(branch_id, cursor, frame);
+            .install_linked(branch_id, cursor, frame, presentation_size);
         Ok(())
     }
 
@@ -254,8 +270,11 @@ fn draw_preview(ui: &mut egui::Ui, preview: &mut TasEditorExecutionPreview) {
                 egui::TextureOptions::NEAREST,
             )
         });
-    let scale = (ui.available_width() / width as f32).clamp(0.25, 2.0);
-    let display_size = egui::vec2(width as f32 * scale, height as f32 * scale);
+    let (display_width, display_height) = preview
+        .presentation_size
+        .unwrap_or((frame.width(), frame.height()));
+    let scale = (ui.available_width() / display_width as f32).clamp(0.25, 2.0);
+    let display_size = egui::vec2(display_width as f32 * scale, display_height as f32 * scale);
     ui.add(egui::Image::new((texture.id(), display_size)));
 }
 

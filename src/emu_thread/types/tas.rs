@@ -273,6 +273,7 @@ pub(crate) struct TasRepairSuspensionProof {
     pub(crate) frame_count: u64,
     pub(crate) framebuffer_sha256: TasDigest,
     pub(crate) framebuffer_len: usize,
+    pub(crate) framebuffer_dimensions: Option<(u32, u32)>,
     pub(crate) loaded_profile: TasLoadedProfileObservation,
 }
 

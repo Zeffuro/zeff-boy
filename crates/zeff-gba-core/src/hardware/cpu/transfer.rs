@@ -1,13 +1,38 @@
 use super::ops::{rotate_right, sign_extend};
 use super::*;
 
-struct SingleTransfer {
-    operation: CpuBusOperation,
-    address: u32,
-    width: u8,
-    value: u32,
-    destination: usize,
-    writeback: Option<(usize, u32)>,
+pub(super) const NO_WRITEBACK: u8 = 16;
+
+#[derive(Clone, Copy)]
+pub(super) struct SingleTransfer {
+    pub(super) operation: CpuBusOperation,
+    pub(super) address: u32,
+    pub(super) width: u8,
+    pub(super) value: u32,
+    pub(super) destination: u8,
+    pub(super) writeback_register: u8,
+    pub(super) writeback_value: u32,
+}
+
+pub(super) fn arm_single_load_value(raw: u32, address: u32, value: u32) -> u32 {
+    if raw & 0x0E00_0090 == 0x0000_0090 && raw & 0x60 != 0 {
+        return match (raw >> 5) & 0x3 {
+            0b01 => rotate_right(value, (address & 1) * 8),
+            0b10 => sign_extend(value, 8) as u32,
+            0b11 if address & 1 != 0 => sign_extend(value, 8) as u32,
+            0b11 => sign_extend(value, 16) as u32,
+            _ => value,
+        };
+    }
+    if raw & (1 << 22) == 0 {
+        rotate_right(value, (address & 3) * 8)
+    } else {
+        value
+    }
+}
+
+pub(super) fn thumb_halfword_load_value(address: u32, value: u32) -> u32 {
+    rotate_right(value, (address & 1) * 8)
 }
 
 impl Cpu {
@@ -60,8 +85,16 @@ impl Cpu {
     }
 
     fn begin_arm_single_transfer(&mut self, pc: u32, raw: u32) -> bool {
-        if raw & 0x0E00_0090 == 0x0000_0090 && raw & 0x60 != 0 {
+        let Some(transfer) = self.plan_arm_single_transfer(pc, raw) else {
             return self.begin_arm_halfword_transfer(pc, raw);
+        };
+        self.prepare_single_transfer(transfer);
+        true
+    }
+
+    pub(super) fn plan_arm_single_transfer(&self, pc: u32, raw: u32) -> Option<SingleTransfer> {
+        if raw & 0x0E00_0090 == 0x0000_0090 && raw & 0x60 != 0 {
+            return None;
         }
 
         let register_offset = raw & (1 << 25) != 0;
@@ -91,7 +124,8 @@ impl Cpu {
             self.reg_read_arm(rd, pc)
                 .wrapping_add(if rd == 15 { 4 } else { 0 })
         };
-        self.prepare_single_transfer(SingleTransfer {
+        let writeback = (!pre_index || writeback) && !(load && rn == rd);
+        Some(SingleTransfer {
             operation: if load {
                 CpuBusOperation::Read
             } else {
@@ -100,10 +134,10 @@ impl Cpu {
             address,
             width,
             value,
-            destination: rd,
-            writeback: ((!pre_index || writeback) && !(load && rn == rd)).then_some((rn, indexed)),
-        });
-        true
+            destination: rd as u8,
+            writeback_register: if writeback { rn as u8 } else { NO_WRITEBACK },
+            writeback_value: if writeback { indexed } else { 0 },
+        })
     }
 
     fn begin_arm_halfword_transfer(&mut self, pc: u32, raw: u32) -> bool {
@@ -137,6 +171,7 @@ impl Cpu {
             0b11 => 2,
             _ => return false,
         };
+        let writeback = (!pre_index || writeback) && !(load && rn == rd);
         self.prepare_single_transfer(SingleTransfer {
             operation: if load {
                 CpuBusOperation::Read
@@ -146,8 +181,9 @@ impl Cpu {
             address,
             width,
             value: if load { 0 } else { self.reg_read_arm(rd, pc) },
-            destination: rd,
-            writeback: ((!pre_index || writeback) && !(load && rn == rd)).then_some((rn, indexed)),
+            destination: rd as u8,
+            writeback_register: if writeback { rn as u8 } else { NO_WRITEBACK },
+            writeback_value: if writeback { indexed } else { 0 },
         });
         true
     }
@@ -161,8 +197,9 @@ impl Cpu {
             address: self.reg_read_arm(rn, pc),
             width: if byte { 1 } else { 4 },
             value: self.reg_read_arm(rm, pc),
-            destination: ((raw >> 12) & 0xF) as usize,
-            writeback: None,
+            destination: ((raw >> 12) & 0xF) as u8,
+            writeback_register: NO_WRITEBACK,
+            writeback_value: 0,
         });
     }
 
@@ -174,12 +211,12 @@ impl Cpu {
         self.execution_state.bus_sequential = false;
         self.execution_state.bus_value = transfer.value;
         self.execution_state.transfer_register_mask = 1 << transfer.destination;
-        self.execution_state.transfer_next_register = transfer.destination as u8;
+        self.execution_state.transfer_next_register = transfer.destination;
         self.execution_state.transfer_first_access = true;
-        if let Some((register, value)) = transfer.writeback {
+        if transfer.writeback_register != NO_WRITEBACK {
             self.execution_state.writeback_present = true;
-            self.execution_state.writeback_register = register as u8;
-            self.execution_state.writeback_value = value;
+            self.execution_state.writeback_register = transfer.writeback_register;
+            self.execution_state.writeback_value = transfer.writeback_value;
         }
     }
 
@@ -260,8 +297,9 @@ impl Cpu {
             address,
             width: 4,
             value: 0,
-            destination: rd,
-            writeback: None,
+            destination: rd as u8,
+            writeback_register: NO_WRITEBACK,
+            writeback_value: 0,
         });
     }
 
@@ -288,8 +326,9 @@ impl Cpu {
                 address,
                 width,
                 value: self.regs[rd],
-                destination: rd,
-                writeback: None,
+                destination: rd as u8,
+                writeback_register: NO_WRITEBACK,
+                writeback_value: 0,
             });
         } else {
             let byte = raw & (1 << 12) != 0;
@@ -305,18 +344,23 @@ impl Cpu {
                 address,
                 width: if byte { 1 } else { 4 },
                 value: self.regs[rd],
-                destination: rd,
-                writeback: None,
+                destination: rd as u8,
+                writeback_register: NO_WRITEBACK,
+                writeback_value: 0,
             });
         }
     }
 
     fn begin_thumb_halfword_transfer(&mut self, raw: u16) {
+        self.prepare_single_transfer(self.plan_thumb_halfword_transfer(raw));
+    }
+
+    pub(super) fn plan_thumb_halfword_transfer(&self, raw: u16) -> SingleTransfer {
         let rb = ((raw >> 3) & 0x7) as usize;
         let rd = (raw & 0x7) as usize;
         let load = raw & (1 << 11) != 0;
         let address = self.regs[rb].wrapping_add(u32::from((raw >> 6) & 0x1F) << 1);
-        self.prepare_single_transfer(SingleTransfer {
+        SingleTransfer {
             operation: if load {
                 CpuBusOperation::Read
             } else {
@@ -325,9 +369,10 @@ impl Cpu {
             address,
             width: 2,
             value: self.regs[rd],
-            destination: rd,
-            writeback: None,
-        });
+            destination: rd as u8,
+            writeback_register: NO_WRITEBACK,
+            writeback_value: 0,
+        }
     }
 
     fn begin_thumb_sp_relative_transfer(&mut self, raw: u16) {
@@ -343,8 +388,9 @@ impl Cpu {
             address,
             width: 4,
             value: self.regs[rd],
-            destination: rd,
-            writeback: None,
+            destination: rd as u8,
+            writeback_register: NO_WRITEBACK,
+            writeback_value: 0,
         });
     }
 
@@ -569,20 +615,7 @@ impl Cpu {
     fn finish_arm_single_load(&self, raw: u32) -> u32 {
         let address = self.execution_state.bus_address;
         let value = self.execution_state.bus_read_latch;
-        if raw & 0x0E00_0090 == 0x0000_0090 && raw & 0x60 != 0 {
-            return match (raw >> 5) & 0x3 {
-                0b01 => rotate_right(value, (address & 1) * 8),
-                0b10 => sign_extend(value, 8) as u32,
-                0b11 if address & 1 != 0 => sign_extend(value, 8) as u32,
-                0b11 => sign_extend(value, 16) as u32,
-                _ => value,
-            };
-        }
-        if raw & (1 << 22) == 0 {
-            rotate_right(value, (address & 3) * 8)
-        } else {
-            value
-        }
+        arm_single_load_value(raw, address, value)
     }
 
     fn finish_thumb_single_load(&self, raw: u16, class: ThumbInstructionClass) -> u32 {
@@ -606,7 +639,7 @@ impl Cpu {
                     value
                 }
             }
-            ThumbInstructionClass::LoadStoreHalfword => rotate_right(value, (address & 1) * 8),
+            ThumbInstructionClass::LoadStoreHalfword => thumb_halfword_load_value(address, value),
             ThumbInstructionClass::SpRelativeLoad => rotate_right(value, (address & 3) * 8),
             _ => value,
         }

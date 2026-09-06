@@ -185,6 +185,10 @@ impl PceMachine {
             trace_scratch: TimedInstructionTrace::default(),
             trace_frame: 0,
             debug: AddressDebugController::new(),
+            #[cfg(test)]
+            plain_memory_lane_enabled: true,
+            #[cfg(test)]
+            coalesce_device_advancement: true,
             #[cfg(feature = "profiling")]
             profiling: PceProfiling::default(),
         };
@@ -203,6 +207,16 @@ impl PceMachine {
             PsgRevision::HuC6280,
             PceHardwareTopology::SuperGrafx,
         )
+    }
+
+    #[cfg(test)]
+    pub(in super::super) fn set_device_advancement_coalescing_for_test(&mut self, enabled: bool) {
+        self.coalesce_device_advancement = enabled;
+    }
+
+    #[cfg(test)]
+    pub(in super::super) fn set_plain_memory_lane_for_test(&mut self, enabled: bool) {
+        self.plain_memory_lane_enabled = enabled;
     }
 
     pub fn reset(&mut self) {

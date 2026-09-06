@@ -135,7 +135,13 @@ fn assert_zero_allocations(output: &str, label: &str) {
 
 fn assert_wonderswan_counters(output: &str) {
     let calls = number_fields(output, "  WonderSwan calls:");
-    assert_eq!(calls, vec![4_883_962; 5]);
+    assert_eq!(calls.len(), 5);
+    assert_eq!(calls[0], 4_883_962);
+    assert!(
+        calls[1..]
+            .iter()
+            .all(|&peripheral_calls| peripheral_calls == calls[1])
+    );
 
     let transitions = number_fields(output, "  WonderSwan transitions:");
     assert_eq!(
@@ -149,6 +155,15 @@ fn assert_wonderswan_counters(output: &str) {
             FRAMES.into()
         ]
     );
+
+    let service = number_fields(output, "  WonderSwan frame service:");
+    assert_eq!(service.len(), 7);
+    assert_eq!(service[0], u64::from(FRAMES));
+    assert_eq!(service[3], transitions[1]);
+    assert_eq!(service[4], service[3]);
+    assert_eq!(service[1] + service[3], calls[0]);
+    assert_eq!(calls[1], service[3] * 2);
+    assert!(calls[1] < calls[0] / 100);
 }
 
 fn number_fields(output: &str, prefix: &str) -> Vec<u64> {

@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 mod direct_sound;
 mod psg;
+mod psg_materialization;
 
 use psg::Psg;
 
@@ -64,6 +65,10 @@ pub struct Apu {
     output_filter_left: f32,
     output_filter_right: f32,
     psg_cycle_accum: u32,
+    psg_pending_t_cycles: u64,
+    psg_merge_horizon_t_cycles: u64,
+    #[cfg(test)]
+    deferred_psg_enabled: bool,
     sample_buffer: Vec<f32>,
     psg: Psg,
     output_pairs_generated: u64,
@@ -139,6 +144,10 @@ impl Apu {
             output_filter_left: 0.0,
             output_filter_right: 0.0,
             psg_cycle_accum: 0,
+            psg_pending_t_cycles: 0,
+            psg_merge_horizon_t_cycles: 0,
+            #[cfg(test)]
+            deferred_psg_enabled: true,
             sample_buffer: Vec::new(),
             psg: Psg::new(sample_rate),
             output_pairs_generated: 0,
@@ -155,6 +164,7 @@ impl Apu {
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        self.flush_pending_psg();
         self.sample_rate = sample_rate.max(1);
         self.output_phase = 0.0;
         self.dac_phase = 0.0;
@@ -164,22 +174,29 @@ impl Apu {
         self.output_filter_left = 0.0;
         self.output_filter_right = 0.0;
         self.psg.set_sample_rate(self.sample_rate);
+        self.refresh_psg_merge_horizon();
     }
 
     pub fn set_sample_generation_enabled(&mut self, enabled: bool) {
+        self.flush_pending_psg();
         self.sample_generation_enabled = enabled;
         self.psg.disable_host_sample_generation();
+        self.refresh_psg_merge_horizon();
     }
 
     pub fn set_debug_capture_enabled(&mut self, enabled: bool) {
+        self.flush_pending_psg();
         self.debug_capture_enabled = enabled;
         self.psg.set_debug_capture_enabled(enabled);
+        self.refresh_psg_merge_horizon();
     }
 
     pub fn set_channel_mutes(&mut self, mutes: [bool; 6]) {
+        self.flush_pending_psg();
         self.channel_mutes = mutes;
         self.psg
             .set_channel_mutes([mutes[0], mutes[1], mutes[2], mutes[3]]);
+        self.refresh_psg_merge_horizon();
     }
 
     pub(crate) fn reset_hardware(&mut self) {
@@ -187,13 +204,20 @@ impl Apu {
         let sample_generation_enabled = self.sample_generation_enabled;
         let channel_mutes = self.channel_mutes;
         let debug_capture_enabled = self.debug_capture_enabled;
+        #[cfg(test)]
+        let deferred_psg_enabled = self.deferred_psg_enabled;
         *self = Self::new(sample_rate);
+        #[cfg(test)]
+        {
+            self.deferred_psg_enabled = deferred_psg_enabled;
+        }
         self.set_sample_generation_enabled(sample_generation_enabled);
         self.set_channel_mutes(channel_mutes);
         self.set_debug_capture_enabled(debug_capture_enabled);
     }
 
     pub fn drain_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.flush_pending_psg();
         buf.clear();
         buf.append(&mut self.sample_buffer);
     }
@@ -212,23 +236,23 @@ impl Apu {
     }
 
     pub fn psg_regs_snapshot(&self) -> [u8; 0x17] {
-        self.psg.regs_snapshot()
+        self.observed_psg().regs_snapshot()
     }
 
     pub fn psg_wave_ram_snapshot(&self) -> [u8; 0x10] {
-        self.psg.wave_ram_snapshot()
+        self.observed_psg().wave_ram_snapshot()
     }
 
     pub fn psg_nr52_raw(&self) -> u8 {
-        self.psg.nr52_raw()
+        self.observed_psg().nr52_raw()
     }
 
     pub fn psg_channel_debug_samples_ordered(&self, channel: usize) -> [f32; 512] {
-        self.psg.channel_debug_samples_ordered(channel)
+        self.observed_psg().channel_debug_samples_ordered(channel)
     }
 
     pub fn psg_master_debug_samples_ordered(&self) -> [f32; 512] {
-        self.psg.master_debug_samples_ordered()
+        self.observed_psg().master_debug_samples_ordered()
     }
 
     pub fn direct_debug_samples_ordered(&self, fifo: usize) -> [f32; 512] {
@@ -240,10 +264,11 @@ impl Apu {
     }
 
     pub fn debug_snapshot(&self) -> ApuDebugSnapshot {
-        let psg = self.psg.channel_snapshot();
+        let observed = self.observed_psg();
+        let psg = observed.channel_snapshot();
         ApuDebugSnapshot {
             sample_rate: self.sample_rate,
-            psg_sample_rate: self.psg.sample_rate(),
+            psg_sample_rate: observed.sample_rate(),
             sample_generation_enabled: self.sample_generation_enabled,
             debug_capture_enabled: self.debug_capture_enabled,
             sample_buffer_len: self.sample_buffer.len(),
@@ -292,6 +317,8 @@ impl Apu {
     }
 
     pub(crate) fn load_save_state(&mut self, state: ApuSaveState) {
+        self.psg_pending_t_cycles = 0;
+        self.psg_merge_horizon_t_cycles = 0;
         self.fifo_a.clear();
         self.fifo_b.clear();
         self.fifo_a.extend(
@@ -326,42 +353,51 @@ impl Apu {
     }
 
     pub(crate) fn write_psg_state(&self, writer: &mut zeff_emu_common::save_state::StateWriter) {
-        self.psg.write_state(writer);
+        self.projected_psg().write_state(writer);
     }
 
     pub(crate) fn read_psg_state(
         &mut self,
         reader: &mut zeff_emu_common::save_state::StateReader<'_>,
     ) -> anyhow::Result<()> {
-        self.psg.read_state(reader)
+        self.psg.read_state(reader)?;
+        self.psg_pending_t_cycles = 0;
+        self.refresh_psg_merge_horizon();
+        Ok(())
     }
 
     pub(crate) fn migrate_legacy_psg_state(&mut self, io: &[u8]) {
+        self.psg_pending_t_cycles = 0;
         self.psg.migrate_legacy_state(io);
+        self.refresh_psg_merge_horizon();
     }
 
     pub(crate) fn clear_host_output_after_state_load(&mut self) {
+        self.psg_pending_t_cycles = 0;
         self.sample_buffer.clear();
         for history in &mut self.direct_debug_history {
             history.clear();
         }
         self.master_debug_history.clear();
         self.psg.clear_host_output_after_state_load();
+        self.refresh_psg_merge_horizon();
     }
 
     #[cfg(test)]
     pub(crate) fn seed_host_output_for_state_load_test(&mut self) {
+        self.flush_pending_psg();
         self.sample_buffer.extend([0.25, -0.5]);
         for (index, history) in self.direct_debug_history.iter_mut().enumerate() {
             history.push((index + 1) as f32);
         }
         self.master_debug_history.push(3.0);
         self.psg.seed_host_output_for_state_load_test();
+        self.refresh_psg_merge_horizon();
     }
 
     #[cfg(test)]
     pub(crate) fn psg_host_output_state_for_test(&self) -> (usize, f64, u64) {
-        self.psg.host_output_state_for_test()
+        self.observed_psg().host_output_state_for_test()
     }
 }
 

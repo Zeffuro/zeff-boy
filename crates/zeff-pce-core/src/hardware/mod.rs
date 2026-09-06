@@ -76,7 +76,11 @@ pub use controller::{
 };
 pub use cpu::{IrqPort, TimerPort, physical_address_for_page};
 pub use host_video::{
-    PCE_HOST_FRAME_HEIGHT, PCE_HOST_FRAME_RGBA_BYTES, PCE_HOST_FRAME_WIDTH, project_full_raw_frame,
+    PCE_HOST_FRAME_HEIGHT, PCE_HOST_FRAME_RGB565_BYTES, PCE_HOST_FRAME_RGBA_BYTES,
+    PCE_HOST_FRAME_WIDTH, PCE_HOST_FRAME_XRGB8888_BYTES, PceNativeFrameDescriptor,
+    native_frame_descriptor, project_full_raw_frame, project_full_rgb565_frame,
+    project_full_xrgb8888_frame, project_native_raw_frame, project_native_rgb565_frame,
+    project_native_xrgb8888_frame,
 };
 pub use hucard_host::{
     HUCARD_BANK_LEN, PCEAS_HEADER_LEN, PceHuCardHost, apply_pce_cheats, normalize_hucard_image,

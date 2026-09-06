@@ -164,6 +164,52 @@ fn physical_decoder_covers_base_boundaries_and_mirrors() {
 }
 
 #[test]
+fn plain_memory_targets_require_full_rom_pages_and_preserve_wram_mirrors() {
+    fn rom(len: usize) -> Vec<u8> {
+        let mut rom = vec![0; len];
+        for (bank, chunk) in rom.as_chunks_mut::<0x2000>().0.iter_mut().enumerate() {
+            chunk[0] = bank as u8;
+            chunk[0x1FFF] = !(bank as u8);
+        }
+        rom
+    }
+
+    let bus_384 = BaseBus::new(rom(0x06_0000), Devices::default()).unwrap();
+    assert_eq!(
+        bus_384.read_plain_memory_target(bus_384.plain_memory_read_target(0x04_0000).unwrap()),
+        0
+    );
+    assert_eq!(
+        bus_384.read_plain_memory_target(bus_384.plain_memory_read_target(0x08_0000).unwrap()),
+        0x20
+    );
+
+    let bus_512 = BaseBus::new(rom(0x08_0000), Devices::default()).unwrap();
+    assert_eq!(
+        bus_512.read_plain_memory_target(bus_512.plain_memory_read_target(0x08_0000).unwrap()),
+        0x20
+    );
+
+    let partial = BaseBus::new(vec![0; 0x2001], Devices::default()).unwrap();
+    assert!(partial.plain_memory_read_target(0).is_some());
+    assert!(partial.plain_memory_read_target(0x2000).is_none());
+
+    let mut bus = BaseBus::new(vec![0; 0x2000], Devices::default()).unwrap();
+    let target = bus.plain_memory_read_target(0x1F_6000).unwrap();
+    bus.write_plain_memory_target(target, 0x5A);
+    assert_eq!(bus.read(0x1F_0000), 0x5A);
+
+    assert_eq!(
+        bus_384.plain_memory_target_for_region(PhysicalRegion::HuCard(0x04_0000)),
+        bus_384.plain_memory_read_target(0x04_0000)
+    );
+    assert_eq!(
+        partial.plain_memory_target_for_region(PhysicalRegion::HuCard(0x2000)),
+        None
+    );
+}
+
+#[test]
 fn plain_hucard_and_unmapped_accesses_are_bounded() {
     let mut bus = BaseBus::new(vec![0x12, 0x34], ()).unwrap();
 

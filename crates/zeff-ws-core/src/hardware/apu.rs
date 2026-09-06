@@ -369,7 +369,7 @@ impl Apu {
 
         let mut remaining = cycles;
         while remaining > 0 {
-            let clocks_until_sample = self.clocks_until_next_sample().max(1);
+            let clocks_until_sample = self.cycles_until_next_sample().max(1);
             let chunk = remaining.min(clocks_until_sample);
             if self.control & CHANNEL_ENABLE_MASK != 0 {
                 self.advance_sound_generators(chunk);
@@ -511,7 +511,7 @@ impl Apu {
         self.clear_debug_sample_history();
     }
 
-    fn clocks_until_next_sample(&self) -> u32 {
+    pub(crate) fn cycles_until_next_sample(&self) -> u32 {
         let remaining = u64::from(CPU_CLOCK_HZ - self.sample_cycle_accumulator);
         let rate = u64::from(self.sample_rate);
         remaining.div_ceil(rate).min(u64::from(u32::MAX)) as u32

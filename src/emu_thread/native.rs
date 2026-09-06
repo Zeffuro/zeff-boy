@@ -119,7 +119,7 @@ impl EmuThread {
         let drain_rx = frame_rx.clone();
 
         let shared_fb = types::new_shared_framebuffer();
-        types::publish_framebuffer(&shared_fb, backend.framebuffer());
+        types::publish_backend_framebuffer(&shared_fb, &backend);
         let emu_fb = shared_fb.clone();
         let emu_frame_duration_ns = Arc::clone(&shared_frame_duration_ns);
 

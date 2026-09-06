@@ -355,7 +355,7 @@ impl CoreState {
             ActiveCore::Gb(emu) => emu.framebuffer().len(),
             ActiveCore::Gba(emu) => emu.framebuffer().len(),
             ActiveCore::Nes(emu) => emu.framebuffer().len(),
-            ActiveCore::Pce(host) => host.framebuffer().len(),
+            ActiveCore::Pce(_) => zeff_pce_core::hardware::PCE_HOST_FRAME_RGBA_BYTES,
             ActiveCore::Sega8(emu) => emu.framebuffer().len(),
             ActiveCore::Ws(emu) => emu.framebuffer().len(),
         }

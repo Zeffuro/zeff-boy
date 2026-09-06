@@ -16,9 +16,12 @@ impl CoreState {
             }
             ActiveCore::Gba(_) => GBA_SCREEN_SIZE,
             ActiveCore::Nes(_) => NES_SCREEN_SIZE,
-            ActiveCore::Pce(_) => (
-                zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH as u32,
-                zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT as u32,
+            ActiveCore::Pce(_) => self.pce_native_output_dimensions.map_or(
+                (
+                    zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH as u32,
+                    zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT as u32,
+                ),
+                |(width, height)| (width as u32, height as u32),
             ),
             ActiveCore::Sega8(emu) => {
                 let (width, height) = emu.framebuffer_dimensions();
@@ -32,8 +35,8 @@ impl CoreState {
 
         let (max_width, max_height) = if matches!(self.core, ActiveCore::Pce(_)) {
             (
-                zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH as u32,
-                zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT as u32,
+                base_width.max(zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH as u32),
+                base_height.max(zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT as u32),
             )
         } else {
             NES_SCREEN_SIZE
@@ -72,14 +75,45 @@ impl CoreState {
         }
     }
 
+    pub(crate) fn pce_output_geometry(dimensions: Option<(usize, usize)>) -> retro_game_geometry {
+        let (width, height) = dimensions.map_or(
+            (
+                zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH as u32,
+                zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT as u32,
+            ),
+            |(width, height)| (width as u32, height as u32),
+        );
+        Self::video_geometry_for_size(
+            width,
+            height,
+            width.max(zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH as u32),
+            height.max(zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT as u32),
+            4.0 / 3.0,
+        )
+    }
+
     pub fn framebuffer_as_xrgb8888(&mut self) -> &[u8] {
+        if let ActiveCore::Pce(host) = &self.core {
+            if let Some((width, height)) = self.pce_native_output_dimensions
+                && let Some(descriptor) = host.native_frame_descriptor()
+                && (descriptor.width(), descriptor.height()) == (width, height)
+            {
+                self.xrgb_buf.resize(width * height * 4, 0);
+                host.project_native_frame_xrgb8888(descriptor, &mut self.xrgb_buf);
+                return &self.xrgb_buf;
+            }
+            self.xrgb_buf
+                .resize(zeff_pce_core::hardware::PCE_HOST_FRAME_XRGB8888_BYTES, 0);
+            host.project_frame_xrgb8888(&mut self.xrgb_buf);
+            return &self.xrgb_buf;
+        }
         let fb = match &self.core {
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
-            ActiveCore::Pce(host) => host.framebuffer(),
             ActiveCore::Sega8(emu) => emu.framebuffer(),
             ActiveCore::Ws(emu) => emu.framebuffer(),
+            ActiveCore::Pce(_) => unreachable!(),
         };
         self.xrgb_buf.resize(fb.len(), 0);
         for (i, chunk) in fb.as_chunks::<RGBA_BYTES_PER_PIXEL>().0.iter().enumerate() {
@@ -96,13 +130,28 @@ impl CoreState {
     }
 
     pub fn framebuffer_as_rgb565(&mut self) -> &[u8] {
+        if let ActiveCore::Pce(host) = &self.core {
+            if let Some((width, height)) = self.pce_native_output_dimensions
+                && let Some(descriptor) = host.native_frame_descriptor()
+                && (descriptor.width(), descriptor.height()) == (width, height)
+            {
+                self.rgb565_buf
+                    .resize(width * height * LIBRETRO_RGB565_BYTES_PER_PIXEL, 0);
+                host.project_native_frame_rgb565(descriptor, &mut self.rgb565_buf);
+                return &self.rgb565_buf;
+            }
+            self.rgb565_buf
+                .resize(zeff_pce_core::hardware::PCE_HOST_FRAME_RGB565_BYTES, 0);
+            host.project_frame_rgb565(&mut self.rgb565_buf);
+            return &self.rgb565_buf;
+        }
         let fb = match &self.core {
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
-            ActiveCore::Pce(host) => host.framebuffer(),
             ActiveCore::Sega8(emu) => emu.framebuffer(),
             ActiveCore::Ws(emu) => emu.framebuffer(),
+            ActiveCore::Pce(_) => unreachable!(),
         };
         let pixel_count = fb.len() / RGBA_BYTES_PER_PIXEL;
         self.rgb565_buf
@@ -117,6 +166,32 @@ impl CoreState {
             self.rgb565_buf[offset + 1] = (rgb565 >> 8) as u8;
         }
         &self.rgb565_buf
+    }
+
+    pub(crate) fn pending_pce_native_output_dimensions(&self) -> Option<Option<(usize, usize)>> {
+        if !matches!(self.core, ActiveCore::Pce(_)) || self.pce_native_output_rejected {
+            return None;
+        }
+        let ActiveCore::Pce(host) = &self.core else {
+            unreachable!();
+        };
+        let desired = host
+            .native_frame_descriptor()
+            .map(|descriptor| (descriptor.width(), descriptor.height()));
+        (desired != self.pce_native_output_dimensions).then_some(desired)
+    }
+
+    pub(crate) fn apply_pce_native_output_dimensions(
+        &mut self,
+        dimensions: Option<(usize, usize)>,
+        accepted: bool,
+    ) {
+        if accepted {
+            self.pce_native_output_dimensions = dimensions;
+        } else {
+            self.pce_native_output_dimensions = None;
+            self.pce_native_output_rejected = true;
+        }
     }
 
     pub fn set_dmg_palette(&mut self, preset: DmgPalettePreset) {

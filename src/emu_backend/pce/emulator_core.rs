@@ -49,7 +49,7 @@ impl PceBackend {
 
 impl EmulatorCore for PceBackend {
     fn framebuffer(&self) -> &[u8] {
-        &self.framebuffer
+        self.canonical_framebuffer()
     }
 
     fn state_restores_framebuffer(&self) -> bool {
@@ -224,7 +224,7 @@ impl EmulatorCore for PceBackend {
             .controller()
             .memory_base128()
             .is_connected();
-        self.project_presented_frame();
+        self.invalidate_frame_output();
         Ok(zeff_emu_common::StateRestoreOutcome::Exact)
     }
 
@@ -250,7 +250,7 @@ impl EmulatorCore for PceBackend {
             video_ram,
             MemoryRegionDescriptor::palette_ram(self.palette_ram_len()),
             oam,
-            MemoryRegionDescriptor::framebuffer(self.framebuffer.len()),
+            MemoryRegionDescriptor::framebuffer(super::PCE_PRESENTED_RGBA_BYTES),
         ];
         if self.cdrom2().is_some() {
             regions.insert(2, MemoryRegionDescriptor::save_ram(CDROM2_BRAM_LEN));
@@ -393,7 +393,7 @@ impl EmulatorCore for PceBackend {
             }
             MemoryRegionKind::Framebuffer => {
                 out.clear();
-                out.extend_from_slice(&self.framebuffer);
+                out.extend_from_slice(self.canonical_framebuffer());
                 Ok(region)
             }
             MemoryRegionKind::SaveRam => {

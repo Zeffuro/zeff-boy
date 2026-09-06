@@ -9,7 +9,9 @@ use zeff_emu_common::save_state::{StateReader, StateWriter};
 use super::{
     ControllerPort, PCE_HOST_FRAME_RGBA_BYTES, POPULOUS_HUCARD_RAM_LEN, PadButtons,
     PceCartridgeDescriptor, PceFrameRun, PceHuCardBoard, PceMachine, PceMachineError,
-    project_full_raw_frame,
+    PceNativeFrameDescriptor, native_frame_descriptor, project_full_raw_frame,
+    project_full_rgb565_frame, project_full_xrgb8888_frame, project_native_rgb565_frame,
+    project_native_xrgb8888_frame,
 };
 
 pub const HUCARD_BANK_LEN: usize = 0x2000;
@@ -21,6 +23,7 @@ const MAX_CORE_STATE_BYTES: usize = 8 * 1024 * 1024;
 pub struct PceHuCardHost {
     machine: PceMachine,
     framebuffer: Box<[u8]>,
+    framebuffer_current: bool,
     image_sha256: [u8; 32],
     frame_count: u64,
     pending_runtime_fault: Option<String>,
@@ -40,22 +43,21 @@ impl PceHuCardHost {
             ControllerPort::two_button(),
         )?;
         machine.set_sample_rate(sample_rate);
-        let mut host = Self {
+        Ok(Self {
             machine,
             framebuffer: vec![0; PCE_HOST_FRAME_RGBA_BYTES].into_boxed_slice(),
+            framebuffer_current: false,
             image_sha256,
             frame_count: 0,
             pending_runtime_fault: None,
-        };
-        host.project_frame();
-        Ok(host)
+        })
     }
 
     pub fn run_until_frame(&mut self) -> Result<PceFrameRun, PceMachineError> {
         let run = self.machine.run_until_frame()?;
         if run.frames_published() != 0 {
             self.frame_count = self.frame_count.saturating_add(run.frames_published());
-            self.project_frame();
+            self.framebuffer_current = false;
         }
         Ok(run)
     }
@@ -75,7 +77,7 @@ impl PceHuCardHost {
         self.machine.reset();
         self.frame_count = 0;
         self.pending_runtime_fault = None;
-        self.project_frame();
+        self.framebuffer_current = false;
     }
 
     pub fn set_input(&mut self, buttons: u8, dpad: u8) {
@@ -133,12 +135,54 @@ impl PceHuCardHost {
             .context("failed to decode PC Engine core state")?;
         self.frame_count = frame_count;
         self.pending_runtime_fault = None;
-        self.project_frame();
+        self.framebuffer_current = false;
         Ok(())
     }
 
-    pub fn framebuffer(&self) -> &[u8] {
+    pub fn framebuffer(&mut self) -> &[u8] {
+        if !self.framebuffer_current {
+            self.project_frame();
+        }
         &self.framebuffer
+    }
+
+    pub fn project_frame_xrgb8888(&self, output: &mut [u8]) {
+        project_full_xrgb8888_frame(
+            self.machine.presented_frame(),
+            self.machine.hardware_topology(),
+            output,
+        );
+    }
+
+    pub fn project_frame_rgb565(&self, output: &mut [u8]) {
+        project_full_rgb565_frame(
+            self.machine.presented_frame(),
+            self.machine.hardware_topology(),
+            output,
+        );
+    }
+
+    pub fn native_frame_descriptor(&self) -> Option<PceNativeFrameDescriptor> {
+        native_frame_descriptor(
+            self.machine.presented_frame(),
+            self.machine.hardware_topology(),
+        )
+    }
+
+    pub fn project_native_frame_xrgb8888(
+        &self,
+        descriptor: PceNativeFrameDescriptor,
+        output: &mut [u8],
+    ) {
+        project_native_xrgb8888_frame(self.machine.presented_frame(), descriptor, output);
+    }
+
+    pub fn project_native_frame_rgb565(
+        &self,
+        descriptor: PceNativeFrameDescriptor,
+        output: &mut [u8],
+    ) {
+        project_native_rgb565_frame(self.machine.presented_frame(), descriptor, output);
     }
 
     pub fn machine(&self) -> &PceMachine {
@@ -146,6 +190,7 @@ impl PceHuCardHost {
     }
 
     pub fn machine_mut(&mut self) -> &mut PceMachine {
+        self.framebuffer_current = false;
         &mut self.machine
     }
 
@@ -185,6 +230,7 @@ impl PceHuCardHost {
             self.machine.hardware_topology(),
             &mut self.framebuffer,
         );
+        self.framebuffer_current = true;
     }
 }
 
@@ -272,15 +318,76 @@ mod tests {
         let mut host = PceHuCardHost::new(test_rom(), 48_000).unwrap();
         host.set_input(0x03, 0x05);
         host.step_frame();
+        assert!(!host.framebuffer_current);
         let state = host.encode_state().unwrap();
         assert!(state.len() > 4 * 1024 * 1024);
         let expected_frame = host.framebuffer().to_vec();
+        assert!(host.framebuffer_current);
 
         host.reset();
+        assert!(!host.framebuffer_current);
         host.load_state(&state).unwrap();
+        assert!(!host.framebuffer_current);
 
         assert_eq!(host.encode_state().unwrap(), state);
         assert_eq!(host.framebuffer(), expected_frame);
+        assert!(host.framebuffer_current);
+    }
+
+    #[test]
+    fn packed_frames_match_the_materialized_rgba_frame() {
+        let mut host = PceHuCardHost::new(test_rom(), 48_000).unwrap();
+        host.step_frame();
+        let mut xrgb = vec![0; super::super::PCE_HOST_FRAME_XRGB8888_BYTES];
+        let mut rgb565 = vec![0; super::super::PCE_HOST_FRAME_RGB565_BYTES];
+
+        host.project_frame_xrgb8888(&mut xrgb);
+        host.project_frame_rgb565(&mut rgb565);
+        assert!(!host.framebuffer_current);
+        let rgba = host.framebuffer().to_vec();
+
+        let mut expected_xrgb = Vec::with_capacity(xrgb.len());
+        let mut expected_rgb565 = Vec::with_capacity(rgb565.len());
+        for pixel in rgba.as_chunks::<4>().0 {
+            expected_xrgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 0]);
+            let red = u16::from(pixel[0]);
+            let green = u16::from(pixel[1]);
+            let blue = u16::from(pixel[2]);
+            expected_rgb565.extend_from_slice(
+                &(((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)).to_le_bytes(),
+            );
+        }
+        assert_eq!(xrgb, expected_xrgb);
+        assert_eq!(rgb565, expected_rgb565);
+    }
+
+    #[test]
+    fn mutable_machine_access_invalidates_the_host_frame() {
+        let mut host = PceHuCardHost::new(test_rom(), 48_000).unwrap();
+        assert!(!host.framebuffer_current);
+        assert_eq!(host.framebuffer().len(), PCE_HOST_FRAME_RGBA_BYTES);
+        assert!(host.framebuffer_current);
+
+        let _ = host.machine_mut();
+
+        assert!(!host.framebuffer_current);
+        assert_eq!(host.framebuffer().len(), PCE_HOST_FRAME_RGBA_BYTES);
+        assert!(host.framebuffer_current);
+    }
+
+    #[test]
+    fn failed_restore_preserves_the_materialized_host_frame() {
+        let mut host = PceHuCardHost::new(test_rom(), 48_000).unwrap();
+        host.step_frame();
+        let state = host.encode_state().unwrap();
+        let frame = host.framebuffer().to_vec();
+        let mut invalid = state.clone();
+        invalid.push(0xA5);
+
+        assert!(host.load_state(&invalid).is_err());
+        assert!(host.framebuffer_current);
+        assert_eq!(host.encode_state().unwrap(), state);
+        assert_eq!(host.framebuffer(), frame);
     }
 
     #[test]

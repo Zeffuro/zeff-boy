@@ -425,6 +425,7 @@ pub(crate) fn profile_projection() {
         );
     }
     crate::emu_thread::profile_frame_publication(&output, iterations);
+    super::pce::profile_native_delivery(iterations);
 }
 
 #[cfg(test)]

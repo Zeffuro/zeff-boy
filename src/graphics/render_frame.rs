@@ -389,7 +389,7 @@ impl Graphics {
             });
 
             let direct_viewport = if render_framebuffer_directly {
-                let (gw, gh) = self.framebuffer.native_size();
+                let (gw, gh) = self.framebuffer.presentation_size();
                 calculate_viewport(
                     self.aspect_ratio_mode,
                     self.gpu.config.width,
@@ -398,7 +398,10 @@ impl Graphics {
                     gh,
                     menu_bar_height,
                 )
-                .map(|(x, y, w, h)| (x, y, w, h, gw, gh))
+                .map(|(x, y, w, h)| {
+                    let (source_w, source_h) = self.framebuffer.native_size();
+                    (x, y, w, h, source_w, source_h)
+                })
             } else {
                 None
             };
@@ -618,7 +621,7 @@ impl Graphics {
                 supports_debugger: ctx.supports_debugger,
                 supports_execution_controls: ctx.supports_execution_controls,
                 game_texture_id,
-                game_native_size: self.framebuffer.native_size(),
+                game_native_size: self.framebuffer.presentation_size(),
                 aspect_ratio_mode: self.aspect_ratio_mode,
                 game_view_pixel_size: None,
             };

@@ -61,7 +61,7 @@ fn backend_with_board(board: PceHuCardBoard, image_len: usize) -> PceBackend {
         rom_hash: [0; 32],
         source_crc32: None,
         source_disc_hash: None,
-        framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
+        frame_output: Default::default(),
         frame_count: 0,
         pending_runtime_fault: None,
         overscan_mode: PceOverscanMode::default(),
@@ -75,7 +75,7 @@ fn backend_with_board(board: PceHuCardBoard, image_len: usize) -> PceBackend {
         host_persistence_enabled: true,
         tas_load_provenance: None,
     };
-    backend.project_presented_frame();
+    backend.invalidate_frame_output();
     backend
 }
 
@@ -954,12 +954,13 @@ fn sync_output_write_continues_without_a_runtime_fault() {
         PathBuf::from("unsupported.pce"),
     )
     .unwrap();
-    backend.framebuffer.fill(0xA5);
+    let before = backend.framebuffer().to_vec();
     backend.step_frame();
 
     assert_eq!(backend.take_runtime_fault(), None);
     assert_eq!(backend.frame_count, 1);
     assert!(backend.machine.devices().vdc().sync_output().horizontal());
     assert!(!backend.machine.devices().vdc().sync_output().vertical());
-    assert!(backend.framebuffer.iter().any(|&byte| byte != 0xA5));
+    assert_eq!(backend.framebuffer().len(), before.len());
+    assert!(backend.tas_presented_frame_is_current());
 }

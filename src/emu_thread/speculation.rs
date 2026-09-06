@@ -32,11 +32,18 @@ trait FramebufferCommitSink {
     fn commit_framebuffer(&mut self, pixels: &[u8]);
 }
 
-struct SharedFramebufferSink<'a>(&'a SharedFramebuffer);
+struct SharedFramebufferSink<'a> {
+    shared: &'a SharedFramebuffer,
+    dimensions: Option<(u32, u32)>,
+}
 
 impl FramebufferCommitSink for SharedFramebufferSink<'_> {
     fn commit_framebuffer(&mut self, pixels: &[u8]) {
-        super::types::publish_framebuffer(self.0, pixels);
+        super::framebuffer::publish_framebuffer_with_dimensions(
+            self.shared,
+            pixels,
+            self.dimensions,
+        );
     }
 }
 
@@ -114,15 +121,19 @@ impl SpeculationBoundary {
     pub(super) fn commit_primary_frame(
         &mut self,
         shared_framebuffer: &SharedFramebuffer,
-        primary_framebuffer: &[u8],
+        backend: &crate::emu_backend::EmuBackend,
         detached_frame: Option<DetachedFrameOutput>,
     ) {
         #[cfg(test)]
         {
             self.committed_frames += 1;
         }
+        let (primary_framebuffer, dimensions) = backend.display_framebuffer();
         self.commit_selected_frame(
-            &mut SharedFramebufferSink(shared_framebuffer),
+            &mut SharedFramebufferSink {
+                shared: shared_framebuffer,
+                dimensions,
+            },
             primary_framebuffer,
             detached_frame,
         );

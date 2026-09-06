@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::{ActiveSystem, App};
+use crate::emu_thread::PublishedFramebuffer;
 use zeff_emu_common::system::{
     RGBA_BYTES_PER_PIXEL, SUPER_GAME_BOY_SCREEN_SIZE, WS_SCREEN_SIZE, rgba_framebuffer_len,
 };
@@ -9,21 +10,11 @@ const SGB_FRAME_LEN: usize = rgba_framebuffer_len(SUPER_GAME_BOY_SCREEN_SIZE);
 const WS_FRAME_LEN: usize = rgba_framebuffer_len(WS_SCREEN_SIZE);
 
 impl App {
-    pub(super) fn display_size_for_frame_len(&self, frame_len: usize) -> Option<(u32, u32)> {
-        if self.active_system == ActiveSystem::GameBoy && frame_len == SGB_FRAME_LEN {
-            return Some(SUPER_GAME_BOY_SCREEN_SIZE);
-        }
-
-        if frame_len != self.active_system.framebuffer_len() {
-            return None;
-        }
-
-        if self.active_system == ActiveSystem::WonderSwan && self.ws_display_rotated {
-            let (width, height) = WS_SCREEN_SIZE;
-            Some((height, width))
-        } else {
-            Some(self.active_system.screen_size())
-        }
+    pub(super) fn display_size_for_frame(
+        &self,
+        frame: &PublishedFramebuffer,
+    ) -> Option<(u32, u32)> {
+        frame_dimensions(self.active_system, self.ws_display_rotated, frame)
     }
 
     pub(super) fn active_display_size(&self) -> (u32, u32) {
@@ -35,7 +26,10 @@ impl App {
         }
     }
 
-    pub(super) fn display_frame_for_upload(&self, frame: Arc<Vec<u8>>) -> Option<Arc<Vec<u8>>> {
+    pub(super) fn display_frame_for_upload(
+        &self,
+        frame: Arc<PublishedFramebuffer>,
+    ) -> Option<Arc<PublishedFramebuffer>> {
         if self.active_system != ActiveSystem::WonderSwan || !self.ws_display_rotated {
             return Some(frame);
         }
@@ -44,10 +38,10 @@ impl App {
             return None;
         }
 
-        Some(Arc::new(rotate_ws_frame_ccw(&frame)))
+        Some(Arc::new(rotate_ws_frame_ccw(&frame).into()))
     }
 
-    pub(super) fn latest_display_frame_snapshot(&self) -> Option<Arc<Vec<u8>>> {
+    pub(super) fn latest_display_frame_snapshot(&self) -> Option<Arc<PublishedFramebuffer>> {
         self.last_displayed_frame.as_ref().cloned().or_else(|| {
             self.latest_frame
                 .as_ref()
@@ -71,13 +65,19 @@ impl App {
     }
 
     pub(super) fn apply_display_orientation(&mut self) {
-        let (native_w, native_h) = self.active_display_size();
         let raw_frame = self.last_core_frame.as_ref().or(self.latest_frame.as_ref());
         let display_frame =
             raw_frame.and_then(|frame| self.display_frame_for_upload(Arc::clone(frame)));
+        let (native_w, native_h) = display_frame
+            .as_ref()
+            .and_then(|frame| self.display_size_for_frame(frame))
+            .unwrap_or_else(|| self.active_display_size());
 
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.set_native_size(native_w, native_h);
+            if self.active_system == ActiveSystem::Pce {
+                gfx.set_presentation_size(640, 480);
+            }
             if let Some(frame) = display_frame.as_ref() {
                 gfx.upload_framebuffer(frame);
             }
@@ -86,6 +86,37 @@ impl App {
         if let Some(frame) = display_frame {
             self.last_displayed_frame = Some(frame);
         }
+    }
+}
+
+fn frame_dimensions(
+    system: ActiveSystem,
+    ws_rotated: bool,
+    frame: &PublishedFramebuffer,
+) -> Option<(u32, u32)> {
+    if let Some((width, height)) = frame.dimensions() {
+        if system != ActiveSystem::Pce
+            || width == 0
+            || height == 0
+            || width > 640
+            || height > 480
+            || frame.len() != width as usize * height as usize * RGBA_BYTES_PER_PIXEL
+        {
+            return None;
+        }
+        return Some((width, height));
+    }
+    if system == ActiveSystem::GameBoy && frame.len() == SGB_FRAME_LEN {
+        return Some(SUPER_GAME_BOY_SCREEN_SIZE);
+    }
+    if frame.len() != system.framebuffer_len() {
+        return None;
+    }
+    if system == ActiveSystem::WonderSwan && ws_rotated {
+        let (width, height) = WS_SCREEN_SIZE;
+        Some((height, width))
+    } else {
+        Some(system.screen_size())
     }
 }
 
@@ -115,6 +146,54 @@ fn rotate_ws_frame_ccw(frame: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_dimensions_are_explicit_and_validated_before_upload() {
+        use crate::emu_thread::framebuffer::{
+            new_shared_framebuffer, publish_framebuffer_with_dimensions,
+        };
+        let shared = new_shared_framebuffer();
+        publish_framebuffer_with_dimensions(&shared, &vec![0; 256 * 242 * 4], Some((256, 242)));
+        let frame = shared.load_full().unwrap();
+        assert_eq!(
+            frame_dimensions(ActiveSystem::Pce, false, &frame),
+            Some((256, 242))
+        );
+        assert_eq!(frame_dimensions(ActiveSystem::GameBoy, false, &frame), None);
+        publish_framebuffer_with_dimensions(&shared, &vec![0; 256 * 242 * 4], Some((256, 240)));
+        assert_eq!(
+            frame_dimensions(ActiveSystem::Pce, false, &shared.load_full().unwrap()),
+            None
+        );
+        publish_framebuffer_with_dimensions(&shared, &vec![0; 256 * 242 * 4], None);
+        assert_eq!(
+            frame_dimensions(ActiveSystem::Pce, false, &shared.load_full().unwrap()),
+            None
+        );
+        let fixed = vec![0; 640 * 480 * 4].into();
+        assert_eq!(
+            frame_dimensions(ActiveSystem::Pce, false, &fixed),
+            Some((640, 480))
+        );
+    }
+
+    #[test]
+    fn legacy_dynamic_layouts_keep_their_dimensions() {
+        let sgb = vec![0; SGB_FRAME_LEN].into();
+        assert_eq!(
+            frame_dimensions(ActiveSystem::GameBoy, false, &sgb),
+            Some(SUPER_GAME_BOY_SCREEN_SIZE)
+        );
+        let ws = vec![0; WS_FRAME_LEN].into();
+        assert_eq!(
+            frame_dimensions(ActiveSystem::WonderSwan, false, &ws),
+            Some(WS_SCREEN_SIZE)
+        );
+        assert_eq!(
+            frame_dimensions(ActiveSystem::WonderSwan, true, &ws),
+            Some((144, 224))
+        );
+    }
 
     #[test]
     fn rotates_ws_frame_counter_clockwise() {

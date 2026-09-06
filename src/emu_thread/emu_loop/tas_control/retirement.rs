@@ -81,9 +81,9 @@ impl EmuLoop {
     }
 
     pub(super) fn finalize_tas_loaded_observables(&mut self, path: &str) {
-        super::super::super::types::publish_framebuffer(
+        super::super::super::types::publish_backend_framebuffer(
             &self.shared_framebuffer,
-            self.backend.framebuffer(),
+            &self.backend,
         );
         self.pending_audio_discontinuities.clear();
         let response = EmuResponse::LoadStateOk {

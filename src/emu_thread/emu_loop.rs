@@ -296,7 +296,7 @@ impl EmuLoop {
                 );
                 self.speculation.commit_primary_frame(
                     &self.shared_framebuffer,
-                    self.backend.framebuffer(),
+                    &self.backend,
                     detached_frame,
                 );
                 let mut result = result;

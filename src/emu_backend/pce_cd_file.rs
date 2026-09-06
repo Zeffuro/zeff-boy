@@ -47,6 +47,12 @@ struct FileIdentity {
     modified: Option<std::time::SystemTime>,
 }
 
+struct ContentIdentity {
+    sha256: [u8; 32],
+    crc32: u32,
+    file_sha256: Vec<[u8; 32]>,
+}
+
 pub(super) fn load_direct_cue_file_backed(
     cue_path: &Path,
     cue_bytes: &[u8],
@@ -127,17 +133,16 @@ fn load_cue_file_backed(
     files: Vec<FileBackedCueFile>,
     progress: impl FnMut(u64) -> Result<(), PceCdLoadError>,
 ) -> Result<LoadedPceCd, PceCdLoadError> {
-    let (content_sha256, content_crc32, file_sha256) =
-        content_identity(cue_bytes, sheet, &files, progress)?;
-    let disc = build_disc(sheet, &files, &file_sha256)?;
+    let content_identity = content_identity(cue_bytes, sheet, &files, progress)?;
+    let disc = build_disc(sheet, &files, &content_identity.file_sha256)?;
     let source_disc_sha256 = disc.content_hash();
     let raw_source_media_len = disc_payload_len(&disc)?;
     Ok(LoadedPceCd {
         raw_source_media_sha256: source_disc_sha256,
         raw_source_media_len,
         disc,
-        content_sha256,
-        content_crc32,
+        content_sha256: content_identity.sha256,
+        content_crc32: content_identity.crc32,
         mod_crc32: crc32fast::hash(&source_disc_sha256),
         source_disc_sha256,
     })
@@ -234,7 +239,7 @@ fn content_identity(
     sheet: &CueSheet,
     files: &[FileBackedCueFile],
     mut progress: impl FnMut(u64) -> Result<(), PceCdLoadError>,
-) -> Result<([u8; 32], u32, Vec<[u8; 32]>), PceCdLoadError> {
+) -> Result<ContentIdentity, PceCdLoadError> {
     let mut sha = Sha256::new();
     let mut crc = Crc32::new();
     update_identity(&mut sha, &mut crc, CONTENT_ID_DOMAIN);
@@ -252,7 +257,11 @@ fn content_identity(
             &mut progress,
         )?);
     }
-    Ok((sha.finalize().into(), crc.finalize(), file_sha256))
+    Ok(ContentIdentity {
+        sha256: sha.finalize().into(),
+        crc32: crc.finalize(),
+        file_sha256,
+    })
 }
 
 fn update_file_identity(

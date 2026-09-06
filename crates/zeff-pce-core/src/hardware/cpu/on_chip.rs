@@ -1,7 +1,13 @@
 use super::super::bus::{OPEN_BUS_VALUE, PhysicalRegion, decode_physical_region};
-use super::{Cpu, CpuBus, CpuStep, CpuTrap, IrqPort, StatusFlags, TimerPort, VdcPort};
+use super::{
+    Cpu, CpuBus, CpuStep, CpuTrap, IrqPort, PlainMemoryCpuBus, StatusFlags, TimerPort, VdcPort,
+};
 use anyhow::bail;
 use zeff_emu_common::save_state::{StateReader, StateWriter};
+
+#[path = "on_chip/plain_memory.rs"]
+mod plain_memory;
+use plain_memory::PlainOnChipBus;
 
 pub const TIMER_MASTER_TICKS: u64 = 3_072;
 pub const UNINITIALIZED_TIMER_COUNTER_READ: u8 = 0;
@@ -306,6 +312,24 @@ impl HuC6280 {
         Ok(step)
     }
 
+    pub(crate) fn step_instruction_plain<B: PlainMemoryCpuBus>(
+        &mut self,
+        bus: &mut B,
+    ) -> Result<CpuStep, CpuTrap> {
+        assert!(self.interrupt_poll_disable.is_none());
+        assert!(self.sampled_interrupt.is_none());
+        let old_interrupt_disable = self.cpu.registers().status.contains(StatusFlags::INTERRUPT);
+        let mut bus = PlainOnChipBus::new(&mut self.on_chip_io, bus);
+        let step = self.cpu.step(&mut bus)?;
+        let final_interrupt_disable = self.cpu.registers().status.contains(StatusFlags::INTERRUPT);
+        self.interrupt_poll_disable = Some(match step.opcode {
+            0x28 | 0x58 | 0x78 => old_interrupt_disable,
+            0x40 => final_interrupt_disable,
+            _ => final_interrupt_disable,
+        });
+        Ok(step)
+    }
+
     pub fn debug_write_logical<B: CpuBus>(&mut self, bus: &mut B, logical_addr: u16, value: u8) {
         let mut bus = OnChipBus::new(&mut self.on_chip_io, bus);
         self.cpu.write(&mut bus, logical_addr, value);
@@ -319,6 +343,23 @@ impl HuC6280 {
         let source = self.sampled_interrupt.take()?;
 
         let mut bus = OnChipBus::new(&mut self.on_chip_io, bus);
+        self.cpu
+            .enter_hardware_interrupt_provisional(&mut bus, source.vector_low());
+        self.interrupt_poll_disable = Some(true);
+        Some(InterruptStep {
+            source,
+            cycles: PROVISIONAL_INTERRUPT_ENTRY_CYCLES,
+        })
+    }
+
+    pub(crate) fn service_interrupt_boundary_plain<B: PlainMemoryCpuBus>(
+        &mut self,
+        bus: &mut B,
+    ) -> Option<InterruptStep> {
+        assert!(self.interrupt_poll_disable.is_none());
+        let source = self.sampled_interrupt.take()?;
+
+        let mut bus = PlainOnChipBus::new(&mut self.on_chip_io, bus);
         self.cpu
             .enter_hardware_interrupt_provisional(&mut bus, source.vector_low());
         self.interrupt_poll_disable = Some(true);
@@ -609,18 +650,29 @@ impl<B: CpuBus> OnChipBus<'_, B> {
     }
 
     fn internal_read(&mut self, physical_addr: u32, dummy: bool) -> Option<u8> {
-        if !matches!(
-            decode_physical_region(physical_addr),
-            PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)
-        ) {
+        let region = decode_physical_region(physical_addr);
+        if !matches!(region, PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)) {
             return None;
         }
+        Some(self.internal_read_region(physical_addr, region, dummy))
+    }
+
+    fn internal_read_region(
+        &mut self,
+        physical_addr: u32,
+        region: PhysicalRegion,
+        dummy: bool,
+    ) -> u8 {
+        debug_assert!(matches!(
+            region,
+            PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)
+        ));
         let completed = self.inner.advance_internal_access(physical_addr, false);
         self.advance_elapsed_time();
         if !completed {
-            return Some(OPEN_BUS_VALUE);
+            return OPEN_BUS_VALUE;
         }
-        let value = match decode_physical_region(physical_addr) {
+        let value = match region {
             PhysicalRegion::Timer(TimerPort::CounterReload) => {
                 self.on_chip_io.read_timer_counter() | (self.on_chip_io.io_data_buffer & 0x80)
             }
@@ -633,22 +685,35 @@ impl<B: CpuBus> OnChipBus<'_, B> {
         self.on_chip_io.io_data_buffer = value;
         self.inner
             .observe_internal_read(physical_addr, value, dummy);
-        Some(value)
+        value
     }
 
     fn internal_write(&mut self, physical_addr: u32, value: u8, dummy: bool) -> bool {
-        if !matches!(
-            decode_physical_region(physical_addr),
-            PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)
-        ) {
+        let region = decode_physical_region(physical_addr);
+        if !matches!(region, PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)) {
             return false;
         }
+        self.internal_write_region(physical_addr, region, value, dummy);
+        true
+    }
+
+    fn internal_write_region(
+        &mut self,
+        physical_addr: u32,
+        region: PhysicalRegion,
+        value: u8,
+        dummy: bool,
+    ) {
+        debug_assert!(matches!(
+            region,
+            PhysicalRegion::Timer(_) | PhysicalRegion::Irq(_)
+        ));
         let completed = self.inner.advance_internal_access(physical_addr, true);
         self.advance_elapsed_time();
         if !completed {
-            return true;
+            return;
         }
-        match decode_physical_region(physical_addr) {
+        match region {
             PhysicalRegion::Timer(port) => self.on_chip_io.write_timer(port, value),
             PhysicalRegion::Irq(port) => self.on_chip_io.write_irq(port, value),
             _ => unreachable!(),
@@ -656,7 +721,46 @@ impl<B: CpuBus> OnChipBus<'_, B> {
         self.on_chip_io.io_data_buffer = value;
         self.inner
             .observe_internal_write(physical_addr, value, dummy);
-        true
+    }
+
+    fn read_non_internal_region(
+        &mut self,
+        physical_addr: u32,
+        region: PhysicalRegion,
+        dummy: bool,
+    ) -> u8 {
+        let value = if dummy {
+            self.inner.dummy_read(physical_addr)
+        } else {
+            self.inner.read(physical_addr)
+        };
+        self.advance_elapsed_time();
+        match region {
+            PhysicalRegion::Psg(_) => self.on_chip_io.io_data_buffer,
+            PhysicalRegion::Controller => {
+                self.on_chip_io.io_data_buffer = value;
+                value
+            }
+            _ => value,
+        }
+    }
+
+    fn write_non_internal_region(
+        &mut self,
+        physical_addr: u32,
+        region: PhysicalRegion,
+        value: u8,
+        dummy: bool,
+    ) {
+        if dummy {
+            self.inner.dummy_write(physical_addr, value);
+        } else {
+            self.inner.write(physical_addr, value);
+        }
+        self.advance_elapsed_time();
+        if matches!(region, PhysicalRegion::Psg(_) | PhysicalRegion::Controller) {
+            self.on_chip_io.io_data_buffer = value;
+        }
     }
 }
 
@@ -665,29 +769,22 @@ impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
         if let Some(value) = self.internal_read(physical_addr, false) {
             value
         } else {
-            let value = self.inner.read(physical_addr);
-            self.advance_elapsed_time();
-            match decode_physical_region(physical_addr) {
-                PhysicalRegion::Psg(_) => self.on_chip_io.io_data_buffer,
-                PhysicalRegion::Controller => {
-                    self.on_chip_io.io_data_buffer = value;
-                    value
-                }
-                _ => value,
-            }
+            self.read_non_internal_region(
+                physical_addr,
+                decode_physical_region(physical_addr),
+                false,
+            )
         }
     }
 
     fn write(&mut self, physical_addr: u32, value: u8) {
         if !self.internal_write(physical_addr, value, false) {
-            self.inner.write(physical_addr, value);
-            self.advance_elapsed_time();
-            if matches!(
+            self.write_non_internal_region(
+                physical_addr,
                 decode_physical_region(physical_addr),
-                PhysicalRegion::Psg(_) | PhysicalRegion::Controller
-            ) {
-                self.on_chip_io.io_data_buffer = value;
-            }
+                value,
+                false,
+            );
         }
     }
 
@@ -695,29 +792,22 @@ impl<B: CpuBus> CpuBus for OnChipBus<'_, B> {
         if let Some(value) = self.internal_read(physical_addr, true) {
             value
         } else {
-            let value = self.inner.dummy_read(physical_addr);
-            self.advance_elapsed_time();
-            match decode_physical_region(physical_addr) {
-                PhysicalRegion::Psg(_) => self.on_chip_io.io_data_buffer,
-                PhysicalRegion::Controller => {
-                    self.on_chip_io.io_data_buffer = value;
-                    value
-                }
-                _ => value,
-            }
+            self.read_non_internal_region(
+                physical_addr,
+                decode_physical_region(physical_addr),
+                true,
+            )
         }
     }
 
     fn dummy_write(&mut self, physical_addr: u32, value: u8) {
         if !self.internal_write(physical_addr, value, true) {
-            self.inner.dummy_write(physical_addr, value);
-            self.advance_elapsed_time();
-            if matches!(
+            self.write_non_internal_region(
+                physical_addr,
                 decode_physical_region(physical_addr),
-                PhysicalRegion::Psg(_) | PhysicalRegion::Controller
-            ) {
-                self.on_chip_io.io_data_buffer = value;
-            }
+                value,
+                true,
+            );
         }
     }
 

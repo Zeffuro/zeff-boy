@@ -76,6 +76,20 @@ impl PceVideoRowMetadata {
     pub const fn background(self) -> Option<PceBackgroundLineDebug> {
         self.background
     }
+
+    #[cfg(test)]
+    pub(crate) const fn test_active(
+        active_x_origin: u16,
+        active_width: u16,
+        pixel_clock: VcePixelClock,
+    ) -> Self {
+        Self {
+            active_x_origin,
+            active_width,
+            pixel_clock: Some(pixel_clock),
+            background: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +176,22 @@ impl<'a> PcePresentedFrame<'a> {
     #[inline]
     pub const fn signal_bounds(self) -> PceVideoSignalBounds {
         self.signal_bounds
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_frame(
+        rgba: &'a [u8],
+        rows: &'a [PceVideoRowMetadata; PCE_ACTIVE_FRAME_HEIGHT],
+    ) -> Self {
+        Self {
+            rgba,
+            rows,
+            active_bounds: None,
+            signal_bounds: PceVideoSignalBounds {
+                first_row: PCE_SIGNAL_FIRST_ROW,
+                row_end: PCE_SIGNAL_ROW_END,
+            },
+        }
     }
 }
 

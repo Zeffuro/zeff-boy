@@ -7,6 +7,7 @@ use zeff_emu_common::debug::{
 use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{ClockRate, MasterTicks};
 
+mod frame_service;
 mod hlt_fast_forward;
 
 fn rom_with_reset_code(code: &[u8]) -> Vec<u8> {

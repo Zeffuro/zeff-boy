@@ -91,6 +91,17 @@ impl App {
                     "framebuffer not available yet",
                 );
             };
+            if frame.dimensions().is_some() {
+                let Some(dimensions) = self.display_size_for_frame(frame) else {
+                    return memory_not_ready_json(
+                        space,
+                        start as u32,
+                        length,
+                        "invalid framebuffer dimensions",
+                    );
+                };
+                return native_pce_frame_memory_json(start, length, frame, dimensions);
+            }
             return slice_memory_json(space, start, length, frame);
         }
 
@@ -205,6 +216,34 @@ impl App {
     }
 }
 
+fn native_pce_frame_memory_json(
+    start: usize,
+    length: usize,
+    native: &[u8],
+    dimensions: (u32, u32),
+) -> Value {
+    const WIDTH: usize = zeff_emu_common::system::PCE_SCREEN_SIZE.0 as usize;
+    const HEIGHT: usize = zeff_emu_common::system::PCE_SCREEN_SIZE.1 as usize;
+    const AVAILABLE: usize = WIDTH * HEIGHT * 4;
+    if start >= AVAILABLE {
+        return json!({
+            "ready": false, "space": "framebuffer", "start": start,
+            "requested_length": length, "available": AVAILABLE,
+            "note": "start is outside the selected buffer",
+        });
+    }
+    let (width, height) = (dimensions.0 as usize, dimensions.1 as usize);
+    let bytes = (start..start.saturating_add(length).min(AVAILABLE))
+        .map(|offset| {
+            let pixel = offset / 4;
+            let x = (pixel % WIDTH) * width / WIDTH;
+            let y = (pixel / WIDTH) * height / HEIGHT;
+            native[(y * width + x) * 4 + offset % 4]
+        })
+        .collect::<Vec<_>>();
+    memory_ready_json("framebuffer", start as u32, AVAILABLE, &bytes)
+}
+
 fn slice_word_memory_json(space: &str, start: usize, length: usize, words: &[u16]) -> Value {
     let bytes = words
         .iter()
@@ -306,6 +345,24 @@ fn hex_string(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_pce_memory_retains_canonical_offsets_and_size() {
+        let native = [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255];
+        let first = native_pce_frame_memory_json(0, 8, &native, (2, 2));
+        assert_eq!(first["available"], 640 * 480 * 4);
+        assert_eq!(first["bytes"], json!([1, 2, 3, 255, 1, 2, 3, 255]));
+        let crossing = native_pce_frame_memory_json(319 * 4 + 2, 4, &native, (2, 2));
+        assert_eq!(crossing["bytes"], json!([3, 255, 4, 5]));
+        let second_row = native_pce_frame_memory_json(240 * 640 * 4, 4, &native, (2, 2));
+        assert_eq!(second_row["bytes"], json!([7, 8, 9, 255]));
+        let last = native_pce_frame_memory_json(640 * 480 * 4 - 2, usize::MAX, &native, (2, 2));
+        assert_eq!(last["bytes"], json!([12, 255]));
+        assert_eq!(last["length"], 2);
+        let outside = native_pce_frame_memory_json(640 * 480 * 4, 4, &native, (2, 2));
+        assert_eq!(outside["ready"], false);
+        assert_eq!(outside["available"], 640 * 480 * 4);
+    }
 
     #[test]
     fn canonical_cached_memory_space_uses_region_aliases() {

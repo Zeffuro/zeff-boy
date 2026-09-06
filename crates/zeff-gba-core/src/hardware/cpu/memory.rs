@@ -250,14 +250,14 @@ impl Cpu {
                 .is_some_and(|fetched| gba_bios_addr(fetched.pc))
     }
 
-    pub(super) fn track_bios_fetch(&mut self, fetched: FetchedInstruction) {
-        if !gba_bios_addr(fetched.pc) {
+    pub(super) fn track_bios_fetch(&mut self, pc: u32, raw: u32, instruction_set: InstructionSet) {
+        if !gba_bios_addr(pc) {
             return;
         }
-        self.bios_protected_read_latch = match fetched.instruction_set {
-            InstructionSet::Arm => fetched.raw,
+        self.bios_protected_read_latch = match instruction_set {
+            InstructionSet::Arm => raw,
             InstructionSet::Thumb => {
-                let halfword = fetched.raw & 0xFFFF;
+                let halfword = raw & 0xFFFF;
                 halfword | (halfword << 16)
             }
         };

@@ -404,12 +404,24 @@ impl App {
                     if let (Some(cursor), Some(frame)) =
                         (self.tas_control.linked_cursor(), self.latest_frame.as_ref())
                     {
-                        let (width, height) = self.active_system.screen_size();
+                        let frame = self
+                            .display_frame_for_upload(frame.clone())
+                            .unwrap_or_else(|| frame.clone());
+                        let (width, height) = self
+                            .display_size_for_frame(&frame)
+                            .unwrap_or_else(|| self.active_system.screen_size());
+                        let presentation_size =
+                            if self.active_system == crate::app::ActiveSystem::Pce {
+                                self.active_system.screen_size()
+                            } else {
+                                (width, height)
+                            };
                         if let Err(error) = self.debug_windows.tas_editor.install_linked_frame(
                             cursor,
                             width,
                             height,
-                            frame.as_ref().clone(),
+                            frame.to_vec(),
+                            presentation_size,
                         ) {
                             self.toast_manager
                                 .error(format!("Could not show the linked TAS frame: {error:#}"));

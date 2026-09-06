@@ -72,6 +72,7 @@ impl Bus {
     }
 
     pub(super) fn io_write16(&mut self, addr: u32, value: u16) {
+        self.materialize_frame_service();
         let offset = (addr & 0x3FF) as usize;
 
         match addr {
@@ -185,11 +186,13 @@ impl Bus {
     }
 
     pub(crate) fn enable_master_interrupts(&mut self) {
+        self.materialize_frame_service();
         self.write_io16_raw(IME, 1);
         self.test_irq_signal(1);
     }
 
     pub(crate) fn set_sound_bias_level(&mut self, high: bool) {
+        self.materialize_frame_service();
         let current = read_io16(&self.io, SOUNDBIAS);
         let level = if high { 0x0200 } else { 0x0000 };
         self.write_io16_raw(SOUNDBIAS, (current & 0xC000) | level);

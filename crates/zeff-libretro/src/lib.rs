@@ -238,6 +238,14 @@ pub extern "C" fn retro_run() {
         if let Some(fault) = state.take_runtime_fault() {
             retro_log_error(&format!("PC Engine runtime fault: {fault}"));
         }
+        if let Some(dimensions) = state.pending_pce_native_output_dimensions() {
+            let mut geometry = core::CoreState::pce_output_geometry(dimensions);
+            let accepted = env_cmd(
+                RETRO_ENVIRONMENT_SET_GEOMETRY,
+                &mut geometry as *mut retro_game_geometry as *mut c_void,
+            );
+            state.apply_pce_native_output_dimensions(dimensions, accepted);
+        }
         if let Err(error) = sram::publish(state) {
             retro_log_error(&format!("retro_run: save RAM publish failed: {error:#}"));
             return;

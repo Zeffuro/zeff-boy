@@ -1,3 +1,4 @@
+use super::super::cdrom2::{CDROM2_REGISTER_END, CDROM2_REGISTER_START};
 use super::super::vce::VcePixelClock;
 #[cfg(feature = "profiling")]
 use super::super::vdc_horizontal::VdcHorizontalAdvance;
@@ -5,7 +6,7 @@ use super::super::vdc_horizontal::VdcHorizontalAdvance;
 use super::super::vdc_scanline::VdcActiveDisplayLine;
 use super::*;
 #[cfg(feature = "profiling")]
-use crate::hardware::profiling::PceProfiling;
+use crate::hardware::profiling::{PceBusAccessKind, PceDeviceMaterializationCause, PceProfiling};
 
 pub(super) struct TimedMachineBus<'a> {
     inner: &'a mut BaseBus<PceDevices>,
@@ -21,6 +22,7 @@ pub(super) struct TimedMachineBus<'a> {
     pub(super) vram_contention_wait_cycles: u32,
     pub(super) elapsed_master_ticks: u64,
     unclaimed_on_chip_master_ticks: u64,
+    pending_device_master_ticks: u64,
     pub(super) vce_lines: u64,
     pub(super) frames_published: u64,
     pub(super) fault: Option<PceMachineError>,
@@ -30,6 +32,12 @@ pub(super) struct TimedMachineBus<'a> {
     capture_old_writes: bool,
     pub(super) dma_completed: bool,
     debug: &'a mut AddressDebugController,
+    #[cfg(test)]
+    coalesce_device_advancement: bool,
+    #[cfg(test)]
+    fault_after_device_chunks: Option<u64>,
+    #[cfg(test)]
+    device_advance_calls: u64,
     #[cfg(feature = "profiling")]
     profiling: &'a mut PceProfiling,
 }
@@ -76,6 +84,7 @@ impl<'a> TimedMachineBus<'a> {
         master_ticks_per_cycle: u64,
         trace: Option<&'a mut TimedInstructionTrace>,
         debug: &'a mut AddressDebugController,
+        #[cfg(test)] coalesce_device_advancement: bool,
         #[cfg(feature = "profiling")] profiling: &'a mut PceProfiling,
     ) -> Self {
         let trace_enabled = trace.is_some();
@@ -100,6 +109,7 @@ impl<'a> TimedMachineBus<'a> {
             vram_contention_wait_cycles: 0,
             elapsed_master_ticks: 0,
             unclaimed_on_chip_master_ticks: 0,
+            pending_device_master_ticks: 0,
             vce_lines: 0,
             frames_published: 0,
             fault: None,
@@ -109,6 +119,12 @@ impl<'a> TimedMachineBus<'a> {
             capture_old_writes,
             dma_completed: false,
             debug,
+            #[cfg(test)]
+            coalesce_device_advancement,
+            #[cfg(test)]
+            fault_after_device_chunks: None,
+            #[cfg(test)]
+            device_advance_calls: 0,
             #[cfg(feature = "profiling")]
             profiling,
         }
@@ -116,16 +132,37 @@ impl<'a> TimedMachineBus<'a> {
 
     fn advance_cycle(&mut self) {
         self.observed_cycles += 1;
-        self.advance_devices(self.master_ticks_per_cycle);
+        self.advance_elapsed_master_ticks(self.master_ticks_per_cycle);
+        let horizon = self.next_fallible_device_horizon();
+        if self.pending_device_master_ticks >= horizon {
+            self.materialize_pending_devices(
+                #[cfg(feature = "profiling")]
+                if horizon == 0 {
+                    PceDeviceMaterializationCause::DmaHorizon
+                } else {
+                    PceDeviceMaterializationCause::LineHorizon
+                },
+            );
+        }
     }
 
     fn advance_access(&mut self, physical_addr: u32, write: bool) -> bool {
         self.pending_debug_write = None;
         self.advance_cycle();
+        if is_timing_observable_access(self.inner, physical_addr) {
+            self.materialize_pending_devices(
+                #[cfg(feature = "profiling")]
+                PceDeviceMaterializationCause::TimingMmio,
+            );
+        }
         let video_access = is_vdc_vce_access(physical_addr);
         if video_access {
-            self.advance_devices(
+            self.advance_elapsed_master_ticks(
                 u64::from(PCE_VDC_VCE_ACCESS_WAIT_CYCLES) * self.master_ticks_per_cycle,
+            );
+            self.materialize_pending_devices(
+                #[cfg(feature = "profiling")]
+                PceDeviceMaterializationCause::DirectVdc,
             );
             self.video_wait_cycles += PCE_VDC_VCE_ACCESS_WAIT_CYCLES;
             if let Some(target) = vdc_vram_cycle_target(self.inner, physical_addr, write) {
@@ -139,10 +176,109 @@ impl<'a> TimedMachineBus<'a> {
         completed
     }
 
+    fn advance_plain_memory_access(&mut self) -> bool {
+        self.pending_debug_write = None;
+        self.advance_cycle();
+        self.fault.is_none()
+    }
+
+    #[cfg(feature = "profiling")]
+    fn record_direct_plain_memory_access(&mut self, physical_addr: u32, kind: PceBusAccessKind) {
+        match kind {
+            PceBusAccessKind::Read => self.profiling.snapshot.bus_reads += 1,
+            PceBusAccessKind::Write => self.profiling.snapshot.bus_writes += 1,
+            PceBusAccessKind::DummyRead => self.profiling.snapshot.bus_dummy_reads += 1,
+            PceBusAccessKind::DummyWrite => self.profiling.snapshot.bus_dummy_writes += 1,
+        }
+        self.profiling.record_bus_access(
+            self.inner.devices().topology(),
+            self.inner.hucard_board(),
+            physical_addr,
+            kind,
+        );
+        self.profiling.snapshot.plain_memory_lane_direct_accesses += 1;
+    }
+
+    fn read_plain_memory(
+        &mut self,
+        physical_addr: u32,
+        target: super::super::bus::PlainMemoryTarget,
+        _dummy: bool,
+    ) -> u8 {
+        #[cfg(not(feature = "profiling"))]
+        let _ = physical_addr;
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.snapshot.plain_memory_lane_attempts += 1;
+        }
+        #[cfg(feature = "profiling")]
+        self.record_direct_plain_memory_access(
+            physical_addr,
+            if _dummy {
+                PceBusAccessKind::DummyRead
+            } else {
+                PceBusAccessKind::Read
+            },
+        );
+        if self.advance_plain_memory_access() {
+            self.inner.read_plain_memory_target(target)
+        } else {
+            OPEN_BUS_VALUE
+        }
+    }
+
+    fn write_plain_memory(
+        &mut self,
+        physical_addr: u32,
+        target: super::super::bus::PlainMemoryTarget,
+        value: u8,
+        _dummy: bool,
+    ) {
+        #[cfg(not(feature = "profiling"))]
+        let _ = physical_addr;
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.snapshot.plain_memory_lane_attempts += 1;
+        }
+        debug_assert!(matches!(
+            target,
+            super::super::bus::PlainMemoryTarget::WorkRam(_)
+        ));
+        #[cfg(feature = "profiling")]
+        self.record_direct_plain_memory_access(
+            physical_addr,
+            if _dummy {
+                PceBusAccessKind::DummyWrite
+            } else {
+                PceBusAccessKind::Write
+            },
+        );
+        if self.advance_plain_memory_access() {
+            self.inner.write_plain_memory_target(target, value);
+            self.observe_dma_completion();
+        }
+    }
+
+    fn record_plain_memory_fallback(&mut self) {
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.snapshot.plain_memory_lane_attempts += 1;
+            self.profiling.snapshot.plain_memory_lane_fallback_accesses += 1;
+        }
+    }
+
     fn advance_direct_vdc_access(&mut self, port: VdcPort) -> bool {
         self.advance_cycle();
-        self.advance_devices(
+        self.materialize_pending_devices(
+            #[cfg(feature = "profiling")]
+            PceDeviceMaterializationCause::DirectVdc,
+        );
+        self.advance_elapsed_master_ticks(
             u64::from(PCE_VDC_VCE_ACCESS_WAIT_CYCLES) * self.master_ticks_per_cycle,
+        );
+        self.materialize_pending_devices(
+            #[cfg(feature = "profiling")]
+            PceDeviceMaterializationCause::DirectVdc,
         );
         self.video_wait_cycles += PCE_VDC_VCE_ACCESS_WAIT_CYCLES;
         if let Some(target) = direct_vdc_vram_write_target(self.inner, port) {
@@ -165,7 +301,18 @@ impl<'a> TimedMachineBus<'a> {
         {
             self.profiling.snapshot.bus_idle_cycles += u64::from(remaining);
         }
-        self.advance_devices(u64::from(remaining) * self.master_ticks_per_cycle);
+        self.advance_elapsed_master_ticks(u64::from(remaining) * self.master_ticks_per_cycle);
+        let horizon = self.next_fallible_device_horizon();
+        if self.pending_device_master_ticks >= horizon {
+            self.materialize_pending_devices(
+                #[cfg(feature = "profiling")]
+                if horizon == 0 {
+                    PceDeviceMaterializationCause::DmaHorizon
+                } else {
+                    PceDeviceMaterializationCause::LineHorizon
+                },
+            );
+        }
         self.fault.map_or(Ok(()), Err)
     }
 
@@ -196,9 +343,67 @@ impl<'a> TimedMachineBus<'a> {
         }
     }
 
-    pub(super) fn advance_devices(&mut self, master_ticks: u64) {
+    fn advance_elapsed_master_ticks(&mut self, master_ticks: u64) {
         if self.fault.is_some() || master_ticks == 0 {
             return;
+        }
+        #[cfg(test)]
+        if !self.coalesce_device_advancement {
+            self.advance_devices_now(master_ticks);
+            return;
+        }
+        self.pending_device_master_ticks += master_ticks;
+    }
+
+    fn next_fallible_device_horizon(&self) -> u64 {
+        #[cfg(test)]
+        if self.fault_after_device_chunks.is_some() {
+            return 0;
+        }
+        let vdc = self.inner.devices().vdc();
+        if vdc.pending_vram_dma().is_some()
+            || vdc.active_vram_dma().is_some()
+            || vdc.pending_satb_dma().is_some()
+            || vdc.active_satb_dma().is_some()
+        {
+            return 0;
+        }
+        PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE - *self.vce_line_accumulator
+    }
+
+    fn materialize_pending_devices(
+        &mut self,
+        #[cfg(feature = "profiling")] cause: PceDeviceMaterializationCause,
+    ) {
+        let master_ticks = std::mem::take(&mut self.pending_device_master_ticks);
+        #[cfg(feature = "profiling")]
+        self.profiling
+            .record_device_materialization(cause, master_ticks);
+        self.advance_devices_now(master_ticks);
+    }
+
+    pub(super) fn finish_action(&mut self) {
+        self.materialize_pending_devices(
+            #[cfg(feature = "profiling")]
+            PceDeviceMaterializationCause::ActionFinish,
+        );
+    }
+
+    pub(super) fn advance_devices(&mut self, master_ticks: u64) {
+        self.advance_elapsed_master_ticks(master_ticks);
+        self.materialize_pending_devices(
+            #[cfg(feature = "profiling")]
+            PceDeviceMaterializationCause::DirectVdc,
+        );
+    }
+
+    fn advance_devices_now(&mut self, master_ticks: u64) {
+        if self.fault.is_some() || master_ticks == 0 {
+            return;
+        }
+        #[cfg(test)]
+        {
+            self.device_advance_calls += 1;
         }
         #[cfg(feature = "profiling")]
         {
@@ -223,6 +428,18 @@ impl<'a> TimedMachineBus<'a> {
             #[cfg(not(feature = "profiling"))]
             self.inner.devices_mut().advance_master_ticks(elapsed);
             self.observe_dma_completion();
+            #[cfg(test)]
+            if let Some(chunks) = &mut self.fault_after_device_chunks {
+                *chunks -= 1;
+                if *chunks == 0 {
+                    self.fault = Some(PceMachineError::ClockOverflow {
+                        counter: PceClockCounter::MasterTicks,
+                        current: 0,
+                        delta: 0,
+                    });
+                    return;
+                }
+            }
             remaining -= elapsed;
             if let Err(error) = result {
                 self.fault = Some(error);
@@ -381,8 +598,12 @@ impl CpuBus for TimedMachineBus<'_> {
         #[cfg(feature = "profiling")]
         {
             self.profiling.snapshot.bus_reads += 1;
-            self.profiling
-                .record_bus_access(self.inner.devices().topology(), physical_addr);
+            self.profiling.record_bus_access(
+                self.inner.devices().topology(),
+                self.inner.hucard_board(),
+                physical_addr,
+                PceBusAccessKind::Read,
+            );
         }
         if self.advance_access(physical_addr, false) {
             self.inner.read(physical_addr)
@@ -395,8 +616,12 @@ impl CpuBus for TimedMachineBus<'_> {
         #[cfg(feature = "profiling")]
         {
             self.profiling.snapshot.bus_writes += 1;
-            self.profiling
-                .record_bus_access(self.inner.devices().topology(), physical_addr);
+            self.profiling.record_bus_access(
+                self.inner.devices().topology(),
+                self.inner.hucard_board(),
+                physical_addr,
+                PceBusAccessKind::Write,
+            );
         }
         if self.advance_access(physical_addr, true) {
             self.inner.write(physical_addr, value);
@@ -408,8 +633,12 @@ impl CpuBus for TimedMachineBus<'_> {
         #[cfg(feature = "profiling")]
         {
             self.profiling.snapshot.bus_dummy_reads += 1;
-            self.profiling
-                .record_bus_access(self.inner.devices().topology(), physical_addr);
+            self.profiling.record_bus_access(
+                self.inner.devices().topology(),
+                self.inner.hucard_board(),
+                physical_addr,
+                PceBusAccessKind::DummyRead,
+            );
         }
         if self.advance_access(physical_addr, false) {
             self.inner.dummy_read(physical_addr)
@@ -422,8 +651,12 @@ impl CpuBus for TimedMachineBus<'_> {
         #[cfg(feature = "profiling")]
         {
             self.profiling.snapshot.bus_dummy_writes += 1;
-            self.profiling
-                .record_bus_access(self.inner.devices().topology(), physical_addr);
+            self.profiling.record_bus_access(
+                self.inner.devices().topology(),
+                self.inner.hucard_board(),
+                physical_addr,
+                PceBusAccessKind::DummyWrite,
+            );
         }
         if self.advance_access(physical_addr, true) {
             self.inner.dummy_write(physical_addr, value);
@@ -525,11 +758,63 @@ impl CpuBus for TimedMachineBus<'_> {
     }
 }
 
+impl PlainMemoryCpuBus for TimedMachineBus<'_> {
+    #[inline]
+    fn plain_memory_target_for_region(
+        &self,
+        region: super::super::bus::PhysicalRegion,
+    ) -> Option<super::super::bus::PlainMemoryTarget> {
+        self.inner.plain_memory_target_for_region(region)
+    }
+
+    #[inline]
+    fn read_plain_memory(
+        &mut self,
+        physical_addr: u32,
+        target: super::super::bus::PlainMemoryTarget,
+        dummy: bool,
+    ) -> u8 {
+        Self::read_plain_memory(self, physical_addr, target, dummy)
+    }
+
+    #[inline]
+    fn write_plain_memory(
+        &mut self,
+        physical_addr: u32,
+        target: super::super::bus::PlainMemoryTarget,
+        value: u8,
+        dummy: bool,
+    ) {
+        Self::write_plain_memory(self, physical_addr, target, value, dummy);
+    }
+
+    #[inline]
+    fn record_plain_memory_fallback(&mut self) {
+        Self::record_plain_memory_fallback(self);
+    }
+}
+
 const fn is_vdc_vce_access(physical_addr: u32) -> bool {
     matches!(
         physical_addr & super::super::cpu::PHYSICAL_ADDRESS_MASK,
         0x1F_E000..=0x1F_E7FF
     )
+}
+
+#[inline]
+fn is_timing_observable_access(bus: &BaseBus<PceDevices>, physical_addr: u32) -> bool {
+    matches!(
+        bus.decode_physical_region(physical_addr),
+        PhysicalRegion::Vdc(_)
+            | PhysicalRegion::Vpc(_)
+            | PhysicalRegion::Vdc2(_)
+            | PhysicalRegion::Vce(_)
+            | PhysicalRegion::Psg(_)
+            | PhysicalRegion::Timer(_)
+            | PhysicalRegion::Controller
+            | PhysicalRegion::Irq(_)
+    ) || (CDROM2_REGISTER_START..=CDROM2_REGISTER_END)
+        .contains(&(physical_addr & super::super::cpu::PHYSICAL_ADDRESS_MASK))
 }
 
 #[inline]
@@ -573,23 +858,5 @@ fn is_vdc_vram_port_cycle(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn specialized_vdc_tick_split_matches_division() {
-        for pixel_clock in [
-            VcePixelClock::DivideByFour,
-            VcePixelClock::DivideByThree,
-            VcePixelClock::DivideByTwo,
-        ] {
-            let divisor = u64::from(pixel_clock.divisor());
-            for total in 0..=PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE + 3 {
-                assert_eq!(
-                    split_vdc_master_ticks(total, pixel_clock),
-                    (total / divisor, (total % divisor) as u8)
-                );
-            }
-        }
-    }
-}
+#[path = "timed_bus_tests.rs"]
+mod tests;

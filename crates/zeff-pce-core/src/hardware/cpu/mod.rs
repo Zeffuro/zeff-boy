@@ -111,6 +111,27 @@ pub trait CpuBus {
     fn idle(&mut self) {}
 }
 
+pub(crate) trait PlainMemoryCpuBus: CpuBus {
+    fn plain_memory_target_for_region(
+        &self,
+        region: crate::hardware::bus::PhysicalRegion,
+    ) -> Option<crate::hardware::bus::PlainMemoryTarget>;
+    fn read_plain_memory(
+        &mut self,
+        physical_addr: u32,
+        target: crate::hardware::bus::PlainMemoryTarget,
+        dummy: bool,
+    ) -> u8;
+    fn write_plain_memory(
+        &mut self,
+        physical_addr: u32,
+        target: crate::hardware::bus::PlainMemoryTarget,
+        value: u8,
+        dummy: bool,
+    );
+    fn record_plain_memory_fallback(&mut self);
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SpeedMode {
     #[default]

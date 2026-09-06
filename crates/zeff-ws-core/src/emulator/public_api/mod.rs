@@ -19,10 +19,12 @@ impl Emulator {
     }
 
     pub fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.bus.materialize_frame_service();
         self.bus.apu.drain_audio_samples_into(buf);
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
+        self.bus.materialize_frame_service();
         self.bus.apu.set_sample_rate(rate);
     }
 
@@ -31,6 +33,7 @@ impl Emulator {
     }
 
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        self.bus.materialize_frame_service();
         self.bus.apu.set_sample_generation_enabled(enabled);
     }
 
@@ -47,10 +50,12 @@ impl Emulator {
     }
 
     pub fn set_apu_channel_mutes(&mut self, mutes: [bool; 4]) {
+        self.bus.materialize_frame_service();
         self.bus.apu.set_channel_mutes(mutes);
     }
 
     pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.bus.materialize_frame_service();
         if self
             .bus
             .keypad

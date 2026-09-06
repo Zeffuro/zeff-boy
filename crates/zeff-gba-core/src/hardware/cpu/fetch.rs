@@ -1,7 +1,6 @@
 #[cfg(feature = "profiling")]
 use super::super::timing::BusRegion;
 use super::super::{bus::Bus, timing};
-use super::decode::decode_stub;
 use super::*;
 
 impl Cpu {
@@ -89,6 +88,11 @@ impl Cpu {
     }
 
     pub(crate) fn fetch_decode_stub(&mut self, bus: &Bus) -> FetchedInstruction {
+        #[cfg(feature = "profiling")]
+        {
+            self.profiling.generic_fetch_decode_calls =
+                self.profiling.generic_fetch_decode_calls.wrapping_add(1);
+        }
         let pending_internal_cycles = u32::from(self.take_pending_load_internal_cycle());
         let instruction_set = self.instruction_set();
         let width_bytes = instruction_set.width_bytes();
@@ -97,10 +101,13 @@ impl Cpu {
 
         let queued_front_matches = matches!(
             self.pipeline.front(),
-            Some(fetched) if fetched.pc == pc && fetched.instruction_set == instruction_set
+            Some(fetched) if fetched.pc == pc && self.pipeline.instruction_set == instruction_set
         );
         let mut fetched = if queued_front_matches {
-            self.pipeline.pop_front().expect("pipeline front existed")
+            self.pipeline
+                .pop_front()
+                .expect("pipeline front existed")
+                .decode(instruction_set, 0)
         } else {
             self.pipeline.clear();
             #[cfg(feature = "profiling")]
@@ -126,7 +133,7 @@ impl Cpu {
                 self.bios_protected_read_latch = POST_SWI_BIOS_READ_LATCH;
                 self.swi_wait_return_pc = None;
             }
-            self.track_bios_fetch(fetched);
+            self.track_bios_fetch(fetched.pc, fetched.raw, instruction_set);
             let fetch_cycles = if queued_front_matches {
                 self.fetch_next_sequential(bus, instruction_set, width_bytes)
             } else {
@@ -157,10 +164,11 @@ impl Cpu {
         let pc = align_pc(pc, instruction_set);
         #[cfg(feature = "profiling")]
         self.profile_instruction_fetch(bus, pc, instruction_set, width_bytes, true);
-        let fetched = fetch_instruction_at(bus, pc, instruction_set, width_bytes, true);
-        self.track_bios_fetch(fetched);
-        self.pipeline.push_back(fetched);
-        fetched.fetch_cycles
+        let (fetched, fetch_cycles) =
+            fetch_prefetched_at(bus, pc, instruction_set, width_bytes, true);
+        self.track_bios_fetch(fetched.pc, fetched.raw, instruction_set);
+        self.pipeline.push_back(fetched, instruction_set);
+        fetch_cycles
     }
 
     fn fill_prefetch_pipeline(
@@ -178,9 +186,10 @@ impl Cpu {
             let aligned_pc = align_pc(pc, instruction_set);
             #[cfg(feature = "profiling")]
             self.profile_instruction_fetch(bus, aligned_pc, instruction_set, width_bytes, true);
-            let fetched = fetch_instruction_at(bus, aligned_pc, instruction_set, width_bytes, true);
-            self.track_bios_fetch(fetched);
-            self.pipeline.push_back(fetched);
+            let (fetched, _) =
+                fetch_prefetched_at(bus, aligned_pc, instruction_set, width_bytes, true);
+            self.track_bios_fetch(fetched.pc, fetched.raw, instruction_set);
+            self.pipeline.push_back(fetched, instruction_set);
             pc = aligned_pc.wrapping_add(width);
         }
     }
@@ -200,7 +209,7 @@ impl Cpu {
             *entry = CpuPipelineEntryState {
                 pc: fetched.pc,
                 raw: fetched.raw,
-                thumb: fetched.instruction_set == InstructionSet::Thumb,
+                thumb: self.pipeline.instruction_set == InstructionSet::Thumb,
             };
         }
         state
@@ -230,14 +239,13 @@ impl Cpu {
                 self.pipeline.clear();
                 return false;
             }
-            self.pipeline.push_back(FetchedInstruction {
-                pc: entry.pc,
-                raw: entry.raw,
+            self.pipeline.push_back(
+                PrefetchedInstruction {
+                    pc: entry.pc,
+                    raw: entry.raw,
+                },
                 instruction_set,
-                width_bytes: instruction_set.width_bytes(),
-                fetch_cycles: 0,
-                decoded: decode_stub(entry.raw, instruction_set),
-            });
+            );
         }
         self.pending_load_internal_cycle = state.pending_load_internal_cycle;
         true
@@ -271,6 +279,18 @@ pub(super) fn fetch_instruction_at(
     width_bytes: u8,
     sequential: bool,
 ) -> FetchedInstruction {
+    let (fetched, fetch_cycles) =
+        fetch_prefetched_at(bus, pc, instruction_set, width_bytes, sequential);
+    fetched.decode(instruction_set, fetch_cycles)
+}
+
+pub(super) fn fetch_prefetched_at(
+    bus: &Bus,
+    pc: u32,
+    instruction_set: InstructionSet,
+    width_bytes: u8,
+    sequential: bool,
+) -> (PrefetchedInstruction, u32) {
     let raw = match instruction_set {
         InstructionSet::Arm => bus.read32(pc),
         InstructionSet::Thumb => u32::from(bus.read16(pc)),
@@ -278,12 +298,5 @@ pub(super) fn fetch_instruction_at(
     let fetch_cycles =
         timing::instruction_fetch_cycles_with_waitcnt(pc, width_bytes, sequential, bus.waitcnt());
 
-    FetchedInstruction {
-        pc,
-        raw,
-        instruction_set,
-        width_bytes,
-        fetch_cycles,
-        decoded: decode_stub(raw, instruction_set),
-    }
+    (PrefetchedInstruction { pc, raw }, fetch_cycles)
 }

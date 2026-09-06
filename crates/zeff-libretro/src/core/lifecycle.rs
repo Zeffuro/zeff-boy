@@ -65,6 +65,8 @@ impl CoreState {
             system_ram_buf: Vec::new(),
             video_ram_buf: Vec::new(),
             port_device: [crate::api::RETRO_DEVICE_JOYPAD; 2],
+            pce_native_output_dimensions: None,
+            pce_native_output_rejected: false,
         })
     }
 
@@ -89,6 +91,7 @@ impl CoreState {
             ActiveCore::Sega8(emu) => emu.reset(),
             ActiveCore::Ws(emu) => emu.reset(),
         }
+        self.pce_native_output_dimensions = None;
         if let Some(bytes) = &battery_sram {
             self.load_battery_sram(bytes)?;
         }

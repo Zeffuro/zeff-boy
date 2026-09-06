@@ -46,7 +46,7 @@ pub(super) fn synthetic_supergrafx_backend() -> PceBackend {
         rom_hash: [0x53; 32],
         source_crc32: None,
         source_disc_hash: None,
-        framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
+        frame_output: Default::default(),
         frame_count: 0,
         pending_runtime_fault: None,
         overscan_mode: PceOverscanMode::default(),
@@ -60,7 +60,7 @@ pub(super) fn synthetic_supergrafx_backend() -> PceBackend {
         host_persistence_enabled: true,
         tas_load_provenance: None,
     };
-    backend.project_presented_frame();
+    backend.invalidate_frame_output();
     backend
 }
 
@@ -211,7 +211,7 @@ fn backend_state_restores_owned_state_reprojects_and_clears_debug_history() {
     let state = backend.encode_state_bytes().unwrap();
 
     backend.frame_count = 99;
-    backend.framebuffer.fill(0x7F);
+    backend.frame_output.invalidate();
     backend.mouse_host_buttons = PadButtons::empty();
     backend.update_controller_mode(PceControllerMode::TwoButton);
     backend.pending_runtime_fault = Some("stale runtime fault".to_owned());

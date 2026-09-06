@@ -22,7 +22,6 @@ use zeff_pce_core::hardware::{
 #[cfg(test)]
 use zeff_pce_core::hardware::{PCE_ACTIVE_FRAME_WIDTH, PCEAS_HEADER_LEN};
 
-use super::pce_display::project_presented_frame;
 #[cfg(test)]
 use super::pce_display::{
     OPAQUE_BLACK, ProjectionRow, project_base_rgba_rows, project_sgx_rgba_rows,
@@ -146,7 +145,7 @@ pub(crate) struct PceBackend {
     rom_hash: [u8; 32],
     source_crc32: Option<u32>,
     source_disc_hash: Option<[u8; 32]>,
-    framebuffer: Box<[u8]>,
+    frame_output: frame_output::PceFrameOutput,
     frame_count: u64,
     pending_runtime_fault: Option<String>,
     overscan_mode: PceOverscanMode,
@@ -252,7 +251,7 @@ impl PceBackend {
             rom_hash: config.content_hash,
             source_crc32: Some(config.content_crc32),
             source_disc_hash: Some(config.source_disc_hash),
-            framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
+            frame_output: Default::default(),
             frame_count: 0,
             pending_runtime_fault: None,
             overscan_mode: PceOverscanMode::default(),
@@ -270,7 +269,7 @@ impl PceBackend {
             host_persistence_enabled,
             tas_load_provenance: None,
         };
-        backend.project_presented_frame();
+        backend.invalidate_frame_output();
         backend.update_controller_mode(PceControllerMode::Automatic);
         backend.update_memory_base_mode(PceMemoryBaseMode::Automatic);
         Ok(backend)
@@ -385,7 +384,7 @@ impl PceBackend {
             rom_hash,
             source_crc32: None,
             source_disc_hash: None,
-            framebuffer: vec![0; PCE_PRESENTED_RGBA_BYTES].into_boxed_slice(),
+            frame_output: Default::default(),
             frame_count: 0,
             pending_runtime_fault: None,
             overscan_mode: PceOverscanMode::default(),
@@ -399,7 +398,7 @@ impl PceBackend {
             host_persistence_enabled: true,
             tas_load_provenance: None,
         };
-        backend.project_presented_frame();
+        backend.invalidate_frame_output();
         backend.update_controller_mode(PceControllerMode::Automatic);
         backend.update_memory_base_mode(PceMemoryBaseMode::Automatic);
         Ok(backend)
@@ -615,7 +614,7 @@ impl PceBackend {
             let step = self.machine.step_boundary()?;
             if step.frames_published() != 0 {
                 self.frame_count = self.frame_count.saturating_add(step.frames_published());
-                self.project_presented_frame();
+                self.invalidate_frame_output();
                 return Ok(cpu_boundaries);
             }
             let elapsed_ticks = self.machine.master_ticks().saturating_sub(starting_ticks);
@@ -675,15 +674,8 @@ impl PceBackend {
         self.paths.set_firmware_manifests(firmware_manifests);
     }
 
-    fn project_presented_frame(&mut self) {
-        let presented = self.machine.presented_frame();
-        project_presented_frame(
-            presented,
-            self.machine.hardware_topology(),
-            self.overscan_mode,
-            self.palette_mode,
-            &mut self.framebuffer,
-        );
+    fn invalidate_frame_output(&mut self) {
+        self.frame_output.invalidate();
     }
 
     pub(crate) fn set_display_config(
@@ -696,7 +688,7 @@ impl PceBackend {
         }
         self.overscan_mode = overscan_mode;
         self.palette_mode = palette_mode;
-        self.project_presented_frame();
+        self.invalidate_frame_output();
     }
 
     fn set_pad_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
@@ -1027,7 +1019,7 @@ impl Reset for PceBackend {
         self.machine.reset();
         self.frame_count = 0;
         self.pending_runtime_fault = None;
-        self.project_presented_frame();
+        self.invalidate_frame_output();
     }
 }
 
@@ -1039,7 +1031,7 @@ impl FrameLifecycle for PceBackend {
         match self.machine.run_until_frame() {
             Ok(run) => {
                 self.frame_count = self.frame_count.saturating_add(run.frames_published());
-                self.project_presented_frame();
+                self.invalidate_frame_output();
             }
             Err(error) => {
                 if self.pending_runtime_fault.is_none() {
@@ -1118,6 +1110,9 @@ fn map_six_button_extra_buttons(buttons: u8) -> SixButtonExtraButtons {
 }
 
 mod emulator_core;
+mod frame_output;
+#[cfg(feature = "profile-cores")]
+pub(super) use frame_output::profile_native_delivery;
 mod tas_provenance;
 mod tas_state;
 #[cfg(test)]

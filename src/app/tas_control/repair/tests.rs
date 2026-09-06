@@ -339,6 +339,15 @@ fn parked_worker_rejects_stale_tokens_and_ordinary_commands_until_exact_discard(
 
 #[test]
 fn resume_proof_mismatch_is_terminal_and_never_reconstructs_original() {
+    assert_framebuffer_proof_mismatch(false);
+}
+
+#[test]
+fn resume_rejects_changed_dimensions_with_identical_pixels() {
+    assert_framebuffer_proof_mismatch(true);
+}
+
+fn assert_framebuffer_proof_mismatch(dimensions_only: bool) {
     let rom = crate::test_support::build_nes_test_rom();
     let mut manager = TasRepairManager::new();
     let (_repaired_root, prepared) = prepare(&mut manager, "tas-repair-proof-new", &rom);
@@ -350,7 +359,18 @@ fn resume_proof_mismatch_is_terminal_and_never_reconstructs_original() {
         Ok(parked) => parked,
         Err(_) => panic!("original worker should suspend"),
     };
-    shared.store(Some(Arc::new(vec![0xA5; parked.proof().framebuffer_len])));
+    if dimensions_only {
+        let pixels = shared.load_full().unwrap().to_vec();
+        crate::emu_thread::framebuffer::publish_framebuffer_with_dimensions(
+            &shared,
+            &pixels,
+            Some((256, 240)),
+        );
+    } else {
+        shared.store(Some(Arc::new(
+            vec![0xA5; parked.proof().framebuffer_len].into(),
+        )));
+    }
 
     assert!(matches!(
         parked.resume(),

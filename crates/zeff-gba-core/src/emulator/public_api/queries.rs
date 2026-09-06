@@ -148,8 +148,36 @@ impl Emulator {
         crate::hardware::profiling::ProfilingSnapshot {
             frames: self.profiling_frames,
             completed_instructions: self.cpu.profiling.completed_instructions,
+            frame_cpu_runs: self.cpu.profiling.frame_runs,
+            frame_cpu_run_instructions: self.cpu.profiling.frame_run_instructions,
+            frame_cpu_direct_runs: self.cpu.profiling.frame_direct_runs,
+            frame_cpu_direct_instructions: self.cpu.profiling.frame_direct_instructions,
+            frame_cpu_direct_cycles: self.cpu.profiling.frame_direct_cycles,
+            frame_cpu_direct_kinds: self.cpu.profiling.frame_direct_kinds,
             cpu_phase_visits: self.cpu.profiling.phase_visits,
+            instruction_classes_arm: self.cpu.profiling.instruction_classes_arm,
+            instruction_classes_thumb: self.cpu.profiling.instruction_classes_thumb,
+            frame_kernel_candidates: self.cpu.profiling.frame_kernel_candidates,
+            frame_kernel_candidate_cycles: self.cpu.profiling.frame_kernel_candidate_cycles,
+            frame_kernel_fetch_gates: self.cpu.profiling.frame_kernel_fetch_gates,
+            frame_kernel_fetch_eligible: self.cpu.profiling.frame_kernel_fetch_eligible,
+            frame_kernel_fetch_eligible_cycles: self
+                .cpu
+                .profiling
+                .frame_kernel_fetch_eligible_cycles,
+            frame_kernel_quiet_instructions: self.cpu.profiling.frame_kernel_quiet_instructions,
+            frame_kernel_quiet_runs: self.cpu.profiling.frame_kernel_quiet_runs,
+            frame_kernel_quiet_longest_run: self.cpu.profiling.frame_kernel_quiet_longest_run,
+            thumb_macro_counts: self.cpu.profiling.thumb_macro_counts,
+            thumb_macro_plain_halfwords: self.cpu.profiling.thumb_macro_plain_halfwords,
+            thumb_macro_eligible: self.cpu.profiling.thumb_macro_eligible,
+            thumb_macro_quiet: self.cpu.profiling.thumb_macro_quiet,
+            thumb_macro_run_ends: self.cpu.profiling.thumb_macro_run_ends,
+            thumb_macro_neighbors: self.cpu.profiling.thumb_macro_neighbors,
             instruction_fetches: self.cpu.profiling.instruction_fetches,
+            cpu_generic_fetch_decode_calls: self.cpu.profiling.generic_fetch_decode_calls,
+            cpu_gamepak_block_fetches: self.cpu.profiling.gamepak_block_fetches,
+            cpu_ram_block_fetches: self.cpu.profiling.ram_block_fetches,
             instruction_fetch_modes: self.cpu.profiling.instruction_fetch_modes,
             instruction_fetch_accesses: self.cpu.profiling.instruction_fetch_accesses,
             instruction_fetch_regions: self.cpu.profiling.instruction_fetch_regions,
@@ -161,7 +189,32 @@ impl Emulator {
             instruction_fetch_waitcnt_changes: self.cpu.profiling.instruction_fetch_waitcnt_changes,
             bus_step_calls: self.bus.profiling.step_calls,
             bus_requested_cycles: self.bus.profiling.requested_cycles,
+            bus_deferred_step_calls: self.bus.profiling.deferred_step_calls,
+            bus_deferred_cycles: self.bus.profiling.deferred_cycles,
+            bus_service_entries: self.bus.profiling.service_entries,
             bus_chunks: self.bus.profiling.chunks,
+            apu_step_output_calls: self.bus.profiling.apu_step_output_calls,
+            apu_step_output_cycles: self.bus.profiling.apu_step_output_cycles,
+            apu_non_observation_chunks: self.bus.profiling.apu_non_observation_chunks,
+            apu_non_observation_cycles: self.bus.profiling.apu_non_observation_cycles,
+            apu_ppu_only_non_observation_chunks: self
+                .bus
+                .profiling
+                .apu_ppu_only_non_observation_chunks,
+            apu_ppu_only_non_observation_cycles: self
+                .bus
+                .profiling
+                .apu_ppu_only_non_observation_cycles,
+            apu_deadline_materializations: self.bus.profiling.apu_deadline_materializations,
+            apu_timer_overflow_ordering_cases: self.bus.profiling.apu_timer_overflow_ordering_cases,
+            apu_timer_overflow_ordering_count: self.bus.profiling.apu_timer_overflow_ordering_count,
+            frame_service_pending_spans: self.bus.profiling.frame_service_pending_spans,
+            frame_service_pending_cycles: self.bus.profiling.frame_service_pending_cycles,
+            frame_service_pending_max_cycles: self.bus.profiling.frame_service_pending_max_cycles,
+            frame_service_pending_span_buckets: self
+                .bus
+                .profiling
+                .frame_service_pending_span_buckets,
             bus_deadline_hits: self.bus.profiling.deadline_hits,
             bus_deadline_recomputes: self.bus.profiling.deadline_recomputes,
             bus_deadline_expiries: self.bus.profiling.deadline_expiries,
