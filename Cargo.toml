@@ -17,6 +17,9 @@ members = [
 ]
 exclude = ["fuzz"]
 
+[patch.crates-io]
+block = { path = "third_party/block" }
+
 [features]
 default = ["camera", "audio-recording"]
 camera = ["dep:nokhwa", "dep:image"]

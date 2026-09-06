@@ -1,7 +1,39 @@
 # Third-Party Notices
 
-Zeff Boy includes or links the archive components listed below. These notices
+Zeff Boy includes or links the third-party components listed below. These notices
 supplement Zeff Boy's own MIT OR Apache-2.0 license.
+
+## block 0.1.6
+
+- Source: https://github.com/SSheldon/rust-block
+- License: MIT
+- Local source: `third_party/block`
+- Upstream revision: `47178790cfc9d4a8b092051d8b413b78bd31254a`
+
+Zeff Boy distributes a one-type compatibility patch for current and future
+Rust compilers. The local change is documented in
+`third_party/block/ZEFF_PATCH.md`, and the complete MIT text is in
+`third_party/block/LICENSE`.
+
+Copyright (c) Steven Sheldon
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## xdelta3-rs 0.1.5 / xdelta3 3.0.12
 
