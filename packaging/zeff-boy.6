@@ -1,0 +1,69 @@
+.TH ZEFF-BOY 6 "September 2026" "zeff-boy" "Games Manual"
+.SH NAME
+zeff-boy \- multi-system video game console emulator
+.SH SYNOPSIS
+.B zeff-boy
+.RI [ options ]
+.RI [ rom ]
+.SH DESCRIPTION
+.B zeff-boy
+emulates Game Boy, Game Boy Color, Game Boy Advance, NES, ColecoVision,
+PC Engine, WonderSwan, and Sega 8-bit systems.
+Without a ROM argument it opens the graphical interface.  A supported ROM or
+archive may be supplied on the command line to open it at startup.
+.SH OPTIONS
+.TP
+.BI "--mode " auto|dmg|sgb|cgb
+Select the Game Boy hardware mode.  The default is
+.BR auto .
+.TP
+.B --headless
+Run without the graphical interface.  This option requires a ROM path.
+.TP
+.BI "--max-frames " count
+Stop a headless run after the given number of frames.  The default is 600.
+.TP
+.BI "--load-state " file
+Load a native save state at the start of a headless run.
+.TP
+.BI "--replay " file
+Play a replay during a headless run.
+.TP
+.BI "--tas-verify " project
+Verify a TAS project during a headless run.  Exactly one ROM path is required.
+.TP
+.BI "--tas-branch " id
+Select the TAS branch to verify.  Requires
+.BR --tas-verify .
+.TP
+.BI "--tas-export " file
+Export the verified TAS branch as a replay.  Requires
+.BR --tas-verify .
+.TP
+.B --apply-mods
+Apply discovered ROM modifications during a headless run.
+.TP
+.B --no-apu
+Disable audio processing during a headless run.
+.TP
+.B --no-sram
+Disable battery-backed save RAM loading and writing during a headless run.
+.TP
+.BI "--screenshot " file
+Write a screenshot from a headless run to
+.IR file .
+.TP
+.BI "--screenshot-frame " frame
+Select the frame captured by
+.BR --screenshot .
+.SH FILES
+Settings, firmware, saves, screenshots, and other user data are managed from
+the graphical interface and stored in platform-specific user data directories.
+.SH ENVIRONMENT
+.TP
+.B ZEFF_MUTE_AUDIO=1
+Disable host audio output while leaving emulated audio processing enabled.
+.SH BUGS
+Report bugs at https://github.com/Zeffuro/zeff-boy/issues.
+.SH AUTHOR
+Zeffuro.

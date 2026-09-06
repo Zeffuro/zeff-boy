@@ -32,11 +32,12 @@ fn reference_background_pixel(
     vdc: &HuC6270,
     state: &BackgroundRenderState,
     display_line: usize,
+    display_x: usize,
 ) -> u8 {
     let width_pixels = state.width_tiles() * 8;
     let height_pixels = state.height_tiles() * 8;
     let virtual_y = (state.scroll_y() + display_line % height_pixels) % height_pixels;
-    let virtual_x = state.scroll_x() % width_pixels;
+    let virtual_x = (state.scroll_x() + display_x) % width_pixels;
     let entry = vdc.vram()[(virtual_y / 8) * state.width_tiles() + virtual_x / 8];
     let base = usize::from(entry & 0x0FFF) << 4;
     let row = virtual_y % 8;
@@ -279,7 +280,7 @@ fn tile_cached_background_rendering_matches_the_pixel_reference_for_all_bat_coor
             write_register(&mut vdc, VdcRegister::BackgroundScrollX, scroll_x as u16);
             let state = vdc.background_render_state();
             for display_line in 0..height {
-                let expected = reference_background_pixel(&vdc, &state, display_line);
+                let expected = reference_background_pixel(&vdc, &state, display_line, 0);
                 let mut actual = [0xFF];
                 vdc.render_background_scanline(&state, display_line, &mut actual)
                     .unwrap();
@@ -290,5 +291,82 @@ fn tile_cached_background_rendering_matches_the_pixel_reference_for_all_bat_coor
                 );
             }
         }
+    }
+}
+
+#[test]
+fn packed_background_rows_match_every_plane_byte_palette_and_color_mode() {
+    let mut vdc = HuC6270::new();
+    let code = 0x20;
+    for plane in 0..4 {
+        for byte in 0..=u8::MAX {
+            let mut planes = [0; 4];
+            planes[plane] = byte;
+            vdc.vram_mut()[code * 16] = u16::from_le_bytes([planes[0], planes[1]]);
+            vdc.vram_mut()[code * 16 + 8] = u16::from_le_bytes([planes[2], planes[3]]);
+            for palette in 0..16 {
+                vdc.vram_mut()[0] = (palette << 12) | code as u16;
+                for mode in [0x00, 0x03, 0x83] {
+                    let state = BackgroundRenderState::from_register_values(0x80, mode, 0, 0);
+                    let mut actual = [0xFF; 8];
+                    vdc.render_background_scanline(&state, 0, &mut actual)
+                        .unwrap();
+                    let expected: [u8; 8] =
+                        std::array::from_fn(|x| reference_background_pixel(&vdc, &state, 0, x));
+                    assert_eq!(
+                        actual, expected,
+                        "plane {plane}, byte {byte}, palette {palette}, mode {mode}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn packed_background_spans_match_scalar_through_clipping_wrap_and_vram_changes() {
+    let mut vdc = HuC6270::new();
+    let mut random = 0x61C8_8647u32;
+    for word in vdc.vram_mut() {
+        random ^= random << 13;
+        random ^= random >> 17;
+        random ^= random << 5;
+        *word = random as u16;
+    }
+    for mode in [0x00, 0x10, 0x20, 0x40, 0x50, 0x60, 0x03, 0x83] {
+        let dimensions = BackgroundRenderState::from_register_values(0x80, mode, 0, 0);
+        let width = dimensions.width_tiles() * 8;
+        let height = dimensions.height_tiles() * 8;
+        vdc.vram_mut()[dimensions.width_tiles() - 1] = 0xFFFF;
+        for scroll_x in (0..8).chain(width - 8..width) {
+            for display_line in [0, 1, 7, height - 1, height] {
+                let state =
+                    BackgroundRenderState::from_register_values(0x80, mode, scroll_x as u16, 7);
+                for output_width in (0..=17).chain([255, 256, 257, 1024]) {
+                    let mut actual = vec![0xFF; output_width];
+                    vdc.render_background_scanline(&state, display_line, &mut actual)
+                        .unwrap();
+                    let expected: Vec<_> = (0..output_width)
+                        .map(|x| reference_background_pixel(&vdc, &state, display_line, x))
+                        .collect();
+                    assert_eq!(
+                        actual, expected,
+                        "mode {mode}, x {scroll_x}, y {display_line}, width {output_width}"
+                    );
+                }
+            }
+        }
+    }
+
+    let state = BackgroundRenderState::from_register_values(0x80, 0, 0, 0);
+    vdc.vram_mut()[0] = 0xF020;
+    for colors in [[0; 8], [15; 8], [0, 1, 2, 3, 4, 7, 8, 15]] {
+        set_pattern_row(&mut vdc, 0x20, 0, colors);
+        let mut actual = [0xFF; 8];
+        vdc.render_background_scanline(&state, 0, &mut actual)
+            .unwrap();
+        let expected: [u8; 8] =
+            std::array::from_fn(|x| reference_background_pixel(&vdc, &state, 0, x));
+        assert_eq!(actual, expected);
     }
 }

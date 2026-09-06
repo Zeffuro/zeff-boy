@@ -1,6 +1,30 @@
 use super::vdc::{HuC6270, VdcRegister};
 
 const TILE_SIZE: usize = 8;
+const PLANE_BYTE_LANES: [u64; 256] = {
+    let mut lanes = [0; 256];
+    let mut byte = 0;
+    while byte < lanes.len() {
+        let mut column = 0;
+        while column < TILE_SIZE {
+            lanes[byte] |= (((byte >> (7 - column)) & 1) as u64) << (column * 8);
+            column += 1;
+        }
+        byte += 1;
+    }
+    lanes
+};
+
+fn packed_background_row(planes_zero_one: u16, planes_two_three: u16, palette: u8) -> [u8; 8] {
+    let patterns = PLANE_BYTE_LANES[usize::from(planes_zero_one as u8)]
+        | (PLANE_BYTE_LANES[usize::from((planes_zero_one >> 8) as u8)] << 1)
+        | (PLANE_BYTE_LANES[usize::from(planes_two_three as u8)] << 2)
+        | (PLANE_BYTE_LANES[usize::from((planes_two_three >> 8) as u8)] << 3);
+    let nonzero = (patterns | (patterns >> 1) | (patterns >> 2) | (patterns >> 3))
+        & u64::from_le_bytes([1; TILE_SIZE]);
+    // Each byte lane contains zero or one, so multiplying by the palette cannot carry.
+    (patterns | (nonzero * u64::from(palette))).to_le_bytes()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackgroundColorMode {
@@ -127,13 +151,21 @@ impl HuC6270 {
                 self.background_pattern_row(usize::from(entry & 0x0FFF), row, state.color_mode);
             let pixels = (TILE_SIZE - column).min(output.len() - display_x);
             let palette = (entry >> 8) as u8 & 0xF0;
-            for offset in 0..pixels {
-                let bit = 7 - column - offset;
-                let pattern = ((planes_zero_one >> bit) & 1) as u8
-                    | (((planes_zero_one >> (bit + 8)) & 1) as u8) << 1
-                    | (((planes_two_three >> bit) & 1) as u8) << 2
-                    | (((planes_two_three >> (bit + 8)) & 1) as u8) << 3;
-                output[display_x + offset] = if pattern == 0 { 0 } else { palette | pattern };
+            if pixels == TILE_SIZE {
+                output[display_x..display_x + TILE_SIZE].copy_from_slice(&packed_background_row(
+                    planes_zero_one,
+                    planes_two_three,
+                    palette,
+                ));
+            } else {
+                for offset in 0..pixels {
+                    let bit = 7 - column - offset;
+                    let pattern = ((planes_zero_one >> bit) & 1) as u8
+                        | (((planes_zero_one >> (bit + 8)) & 1) as u8) << 1
+                        | (((planes_two_three >> bit) & 1) as u8) << 2
+                        | (((planes_two_three >> (bit + 8)) & 1) as u8) << 3;
+                    output[display_x + offset] = if pattern == 0 { 0 } else { palette | pattern };
+                }
             }
             display_x += pixels;
         }

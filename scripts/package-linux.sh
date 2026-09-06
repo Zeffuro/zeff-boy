@@ -31,11 +31,12 @@ fi
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 mkdir -p "$OUTPUT_DIR"
+DESKTOP_FILE="$WORK_DIR/zeff-boy.desktop"
+sed 's/\r$//' "$ROOT_DIR/packaging/zeff-boy.desktop" > "$DESKTOP_FILE"
 
-install_payload() {
+install_desktop_payload() {
   local root="$1"
-  install -Dm755 "$BINARY" "$root/usr/bin/zeff-boy"
-  install -Dm644 "$ROOT_DIR/packaging/zeff-boy.desktop" \
+  install -Dm644 "$DESKTOP_FILE" \
     "$root/usr/share/applications/zeff-boy.desktop"
   install -Dm644 "$ROOT_DIR/packaging/com.github.zeffuro.zeff-boy.metainfo.xml" \
     "$root/usr/share/metainfo/com.github.zeffuro.zeff-boy.metainfo.xml"
@@ -44,7 +45,13 @@ install_payload() {
 }
 
 DEB_ROOT="$WORK_DIR/deb"
-install_payload "$DEB_ROOT"
+install_desktop_payload "$DEB_ROOT"
+install -Dm755 "$BINARY" "$DEB_ROOT/usr/games/zeff-boy"
+sed -i 's|^Exec=.*|Exec=/usr/games/zeff-boy %f|' \
+  "$DEB_ROOT/usr/share/applications/zeff-boy.desktop"
+install -Dm644 "$ROOT_DIR/packaging/zeff-boy.6" \
+  "$DEB_ROOT/usr/share/man/man6/zeff-boy.6"
+gzip -n -9 "$DEB_ROOT/usr/share/man/man6/zeff-boy.6"
 install -Dm644 "$ROOT_DIR/LICENSE-MIT" "$DEB_ROOT/usr/share/doc/zeff-boy/LICENSE-MIT"
 install -Dm644 "$ROOT_DIR/LICENSE-APACHE" "$DEB_ROOT/usr/share/doc/zeff-boy/LICENSE-APACHE"
 install -Dm644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" \
@@ -63,7 +70,7 @@ EOF
 CHANGELOG_DATE="$(LC_ALL=C date -u -R)"
 printf 'zeff-boy (%s) stable; urgency=medium\n\n  * Package zeff-boy %s.\n\n -- Zeffuro <Jeffroiscool@gmail.com>  %s\n' \
   "$DEB_VERSION" "$VERSION" "$CHANGELOG_DATE" \
-  | gzip -n -9 > "$DEB_ROOT/usr/share/doc/zeff-boy/changelog.Debian.gz"
+  | gzip -n -9 > "$DEB_ROOT/usr/share/doc/zeff-boy/changelog.gz"
 mkdir -p "$DEB_ROOT/DEBIAN"
 cat > "$DEB_ROOT/DEBIAN/control" <<EOF
 Package: zeff-boy
@@ -85,13 +92,14 @@ dpkg-deb --root-owner-group --build "$DEB_ROOT" \
 RPM_TOP="$WORK_DIR/rpmbuild"
 mkdir -p "$RPM_TOP"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
 install -m755 "$BINARY" "$RPM_TOP/SOURCES/zeff-boy"
-install -m644 "$ROOT_DIR/packaging/zeff-boy.desktop" "$RPM_TOP/SOURCES/zeff-boy.desktop"
+install -m644 "$DESKTOP_FILE" "$RPM_TOP/SOURCES/zeff-boy.desktop"
 install -m644 "$ROOT_DIR/packaging/com.github.zeffuro.zeff-boy.metainfo.xml" \
   "$RPM_TOP/SOURCES/com.github.zeffuro.zeff-boy.metainfo.xml"
 install -m644 "$ROOT_DIR/assets/icon.png" "$RPM_TOP/SOURCES/zeff-boy.png"
 install -m644 "$ROOT_DIR/LICENSE-MIT" "$RPM_TOP/SOURCES/LICENSE-MIT"
 install -m644 "$ROOT_DIR/LICENSE-APACHE" "$RPM_TOP/SOURCES/LICENSE-APACHE"
 install -m644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$RPM_TOP/SOURCES/THIRD_PARTY_NOTICES.md"
+install -m644 "$ROOT_DIR/packaging/zeff-boy.6" "$RPM_TOP/SOURCES/zeff-boy.6"
 
 cat > "$RPM_TOP/SPECS/zeff-boy.spec" <<EOF
 Name: zeff-boy
@@ -126,6 +134,7 @@ install -Dm644 %{_sourcedir}/zeff-boy.png %{buildroot}%{_datadir}/icons/hicolor/
 install -Dm644 %{_sourcedir}/LICENSE-MIT %{buildroot}%{_datadir}/licenses/zeff-boy/LICENSE-MIT
 install -Dm644 %{_sourcedir}/LICENSE-APACHE %{buildroot}%{_datadir}/licenses/zeff-boy/LICENSE-APACHE
 install -Dm644 %{_sourcedir}/THIRD_PARTY_NOTICES.md %{buildroot}%{_datadir}/licenses/zeff-boy/THIRD_PARTY_NOTICES.md
+install -Dm644 %{_sourcedir}/zeff-boy.6 %{buildroot}%{_mandir}/man6/zeff-boy.6
 
 %files
 %{_bindir}/zeff-boy
@@ -135,6 +144,7 @@ install -Dm644 %{_sourcedir}/THIRD_PARTY_NOTICES.md %{buildroot}%{_datadir}/lice
 %license %{_datadir}/licenses/zeff-boy/LICENSE-MIT
 %license %{_datadir}/licenses/zeff-boy/LICENSE-APACHE
 %license %{_datadir}/licenses/zeff-boy/THIRD_PARTY_NOTICES.md
+%{_mandir}/man6/zeff-boy.6*
 
 %changelog
 * $(LC_ALL=C date -u '+%a %b %d %Y') Zeffuro <Jeffroiscool@gmail.com> - $RPM_VERSION-$RPM_RELEASE

@@ -1,15 +1,287 @@
 use super::{
-    CALLBACK_STATE, CallbackState, CoreOptionValue, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
+    CALLBACK_STATE, CallbackCounts, CallbackState, ContinuationCore, CoreOptionValue, JoypadInput,
+    RETRO_DEVICE_JOYPAD, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_LANGUAGE, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
     RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
     RETRO_NUM_CORE_OPTION_VALUES_MAX, RETRO_PIXEL_FORMAT_RGB565, RetroCoreOptionV2Definition,
     RetroCoreOptionValue, RetroCoreOptionsV2, RetroCoreOptionsV2Intl, RetroLogCallback,
-    RetroVariable, audio_batch, audio_sample, capture_rgb24, copy_save_ram, environment,
-    get_variable, percentile, repeated_callback_hashes_match, serialize_rejects_undersized_buffer,
+    RetroVariable, SaveRamSnapshot, audio_batch, audio_sample, capture_rgb24,
+    check_state_and_continuation, copy_save_ram, environment, get_variable, input_poll,
+    input_state, percentile, repeated_callback_hashes_match, serialize_rejects_undersized_buffer,
     validate_callback_buffers, video_refresh,
 };
 use sha2::Digest;
 use std::ffi::CString;
+
+struct SyntheticContinuationCore {
+    counter: u8,
+    save_ram: Vec<u8>,
+    checkpoint_save_ram: u8,
+    reject_restore: bool,
+    restore_save_ram: bool,
+    hidden_restore_bias: u8,
+    reject_serialize_after_restore: bool,
+    restored: bool,
+    uninterrupted_inputs: Vec<i16>,
+    restored_inputs: Vec<i16>,
+}
+
+impl SyntheticContinuationCore {
+    fn exact() -> Self {
+        Self {
+            counter: 3,
+            save_ram: vec![7],
+            checkpoint_save_ram: 7,
+            reject_restore: false,
+            restore_save_ram: true,
+            hidden_restore_bias: 0,
+            reject_serialize_after_restore: false,
+            restored: false,
+            uninterrupted_inputs: Vec::new(),
+            restored_inputs: Vec::new(),
+        }
+    }
+}
+
+impl ContinuationCore for SyntheticContinuationCore {
+    fn run_frame(&mut self) {
+        unsafe { input_poll() };
+        let input = unsafe { input_state(0, RETRO_DEVICE_JOYPAD, 0, 8) };
+        if self.restored {
+            self.restored_inputs.push(input);
+        } else {
+            self.uninterrupted_inputs.push(input);
+        }
+        self.counter = self
+            .counter
+            .wrapping_add(1)
+            .wrapping_add(input as u8)
+            .wrapping_add(self.hidden_restore_bias * u8::from(self.restored));
+        self.save_ram[0] = self.save_ram[0].wrapping_add(self.counter);
+        let pixel = u16::from(self.counter).to_ne_bytes();
+        unsafe {
+            video_refresh(pixel.as_ptr().cast(), 1, 1, 2);
+            audio_sample(i16::from(self.counter), input);
+        }
+    }
+
+    fn serialize(&mut self, state: &mut [u8]) -> bool {
+        if self.restored && self.reject_serialize_after_restore {
+            return false;
+        }
+        let Some(output) = state.first_mut() else {
+            return false;
+        };
+        *output = self.counter;
+        true
+    }
+
+    fn unserialize(&mut self, state: &[u8]) -> bool {
+        if self.reject_restore {
+            return false;
+        }
+        let Some(counter) = state.first() else {
+            return false;
+        };
+        self.counter = *counter;
+        if self.restore_save_ram {
+            self.save_ram[0] = self.checkpoint_save_ram;
+        }
+        self.restored = true;
+        true
+    }
+
+    fn snapshot_save_ram(&mut self) -> anyhow::Result<SaveRamSnapshot> {
+        Ok(SaveRamSnapshot {
+            hash: Some(sha2::Sha256::digest(&self.save_ram).into()),
+            bytes: self.save_ram.clone(),
+            nonnull: true,
+        })
+    }
+}
+
+#[test]
+fn disabled_continuation_restores_and_roundtrips_without_advancing() {
+    let mut core = SyntheticContinuationCore::exact();
+
+    let result = check_state_and_continuation(&mut core, &[3], 10, 0).unwrap();
+
+    assert!(result.restore_accepted);
+    assert!(result.reserialize_succeeded);
+    assert!(result.roundtrip);
+    assert!(result.continuation.is_none());
+    assert!(core.uninterrupted_inputs.is_empty());
+    assert!(core.restored_inputs.is_empty());
+}
+
+fn install_continuation_callback_state() -> sha2::Sha256 {
+    let mut measured_video = sha2::Sha256::new();
+    measured_video.update(b"measured video");
+    *CALLBACK_STATE.lock().unwrap() = Some(CallbackState {
+        active_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+        requested_pixel_format: RETRO_PIXEL_FORMAT_RGB565,
+        frame_index: 9,
+        inputs: vec![
+            JoypadInput {
+                frame: 10,
+                port: 0,
+                mask: 0x0100,
+            },
+            JoypadInput {
+                frame: 12,
+                port: 0,
+                mask: 0,
+            },
+        ],
+        counts: CallbackCounts {
+            video_calls: 17,
+            audio_frames: 23,
+            ..CallbackCounts::default()
+        },
+        video_hasher: measured_video.clone(),
+        frame_audio: Some(vec![Default::default(); 10]),
+        capture_frame: Some(4),
+        capture_audio_s16le: true,
+        blackhole_output: true,
+        ..CallbackState::default()
+    });
+    measured_video
+}
+
+#[test]
+fn continuation_proof_replays_inputs_and_isolates_each_witness() {
+    let measured_video = install_continuation_callback_state();
+    let mut core = SyntheticContinuationCore::exact();
+
+    let result = check_state_and_continuation(&mut core, &[3], 10, 3).unwrap();
+
+    assert!(result.restore_accepted);
+    assert!(result.reserialize_succeeded);
+    assert!(result.roundtrip);
+    assert_eq!(
+        result.save_ram_post_roundtrip.hash,
+        Some(sha2::Sha256::digest([7]).into())
+    );
+    let proof = result.continuation.unwrap();
+    assert!(proof.matches);
+    assert_eq!(proof.callback_counts_match, Some(true));
+    assert_eq!(proof.video_match, Some(true));
+    assert_eq!(proof.audio_match, Some(true));
+    assert_eq!(proof.state_match, Some(true));
+    assert_eq!(proof.save_ram_match, Some(true));
+    assert_eq!(proof.uninterrupted.callbacks.video_calls, 3);
+    assert_eq!(proof.uninterrupted.callbacks.audio_sample_calls, 3);
+    assert_eq!(proof.restored.unwrap().callbacks.video_calls, 3);
+    assert_eq!(core.uninterrupted_inputs, [1, 1, 0]);
+    assert_eq!(core.restored_inputs, core.uninterrupted_inputs);
+
+    let callback_state = CALLBACK_STATE.lock().unwrap().take().unwrap();
+    assert_eq!(callback_state.frame_index, 9);
+    assert_eq!(callback_state.counts.video_calls, 17);
+    assert_eq!(callback_state.counts.audio_frames, 23);
+    assert_eq!(
+        callback_state.video_hasher.finalize(),
+        measured_video.finalize()
+    );
+    assert_eq!(callback_state.frame_audio.unwrap().len(), 10);
+    assert_eq!(callback_state.capture_frame, Some(4));
+    assert!(callback_state.capture_audio_s16le);
+    assert!(callback_state.blackhole_output);
+}
+
+#[test]
+fn continuation_catches_hidden_restore_divergence_after_exact_roundtrip() {
+    install_continuation_callback_state();
+    let mut core = SyntheticContinuationCore {
+        hidden_restore_bias: 1,
+        ..SyntheticContinuationCore::exact()
+    };
+
+    let result = check_state_and_continuation(&mut core, &[3], 10, 3).unwrap();
+
+    assert!(result.restore_accepted);
+    assert!(result.reserialize_succeeded);
+    assert!(result.roundtrip);
+    let proof = result.continuation.unwrap();
+    assert!(!proof.matches);
+    assert_eq!(proof.callback_counts_match, Some(true));
+    assert_eq!(proof.video_match, Some(false));
+    assert_eq!(proof.audio_match, Some(false));
+    assert_eq!(proof.state_match, Some(false));
+    assert_eq!(proof.save_ram_match, Some(false));
+    CALLBACK_STATE.lock().unwrap().take();
+}
+
+#[test]
+fn continuation_restore_rejection_is_reported_without_a_restored_witness() {
+    install_continuation_callback_state();
+    let mut core = SyntheticContinuationCore {
+        reject_restore: true,
+        ..SyntheticContinuationCore::exact()
+    };
+
+    let result = check_state_and_continuation(&mut core, &[3], 10, 3).unwrap();
+
+    assert!(!result.restore_accepted);
+    assert!(!result.reserialize_succeeded);
+    assert!(!result.roundtrip);
+    let proof = result.continuation.unwrap();
+    assert!(!proof.matches);
+    assert!(proof.restored.is_none());
+    assert_eq!(proof.video_match, None);
+    assert_eq!(proof.audio_match, None);
+    assert_eq!(proof.state_match, None);
+    assert_eq!(proof.save_ram_match, None);
+    CALLBACK_STATE.lock().unwrap().take();
+}
+
+#[test]
+fn continuation_distinguishes_post_restore_serialization_failure() {
+    install_continuation_callback_state();
+    let mut core = SyntheticContinuationCore {
+        reject_serialize_after_restore: true,
+        ..SyntheticContinuationCore::exact()
+    };
+
+    let result = check_state_and_continuation(&mut core, &[3], 10, 3).unwrap();
+
+    assert!(result.restore_accepted);
+    assert!(!result.reserialize_succeeded);
+    assert!(!result.roundtrip);
+    let proof = result.continuation.unwrap();
+    assert!(!proof.matches);
+    let restored = proof.restored.unwrap();
+    assert!(!restored.state_serialized);
+    assert!(restored.state_hash.is_none());
+    assert_eq!(proof.state_match, Some(false));
+    CALLBACK_STATE.lock().unwrap().take();
+}
+
+#[test]
+fn continuation_does_not_repair_sram_that_the_core_failed_to_restore() {
+    install_continuation_callback_state();
+    let mut core = SyntheticContinuationCore {
+        restore_save_ram: false,
+        ..SyntheticContinuationCore::exact()
+    };
+
+    let result = check_state_and_continuation(&mut core, &[3], 10, 3).unwrap();
+
+    assert!(result.restore_accepted);
+    assert!(result.reserialize_succeeded);
+    assert!(result.roundtrip);
+    assert_ne!(
+        result.save_ram_post_roundtrip.hash,
+        Some(sha2::Sha256::digest([7]).into())
+    );
+    let proof = result.continuation.unwrap();
+    assert_eq!(proof.video_match, Some(true));
+    assert_eq!(proof.audio_match, Some(true));
+    assert_eq!(proof.state_match, Some(true));
+    assert_eq!(proof.save_ram_match, Some(false));
+    assert!(!proof.matches);
+    CALLBACK_STATE.lock().unwrap().take();
+}
 
 #[test]
 fn percentile_uses_a_measured_sample() {

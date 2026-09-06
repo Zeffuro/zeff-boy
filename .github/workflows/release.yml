@@ -282,16 +282,16 @@ jobs:
             "${{ github.ref_name }}" linux-artifact/zeff-boy linux-packages
           desktop-file-validate packaging/zeff-boy.desktop
           appstreamcli validate --no-net packaging/com.github.zeffuro.zeff-boy.metainfo.xml
-          lintian --pedantic --fail-on error linux-packages/*.deb
+          lintian --pedantic --fail-on warning linux-packages/*.deb
 
       - name: Test package installation
         run: |
           docker run --rm -v "$PWD/linux-packages:/packages:ro" ubuntu:22.04 \
-            bash -c 'apt-get update && apt-get install -y /packages/*.deb xvfb mesa-vulkan-drivers && ! ldd /usr/bin/zeff-boy | grep -q "not found" && timeout 10s xvfb-run -a env ZEFF_MUTE_AUDIO=1 /usr/bin/zeff-boy >/tmp/zeff-boy.log 2>&1; test $? -eq 124'
+            bash -c 'set -e; apt-get update; apt-get install -y /packages/*.deb xvfb mesa-vulkan-drivers; test -x /usr/games/zeff-boy; ldd /usr/games/zeff-boy >/tmp/zeff-boy.ldd; ! grep -q "not found" /tmp/zeff-boy.ldd; set +e; timeout 10s xvfb-run -a env ZEFF_MUTE_AUDIO=1 /usr/games/zeff-boy >/tmp/zeff-boy.log 2>&1; status=$?; set -e; test "$status" -eq 124'
           docker run --rm -v "$PWD/linux-packages:/packages:ro" ubuntu:24.04 \
-            bash -c 'apt-get update && apt-get install -y /packages/*.deb && ! ldd /usr/bin/zeff-boy | grep -q "not found"'
+            bash -c 'set -e; apt-get update; apt-get install -y /packages/*.deb; test -x /usr/games/zeff-boy; ldd /usr/games/zeff-boy >/tmp/zeff-boy.ldd; ! grep -q "not found" /tmp/zeff-boy.ldd'
           docker run --rm -v "$PWD/linux-packages:/packages:ro" fedora:43 \
-            bash -c 'dnf install -y /packages/*.rpm && ! ldd /usr/bin/zeff-boy | grep -q "not found"'
+            bash -c 'set -e; dnf install -y /packages/*.rpm; test -x /usr/bin/zeff-boy; ldd /usr/bin/zeff-boy >/tmp/zeff-boy.ldd; ! grep -q "not found" /tmp/zeff-boy.ldd'
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v7

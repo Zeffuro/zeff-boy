@@ -8,8 +8,8 @@ mod libretro_harness;
 mod native {
 
     use super::libretro_harness::{
-        CoreOption, FrameCaptureRequest, HarnessConfig, JoypadInput, PixelFormat, load_rom,
-        run_repeated_fixed_frames,
+        ContinuationObservation, CoreOption, FrameCaptureRequest, HarnessConfig, JoypadInput,
+        PixelFormat, load_rom, run_repeated_fixed_frames_with_continuation,
     };
     use std::env;
     use std::error::Error;
@@ -41,6 +41,7 @@ mod native {
         let mut audio_frame_csv = None;
         let mut audio_s16le = None;
         let mut blackhole_output = false;
+        let mut continuation_frames = 0;
         while let Some(option) = args.next() {
             match option.as_str() {
                 "--warmup" => warmup_frames = parse_usize(args.next(), "--warmup")?,
@@ -86,6 +87,9 @@ mod native {
                     ));
                 }
                 "--blackhole-output" => blackhole_output = true,
+                "--continuation-frames" => {
+                    continuation_frames = parse_usize(args.next(), "--continuation-frames")?;
+                }
                 "--help" | "-h" => {
                     println!("{}", usage());
                     return Ok(());
@@ -99,7 +103,7 @@ mod native {
             _ => return Err("--capture-frame and --capture-png must be supplied together".into()),
         };
         let content_path = PathBuf::from(content_path);
-        let result = run_repeated_fixed_frames(
+        let result = run_repeated_fixed_frames_with_continuation(
             &HarnessConfig {
                 core_path: PathBuf::from(core_path),
                 rom_bytes: load_rom(&content_path)?,
@@ -117,10 +121,14 @@ mod native {
                 blackhole_output,
             },
             repeats,
+            continuation_frames,
         )?;
         let run = result.runs.last().expect("nonzero repeats has a result");
+        let continuation = run.continuation.as_ref();
+        let uninterrupted = continuation.map(|proof| &proof.uninterrupted);
+        let restored = continuation.and_then(|proof| proof.restored.as_ref());
         println!(
-            "runs={} fps_p50={:.2} fps_p95={:.2} elapsed_ms_p50={:.3} elapsed_ms_p95={:.3} callback_payload_hashing={} video_calls={} video_bytes={} visible_video_bytes={} video_pixel_format={} video_sha256={} audio_sample_calls={} audio_batch_calls={} audio_frames={} audio_bytes={} invalid_audio_buffer_len={} audio_sha256={} input_polls={} input_queries={} geometry={}x{} max={}x{} aspect={} advertised_fps={} advertised_sample_rate={} last_video={}x{} pitch={} serialize_size={} serialize_sha256={} save_ram_size={} save_ram_nonnull={} save_ram_sha256={} save_ram_post_roundtrip_sha256={} state_roundtrip={} undersized_serialize_rejected={} repeated_state_hashes_match={} repeated_video_hashes_match={} repeated_audio_hashes_match={} repeated_callback_counts_match={} unsupported_environment_commands={}",
+            "runs={} fps_p50={:.2} fps_p95={:.2} elapsed_ms_p50={:.3} elapsed_ms_p95={:.3} callback_payload_hashing={} video_calls={} video_bytes={} visible_video_bytes={} video_pixel_format={} video_sha256={} audio_sample_calls={} audio_batch_calls={} audio_frames={} audio_bytes={} invalid_audio_buffer_len={} audio_sha256={} input_polls={} input_queries={} geometry={}x{} max={}x{} aspect={} advertised_fps={} advertised_sample_rate={} last_video={}x{} pitch={} serialize_size={} serialize_sha256={} save_ram_size={} save_ram_nonnull={} save_ram_sha256={} save_ram_post_roundtrip_sha256={} state_restore_accepted={} state_reserialize_succeeded={} state_roundtrip={} continuation_frames={} continuation_match={} continuation_callback_counts_match={} continuation_video_match={} continuation_audio_match={} continuation_state_match={} continuation_save_ram_match={} continuation_uninterrupted_callbacks={} continuation_uninterrupted_video_sha256={} continuation_uninterrupted_audio_sha256={} continuation_uninterrupted_state_sha256={} continuation_uninterrupted_save_ram_size={} continuation_uninterrupted_save_ram_nonnull={} continuation_uninterrupted_save_ram_sha256={} continuation_restored_callbacks={} continuation_restored_video_sha256={} continuation_restored_audio_sha256={} continuation_restored_state_sha256={} continuation_restored_save_ram_size={} continuation_restored_save_ram_nonnull={} continuation_restored_save_ram_sha256={} undersized_serialize_rejected={} repeated_state_hashes_match={} repeated_video_hashes_match={} repeated_audio_hashes_match={} repeated_callback_counts_match={} unsupported_environment_commands={}",
             result.runs.len(),
             result.fps_p50,
             result.fps_p95,
@@ -156,7 +164,30 @@ mod native {
             run.save_ram_nonnull,
             save_ram_hash(run.save_ram_sha256.as_ref()),
             save_ram_hash(run.save_ram_post_roundtrip_sha256.as_ref()),
+            run.state_restore_accepted,
+            run.state_reserialize_succeeded,
             run.state_roundtrip,
+            continuation.map_or(0, |proof| proof.frames),
+            continuation.map_or("not_evaluated", |proof| bool_text(proof.matches)),
+            evaluated(continuation.and_then(|proof| proof.callback_counts_match)),
+            evaluated(continuation.and_then(|proof| proof.video_match)),
+            evaluated(continuation.and_then(|proof| proof.audio_match)),
+            evaluated(continuation.and_then(|proof| proof.state_match)),
+            evaluated(continuation.and_then(|proof| proof.save_ram_match)),
+            observation_callbacks(uninterrupted),
+            observation_hash(uninterrupted, |observation| &observation.video_hash),
+            observation_hash(uninterrupted, |observation| &observation.audio_hash),
+            observation_state_hash(uninterrupted),
+            observation_size(uninterrupted),
+            observation_nonnull(uninterrupted),
+            observation_save_ram_hash(uninterrupted),
+            observation_callbacks(restored),
+            observation_hash(restored, |observation| &observation.video_hash),
+            observation_hash(restored, |observation| &observation.audio_hash),
+            observation_state_hash(restored),
+            observation_size(restored),
+            observation_nonnull(restored),
+            observation_save_ram_hash(restored),
             run.undersized_serialize_rejected,
             result.state_hashes_match,
             evaluated(result.video_hashes_match),
@@ -227,6 +258,74 @@ mod native {
         }
     }
 
+    const fn bool_text(value: bool) -> &'static str {
+        if value { "true" } else { "false" }
+    }
+
+    fn observation_callbacks(observation: Option<&ContinuationObservation>) -> String {
+        observation.map_or_else(
+            || "not_evaluated".into(),
+            |observation| {
+                let counts = observation.callbacks;
+                format!(
+                    "video_calls={},video_bytes={},visible_video_bytes={},audio_sample_calls={},audio_batch_calls={},audio_frames={},audio_bytes={},input_poll_calls={},input_state_calls={}",
+                    counts.video_calls,
+                    counts.video_bytes,
+                    counts.visible_video_bytes,
+                    counts.audio_sample_calls,
+                    counts.audio_batch_calls,
+                    counts.audio_frames,
+                    counts.audio_bytes,
+                    counts.input_poll_calls,
+                    counts.input_state_calls,
+                )
+            },
+        )
+    }
+
+    fn observation_hash(
+        observation: Option<&ContinuationObservation>,
+        select: impl FnOnce(&ContinuationObservation) -> &[u8; 32],
+    ) -> String {
+        observation.map_or_else(
+            || "not_evaluated".into(),
+            |observation| hex(select(observation)),
+        )
+    }
+
+    fn observation_state_hash(observation: Option<&ContinuationObservation>) -> String {
+        observation.map_or_else(
+            || "not_evaluated".into(),
+            |observation| {
+                observation
+                    .state_hash
+                    .as_ref()
+                    .map_or_else(|| "serialize_failed".into(), |hash| hex(hash))
+            },
+        )
+    }
+
+    fn observation_size(observation: Option<&ContinuationObservation>) -> String {
+        observation.map_or_else(
+            || "not_evaluated".into(),
+            |observation| observation.save_ram_size.to_string(),
+        )
+    }
+
+    fn observation_nonnull(observation: Option<&ContinuationObservation>) -> String {
+        observation.map_or_else(
+            || "not_evaluated".into(),
+            |observation| bool_text(observation.save_ram_nonnull).into(),
+        )
+    }
+
+    fn observation_save_ram_hash(observation: Option<&ContinuationObservation>) -> String {
+        observation.map_or_else(
+            || "not_evaluated".into(),
+            |observation| save_ram_hash(observation.save_ram_hash.as_ref()),
+        )
+    }
+
     fn comma_separated(values: &[u32]) -> String {
         if values.is_empty() {
             return "none".into();
@@ -239,7 +338,7 @@ mod native {
     }
 
     fn usage() -> &'static str {
-        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path] [--capture-frame N --capture-png path] [--audio-frame-csv path] [--audio-s16le path] [--blackhole-output]"
+        "usage: libretro_harness <core-library> <rom> [--warmup N] [--frames N] [--repeat N] [--pixel-format xrgb8888|rgb565] [--input frame:port:joypad-mask] [--core-option key=value] [--system-dir path] [--save-dir path] [--capture-frame N --capture-png path] [--audio-frame-csv path] [--audio-s16le path] [--blackhole-output] [--continuation-frames N]"
     }
 
     #[cfg(test)]

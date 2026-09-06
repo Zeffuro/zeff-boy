@@ -39,6 +39,15 @@ const RETRO_NUM_CORE_OPTION_VALUES_MAX: usize = 128;
 const MAX_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_AUDIO_TELEMETRY_FRAMES: usize = 100_000;
 const MAX_RAW_AUDIO_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_CONTINUATION_FRAMES: usize = 100_000;
+
+#[path = "libretro_harness/continuation.rs"]
+mod continuation;
+
+#[cfg(test)]
+use continuation::ContinuationCore;
+use continuation::{AbiContinuationCore, check_state_and_continuation};
+pub use continuation::{ContinuationObservation, ContinuationProof};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -233,7 +242,10 @@ pub struct HarnessResult {
     pub save_ram_nonnull: bool,
     pub save_ram_sha256: Option<[u8; 32]>,
     pub save_ram_post_roundtrip_sha256: Option<[u8; 32]>,
+    pub state_restore_accepted: bool,
+    pub state_reserialize_succeeded: bool,
     pub state_roundtrip: bool,
+    pub continuation: Option<ContinuationProof>,
     pub undersized_serialize_rejected: bool,
 }
 
@@ -764,10 +776,22 @@ unsafe extern "C" fn input_state(port: c_uint, device: c_uint, index: c_uint, id
     i16::from(mask & (1 << id) != 0)
 }
 
+#[allow(dead_code)] // This source is shared by binaries that use different entry points.
 pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult> {
+    run_fixed_frames_with_continuation(config, 0)
+}
+
+pub fn run_fixed_frames_with_continuation(
+    config: &HarnessConfig,
+    continuation_frames: usize,
+) -> anyhow::Result<HarnessResult> {
     anyhow::ensure!(
         config.measurement_frames > 0,
         "measurement_frames must be nonzero"
+    );
+    anyhow::ensure!(
+        continuation_frames <= MAX_CONTINUATION_FRAMES,
+        "continuation proof is limited to {MAX_CONTINUATION_FRAMES} frames"
     );
     anyhow::ensure!(
         !config.rom_bytes.is_empty(),
@@ -860,16 +884,25 @@ pub fn run_fixed_frames(config: &HarnessConfig) -> anyhow::Result<HarnessResult>
         ..CallbackState::default()
     });
 
-    let result = unsafe { run_loaded_core(&library, config, &content_path) };
+    let result = unsafe { run_loaded_core(&library, config, &content_path, continuation_frames) };
     *CALLBACK_STATE
         .lock()
         .expect("libretro callback mutex poisoned") = None;
     result
 }
 
+#[allow(dead_code)] // This source is shared by binaries that use different entry points.
 pub fn run_repeated_fixed_frames(
     config: &HarnessConfig,
     repeats: usize,
+) -> anyhow::Result<RepeatedHarnessResult> {
+    run_repeated_fixed_frames_with_continuation(config, repeats, 0)
+}
+
+pub fn run_repeated_fixed_frames_with_continuation(
+    config: &HarnessConfig,
+    repeats: usize,
+    continuation_frames: usize,
 ) -> anyhow::Result<RepeatedHarnessResult> {
     anyhow::ensure!(repeats > 0, "repeats must be nonzero");
     anyhow::ensure!(
@@ -881,7 +914,10 @@ pub fn run_repeated_fixed_frames(
     );
     let mut runs = Vec::with_capacity(repeats);
     for _ in 0..repeats {
-        runs.push(run_fixed_frames(config)?);
+        runs.push(run_fixed_frames_with_continuation(
+            config,
+            continuation_frames,
+        )?);
     }
     let mut fps = runs
         .iter()
@@ -943,6 +979,7 @@ unsafe fn run_loaded_core(
     library: &Library,
     config: &HarnessConfig,
     content_path: &CString,
+    continuation_frames: usize,
 ) -> anyhow::Result<HarnessResult> {
     let set_environment: Symbol<
         unsafe extern "C" fn(unsafe extern "C" fn(c_uint, *mut c_void) -> bool),
@@ -1028,14 +1065,27 @@ unsafe fn run_loaded_core(
         "retro_serialize failed"
     );
     let state_hash: [u8; 32] = Sha256::digest(&state).into();
-    let state_roundtrip = unsafe { unserialize(state.as_ptr().cast(), state_size) }
-        && unsafe { serialize(state.as_mut_ptr().cast(), state_size) }
-        && Sha256::digest(&state).as_slice() == state_hash;
-    let save_ram_post_roundtrip = unsafe { snapshot_save_ram(*get_memory_data, *get_memory_size)? };
+    let mut continuation_core = AbiContinuationCore::new(
+        *run,
+        *serialize,
+        *unserialize,
+        *get_memory_data,
+        *get_memory_size,
+    );
+    let state_checks = check_state_and_continuation(
+        &mut continuation_core,
+        &state,
+        config
+            .warmup_frames
+            .checked_add(config.measurement_frames)
+            .expect("frame count overflow was validated before loading the core"),
+        continuation_frames,
+    );
     unsafe {
         unload_game();
         deinit();
     }
+    let state_checks = state_checks?;
     let mut callback_guard = CALLBACK_STATE
         .lock()
         .expect("libretro callback mutex poisoned");
@@ -1094,8 +1144,11 @@ unsafe fn run_loaded_core(
         save_ram_size: save_ram.bytes.len(),
         save_ram_nonnull: save_ram.nonnull,
         save_ram_sha256: save_ram.hash,
-        save_ram_post_roundtrip_sha256: save_ram_post_roundtrip.hash,
-        state_roundtrip,
+        save_ram_post_roundtrip_sha256: state_checks.save_ram_post_roundtrip.hash,
+        state_restore_accepted: state_checks.restore_accepted,
+        state_reserialize_succeeded: state_checks.reserialize_succeeded,
+        state_roundtrip: state_checks.roundtrip,
+        continuation: state_checks.continuation,
         undersized_serialize_rejected,
     };
     drop(callback_guard);
