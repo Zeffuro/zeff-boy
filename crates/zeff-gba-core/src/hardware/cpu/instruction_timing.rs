@@ -42,17 +42,28 @@ impl DataAccessCharge {
     }
 }
 
-pub(super) fn instruction_base_cycles(fetched: FetchedInstruction, condition_passed: bool) -> u32 {
+pub(super) const fn instruction_base_cycles(
+    fetched: FetchedInstruction,
+    condition_passed: bool,
+) -> u32 {
+    instruction_base_cycles_parts(fetched.raw, fetched.decoded, condition_passed)
+}
+
+pub(super) const fn instruction_base_cycles_parts(
+    raw: u32,
+    decoded: DecodedInstruction,
+    condition_passed: bool,
+) -> u32 {
     if !condition_passed {
         return 0;
     }
 
-    match fetched.decoded {
+    match decoded {
         DecodedInstruction::Arm {
             class: ArmInstructionClass::DataProcessing,
             ..
         } => {
-            if fetched.raw & (1 << 25) == 0 && fetched.raw & (1 << 4) != 0 {
+            if raw & (1 << 25) == 0 && raw & (1 << 4) != 0 {
                 1
             } else {
                 0
@@ -66,7 +77,7 @@ pub(super) fn instruction_base_cycles(fetched: FetchedInstruction, condition_pas
             class: ArmInstructionClass::SingleDataTransfer,
             ..
         } => {
-            if fetched.raw & (1 << 20) != 0 {
+            if raw & (1 << 20) != 0 {
                 2
             } else {
                 1
@@ -76,8 +87,8 @@ pub(super) fn instruction_base_cycles(fetched: FetchedInstruction, condition_pas
             class: ArmInstructionClass::BlockDataTransfer,
             ..
         } => {
-            let register_count = block_transfer_register_count(fetched.raw);
-            if fetched.raw & (1 << 20) != 0 {
+            let register_count = block_transfer_register_count(raw);
+            if raw & (1 << 20) != 0 {
                 register_count + 1
             } else {
                 register_count
@@ -100,18 +111,18 @@ pub(super) fn instruction_base_cycles(fetched: FetchedInstruction, condition_pas
         } => 0,
         DecodedInstruction::Thumb {
             class: ThumbInstructionClass::Alu,
-        } => match (fetched.raw >> 6) & 0xF {
+        } => match (raw >> 6) & 0xF {
             0x2 | 0x3 | 0x4 | 0x7 | 0xD => 1,
             _ => 0,
         },
         DecodedInstruction::Thumb {
             class: ThumbInstructionClass::ConditionalBranchOrSwi,
-        } if fetched.raw as u16 & 0x0F00 != 0x0F00 => 0,
+        } if raw as u16 & 0x0F00 != 0x0F00 => 0,
         _ => 1,
     }
 }
 
-fn block_transfer_register_count(raw: u32) -> u32 {
+const fn block_transfer_register_count(raw: u32) -> u32 {
     let count = (raw & 0xFFFF).count_ones();
     if count == 0 { 16 } else { count }
 }

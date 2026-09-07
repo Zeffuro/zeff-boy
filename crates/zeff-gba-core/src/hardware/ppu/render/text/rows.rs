@@ -66,6 +66,8 @@ impl Ppu {
         debug_assert!(bg_priorities.iter().all(|&priority| priority == 4));
         let controls = windows.scanline_controls(y);
         let mut missing_second = SCREEN_WIDTH;
+        #[cfg(feature = "profiling")]
+        let mut row_cache_tags = [u32::MAX; 32];
         for &(priority, bg, control) in layers.iter().rev() {
             let params = TextBgParams::new(control, io, bg);
             let sy = (y + params.vofs) & (params.height - 1);
@@ -79,7 +81,28 @@ impl Ppu {
                     controls[pixel] & bg_mask != 0 && bg_second_priorities[pixel] == 4
                 });
                 if let Some(first) = first {
+                    #[cfg(feature = "profiling")]
+                    {
+                        let entry = read_le16(vram, params.entry_offset(sx, sy));
+                        let key = params.decoded_row_key(entry, sy);
+                        let slot = (key.wrapping_mul(0x9E37_79B1) >> 27) as usize;
+                        let depth = usize::from(params.color_256);
+                        self.profiling.text_row_cache_requests[depth] =
+                            self.profiling.text_row_cache_requests[depth].wrapping_add(1);
+                        if row_cache_tags[slot] == key {
+                            self.profiling.text_row_cache_hits[depth] =
+                                self.profiling.text_row_cache_hits[depth].wrapping_add(1);
+                        } else {
+                            row_cache_tags[slot] = key;
+                        }
+                    }
                     let colors = params.color_indices_row(vram, sx, sy);
+                    #[cfg(feature = "profiling")]
+                    if colors == [0; 8] {
+                        let depth = usize::from(params.color_256);
+                        self.profiling.text_row_all_zero[depth] =
+                            self.profiling.text_row_all_zero[depth].wrapping_add(1);
+                    }
                     #[cfg(test)]
                     {
                         work.decoded_rows += 1;
@@ -140,6 +163,29 @@ impl Ppu {
 }
 
 impl TextBgParams {
+    #[cfg(feature = "profiling")]
+    fn decoded_row_key(&self, entry: u16, y: usize) -> u32 {
+        let tile = u32::from(entry & 0x03FF);
+        let py = if entry & (1 << 11) == 0 {
+            y & 7
+        } else {
+            7 - (y & 7)
+        } as u32;
+        let horizontal_flip = u32::from(entry >> 10 & 1);
+        let palette = if self.color_256 {
+            0
+        } else {
+            u32::from(entry >> 12 & 0xF)
+        };
+        let char_base = (self.char_base / 0x4000) as u32;
+
+        tile | (py << 10)
+            | (horizontal_flip << 13)
+            | (palette << 14)
+            | (u32::from(self.color_256) << 18)
+            | (char_base << 19)
+    }
+
     pub(super) fn color_indices_row(&self, vram: &[u8], x: usize, y: usize) -> [u8; 8] {
         let entry = read_le16(vram, self.entry_offset(x, y));
         let tile = usize::from(entry & 0x03FF);

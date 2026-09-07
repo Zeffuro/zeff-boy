@@ -141,6 +141,14 @@ impl Cpu {
     }
 
     fn begin_arm_halfword_transfer(&mut self, pc: u32, raw: u32) -> bool {
+        let Some(transfer) = self.plan_arm_halfword_transfer(pc, raw) else {
+            return false;
+        };
+        self.prepare_single_transfer(transfer);
+        true
+    }
+
+    pub(super) fn plan_arm_halfword_transfer(&self, pc: u32, raw: u32) -> Option<SingleTransfer> {
         let pre_index = raw & (1 << 24) != 0;
         let add = raw & (1 << 23) != 0;
         let immediate = raw & (1 << 22) != 0;
@@ -150,7 +158,7 @@ impl Cpu {
         let rd = ((raw >> 12) & 0xF) as usize;
         let mode = (raw >> 5) & 0x3;
         if !load && mode != 0b01 {
-            return false;
+            return None;
         }
         let base = self.reg_read_arm(rn, pc);
         let offset = if immediate {
@@ -169,10 +177,10 @@ impl Cpu {
             0b10 => 1,
             0b11 if address & 1 != 0 => 1,
             0b11 => 2,
-            _ => return false,
+            _ => return None,
         };
         let writeback = (!pre_index || writeback) && !(load && rn == rd);
-        self.prepare_single_transfer(SingleTransfer {
+        Some(SingleTransfer {
             operation: if load {
                 CpuBusOperation::Read
             } else {
@@ -184,8 +192,7 @@ impl Cpu {
             destination: rd as u8,
             writeback_register: if writeback { rn as u8 } else { NO_WRITEBACK },
             writeback_value: if writeback { indexed } else { 0 },
-        });
-        true
+        })
     }
 
     fn begin_arm_swap(&mut self, pc: u32, raw: u32) {
@@ -376,10 +383,14 @@ impl Cpu {
     }
 
     fn begin_thumb_sp_relative_transfer(&mut self, raw: u16) {
+        self.prepare_single_transfer(self.plan_thumb_sp_relative_transfer(raw));
+    }
+
+    pub(super) fn plan_thumb_sp_relative_transfer(&self, raw: u16) -> SingleTransfer {
         let load = raw & (1 << 11) != 0;
         let rd = ((raw >> 8) & 0x7) as usize;
         let address = self.regs[13].wrapping_add(u32::from(raw & 0xFF) << 2);
-        self.prepare_single_transfer(SingleTransfer {
+        SingleTransfer {
             operation: if load {
                 CpuBusOperation::Read
             } else {
@@ -391,7 +402,7 @@ impl Cpu {
             destination: rd as u8,
             writeback_register: NO_WRITEBACK,
             writeback_value: 0,
-        });
+        }
     }
 
     fn begin_thumb_push_pop(&mut self, raw: u16) -> bool {

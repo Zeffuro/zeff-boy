@@ -24,8 +24,21 @@ modules:
     build-commands:
       - mkdir -p .cargo
       - cp packaging/flatpak/cargo-config.toml .cargo/config.toml
-      - cargo build --release --locked --offline --no-default-features --features audio-recording
-      - install -Dm755 target/release/zeff-boy /app/bin/zeff-boy
+      - HOST_TARGET="$(rustc -vV | sed -n 's/^host:[[:space:]]*//p')"; LLVM_PROFDATA="$(rustc --print sysroot)/lib/rustlib/${HOST_TARGET}/bin/llvm-profdata"; test -x "$LLVM_PROFDATA"; "$LLVM_PROFDATA" --version
+      - |
+        TASK_PGO_ROOT="$(mktemp -d /tmp/zeff-pgo.XXXXXX)"
+        python3 scripts/build-optimized.py \
+          --artifact desktop \
+          --output-dir "$TASK_PGO_ROOT/run" \
+          --target-dir target \
+          --offline \
+          --no-default-features \
+          --features audio-recording
+        test -f "$TASK_PGO_ROOT/run/manifest.json"
+        python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["status"] == "complete"' \
+          "$TASK_PGO_ROOT/run/manifest.json"
+        install -Dm755 "$TASK_PGO_ROOT/run/artifacts/optimized-zeff-boy" \
+          /app/bin/zeff-boy
       - install -Dm644 packaging/flatpak/com.github.zeffuro.zeff-boy.desktop /app/share/applications/com.github.zeffuro.zeff-boy.desktop
       - install -Dm644 packaging/flatpak/com.github.zeffuro.zeff-boy.metainfo.xml /app/share/metainfo/com.github.zeffuro.zeff-boy.metainfo.xml
       - install -Dm644 assets/icon.png /app/share/icons/hicolor/512x512/apps/com.github.zeffuro.zeff-boy.png

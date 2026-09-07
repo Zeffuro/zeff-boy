@@ -2,6 +2,10 @@ name: Snap Store
 
 on:
   workflow_call:
+    secrets:
+      SNAPCRAFT_STORE_CREDENTIALS:
+        description: Snap Store credentials for publishing the release
+        required: true
     inputs:
       release_tag:
         description: Published GitHub release tag to package
@@ -17,7 +21,7 @@ on:
       release_tag:
         description: Published GitHub release tag to package
         required: true
-        default: v0.2.0
+        default: v0.3.0
         type: string
       existing_revision:
         description: Existing Store revision to release instead of rebuilding

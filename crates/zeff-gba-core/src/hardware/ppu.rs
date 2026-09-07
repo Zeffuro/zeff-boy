@@ -31,6 +31,16 @@ pub struct Ppu {
     vcount: u16,
     line_cycles: u32,
     debug_flags: PpuDebugFlags,
+    #[cfg(feature = "profiling")]
+    pub(crate) profiling: PpuProfiling,
+}
+
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PpuProfiling {
+    pub text_row_cache_requests: [u64; 2],
+    pub text_row_cache_hits: [u64; 2],
+    pub text_row_all_zero: [u64; 2],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +75,8 @@ impl Ppu {
             vcount: 0,
             line_cycles: 0,
             debug_flags: PpuDebugFlags::default(),
+            #[cfg(feature = "profiling")]
+            profiling: PpuProfiling::default(),
         }
     }
 

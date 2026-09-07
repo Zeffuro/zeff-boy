@@ -14,6 +14,7 @@ members = [
     "crates/zeff-libretro",
     "crates/zeff-romtest",
     "crates/zeff-mcp",
+    "crates/zeff-pgo-corpus",
 ]
 exclude = ["fuzz"]
 
@@ -29,7 +30,7 @@ wasm-browser-tests = []
 
 [package]
 name = "zeff-boy"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
@@ -77,6 +78,7 @@ default-features = false
 features = ["links"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+zeff-pgo-corpus = { path = "crates/zeff-pgo-corpus" }
 chd = { version = "0.3.4", default-features = false, features = ["std", "cd_full", "fast_lzma"] }
 rars = "0.9.3"
 cpal = "0.18.1"

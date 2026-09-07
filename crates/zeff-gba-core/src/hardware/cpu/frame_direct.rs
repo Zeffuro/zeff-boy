@@ -1,5 +1,12 @@
 use super::super::constants::{EWRAM_END, EWRAM_SIZE, IWRAM_END, IWRAM_SIZE};
 use super::super::timing::{self, AccessType, BusRegion, DataAccessCursor};
+#[cfg(test)]
+pub(super) use super::frame_classify::classify_stateless_pure;
+use super::frame_classify::classify_stateless_pure_parts;
+pub(super) use super::frame_classify::classify_thumb_pure;
+#[cfg(any(test, feature = "profiling"))]
+pub(super) use super::frame_classify::stateless_candidate;
+use super::frame_data::ResolvedData;
 use super::frame_fetch::FrameFetchWindow;
 use super::transfer::{
     NO_WRITEBACK, SingleTransfer, arm_single_load_value, thumb_halfword_load_value,
@@ -8,7 +15,6 @@ use super::{
     ArmInstructionClass, Bus, CPSR_IRQ_DISABLE, Cpu, CpuBusOperation, CpuState, DataAccessCharge,
     DecodedInstruction, EMPTY_PREFETCHED_INSTRUCTION, FetchedInstruction, InstructionSet,
     PREFETCH_QUEUE_LEN, PrefetchedInstruction, ThumbInstructionClass, fetch,
-    instruction_base_cycles,
 };
 
 #[derive(Clone, Copy)]
@@ -18,10 +24,35 @@ pub(super) struct DirectFetchWindow {
     cycles: u32,
 }
 
+#[derive(Clone, Copy)]
+struct DirectInstruction {
+    pc: u32,
+    instruction_set: InstructionSet,
+    #[cfg(feature = "profiling")]
+    raw: u32,
+    #[cfg(any(test, feature = "profiling"))]
+    fetch_cycles: u32,
+}
+
+#[cfg(not(any(test, feature = "profiling")))]
+const _: () = assert!(size_of::<DirectInstruction>() <= 8);
+
+#[cfg(feature = "profiling")]
+impl DirectInstruction {
+    fn fetched(self) -> FetchedInstruction {
+        PrefetchedInstruction {
+            pc: self.pc,
+            raw: self.raw,
+        }
+        .decode(self.instruction_set, self.fetch_cycles)
+    }
+}
+
 enum DirectOperation {
     Noop,
     Transfer {
         transfer: SingleTransfer,
+        location: ResolvedData,
         #[cfg(test)]
         cursor: DataAccessCursor,
     },
@@ -172,27 +203,63 @@ impl Cpu {
             let fetch_cycles = window
                 .cycles
                 .max(u32::from(self.pending_load_internal_cycle));
-            let fetched = front.decode(instruction_set, fetch_cycles);
-            let condition_passed = self.fetched_condition_passed(fetched);
-            let base_cycles = instruction_base_cycles(fetched, condition_passed);
-            let (charged, _kind) = if let Some(operation) =
-                direct_pure_candidate(fetched, condition_passed, options)
-            {
+            let current = front;
+            let instruction = DirectInstruction {
+                pc: current.pc,
+                instruction_set,
+                #[cfg(feature = "profiling")]
+                raw: current.raw,
+                #[cfg(any(test, feature = "profiling"))]
+                fetch_cycles,
+            };
+            let (decoded, base_cycles, pure) = match instruction_set {
+                InstructionSet::Thumb => {
+                    let metadata = super::frame_thumb_metadata::lookup(current.raw as u16);
+                    (
+                        DecodedInstruction::Thumb {
+                            class: metadata.class,
+                        },
+                        u32::from(metadata.base_cycles),
+                        metadata.pure,
+                    )
+                }
+                InstructionSet::Arm => {
+                    let (decoded, base_cycles) = super::frame_arm_metadata::lookup(current.raw);
+                    let condition_passed = self.decoded_condition_passed(decoded);
+                    (
+                        decoded,
+                        if condition_passed { base_cycles } else { 0 },
+                        direct_pure_candidate_parts(
+                            current.raw,
+                            decoded,
+                            condition_passed,
+                            options,
+                        ),
+                    )
+                }
+            };
+            let (charged, _kind) = if let Some(operation) = pure {
                 let cycles = fetch_cycles + base_cycles;
                 if cycles > budget - elapsed {
                     break;
+                }
+                #[cfg(feature = "profiling")]
+                if classify_stateless_pure_parts(current.raw, decoded, true).is_some() {
+                    self.profiling
+                        .pure_opcodes
+                        .record(current.raw, instruction_set == InstructionSet::Thumb);
                 }
                 let next = self.prepare_frame_direct_next(
                     bus,
                     fast_fetch,
                     lookahead,
                     window.cycles,
-                    fetched,
+                    instruction,
                 );
                 front = back;
                 back = next;
                 next_fetch_sequential = true;
-                self.execute_frame_pure(operation, fetched.pc, fetched.raw);
+                self.execute_frame_pure(operation, current.pc, current.raw);
                 #[cfg(test)]
                 {
                     self.cycles = self.cycles.wrapping_add(u64::from(base_cycles));
@@ -204,6 +271,14 @@ impl Cpu {
                 debug_assert_eq!(charged, cycles);
                 (charged, 0)
             } else {
+                let fetched = FetchedInstruction {
+                    pc: current.pc,
+                    raw: current.raw,
+                    instruction_set,
+                    width_bytes: instruction_set.width_bytes(),
+                    fetch_cycles,
+                    decoded,
+                };
                 let Some((operation, cycles)) =
                     self.plan_frame_direct(bus, fetched, base_cycles, options)
                 else {
@@ -221,7 +296,7 @@ impl Cpu {
                     fast_fetch,
                     lookahead,
                     window.cycles,
-                    fetched,
+                    instruction,
                 );
                 front = back;
                 back = next;
@@ -234,6 +309,7 @@ impl Cpu {
                     }
                     DirectOperation::Transfer {
                         transfer,
+                        location,
                         #[cfg(test)]
                         cursor,
                     } => {
@@ -241,7 +317,7 @@ impl Cpu {
                         {
                             self.data_access_cursor = *cursor;
                         }
-                        self.execute_frame_transfer(bus, fetched, *transfer);
+                        self.execute_frame_transfer(bus, fetched, *transfer, *location);
                         1
                     }
                     DirectOperation::BlockTransfer {
@@ -288,12 +364,9 @@ impl Cpu {
             elapsed += charged;
             #[cfg(feature = "profiling")]
             {
-                completed = Some(self.complete_instruction(bus, fetched));
+                self.complete_instruction(bus, current.decode(instruction_set, fetch_cycles));
             }
-            #[cfg(not(feature = "profiling"))]
-            {
-                completed = Some(fetched);
-            }
+            completed = Some((current, fetch_cycles));
             instructions += 1;
             #[cfg(feature = "profiling")]
             {
@@ -304,7 +377,8 @@ impl Cpu {
                 break;
             }
         }
-        let completed = completed?;
+        let (last, last_fetch_cycles) = completed?;
+        let completed = last.decode(instruction_set, last_fetch_cycles);
         #[cfg(not(test))]
         {
             self.cycles = self.cycles.wrapping_add(u64::from(elapsed));
@@ -338,9 +412,9 @@ impl Cpu {
         fast_fetch: Option<FrameFetchWindow>,
         lookahead: u32,
         window_cycles: u32,
-        fetched: FetchedInstruction,
+        instruction: DirectInstruction,
     ) -> PrefetchedInstruction {
-        let instruction_set = fetched.instruction_set;
+        let instruction_set = instruction.instruction_set;
         let next = if let Some(window) = fast_fetch.filter(|window| window.contains(lookahead)) {
             self.fetch_frame_direct(bus, window, lookahead)
         } else {
@@ -364,15 +438,19 @@ impl Cpu {
             next
         };
         self.pending_load_internal_cycle = false;
-        self.regs[15] = fetched.pc.wrapping_add(u32::from(fetched.width_bytes));
+        self.regs[15] = instruction
+            .pc
+            .wrapping_add(u32::from(instruction_set.width_bytes()));
         #[cfg(test)]
         {
-            self.cycles = self.cycles.wrapping_add(u64::from(fetched.fetch_cycles));
+            self.cycles = self
+                .cycles
+                .wrapping_add(u64::from(instruction.fetch_cycles));
         }
         #[cfg(feature = "profiling")]
-        self.profile_frame_kernel_instruction(bus, fetched, 0);
+        self.profile_frame_kernel_instruction(bus, instruction.fetched(), 0);
         #[cfg(test)]
-        self.begin_data_access_timing(fetched.fetch_cycles);
+        self.begin_data_access_timing(instruction.fetch_cycles);
         next
     }
 
@@ -394,20 +472,28 @@ impl Cpu {
                 ..
             }
             | DecodedInstruction::Thumb {
-                class: ThumbInstructionClass::LoadStoreHalfword,
+                class:
+                    ThumbInstructionClass::LoadStoreHalfword | ThumbInstructionClass::SpRelativeLoad,
             } => {
                 let transfer = match fetched.instruction_set {
                     InstructionSet::Arm => {
-                        self.plan_arm_single_transfer(fetched.pc, fetched.raw)?
+                        self.plan_arm_single_transfer(fetched.pc, fetched.raw)
+                            .or_else(|| self.plan_arm_halfword_transfer(fetched.pc, fetched.raw))?
                     }
-                    InstructionSet::Thumb => self.plan_thumb_halfword_transfer(fetched.raw as u16),
+                    InstructionSet::Thumb => {
+                        if fetched.raw & 0xF000 == 0x9000 {
+                            self.plan_thumb_sp_relative_transfer(fetched.raw as u16)
+                        } else {
+                            self.plan_thumb_halfword_transfer(fetched.raw as u16)
+                        }
+                    }
                 };
                 if transfer.writeback_register == 15
                     || (transfer.operation == CpuBusOperation::Read && transfer.destination == 15)
-                    || !plain_data_access(bus, transfer)
                 {
                     return None;
                 }
+                let location = ResolvedData::new(bus, transfer)?;
                 let mut cursor = DataAccessCursor::default();
                 cursor.reset(fetch_cycles);
                 cursor.advance(
@@ -420,6 +506,7 @@ impl Cpu {
                 Some((
                     DirectOperation::Transfer {
                         transfer,
+                        location,
                         #[cfg(test)]
                         cursor,
                     },
@@ -479,27 +566,28 @@ impl Cpu {
         bus: &mut Bus,
         fetched: FetchedInstruction,
         transfer: SingleTransfer,
+        location: ResolvedData,
     ) {
         match (transfer.operation, transfer.width) {
             (CpuBusOperation::Read, width) => {
-                let value = match width {
-                    1 => u32::from(bus.read8(transfer.address)),
-                    2 => u32::from(bus.read16(transfer.address)),
-                    _ => bus.read32(transfer.address),
-                };
+                let value = location.read(bus, width);
                 self.regs[usize::from(transfer.destination)] = match fetched.instruction_set {
                     InstructionSet::Arm => {
                         arm_single_load_value(fetched.raw, transfer.address, value)
                     }
                     InstructionSet::Thumb => {
                         self.pending_load_internal_cycle = true;
-                        thumb_halfword_load_value(transfer.address, value)
+                        if transfer.width == 4 {
+                            value.rotate_right((transfer.address & 3) * 8)
+                        } else {
+                            thumb_halfword_load_value(transfer.address, value)
+                        }
                     }
                 };
             }
-            (CpuBusOperation::Write, 1) => bus.write8(transfer.address, transfer.value as u8),
-            (CpuBusOperation::Write, 2) => bus.write16(transfer.address, transfer.value as u16),
-            (CpuBusOperation::Write, 4) => bus.write32(transfer.address, transfer.value),
+            (CpuBusOperation::Write, width @ (1 | 2 | 4)) => {
+                location.write(bus, width, transfer.value)
+            }
             _ => unreachable!("invalid direct transfer"),
         }
         if transfer.writeback_register != NO_WRITEBACK {
@@ -737,101 +825,58 @@ impl DirectFetchWindow {
     }
 }
 
+#[cfg(feature = "profiling")]
 pub(super) fn plain_data_access(bus: &Bus, transfer: SingleTransfer) -> bool {
-    let address = transfer.address & !(u32::from(transfer.width) - 1);
-    match timing::region_for_addr(address) {
-        BusRegion::Ewram | BusRegion::Iwram => true,
-        BusRegion::GamePak0 | BusRegion::GamePak1 | BusRegion::GamePak2 => {
-            transfer.operation == CpuBusOperation::Read
-                && !bus.cartridge.is_eeprom_access_addr(address)
-                && !bus.cartridge.has_rtc()
-                && (address & 0x01FF_FFFF) as usize + usize::from(transfer.width)
-                    <= bus.cartridge.rom().len()
-        }
-        _ => false,
-    }
+    ResolvedData::new(bus, transfer).is_some()
 }
 
+#[cfg(test)]
 fn direct_pure_candidate(
     fetched: FetchedInstruction,
     condition_passed: bool,
     options: DirectOptions,
 ) -> Option<DirectPure> {
-    let operation = classify_stateless_pure(fetched, condition_passed)?;
+    direct_pure_candidate_parts(fetched.raw, fetched.decoded, condition_passed, options)
+}
+
+fn direct_pure_candidate_parts(
+    raw: u32,
+    decoded: DecodedInstruction,
+    condition_passed: bool,
+    options: DirectOptions,
+) -> Option<DirectPure> {
+    let operation = classify_stateless_pure_parts(raw, decoded, condition_passed)?;
     (options.allow_multiply || !matches!(operation, DirectPure::ArmMultiply)).then_some(operation)
 }
 
-#[cfg(any(test, feature = "profiling"))]
-pub(super) fn stateless_candidate(
-    fetched: FetchedInstruction,
-    condition_passed: bool,
-) -> Option<usize> {
-    classify_stateless_pure(fetched, condition_passed).map(|operation| match operation {
-        DirectPure::ArmConditionFailed => 0,
-        DirectPure::ArmDataProcessing
-            if fetched.raw & (1 << 25) == 0 && fetched.raw & (1 << 4) != 0 =>
-        {
-            2
-        }
-        DirectPure::ArmDataProcessing | DirectPure::ArmMultiply => 1,
-        DirectPure::ThumbMoveShiftedRegister
-        | DirectPure::ThumbAddSubtract
-        | DirectPure::ThumbImmediate
-        | DirectPure::ThumbAlu
-        | DirectPure::ThumbLoadAddress
-        | DirectPure::ThumbAddOffsetSp => 3,
-    })
-}
+#[cfg(test)]
+mod metadata_option_tests {
+    use super::*;
 
-pub(super) fn classify_stateless_pure(
-    fetched: FetchedInstruction,
-    condition_passed: bool,
-) -> Option<DirectPure> {
-    match fetched.decoded {
-        DecodedInstruction::Arm { .. } if !condition_passed => Some(DirectPure::ArmConditionFailed),
-        DecodedInstruction::Arm {
-            class: ArmInstructionClass::DataProcessing,
-            ..
-        } => {
-            let raw = fetched.raw;
-            if raw & 0x0FBF_0FFF == 0x010F_0000
-                || raw & 0x0FB0_FFF0 == 0x0120_F000
-                || raw & 0x0FB0_F000 == 0x0320_F000
-                || (raw >> 12) & 0xF == 15
-            {
-                None
-            } else {
-                Some(DirectPure::ArmDataProcessing)
+    #[test]
+    fn thumb_metadata_preserves_prior_admission_options_for_every_opcode() {
+        for raw in 0..=u16::MAX {
+            let fetched = PrefetchedInstruction {
+                pc: 0x0300_0200,
+                raw: u32::from(raw),
+            }
+            .decode(InstructionSet::Thumb, 1);
+            let metadata = super::super::frame_thumb_metadata::lookup(raw);
+            for allow_multiply in [false, true] {
+                for allow_mixed in [false, true] {
+                    let options = DirectOptions {
+                        allow_multiply,
+                        allow_mixed,
+                        allow_fast_fetch: true,
+                    };
+                    assert_eq!(
+                        metadata.pure.map(|operation| operation as u8),
+                        direct_pure_candidate(fetched, true, options)
+                            .map(|operation| operation as u8),
+                        "{raw:04X}"
+                    );
+                }
             }
         }
-        DecodedInstruction::Arm {
-            class: ArmInstructionClass::Multiply,
-            ..
-        } => {
-            let raw = fetched.raw;
-            [raw >> 16, raw >> 12, raw >> 8, raw]
-                .into_iter()
-                .all(|register| register & 0xF != 15)
-                .then_some(DirectPure::ArmMultiply)
-        }
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::MoveShiftedRegister,
-        } => Some(DirectPure::ThumbMoveShiftedRegister),
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::AddSubtract,
-        } => Some(DirectPure::ThumbAddSubtract),
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::Immediate,
-        } => Some(DirectPure::ThumbImmediate),
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::Alu,
-        } => Some(DirectPure::ThumbAlu),
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::LoadAddress,
-        } => Some(DirectPure::ThumbLoadAddress),
-        DecodedInstruction::Thumb {
-            class: ThumbInstructionClass::AddOffsetSp,
-        } => Some(DirectPure::ThumbAddOffsetSp),
-        _ => None,
     }
 }

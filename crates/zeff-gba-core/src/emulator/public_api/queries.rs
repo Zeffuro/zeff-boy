@@ -154,6 +154,11 @@ impl Emulator {
             frame_cpu_direct_instructions: self.cpu.profiling.frame_direct_instructions,
             frame_cpu_direct_cycles: self.cpu.profiling.frame_direct_cycles,
             frame_cpu_direct_kinds: self.cpu.profiling.frame_direct_kinds,
+            frame_scalar_arm: self.cpu.profiling.frame_scalar_arm,
+            frame_scalar_thumb: self.cpu.profiling.frame_scalar_thumb,
+            frame_scalar_arm_halfword: self.cpu.profiling.frame_scalar_arm_halfword,
+            pure_opcode_requests: self.cpu.profiling.pure_opcodes.requests,
+            pure_opcode_hits: self.cpu.profiling.pure_opcodes.hits,
             cpu_phase_visits: self.cpu.profiling.phase_visits,
             instruction_classes_arm: self.cpu.profiling.instruction_classes_arm,
             instruction_classes_thumb: self.cpu.profiling.instruction_classes_thumb,
@@ -222,6 +227,9 @@ impl Emulator {
             visible_hblank_events: self.bus.profiling.visible_hblank_events,
             vblank_events: self.bus.profiling.vblank_events,
             rendered_scanlines: self.bus.profiling.rendered_scanlines,
+            text_row_cache_requests: self.bus.ppu.profiling.text_row_cache_requests,
+            text_row_cache_hits: self.bus.ppu.profiling.text_row_cache_hits,
+            text_row_all_zero: self.bus.ppu.profiling.text_row_all_zero,
             timer_overflows: self.bus.profiling.timer_overflows,
             dma_starts: self.bus.profiling.dma_starts,
             dma_units: self.bus.profiling.dma_units,
@@ -233,6 +241,7 @@ impl Emulator {
         self.profiling_frames = 0;
         self.cpu.profiling = crate::hardware::profiling::CpuProfiling::default();
         self.bus.profiling = crate::hardware::profiling::BusProfiling::default();
+        self.bus.ppu.profiling = crate::hardware::ppu::PpuProfiling::default();
     }
 }
 

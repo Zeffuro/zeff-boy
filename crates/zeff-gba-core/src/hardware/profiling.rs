@@ -8,6 +8,11 @@ pub struct ProfilingSnapshot {
     pub frame_cpu_direct_instructions: u64,
     pub frame_cpu_direct_cycles: u64,
     pub frame_cpu_direct_kinds: [u64; 3],
+    pub frame_scalar_arm: [u64; 11],
+    pub frame_scalar_thumb: [u64; 17],
+    pub frame_scalar_arm_halfword: [u64; 4],
+    pub pure_opcode_requests: [u64; 2],
+    pub pure_opcode_hits: [[u64; 2]; 3],
     pub cpu_phase_visits: [u64; 8],
     pub instruction_classes_arm: [u64; 11],
     pub instruction_classes_thumb: [u64; 17],
@@ -61,13 +66,17 @@ pub struct ProfilingSnapshot {
     pub visible_hblank_events: u64,
     pub vblank_events: u64,
     pub rendered_scanlines: u64,
+    pub text_row_cache_requests: [u64; 2],
+    pub text_row_cache_hits: [u64; 2],
+    pub text_row_all_zero: [u64; 2],
     pub timer_overflows: [u64; 4],
     pub dma_starts: [u64; 4],
     pub dma_units: [u64; 4],
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct CpuProfiling {
+    pub pure_opcodes: PureOpcodeProbe,
     pub generic_fetch_decode_calls: u64,
     pub gamepak_block_fetches: u64,
     pub ram_block_fetches: [u64; 2],
@@ -78,6 +87,9 @@ pub(crate) struct CpuProfiling {
     pub frame_direct_instructions: u64,
     pub frame_direct_cycles: u64,
     pub frame_direct_kinds: [u64; 3],
+    pub frame_scalar_arm: [u64; 11],
+    pub frame_scalar_thumb: [u64; 17],
+    pub frame_scalar_arm_halfword: [u64; 4],
     pub phase_visits: [u64; 8],
     pub instruction_classes_arm: [u64; 11],
     pub instruction_classes_thumb: [u64; 17],
@@ -113,6 +125,80 @@ pub(crate) struct CpuProfiling {
     pub instruction_fetch_fallbacks: [u64; 5],
     pub instruction_fetch_waitcnt_changes: u64,
     pub last_instruction_fetch_waitcnt: Option<u16>,
+}
+
+/// Direct-mapped locality estimates, keyed by exact opcode and instruction set.
+/// Heap storage stays bounded and is never architectural or serialized state.
+#[derive(Clone, Debug)]
+pub(crate) struct PureOpcodeProbe {
+    tags: [Box<[u64]>; 3],
+    pub requests: [u64; 2],
+    pub hits: [[u64; 2]; 3],
+}
+
+impl Default for PureOpcodeProbe {
+    fn default() -> Self {
+        Self {
+            tags: [64, 256, 1024].map(|size| vec![0; size].into_boxed_slice()),
+            requests: [0; 2],
+            hits: [[0; 2]; 3],
+        }
+    }
+}
+
+impl PureOpcodeProbe {
+    pub fn record(&mut self, raw: u32, thumb: bool) {
+        let isa = usize::from(thumb);
+        // Zero denotes an unused slot; both raw zero and ARM/Thumb remain distinct.
+        let key = (u64::from(raw) | (u64::from(thumb) << 32)) + 1;
+        let hash = (key ^ (key >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.requests[isa] += 1;
+        for (index, tags) in self.tags.iter_mut().enumerate() {
+            let slot = (hash >> (64 - tags.len().ilog2())) as usize;
+            self.hits[index][isa] += u64::from(tags[slot] == key);
+            tags[slot] = key;
+        }
+    }
+}
+
+#[cfg(test)]
+mod pure_opcode_tests {
+    use super::PureOpcodeProbe;
+
+    #[test]
+    fn pure_opcode_probe_tracks_exact_tags_isa_and_independent_clones() {
+        let mut probe = PureOpcodeProbe::default();
+        probe.record(0, false);
+        assert_eq!(probe.hits, [[0; 2]; 3]);
+        probe.record(0, false);
+        assert_eq!(probe.hits, [[1, 0]; 3]);
+        probe.record(0, true);
+        assert_eq!(probe.hits, [[1, 0]; 3]);
+        probe.record(0, true);
+        assert_eq!(probe.hits, [[1, 1]; 3]);
+        let mut cloned = probe.clone();
+        cloned.record(0, true);
+        assert_eq!(probe.requests, [2, 2]);
+        assert_eq!(cloned.requests, [2, 3]);
+        assert_eq!(cloned.hits, [[1, 2]; 3]);
+        probe = PureOpcodeProbe::default();
+        probe.record(0, true);
+        assert_eq!(probe.hits, [[0; 2]; 3]);
+        assert_eq!(
+            probe.tags.iter().map(|tags| tags.len()).sum::<usize>(),
+            1344
+        );
+    }
+
+    #[test]
+    fn pure_opcode_probe_collisions_never_count_as_hits() {
+        let mut probe = PureOpcodeProbe::default();
+        for raw in 0..2048 {
+            probe.record(raw, false);
+        }
+        assert_eq!(probe.requests, [2048, 0]);
+        assert_eq!(probe.hits, [[0; 2]; 3]);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]

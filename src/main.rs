@@ -27,6 +27,8 @@ mod link;
 mod live_control;
 mod mods;
 mod patching;
+#[cfg(not(target_arch = "wasm32"))]
+mod pgo_training;
 mod platform;
 mod replay_execution;
 mod rom_archive;
@@ -52,6 +54,10 @@ use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
     platform::init_logging();
+
+    if pgo_training::run_if_requested()? {
+        return Ok(());
+    }
 
     #[cfg(feature = "profile-cores")]
     if std::env::var("ZEFF_PROFILE_PCE_DISPLAY").as_deref() == Ok("1") {

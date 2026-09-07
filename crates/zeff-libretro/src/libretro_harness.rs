@@ -47,7 +47,8 @@ mod continuation;
 #[cfg(test)]
 use continuation::ContinuationCore;
 use continuation::{AbiContinuationCore, check_state_and_continuation};
-pub use continuation::{ContinuationObservation, ContinuationProof};
+pub type ContinuationObservation = continuation::ContinuationObservation;
+pub use continuation::ContinuationProof;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

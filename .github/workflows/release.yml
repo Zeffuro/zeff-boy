@@ -37,6 +37,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -47,13 +50,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v2-release-${{ matrix.target }}"
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build and verify optimized release binary
+        run: python scripts/build-optimized.py --artifact desktop --expected-target "${{ matrix.target }}" --output-dir "${{ runner.temp }}/zeff-pgo-desktop" --target-dir target
+      - name: Promote verified optimized binary
+        run: python -c "import shutil,sys;shutil.copy2(sys.argv[1],sys.argv[2])" "${{ runner.temp }}/zeff-pgo-desktop/artifacts/optimized-${{ matrix.artifact }}" "target/${{ matrix.target }}/release/${{ matrix.artifact }}"
+      - name: Upload optimization evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: optimization-desktop-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/zeff-pgo-desktop/manifest.json
+            ${{ runner.temp }}/zeff-pgo-desktop/logs/
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -114,6 +128,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Sync .info display_version from tag
         shell: bash
@@ -134,13 +151,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v2-libretro-${{ matrix.target }}"
 
-      - name: Build libretro core
-        run: cargo build --release --target ${{ matrix.target }} -p zeff-libretro
+      - name: Build and verify optimized libretro core
+        run: python scripts/build-optimized.py --artifact libretro --expected-target "${{ matrix.target }}" --output-dir "${{ runner.temp }}/zeff-pgo-libretro" --target-dir target
+      - name: Promote verified optimized core
+        run: python -c "import shutil,sys;shutil.copy2(sys.argv[1],sys.argv[2])" "${{ runner.temp }}/zeff-pgo-libretro/artifacts/optimized-${{ matrix.lib }}" "target/${{ matrix.target }}/release/${{ matrix.lib }}"
+      - name: Upload optimization evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: optimization-libretro-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/zeff-pgo-libretro/manifest.json
+            ${{ runner.temp }}/zeff-pgo-libretro/logs/
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -393,11 +421,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download all artifacts
+      - name: Download application artifacts
         uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
+          pattern: zeff-boy-*
+
+      - name: Download libretro artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: libretro-*
 
       - name: Generate checksums
         run: |
@@ -435,6 +471,8 @@ jobs:
     name: Publish Snap
     needs: publish-release
     uses: ./.github/workflows/snap.yml
+    secrets:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
     with:
       release_tag: ${{ github.ref_name }}
 

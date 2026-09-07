@@ -9,11 +9,15 @@ use super::timing::{CpuInstructionTimeline, TimerIoCompletionEvent};
 mod arm;
 mod decode;
 mod fetch;
+mod frame_arm_metadata;
+mod frame_classify;
+mod frame_data;
 mod frame_direct;
 mod frame_fetch;
 #[cfg(feature = "profiling")]
 mod frame_profile;
 mod frame_run;
+mod frame_thumb_metadata;
 mod instruction_timing;
 mod memory;
 mod ops;
@@ -1004,7 +1008,11 @@ impl Cpu {
     }
 
     fn fetched_condition_passed(&self, fetched: FetchedInstruction) -> bool {
-        match fetched.decoded {
+        self.decoded_condition_passed(fetched.decoded)
+    }
+
+    fn decoded_condition_passed(&self, decoded: DecodedInstruction) -> bool {
+        match decoded {
             DecodedInstruction::Arm { condition, .. } => {
                 condition != 0xF && self.condition_passed(condition)
             }

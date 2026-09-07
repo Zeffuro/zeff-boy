@@ -215,6 +215,25 @@ fn write16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_counts_repeated_4bpp_rows_for_hypothetical_cache() {
+    let fixture = Fixture::opaque();
+    let layers = fixture.layers([true, false, false, false]);
+    let windows = fixture.windows();
+    let mut line = TextLine::new(
+        fixture.y,
+        &fixture.palette,
+        ColorEffects::from_io(&fixture.io),
+        &windows,
+    );
+
+    assert!(line.candidate(&fixture, &layers, &windows, &mut TextRowWork::default(),));
+    assert_eq!(line.ppu.profiling.text_row_cache_requests, [30, 0]);
+    assert_eq!(line.ppu.profiling.text_row_cache_hits, [29, 0]);
+    assert_eq!(line.ppu.profiling.text_row_all_zero, [0, 0]);
+}
+
 fn next(seed: &mut u32) -> u32 {
     *seed ^= *seed << 13;
     *seed ^= *seed >> 17;

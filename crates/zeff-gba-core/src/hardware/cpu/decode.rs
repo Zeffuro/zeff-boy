@@ -69,7 +69,7 @@ pub(super) fn decode_stub(raw: u32, instruction_set: InstructionSet) -> DecodedI
     }
 }
 
-fn decode_arm_class(raw: u32) -> ArmInstructionClass {
+pub(super) const fn decode_arm_class(raw: u32) -> ArmInstructionClass {
     if raw & 0x0FFF_FFF0 == 0x012F_FF10 {
         return ArmInstructionClass::BranchExchange;
     }
@@ -100,7 +100,7 @@ fn decode_arm_class(raw: u32) -> ArmInstructionClass {
     }
 }
 
-fn decode_thumb_class(raw: u16) -> ThumbInstructionClass {
+pub(super) const fn decode_thumb_class(raw: u16) -> ThumbInstructionClass {
     match raw >> 11 {
         0b00000..=0b00010 => ThumbInstructionClass::MoveShiftedRegister,
         0b00011 => ThumbInstructionClass::AddSubtract,

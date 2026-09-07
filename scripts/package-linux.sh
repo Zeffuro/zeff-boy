@@ -118,7 +118,7 @@ Requires: libX11
 Requires: libX11-xcb
 Requires: libXcursor
 Requires: libXi
-Requires: wayland-libs
+Requires: libwayland-client
 Requires: (vulkan-loader or libglvnd-egl)
 Recommends: xdg-desktop-portal
 

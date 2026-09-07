@@ -28,7 +28,12 @@ impl Cpu {
             {
                 (Some(instruction), count)
             } else {
-                (self.step(bus), 1)
+                let instruction = self.step(bus);
+                #[cfg(feature = "profiling")]
+                if let Some(fetched) = instruction {
+                    self.profile_frame_scalar_completion(fetched);
+                }
+                (instruction, 1)
             };
             #[cfg(feature = "profiling")]
             if instruction.is_some() {

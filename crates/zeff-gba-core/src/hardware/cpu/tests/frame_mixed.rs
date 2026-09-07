@@ -282,7 +282,7 @@ fn frame_mixed_rejects_observable_transfers_and_pc_writeback_before_mutation() {
         (0xE590_1000, 0x0C00_4000),
         (0xE580_1000, 0x0800_3000),
         (0xE590_1000, 0x0E00_0000),
-        (0xE1D0_10B0, 0x0200_1080),
+        (0xE1D0_10B0, 0x0400_0100),
     ] {
         let mut phase = fixture(0x0300_0200, &[raw]);
         phase.cpu.regs[0] = address;
@@ -352,6 +352,10 @@ fn frame_mixed_crossing_transfers_and_refills_keep_the_original_phase_chunks() {
         for raw in [
             0xE580_1000,
             0xE590_1000,
+            0xE1C0_10B3,
+            0xE1D0_10B3,
+            0xE1D0_10D3,
+            0xE1D0_10F3,
             0xE8A0_0006,
             0xEAFF_FFFE,
             0xEBFF_FFFE,

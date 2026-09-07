@@ -5,6 +5,41 @@ use zeff_emu_common::time::{ClockRate, MasterTicks};
 
 mod frame_service;
 
+#[cfg(feature = "profiling")]
+#[test]
+fn pure_opcode_probe_persists_across_frames_and_does_not_change_native_state() {
+    let mut rom = minimal_rom();
+    rom[..4].copy_from_slice(&0xE280_0001u32.to_le_bytes());
+    rom[4..8].copy_from_slice(&0xEAFF_FFFDu32.to_le_bytes());
+    let mut emu = Emulator::new(&rom, 48_000).unwrap();
+    emu.step_frame();
+    let first = emu.profiling_snapshot();
+    assert!(first.pure_opcode_requests[0] > 1);
+    assert_eq!(first.pure_opcode_requests[1], 0);
+    let mut cloned = emu.clone();
+    cloned.step_frame();
+    let second = cloned.profiling_snapshot();
+    for size in 0..3 {
+        assert_eq!(
+            second.pure_opcode_hits[size][0] - first.pure_opcode_hits[size][0],
+            second.pure_opcode_requests[0] - first.pure_opcode_requests[0]
+        );
+    }
+    assert_eq!(emu.profiling_snapshot(), first);
+    let before = cloned.encode_state().unwrap();
+    cloned.reset_profiling();
+    assert_eq!(cloned.encode_state().unwrap(), before);
+    assert_eq!(cloned.profiling_snapshot().pure_opcode_requests, [0; 2]);
+    cloned.step_frame();
+    let reset = cloned.profiling_snapshot();
+    for size in 0..3 {
+        assert_eq!(
+            reset.pure_opcode_hits[size][0] + 1,
+            reset.pure_opcode_requests[0]
+        );
+    }
+}
+
 fn minimal_rom() -> Vec<u8> {
     let mut rom = vec![0; 0xC0];
     rom[0xA0..0xA4].copy_from_slice(b"TEST");
@@ -22,6 +57,12 @@ fn profiling_counts_frame_work_and_resets() {
 
     let snapshot = emu.profiling_snapshot();
     assert_eq!(snapshot.frames, 1);
+    assert_eq!(
+        snapshot.frame_scalar_arm.iter().sum::<u64>()
+            + snapshot.frame_scalar_thumb.iter().sum::<u64>()
+            + snapshot.frame_cpu_direct_instructions,
+        snapshot.frame_cpu_run_instructions,
+    );
     assert!(snapshot.completed_instructions > 0);
     for visits in &snapshot.cpu_phase_visits[..3] {
         assert_eq!(

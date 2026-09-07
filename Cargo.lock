@@ -5994,7 +5994,7 @@ dependencies = [
 
 [[package]]
 name = "zeff-boy"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -6053,6 +6053,7 @@ dependencies = [
  "zeff-gba-core",
  "zeff-nes-core",
  "zeff-pce-core",
+ "zeff-pgo-corpus",
  "zeff-sega8-core",
  "zeff-ws-core",
  "zeff-z80",
@@ -6177,6 +6178,21 @@ dependencies = [
  "criterion",
  "sha2",
  "zeff-emu-common",
+]
+
+[[package]]
+name = "zeff-pgo-corpus"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "zeff-gb-core",
+ "zeff-gba-core",
+ "zeff-nes-core",
+ "zeff-pce-core",
+ "zeff-sega8-core",
+ "zeff-ws-core",
 ]
 
 [[package]]

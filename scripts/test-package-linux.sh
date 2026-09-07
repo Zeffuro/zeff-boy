@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ $# -gt 1 ]]; then
+  echo "usage: $0 [rpm-output-dir]" >&2
+  exit 2
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
+RPM_OUTPUT_DIR="${1:-}"
 
 for tool in gcc dpkg-deb lintian rpmbuild rpm; do
   if ! command -v "$tool" >/dev/null; then
@@ -61,3 +67,10 @@ check_packages \
   v0.0.0-test.1 \
   zeff-boy_0.0.0-test.1_amd64.deb \
   zeff-boy-0.0.0-0.1.test.1.x86_64.rpm
+
+if [[ -n "$RPM_OUTPUT_DIR" ]]; then
+  mkdir -p "$RPM_OUTPUT_DIR"
+  install -m644 \
+    "$WORK_DIR/packages-0.3.0/zeff-boy-0.3.0-1.x86_64.rpm" \
+    "$RPM_OUTPUT_DIR/zeff-boy-0.3.0-1.x86_64.rpm"
+fi

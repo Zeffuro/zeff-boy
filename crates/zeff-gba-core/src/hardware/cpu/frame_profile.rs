@@ -6,6 +6,26 @@ use super::{
 };
 
 impl Cpu {
+    pub(super) fn profile_frame_scalar_completion(&mut self, fetched: FetchedInstruction) {
+        let counter = match fetched.decoded {
+            DecodedInstruction::Arm { class, .. } => {
+                if class == super::ArmInstructionClass::SingleDataTransfer
+                    && fetched.raw & 0x0E00_0090 == 0x90
+                    && fetched.raw & 0x60 != 0
+                {
+                    let subtype = ((fetched.raw >> 5) & 3) as usize;
+                    self.profiling.frame_scalar_arm_halfword[subtype] =
+                        self.profiling.frame_scalar_arm_halfword[subtype].wrapping_add(1);
+                }
+                &mut self.profiling.frame_scalar_arm[class as usize]
+            }
+            DecodedInstruction::Thumb { class } => {
+                &mut self.profiling.frame_scalar_thumb[class as usize]
+            }
+        };
+        *counter = counter.wrapping_add(1);
+    }
+
     pub(super) fn profile_frame_kernel_fetch_gate(&self, bus: &Bus) -> usize {
         if !bus.frame_service_active() {
             return 1;

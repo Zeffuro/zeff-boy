@@ -32,6 +32,10 @@ pub(super) fn profile_frames(
     profile_frames_with_prepare(label, frames, machine, |machine| machine.reset_profiling());
     let snapshot = machine.profiling_snapshot();
     println!(
+        "  GBA direct pure opcode locality ARM/Thumb requests {:?}; direct-mapped 64/256/1024 hits {:?} (exact raw+ISA; excludes condition-failed non-pure opcodes)",
+        snapshot.pure_opcode_requests, snapshot.pure_opcode_hits,
+    );
+    println!(
         "  GBA work: {} frames  {} instructions  {} CPU runs / {} CPU-run instructions  {} bus calls  {} deferred calls / {} deferred cycles  {} service entries  {} chunks  {} cycles",
         snapshot.frames,
         snapshot.completed_instructions,
@@ -60,6 +64,21 @@ pub(super) fn profile_frames(
         snapshot.timer_overflows,
         snapshot.dma_starts,
         snapshot.dma_units,
+    );
+    println!(
+        "  GBA scalar-completed ARM classes {:?}  Thumb classes {:?}  ARM halfword subtype reserved/half/signed-byte/signed-half {:?}",
+        snapshot.frame_scalar_arm, snapshot.frame_scalar_thumb, snapshot.frame_scalar_arm_halfword,
+    );
+    println!(
+        "  GBA text-row hypothetical 32-slot cache requests/hits 4bpp {}/{}  8bpp {}/{}",
+        snapshot.text_row_cache_requests[0],
+        snapshot.text_row_cache_hits[0],
+        snapshot.text_row_cache_requests[1],
+        snapshot.text_row_cache_hits[1],
+    );
+    println!(
+        "  GBA text-row all-zero decoded rows 4bpp {}  8bpp {}",
+        snapshot.text_row_all_zero[0], snapshot.text_row_all_zero[1],
     );
     println!(
         "  GBA ARM classes BX/B/block/single/DP/mul/mull/swap/SWI/coproc/unknown: {:?}",
