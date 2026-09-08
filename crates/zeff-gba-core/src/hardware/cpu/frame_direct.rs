@@ -1,5 +1,7 @@
 use super::super::constants::{EWRAM_END, EWRAM_SIZE, IWRAM_END, IWRAM_SIZE};
-use super::super::timing::{self, AccessType, BusRegion, DataAccessCursor};
+use super::super::timing::{
+    self, AccessType, BusRegion, DataAccessCursor, RamAccessTiming as DirectRam,
+};
 #[cfg(test)]
 pub(super) use super::frame_classify::classify_stateless_pure;
 use super::frame_classify::classify_stateless_pure_parts;
@@ -79,12 +81,6 @@ pub(super) enum DirectPure {
 
 #[cfg(not(test))]
 const _: () = assert!(size_of::<Option<(DirectOperation, u32)>>() <= 36);
-
-#[derive(Clone, Copy)]
-enum DirectRam {
-    Ewram,
-    Iwram,
-}
 
 #[derive(Clone, Copy)]
 struct DirectBlockTransfer {
@@ -658,20 +654,7 @@ impl Cpu {
         };
         let load = raw & (1 << 20) != 0;
         let writeback = raw & (1 << 21) != 0 && !(load && list & (1 << base_register) != 0);
-        let mut cursor = DataAccessCursor::default();
-        cursor.reset(fetched.fetch_cycles);
-        for index in 0..count {
-            cursor.advance(
-                address + index * 4,
-                4,
-                if index == 0 {
-                    AccessType::NonSequential
-                } else {
-                    AccessType::Sequential
-                },
-                bus.waitcnt(),
-            );
-        }
+        let cursor = DataAccessCursor::for_ram_accesses(fetched.fetch_cycles, ram, 4, count);
         Some((
             DirectBlockTransfer {
                 ram,

@@ -157,5 +157,5 @@ fn direct_nes_file(source_path: &Path, rom_path: &Path) -> bool {
             .is_some_and(|extension| extension.eq_ignore_ascii_case("nes"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

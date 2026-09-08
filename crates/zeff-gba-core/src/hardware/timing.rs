@@ -104,6 +104,25 @@ impl TimerIoCompletionEvent {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum RamAccessTiming {
+    Ewram,
+    Iwram,
+}
+
+impl RamAccessTiming {
+    const fn bus_cycles(self) -> u32 {
+        match self {
+            Self::Ewram => 3,
+            Self::Iwram => 1,
+        }
+    }
+
+    const fn word_uses_halfwords(self) -> bool {
+        matches!(self, Self::Ewram)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DataAccessCursor {
     timeline_origin_cycle: u32,
@@ -161,6 +180,26 @@ pub(crate) struct DataAccessCompletion {
 }
 
 impl DataAccessCursor {
+    /// Callers must already exclude device events and RAM-boundary crossings.
+    pub(super) fn for_ram_accesses(
+        timeline_origin_cycle: u32,
+        ram: RamAccessTiming,
+        width: u8,
+        count: u32,
+    ) -> Self {
+        debug_assert!(matches!(width, 1 | 2 | 4));
+        let transactions = if width == WORD_BYTES && ram.word_uses_halfwords() {
+            2
+        } else {
+            1
+        };
+        Self {
+            timeline_origin_cycle,
+            elapsed_cycles: (ram.bus_cycles() * transactions).saturating_mul(count),
+            access_count: count,
+        }
+    }
+
     pub(crate) fn reset(&mut self, timeline_origin_cycle: u32) {
         self.timeline_origin_cycle = timeline_origin_cycle;
         self.elapsed_cycles = 0;
@@ -308,8 +347,8 @@ pub fn access_cycles_with_waitcnt(
     let region = region_for_addr(addr);
     let base = match (region, access) {
         (BusRegion::Bios, _) => 1,
-        (BusRegion::Ewram, _) => 3,
-        (BusRegion::Iwram, _) => 1,
+        (BusRegion::Ewram, _) => RamAccessTiming::Ewram.bus_cycles(),
+        (BusRegion::Iwram, _) => RamAccessTiming::Iwram.bus_cycles(),
         (BusRegion::Io, _) => 1,
         (BusRegion::PaletteRam | BusRegion::Vram | BusRegion::Oam, _) => 1,
         (BusRegion::GamePak0, AccessType::NonSequential) => {
@@ -413,20 +452,97 @@ fn sram_access_cycles(waitcnt: u16) -> u32 {
 }
 
 fn word_access_uses_halfwords(addr: u32) -> bool {
-    matches!(
-        region_for_addr(addr),
-        BusRegion::Ewram
-            | BusRegion::PaletteRam
-            | BusRegion::Vram
-            | BusRegion::GamePak0
-            | BusRegion::GamePak1
-            | BusRegion::GamePak2
-    )
+    match region_for_addr(addr) {
+        BusRegion::Ewram => RamAccessTiming::Ewram.word_uses_halfwords(),
+        BusRegion::Iwram => RamAccessTiming::Iwram.word_uses_halfwords(),
+        BusRegion::PaletteRam
+        | BusRegion::Vram
+        | BusRegion::GamePak0
+        | BusRegion::GamePak1
+        | BusRegion::GamePak2 => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uniform_ram_cursor_matches_each_generic_access() {
+        for (ram, addresses) in [
+            (
+                RamAccessTiming::Ewram,
+                [0x0200_0000, 0x0203_FFC0, 0x0204_0100, 0x02FF_FF80],
+            ),
+            (
+                RamAccessTiming::Iwram,
+                [0x0300_0000, 0x0300_7FC0, 0x0300_8100, 0x03FF_FF80],
+            ),
+        ] {
+            for address in addresses {
+                for alignment in 0..4 {
+                    for width in [1, 2, 4] {
+                        for count in 0..=16 {
+                            for origin in [0, 9, u32::MAX - 2, u32::MAX] {
+                                for waitcnt in [0, 0x47FF, u16::MAX] {
+                                    for first_access in
+                                        [AccessType::NonSequential, AccessType::Sequential]
+                                    {
+                                        let mut expected = DataAccessCursor::default();
+                                        expected.reset(origin);
+                                        for index in 0..count {
+                                            expected.advance(
+                                                address + alignment + index * u32::from(width),
+                                                width,
+                                                if index == 0 {
+                                                    first_access
+                                                } else {
+                                                    AccessType::Sequential
+                                                },
+                                                waitcnt,
+                                            );
+                                        }
+                                        assert_eq!(
+                                            DataAccessCursor::for_ram_accesses(
+                                                origin, ram, width, count
+                                            ),
+                                            expected,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn uniform_ram_cursor_preserves_saturation_and_fetch_data_distinction() {
+        for ram in [RamAccessTiming::Ewram, RamAccessTiming::Iwram] {
+            for width in [1, 2, 4] {
+                assert_eq!(
+                    DataAccessCursor::for_ram_accesses(7, ram, width, u32::MAX).state(),
+                    (7, u32::MAX, u32::MAX),
+                );
+            }
+        }
+        assert_eq!(instruction_fetch_cycles(0x0200_0000, 4, true), 3);
+        assert_eq!(
+            DataAccessCursor::for_ram_accesses(0, RamAccessTiming::Ewram, 4, 1).state(),
+            (0, 6, 1)
+        );
+        assert_eq!(
+            DataAccessCursor::for_ram_accesses(0, RamAccessTiming::Ewram, 2, 1).state(),
+            (0, 3, 1)
+        );
+        assert_eq!(
+            DataAccessCursor::for_ram_accesses(0, RamAccessTiming::Iwram, 4, 1).state(),
+            (0, 1, 1)
+        );
+    }
 
     #[test]
     fn maps_common_regions() {

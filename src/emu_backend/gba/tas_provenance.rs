@@ -134,7 +134,7 @@ fn has_gba_extension(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("gba"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_source};

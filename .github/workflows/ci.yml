@@ -198,6 +198,11 @@ jobs:
       - name: Check
         run: cargo check --target wasm32-unknown-unknown --no-default-features
 
+      - name: Check test configurations
+        run: |
+          cargo check --locked --package zeff-boy --bin zeff-boy --tests --target wasm32-unknown-unknown --no-default-features
+          cargo check --locked --package zeff-boy --bin zeff-boy --tests --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests
+
       - name: Build browser deployment
         run: trunk build --release --public-url /zeff-boy/
 

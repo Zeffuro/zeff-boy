@@ -127,6 +127,7 @@ fn load_state_response_has_no_game_boy_serial_device_for_other_systems() {
     ));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn load_state_response_carries_structured_best_effort_bess_warning() {
     let mut backend = gb_backend();
@@ -155,6 +156,7 @@ fn load_state_response_carries_structured_best_effort_bess_warning() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn load_state_response_carries_structured_best_effort_portable_warning() {
     let mut backend = gb_backend();
