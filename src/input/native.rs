@@ -2,7 +2,11 @@
 use gilrs::ff;
 use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs};
 
-use crate::settings::GamepadBindings;
+use std::collections::BTreeMap;
+
+use super::routing::{EffectiveGamepads, GamepadRawPress, GamepadRouter, action_bit, ws_bit};
+use super::{GamepadCommand, GamepadSnapshot, HostButton, RuntimeGamepadId};
+use crate::settings::{GamepadBindings, GamepadFingerprint, InputDeviceSettings};
 
 use super::GamepadPoll;
 
@@ -12,7 +16,10 @@ const RUMBLE_MAGNITUDE: u16 = 40_000;
 pub(crate) struct GamepadHandler {
     gilrs: Gilrs,
     active_gamepad: Option<GamepadId>,
-    player_gamepads: [Option<GamepadId>; 5],
+    connected: BTreeMap<usize, (GamepadId, RuntimeGamepadId)>,
+    next_connection: u64,
+    router: GamepadRouter,
+    effective: EffectiveGamepads,
     #[cfg(not(target_arch = "wasm32"))]
     rumble_effect: Option<ff::Effect>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -26,7 +33,10 @@ impl GamepadHandler {
         Ok(Self {
             gilrs,
             active_gamepad: None,
-            player_gamepads: [None; 5],
+            connected: BTreeMap::new(),
+            next_connection: 1,
+            router: GamepadRouter::default(),
+            effective: EffectiveGamepads::default(),
             #[cfg(not(target_arch = "wasm32"))]
             rumble_effect: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -34,84 +44,158 @@ impl GamepadHandler {
         })
     }
 
-    pub(crate) fn poll(&mut self, bindings: &GamepadBindings) -> GamepadPoll {
-        let mut events = Vec::with_capacity(4);
-        let mut events_p2 = Vec::with_capacity(4);
-        let mut events_p3 = Vec::with_capacity(4);
-        let mut events_p4 = Vec::with_capacity(4);
-        let mut events_p5 = Vec::with_capacity(4);
-        let mut ws_events = Vec::with_capacity(4);
-        let mut action_events = Vec::with_capacity(4);
-        let mut raw_pressed = Vec::with_capacity(4);
+    pub(crate) fn snapshot(&self) -> GamepadSnapshot {
+        self.router.snapshot().clone()
+    }
+
+    pub(crate) fn apply_command(&mut self, command: GamepadCommand) {
+        self.router.apply_command(command);
+    }
+
+    fn ensure_connected(&mut self, id: GamepadId) -> RuntimeGamepadId {
+        let key = usize::from(id);
+        if let Some((_, runtime)) = self.connected.get(&key) {
+            return *runtime;
+        }
+        let runtime = RuntimeGamepadId(self.next_connection);
+        self.next_connection = self.next_connection.saturating_add(1);
+        let gamepad = self.gilrs.gamepad(id);
+        self.router.connect(
+            runtime,
+            GamepadFingerprint {
+                name: gamepad.name().to_owned(),
+                uuid: gamepad
+                    .uuid()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
+            },
+        );
+        self.connected.insert(key, (id, runtime));
+        runtime
+    }
+
+    pub(crate) fn poll(
+        &mut self,
+        bindings: &GamepadBindings,
+        preferences: &InputDeviceSettings,
+        capture_active: bool,
+        deadzone: f32,
+    ) -> GamepadPoll {
+        let mut raw_pressed = Vec::new();
+        // Apply capture/config changes before consuming new physical events.
+        self.router
+            .resolve(preferences, bindings, capture_active, deadzone);
         while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
-            let player = self.player_for_gamepad(id);
+            if matches!(event, EventType::Disconnected) {
+                if let Some((_, runtime)) = self.connected.remove(&usize::from(id)) {
+                    self.router.disconnect(runtime);
+                }
+                continue;
+            }
+            if !self.gilrs.gamepad(id).is_connected() {
+                continue;
+            }
+            let newly_connected = !self.connected.contains_key(&usize::from(id));
+            let runtime = self.ensure_connected(id);
+            if newly_connected {
+                self.router
+                    .resolve(preferences, bindings, capture_active, deadzone);
+            }
             match event {
                 EventType::ButtonPressed(button, _) => {
                     let name = button_name(button);
-                    raw_pressed.push(name);
-                    if let Some(key) = bindings.map_button_name_for_player(name, player) {
-                        match player {
-                            1 => events.push((key, true)),
-                            2 => events_p2.push((key, true)),
-                            3 => events_p3.push((key, true)),
-                            4 => events_p4.push((key, true)),
-                            5 => events_p5.push((key, true)),
-                            _ => {}
-                        }
-                    }
-                    if player == 1 {
-                        if let Some(action) = bindings.map_action_button_name(name) {
-                            action_events.push((action, true));
-                        }
-                        if let Some(button) = bindings.map_ws_button_name(name) {
-                            ws_events.push((button, true));
-                        }
+                    let capture_ready = self.router.capture_accepts_press();
+                    if self.router.button(runtime, name, true) && capture_ready {
+                        raw_pressed.push(GamepadRawPress {
+                            device: runtime,
+                            button: name,
+                        });
                     }
                 }
                 EventType::ButtonReleased(button, _) => {
-                    let name = button_name(button);
-                    if let Some(key) = bindings.map_button_name_for_player(name, player) {
-                        match player {
-                            1 => events.push((key, false)),
-                            2 => events_p2.push((key, false)),
-                            3 => events_p3.push((key, false)),
-                            4 => events_p4.push((key, false)),
-                            5 => events_p5.push((key, false)),
-                            _ => {}
-                        }
-                    }
-                    if player == 1 {
-                        if let Some(action) = bindings.map_action_button_name(name) {
-                            action_events.push((action, false));
-                        }
-                        if let Some(button) = bindings.map_ws_button_name(name) {
-                            ws_events.push((button, false));
-                        }
-                    }
-                }
-                EventType::Disconnected => {
-                    let was_active_gamepad = self.active_gamepad == Some(id);
-                    self.release_gamepad(id);
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if was_active_gamepad {
-                        self.rumble_effect = None;
-                        self.rumble_playing = false;
-                    }
+                    self.router.button(runtime, button_name(button), false);
                 }
                 _ => {}
             }
         }
-
-        let left_stick = self
-            .active_gamepad
-            .map(|id| {
-                let gp = self.gilrs.gamepad(id);
-                let x = gp.value(Axis::LeftStickX).clamp(-1.0, 1.0);
-                let y = gp.value(Axis::LeftStickY).clamp(-1.0, 1.0);
-                (x, y)
+        // Enumerate connected devices even before their first button press, including on web.
+        let connected: Vec<_> = self.gilrs.gamepads().map(|(id, _)| id).collect();
+        for id in connected {
+            let runtime = self.ensure_connected(id);
+            let gamepad = self.gilrs.gamepad(id);
+            self.router.stick(
+                runtime,
+                (
+                    gamepad.value(Axis::LeftStickX),
+                    gamepad.value(Axis::LeftStickY),
+                ),
+            );
+            self.router.right_stick(
+                runtime,
+                (
+                    gamepad.value(Axis::RightStickX),
+                    gamepad.value(Axis::RightStickY),
+                ),
+            );
+        }
+        let effective = self
+            .router
+            .resolve(preferences, bindings, capture_active, deadzone);
+        let mut player_events: [Vec<(HostButton, bool)>; 5] = std::array::from_fn(|_| Vec::new());
+        for (index, events) in player_events.iter_mut().enumerate() {
+            for &button in HostButton::WITH_SIX_BUTTONS {
+                let bit = button.host_mask_bit();
+                let before = self.effective.players[index].buttons & bit != 0;
+                let after = effective.players[index].buttons & bit != 0;
+                if before != after {
+                    events.push((button, after));
+                }
+            }
+        }
+        let ws_events = crate::settings::WonderSwanButton::ALL
+            .iter()
+            .copied()
+            .filter_map(|button| {
+                let bit = ws_bit(button);
+                let before = self.effective.ws & bit != 0;
+                let after = effective.ws & bit != 0;
+                (before != after).then_some((button, after))
             })
-            .unwrap_or((0.0, 0.0));
-
+            .collect();
+        use crate::settings::GamepadAction;
+        let mut action_events: Vec<_> = [
+            GamepadAction::SpeedUp,
+            GamepadAction::Rewind,
+            GamepadAction::Turbo,
+        ]
+        .into_iter()
+        .filter_map(|action| {
+            let bit = action_bit(action);
+            let before = self.effective.actions & bit != 0;
+            let after = effective.actions & bit != 0;
+            (before != after).then_some((action, after))
+        })
+        .collect();
+        action_events
+            .extend((0..self.router.take_pause_presses()).map(|_| (GamepadAction::Pause, true)));
+        let assigned = self.router.assigned_p1().and_then(|runtime| {
+            self.connected
+                .values()
+                .find_map(|&(id, candidate)| (candidate == runtime).then_some(id))
+        });
+        if self.active_gamepad != assigned {
+            self.set_rumble(false);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.rumble_effect = None;
+                self.rumble_playing = false;
+            }
+            self.active_gamepad = assigned;
+        }
+        let player_sticks = effective.players.map(|player| player.stick);
+        self.effective = effective;
+        let [events, events_p2, events_p3, events_p4, events_p5] = player_events;
         GamepadPoll {
             events,
             events_p2,
@@ -120,7 +204,8 @@ impl GamepadHandler {
             events_p5,
             ws_events,
             action_events,
-            left_stick,
+            left_stick: player_sticks[0],
+            player_sticks,
             raw_pressed,
         }
     }
@@ -172,39 +257,6 @@ impl GamepadHandler {
 
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn set_rumble(&mut self, _active: bool) {}
-
-    fn player_for_gamepad(&mut self, id: GamepadId) -> u8 {
-        if self.player_gamepads[0] == Some(id) {
-            self.active_gamepad = Some(id);
-            return 1;
-        }
-        for (index, slot) in self.player_gamepads.iter().enumerate().skip(1) {
-            if *slot == Some(id) {
-                return u8::try_from(index + 1).unwrap_or(1);
-            }
-        }
-        for (index, slot) in self.player_gamepads.iter_mut().enumerate() {
-            if slot.is_none() {
-                *slot = Some(id);
-                if index == 0 {
-                    self.active_gamepad = Some(id);
-                }
-                return u8::try_from(index + 1).unwrap_or(1);
-            }
-        }
-        1
-    }
-
-    fn release_gamepad(&mut self, id: GamepadId) {
-        for slot in &mut self.player_gamepads {
-            if *slot == Some(id) {
-                *slot = None;
-            }
-        }
-        if self.active_gamepad == Some(id) {
-            self.active_gamepad = self.player_gamepads[0];
-        }
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

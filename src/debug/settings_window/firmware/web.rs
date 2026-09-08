@@ -32,18 +32,20 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         }
     }
 
-    if ui
-        .add_enabled(
-            !state.firmware_inventory.web_operation_pending,
-            egui::Button::new("Import firmware..."),
-        )
-        .clicked()
-    {
-        crate::platform::FileDialog::new()
-            .add_filter("Firmware", &["bin", "rom", "bios", "col"])
-            .set_title("Import firmware")
-            .pick_file_web(state.firmware_inventory.pending_file.clone());
-    }
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(
+                !state.firmware_inventory.web_operation_pending,
+                egui::Button::new("Import firmware..."),
+            )
+            .clicked()
+        {
+            crate::platform::FileDialog::new()
+                .add_filter("Firmware", &["bin", "rom", "bios", "col"])
+                .set_title("Import firmware")
+                .pick_file_web(state.firmware_inventory.pending_file.clone());
+        }
+    });
     ui.label(
         egui::RichText::new("Recognized firmware is stored in this browser.")
             .weak()

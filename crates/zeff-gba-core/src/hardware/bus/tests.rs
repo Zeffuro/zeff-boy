@@ -101,6 +101,34 @@ fn deadline_cache_preserves_tied_ppu_and_timer_events() {
 }
 
 #[test]
+fn timer0_count_up_bit_keeps_deadline_irq_cascade_and_fifo_clock() {
+    let mut bus = Bus::new(cartridge(), 48_000);
+    bus.write16(0x0400_0082, (1 << 8) | (1 << 9));
+    bus.write16(0x0400_00A0, 0x2211);
+    bus.write32(0x0400_0104, 0x00C4_FFFF);
+    bus.write32(0x0400_0100, 0x00C4_FFFE);
+
+    assert_eq!(bus.read16(0x0400_0102), 0x00C4);
+    assert_eq!(bus.read16(0x0400_0106), 0x00C4);
+    let deadline = bus.fresh_event_deadline();
+    assert_eq!(deadline.remaining, 3);
+    assert_eq!(deadline.sources, 1 << DEADLINE_TIMER_SHIFT);
+
+    bus.step_cycles(2);
+    assert_eq!(bus.read16(0x0400_0100), 0xFFFF);
+    assert_eq!(bus.read16(0x0400_0202) & 0x18, 0);
+    assert_eq!(bus.apu.fifo_len(0), 2);
+
+    bus.step_cycles(1);
+    assert_eq!(bus.read16(0x0400_0100), 0xFFFE);
+    assert_eq!(bus.read16(0x0400_0104), 0xFFFF);
+    assert_eq!(bus.read16(0x0400_0202) & 0x18, 0x18);
+    assert_eq!(bus.apu.fifo_len(0), 1);
+    assert_eq!(bus.apu.debug_snapshot().current_sample[0], 0x11);
+    assert_eq!(bus.fresh_event_deadline().remaining, 2);
+}
+
+#[test]
 fn deadline_cache_invalidates_for_timer_irq_and_reset_mutations() {
     let mut bus = Bus::new(cartridge(), 48_000);
     bus.step_cycles(1);

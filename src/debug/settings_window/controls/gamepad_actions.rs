@@ -33,18 +33,13 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                             display
                         };
                         if ui.button(capture_label).clicked() {
+                            super::joypad::clear_capture(state);
                             state.rebinding_gamepad_action = Some(action);
-                            state.rebinding_gamepad = None;
-                            state.rebinding_gamepad_p2 = None;
-                            state.rebinding_ws_gamepad = None;
-                            state.rebinding_action = None;
-                            state.rebinding_shortcut = None;
-                            state.rebinding_speedup = false;
-                            state.rebinding_rewind = false;
                         }
                         if !settings.gamepad_bindings.get_action(action).is_empty()
                             && ui.small_button("✕").clicked()
                         {
+                            super::joypad::clear_capture(state);
                             settings.gamepad_bindings.set_action(action, "");
                         }
                         ui.end_row();

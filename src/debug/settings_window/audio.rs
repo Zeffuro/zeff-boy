@@ -5,6 +5,13 @@ use crate::settings::Settings;
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     const OUTPUT_SAMPLE_RATES: [u32; 5] = [32_000, 44_100, 48_000, 96_000, 192_000];
 
+    ui.label(
+        egui::RichText::new("Output, filtering, and recording defaults.")
+            .small()
+            .weak(),
+    );
+
+    ui.separator();
     ui.heading("Volume");
     ui.add(
         egui::Slider::new(&mut settings.audio.volume, 0.0..=1.0)
@@ -17,7 +24,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     );
 
     ui.separator();
-    ui.heading("Output");
+    ui.heading("Output format");
     egui::ComboBox::from_label("Emulator sample rate")
         .selected_text(format!("{} Hz", settings.audio.output_sample_rate))
         .show_ui(ui, |ui| {
@@ -35,7 +42,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         );
 
     ui.separator();
-    ui.heading("Filtering");
+    ui.heading("Output filter");
     ui.checkbox(
         &mut settings.audio.low_pass_enabled,
         "Enable low-pass output filter",
@@ -49,7 +56,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
     });
 
     ui.separator();
-    ui.heading("Recording");
+    ui.heading("Audio recording");
 
     enum_combo_box(ui, "Recording format", &mut settings.audio.recording_format);
     if !ogg_vorbis_supported() {

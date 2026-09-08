@@ -24,6 +24,7 @@ pub(super) struct HostInputState {
     coleco_remote_keypad_pressed: u16,
     coleco_remote_keypad_p2_pressed: u16,
     gamepad_stick_dpad_pressed: u8,
+    gamepad_multiplayer_stick_dpad_pressed: [u8; 4],
     tilt_keyboard_pressed: u8,
     ws_keyboard_x_pressed: u8,
     ws_keyboard_y_pressed: u8,
@@ -253,40 +254,21 @@ impl HostInputState {
     }
 
     pub(super) fn set_gamepad_stick_dpad(&mut self, left_stick: (f32, f32), deadzone: f32) {
-        let (x, y) = left_stick;
-        let ax = x.abs();
-        let ay = y.abs();
+        self.gamepad_stick_dpad_pressed = stick_dpad_mask(left_stick, deadzone);
+    }
 
-        let mut use_x = ax >= deadzone;
-        let mut use_y = ay >= deadzone;
-
-        const CARDINAL_SNAP: f32 = 0.18; // ~tan(10deg)
-        if use_x && use_y {
-            if ay < ax * CARDINAL_SNAP {
-                use_y = false;
-            } else if ax < ay * CARDINAL_SNAP {
-                use_x = false;
-            }
+    pub(super) fn set_multiplayer_gamepad_sticks(
+        &mut self,
+        sticks: [(f32, f32); 5],
+        deadzone: f32,
+    ) {
+        for (mask, stick) in self
+            .gamepad_multiplayer_stick_dpad_pressed
+            .iter_mut()
+            .zip(sticks.into_iter().skip(1))
+        {
+            *mask = stick_dpad_mask(stick, deadzone);
         }
-
-        let mut mask = 0u8;
-        if use_x {
-            if x >= deadzone {
-                mask |= 1 << 0;
-            }
-            if x <= -deadzone {
-                mask |= 1 << 1;
-            }
-        }
-        if use_y {
-            if y >= deadzone {
-                mask |= 1 << 2;
-            }
-            if y <= -deadzone {
-                mask |= 1 << 3;
-            }
-        }
-        self.gamepad_stick_dpad_pressed = mask;
     }
 
     pub(super) fn clear_gamepad_stick_dpad(&mut self) {
@@ -324,7 +306,11 @@ impl HostInputState {
     }
 
     pub(super) fn dpad_p2_pressed(&self) -> u8 {
-        ((self.keyboard_p2_pressed | self.gamepad_p2_pressed | self.remote_p2_pressed) & 0x0F) as u8
+        ((self.keyboard_p2_pressed
+            | self.gamepad_p2_pressed
+            | self.remote_p2_pressed
+            | u16::from(self.gamepad_multiplayer_stick_dpad_pressed[0]))
+            & 0x0F) as u8
     }
 
     pub(super) fn buttons_p2_pressed(&self) -> u8 {
@@ -342,7 +328,11 @@ impl HostInputState {
     }
 
     pub(super) fn dpad_p3_pressed(&self) -> u8 {
-        ((self.keyboard_p3_pressed | self.gamepad_p3_pressed | self.remote_p3_pressed) & 0x0F) as u8
+        ((self.keyboard_p3_pressed
+            | self.gamepad_p3_pressed
+            | self.remote_p3_pressed
+            | u16::from(self.gamepad_multiplayer_stick_dpad_pressed[1]))
+            & 0x0F) as u8
     }
 
     pub(super) fn buttons_p3_pressed(&self) -> u8 {
@@ -350,7 +340,11 @@ impl HostInputState {
     }
 
     pub(super) fn dpad_p4_pressed(&self) -> u8 {
-        ((self.keyboard_p4_pressed | self.gamepad_p4_pressed | self.remote_p4_pressed) & 0x0F) as u8
+        ((self.keyboard_p4_pressed
+            | self.gamepad_p4_pressed
+            | self.remote_p4_pressed
+            | u16::from(self.gamepad_multiplayer_stick_dpad_pressed[2]))
+            & 0x0F) as u8
     }
 
     pub(super) fn buttons_p4_pressed(&self) -> u8 {
@@ -358,7 +352,11 @@ impl HostInputState {
     }
 
     pub(super) fn dpad_p5_pressed(&self) -> u8 {
-        ((self.keyboard_p5_pressed | self.gamepad_p5_pressed | self.remote_p5_pressed) & 0x0F) as u8
+        ((self.keyboard_p5_pressed
+            | self.gamepad_p5_pressed
+            | self.remote_p5_pressed
+            | u16::from(self.gamepad_multiplayer_stick_dpad_pressed[3]))
+            & 0x0F) as u8
     }
 
     pub(super) fn buttons_p5_pressed(&self) -> u8 {
@@ -393,6 +391,43 @@ impl HostInputState {
             *mask &= !bit;
         }
     }
+}
+
+fn stick_dpad_mask(left_stick: (f32, f32), deadzone: f32) -> u8 {
+    let (x, y) = left_stick;
+    let ax = x.abs();
+    let ay = y.abs();
+
+    let mut use_x = ax > 0.0 && ax >= deadzone;
+    let mut use_y = ay > 0.0 && ay >= deadzone;
+
+    const CARDINAL_SNAP: f32 = 0.18; // ~tan(10deg)
+    if use_x && use_y {
+        if ay < ax * CARDINAL_SNAP {
+            use_y = false;
+        } else if ax < ay * CARDINAL_SNAP {
+            use_x = false;
+        }
+    }
+
+    let mut mask = 0u8;
+    if use_x {
+        if x >= deadzone {
+            mask |= 1 << 0;
+        }
+        if x <= -deadzone {
+            mask |= 1 << 1;
+        }
+    }
+    if use_y {
+        if y >= deadzone {
+            mask |= 1 << 2;
+        }
+        if y <= -deadzone {
+            mask |= 1 << 3;
+        }
+    }
+    mask
 }
 
 fn set_coleco_keypad_bit(mask: &mut u16, key: u8, pressed: bool) {

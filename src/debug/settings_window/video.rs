@@ -10,7 +10,12 @@ pub(super) fn draw(
     is_pocket_camera: bool,
     #[cfg(target_arch = "wasm32")] nes_palette_file_slot: crate::platform::FileDataSlot,
 ) {
-    ui.heading("Video");
+    ui.label(
+        egui::RichText::new("Presentation, scaling, and console color output.")
+            .small()
+            .weak(),
+    );
+    ui.add_space(6.0);
     enum_combo_box(ui, "VSync", &mut settings.video.vsync_mode);
 
     ui.separator();
@@ -21,8 +26,8 @@ pub(super) fn draw(
         crate::debug::ui_helpers::draw_scaling_params(ui, settings);
     }
 
-    ui.horizontal(|ui| {
-        ui.label("Offscreen scale:");
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Offscreen scale");
         ui.add(
             egui::DragValue::new(&mut settings.video.offscreen_scale)
                 .range(1..=8)
@@ -42,7 +47,7 @@ pub(super) fn draw(
     crate::debug::ui_helpers::draw_effect_params(ui, settings);
 
     ui.separator();
-    ui.heading("Console Color");
+    ui.heading("Console color");
     draw_gb_palette_section(
         ui,
         settings,
@@ -210,8 +215,8 @@ fn draw_nes_palette_section(
 
     enum_combo_box(ui, "NES palette mode", &mut settings.video.nes_palette_mode);
     if settings.video.nes_palette_mode == NesPaletteMode::Custom {
-        ui.separator();
-        ui.label("Custom NES .pal file:");
+        ui.add_space(4.0);
+        ui.label("Custom palette file");
         #[cfg(not(target_arch = "wasm32"))]
         ui.add(
             egui::TextEdit::singleline(&mut settings.video.nes_custom_palette_path)
@@ -224,7 +229,7 @@ fn draw_nes_palette_section(
         } else {
             ui.monospace(&settings.video.nes_custom_palette_name);
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             #[cfg(not(target_arch = "wasm32"))]
             if ui.button("Load .pal...").clicked()
                 && let Some(path) = crate::platform::FileDialog::new()
@@ -307,7 +312,7 @@ fn draw_custom_color_matrix(
     matrix: &mut [f32; 9],
     preset_button_label: Option<&'static str>,
 ) {
-    ui.separator();
+    ui.add_space(4.0);
     ui.label("Custom 3x3 matrix (input RGB -> output RGB)");
 
     egui::Grid::new(grid_id).spacing([6.0, 4.0]).show(ui, |ui| {
@@ -366,7 +371,7 @@ fn draw_custom_color_matrix(
         ui.end_row();
     });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("Identity").clicked() {
             *matrix = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         }

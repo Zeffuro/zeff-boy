@@ -118,44 +118,34 @@ pub(crate) fn read_save_data(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     Ok(Some(std::fs::read(path)?))
 }
 
-pub(crate) fn load_settings_json() -> Option<String> {
-    if let Some(dir) = config_dir_path() {
-        let config_path = dir.join("settings.json");
-        if let Ok(bytes) = std::fs::read(&config_path) {
-            return String::from_utf8(bytes).ok();
-        }
-
-        let legacy_path = legacy_settings_path();
-        if let Ok(bytes) = std::fs::read(&legacy_path)
-            && let Ok(json) = String::from_utf8(bytes)
-        {
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(&config_path, &json);
-            return Some(json);
-        }
-
-        return None;
+pub(crate) fn load_settings_json() -> anyhow::Result<Option<String>> {
+    let path = settings_path();
+    if let Some(json) = super::settings_store::read(&path)? {
+        return Ok(Some(json));
     }
-
     let legacy = legacy_settings_path();
-    let bytes = std::fs::read(&legacy).ok()?;
-    String::from_utf8(bytes).ok()
+    if path != legacy {
+        return super::settings_store::read(&legacy);
+    }
+    Ok(None)
 }
 
-pub(crate) fn save_settings_json(json: &str) {
-    let path = if let Some(dir) = config_dir_path() {
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            log::error!("failed to create settings directory {}: {e}", dir.display());
-            return;
-        }
-        dir.join("settings.json")
-    } else {
-        legacy_settings_path()
-    };
+pub(crate) fn load_settings_backup_json() -> anyhow::Result<Option<String>> {
+    super::settings_store::read(&settings_path().with_extension("json.bak"))
+}
 
-    if let Err(e) = std::fs::write(&path, json) {
-        log::error!("failed to write settings to {}: {e}", path.display());
-    }
+pub(crate) fn save_settings_json(
+    json: &str,
+    previous: Option<&str>,
+    preserve_original: bool,
+) -> anyhow::Result<()> {
+    super::settings_store::save(&settings_path(), json, previous, preserve_original)
+}
+
+fn settings_path() -> PathBuf {
+    config_dir_path()
+        .map(|dir| dir.join("settings.json"))
+        .unwrap_or_else(legacy_settings_path)
 }
 
 fn save_root_path() -> PathBuf {

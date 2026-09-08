@@ -12,6 +12,8 @@ mod cheats_window;
 #[cfg(not(target_arch = "wasm32"))]
 mod debugger_window;
 mod egui_integration;
+#[cfg(test)]
+pub(crate) use egui_integration::apply_egui_theme;
 mod framebuffer;
 mod gpu;
 #[cfg(not(target_arch = "wasm32"))]

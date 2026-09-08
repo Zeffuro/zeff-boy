@@ -218,7 +218,9 @@ impl App {
                             self.toast_manager.info(format!("Can't step back: {msg}"));
                         } else {
                             self.rewind.pending = false;
-                            self.rewind.held = false;
+                            self.force_clear_frontend_hold(
+                                crate::app::keyboard::HeldFrontendAction::Rewind,
+                            );
                             self.rewind.reset_pacing();
                             log::debug!("Rewind: {}", msg);
                         }
@@ -243,7 +245,7 @@ impl App {
             self.recompute_pause();
             self.finish_audio_recording_for_teardown();
             self.stop_replay_recording_for_teardown();
-            self.rewind.held = false;
+            self.force_clear_frontend_hold(crate::app::keyboard::HeldFrontendAction::Rewind);
             if let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::SetUncapped(false));
             }

@@ -254,7 +254,7 @@ kind = "gba_mgba_suite_sram"
 
 [tests.expectation]
 kind = "known_fail"
-reason = "Timer count-up suite still has broad IRQ/timer phase failures; first reported failure is currently 16xv 1d 1i as FFFF vs FFFD."
+reason = "Timer count-up suite has known IRQ/timer phase failures; inspect the captured test output for the current failing subcase."
 
 [[tests]]
 id = "gba/mgba-suite/timer-irq"

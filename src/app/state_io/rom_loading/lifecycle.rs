@@ -159,7 +159,7 @@ impl App {
         self.debug_windows.last_disasm_mapping = None;
         self.debug_windows.disasm_target = None;
         self.set_user_paused(false);
-        self.rewind.held = false;
+        self.force_clear_frontend_hold(crate::app::keyboard::HeldFrontendAction::Rewind);
         self.rewind.fill = 0.0;
         self.rewind.frames_rewound = 0;
         self.rewind.pending = false;

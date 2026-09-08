@@ -1,11 +1,15 @@
 mod binding_actions;
+mod document;
 mod enums;
 mod gamepad;
+mod input_devices;
+mod input_profiles;
 mod keyboard_bindings;
 mod keycode_serde;
 mod shortcuts;
 mod structs;
 mod tilt_bindings;
+mod validation;
 
 pub(crate) use binding_actions::{BindingAction, InputBindingAction, WonderSwanButton};
 pub(crate) use enums::{
@@ -17,6 +21,8 @@ pub(crate) use enums::{
     effective_wonderswan_color_correction,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
+pub(crate) use input_devices::{GamepadAssignment, GamepadFingerprint, InputDeviceSettings};
+pub(crate) use input_profiles::{InputProfileBindings, InputProfileCatalog};
 pub(crate) use keyboard_bindings::{KeyBindings, PceMultitapKeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
@@ -66,8 +72,12 @@ pub(crate) struct Settings {
     pub(crate) shortcut_bindings: ShortcutBindings,
     #[serde(default)]
     pub(crate) gamepad_bindings: GamepadBindings,
+    pub(crate) input_devices: InputDeviceSettings,
+    pub(crate) input_profiles: InputProfileCatalog,
     #[serde(flatten)]
     pub(crate) camera: CameraSettings,
+    #[serde(skip)]
+    persistence: document::PersistenceMetadata,
 }
 
 impl Default for Settings {
@@ -87,7 +97,10 @@ impl Default for Settings {
             video: VideoSettings::default(),
             shortcut_bindings: ShortcutBindings::default(),
             gamepad_bindings: GamepadBindings::default(),
+            input_devices: InputDeviceSettings::default(),
+            input_profiles: InputProfileCatalog::default(),
             camera: CameraSettings::default(),
+            persistence: document::PersistenceMetadata::default(),
         }
     }
 }
@@ -127,20 +140,7 @@ impl Settings {
     }
 
     pub(crate) fn load_or_default() -> Self {
-        if let Some(json) = platform::load_settings_json()
-            && let Ok(mut settings) = Self::from_json(&json)
-        {
-            settings.video.migrate_shader_preset();
-            settings.gamepad_bindings.migrate_wonderswan_defaults();
-            return settings;
-        }
-        Settings {
-            ui: UiSettings {
-                ui_scale_needs_auto: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        document::load()
     }
 
     fn from_json(json: &str) -> serde_json::Result<Self> {
@@ -183,11 +183,23 @@ impl Settings {
     }
 
     pub(crate) fn save(&self) {
-        let Ok(json) = serde_json::to_string_pretty(self) else {
-            log::error!("failed to serialize settings");
-            return;
-        };
-        platform::save_settings_json(&json);
+        document::save(self);
+    }
+
+    pub(crate) fn persistence_notice(&self) -> Option<String> {
+        self.persistence.notice()
+    }
+
+    pub(crate) fn take_persistence_notification(&self) -> Option<String> {
+        self.persistence.take_notification()
+    }
+
+    pub(crate) fn reset_preferences(&mut self) {
+        let persistence = self.persistence.clone();
+        let next_profile_id = self.input_profiles.next_id;
+        *self = Self::default();
+        self.input_profiles.next_id = next_profile_id;
+        self.persistence = persistence;
     }
 }
 

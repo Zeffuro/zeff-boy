@@ -8,8 +8,8 @@ pub struct Timer {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Timers {
     timers: [Timer; 4],
-    // Only enabled, non-cascading timers consume CPU cycles. Keeping this derived
-    // mask avoids walking the four disabled timer registers at every instruction.
+    // Only timers eligible for CPU clocks consume CPU cycles. TM0 ignores its
+    // readable count-up bit; TM1-TM3 use it to select cascade clocks.
     clocked_timer_mask: u8,
     cycle_accum: [u32; 4],
     start_delay_cycles: [u8; 4],
@@ -75,7 +75,7 @@ impl Timers {
         let mut irq_extra_delays = [0u32; 4];
         for index in 0..4 {
             let timer = self.timers[index];
-            if timer.control & 0x0080 == 0 || timer.control & 0x0004 != 0 {
+            if !timer_uses_cpu_clock(index, timer.control) {
                 continue;
             }
 
@@ -140,7 +140,7 @@ impl Timers {
         self.clock_phase = phase;
         self.start_delay_cycles = [0; 4];
         for (index, timer) in self.timers.iter().enumerate() {
-            self.cycle_accum[index] = if timer.control & 0x0084 == 0x0080 {
+            self.cycle_accum[index] = if timer_uses_cpu_clock(index, timer.control) {
                 u32::from(phase) & (timer_period(timer.control) - 1)
             } else {
                 0
@@ -177,7 +177,7 @@ impl Timers {
             .iter()
             .enumerate()
             .fold(0, |mask, (index, timer)| {
-                mask | (u8::from(timer.control & 0x0084 == 0x0080) << index)
+                mask | (u8::from(timer_uses_cpu_clock(index, timer.control)) << index)
             });
         self.cycle_accum = [0; 4];
         self.start_delay_cycles = [0; 4];
@@ -192,7 +192,7 @@ impl Timers {
     #[inline]
     fn refresh_clocked_timer_mask(&mut self, index: usize) {
         let bit = 1 << index;
-        if self.timers[index].control & 0x0084 == 0x0080 {
+        if timer_uses_cpu_clock(index, self.timers[index].control) {
             self.clocked_timer_mask |= bit;
         } else {
             self.clocked_timer_mask &= !bit;
@@ -278,7 +278,7 @@ impl Timers {
         let mut irq_extra_delays = [0u32; 4];
         for index in 0..4 {
             let timer = self.timers[index];
-            if timer.control & 0x0080 == 0 || timer.control & 0x0004 != 0 {
+            if timer.control & 0x0080 == 0 || (index != 0 && timer.control & 0x0004 != 0) {
                 continue;
             }
 
@@ -352,6 +352,10 @@ impl Timers {
         }
         true
     }
+}
+
+fn timer_uses_cpu_clock(index: usize, control: u16) -> bool {
+    control & 0x0080 != 0 && (index == 0 || control & 0x0004 == 0)
 }
 
 fn timer_period(control: u16) -> u32 {
@@ -648,6 +652,140 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tm0_count_up_bit_is_readable_and_uses_cpu_clock_for_all_prescalers() {
+        for (prescaler_bits, period) in [(0u16, 1u32), (1, 64), (2, 256), (3, 1024)] {
+            let control = 0x00C4 | prescaler_bits;
+            let mut timers = Timers::default();
+            timers.set_all([
+                Timer {
+                    reload: 0xFFFC,
+                    counter: 0xFFFE,
+                    control,
+                },
+                Timer::default(),
+                Timer::default(),
+                Timer::default(),
+            ]);
+
+            assert_eq!(timers.read16(0, true), control);
+            assert!(timers.has_clocked_timers());
+            assert_eq!(timers.cycles_until_overflow(0), Some(2 * period));
+
+            let (flags, overflows, extra_delays) = timers.step_with_overflows(period);
+            assert_eq!(flags, 0);
+            assert_eq!(overflows, [0; 4]);
+            assert_eq!(extra_delays, [0; 4]);
+            assert_eq!(timers.read16(0, false), 0xFFFF);
+            assert_eq!(timers.cycles_until_overflow(0), Some(period));
+
+            let (flags, overflows, extra_delays) = timers.step_with_overflows(period);
+            assert_eq!(flags, 1 << 3);
+            assert_eq!(overflows, [1, 0, 0, 0]);
+            assert_eq!(extra_delays, [0; 4]);
+            assert_eq!(timers.read16(0, false), 0xFFFC);
+        }
+    }
+
+    #[test]
+    fn tm0_count_up_bit_overflow_still_drives_irq_and_timer_cascade() {
+        let mut timers = Timers::default();
+        timers.set_all([
+            Timer {
+                reload: 0xFFFE,
+                counter: 0xFFFF,
+                control: 0x00C4,
+            },
+            Timer {
+                reload: 0xFFFD,
+                counter: 0xFFFF,
+                control: 0x00C4,
+            },
+            Timer {
+                reload: 0,
+                counter: 0xFFFE,
+                control: 0x0084,
+            },
+            Timer::default(),
+        ]);
+
+        let (flags, overflows, extra_delays) = timers.step_with_overflows(1);
+
+        assert_eq!(flags, (1 << 3) | (1 << 4));
+        assert_eq!(overflows, [1, 1, 0, 0]);
+        assert_eq!(extra_delays, [0; 4]);
+        assert_eq!(
+            timers.all().map(|timer| timer.counter),
+            [0xFFFE, 0xFFFD, 0xFFFF, 0]
+        );
+    }
+
+    #[test]
+    fn toggling_tm0_count_up_bit_while_enabled_keeps_cpu_clock_and_phase() {
+        let mut timers = Timers::default();
+        timers.set_all([
+            Timer {
+                reload: 0,
+                counter: 0x1234,
+                control: 0x0081,
+            },
+            Timer::default(),
+            Timer::default(),
+            Timer::default(),
+        ]);
+        assert!(timers.set_timing_state(TimerTimingState {
+            cycle_accum: [63, 0, 0, 0],
+            start_delay_cycles: [0; 4],
+            clock_phase: 63,
+        }));
+
+        timers.write16(0, true, 0x0085);
+        assert_eq!(timers.read16(0, true), 0x0085);
+        assert!(timers.has_clocked_timers());
+        assert_eq!(timers.step(1), 0);
+        assert_eq!(timers.read16(0, false), 0x1235);
+        assert_eq!(timers.timing_state().cycle_accum[0], 0);
+
+        timers.write16(0, true, 0x0081);
+        assert_eq!(timers.read16(0, true), 0x0081);
+        assert_eq!(timers.step(64), 0);
+        assert_eq!(timers.read16(0, false), 0x1236);
+    }
+
+    #[test]
+    fn tm0_count_up_bit_is_cpu_clocked_after_set_all_timing_restore_and_legacy_migration() {
+        let timer = Timer {
+            reload: 0,
+            counter: 0x3456,
+            control: 0x0085,
+        };
+        let mut restored = Timers::default();
+        restored.set_all([timer, Timer::default(), Timer::default(), Timer::default()]);
+        assert!(restored.has_clocked_timers());
+        assert!(restored.set_timing_state(TimerTimingState {
+            cycle_accum: [63, 0, 0, 0],
+            start_delay_cycles: [0; 4],
+            clock_phase: 63,
+        }));
+        assert_eq!(restored.step(1), 0);
+        assert_eq!(restored.read16(0, false), 0x3457);
+
+        let mut legacy = Timers::default();
+        legacy.set_all([
+            timer,
+            Timer {
+                control: 0x0084,
+                ..Timer::default()
+            },
+            Timer::default(),
+            Timer::default(),
+        ]);
+        legacy.migrate_legacy_timing(63);
+        assert_eq!(legacy.timing_state().cycle_accum, [63, 0, 0, 0]);
+        assert_eq!(legacy.step(1), 0);
+        assert_eq!(legacy.read16(0, false), 0x3457);
+        assert_eq!(legacy.read16(1, false), 0);
+    }
     #[test]
     fn maximum_cycle_span_saturates_counts_through_four_timer_cascade() {
         let mut timers = Timers::default();

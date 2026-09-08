@@ -3,6 +3,63 @@ use crate::input::HostButton;
 use crate::settings::{TiltBindingAction, WonderSwanButton};
 
 #[test]
+fn zero_deadzone_does_not_press_directions_for_absent_or_centered_sticks() {
+    let mut state = HostInputState::new();
+    state.set_gamepad_stick_dpad((0.0, -0.0), 0.0);
+    state.set_multiplayer_gamepad_sticks([(0.0, 0.0); 5], 0.0);
+    assert_eq!(
+        [
+            state.dpad_pressed(),
+            state.dpad_p2_pressed(),
+            state.dpad_p3_pressed(),
+            state.dpad_p4_pressed(),
+            state.dpad_p5_pressed()
+        ],
+        [0; 5]
+    );
+    assert_eq!(stick_dpad_mask((0.5, 0.0), 0.0), 1);
+    assert_eq!(stick_dpad_mask((0.0, -0.5), 0.0), 8);
+    assert_eq!(
+        stick_dpad_mask((0.3, 0.0), 0.3),
+        1,
+        "the existing nonzero engage boundary is unchanged"
+    );
+}
+
+#[test]
+fn multiplayer_sticks_are_independent_and_releasing_one_preserves_other_sources() {
+    let mut state = HostInputState::new();
+    state.set_keyboard_p2(HostButton::Right, true);
+    state.set_remote_p3(HostButton::Down, true);
+    state.set_multiplayer_gamepad_sticks(
+        [(0.9, 0.0), (0.8, 0.0), (-0.8, 0.0), (0.0, 0.8), (0.0, -0.8)],
+        0.3,
+    );
+    assert_eq!(
+        state.dpad_pressed(),
+        0,
+        "P1 still owns the existing tilt/stick-mode adapter"
+    );
+    assert_eq!(state.dpad_p2_pressed(), 1);
+    assert_eq!(state.dpad_p3_pressed(), 2 | 8);
+    assert_eq!(state.dpad_p4_pressed(), 4);
+    assert_eq!(state.dpad_p5_pressed(), 8);
+    state.set_multiplayer_gamepad_sticks([(0.0, 0.0); 5], 0.3);
+    assert_eq!(
+        state.dpad_p2_pressed(),
+        1,
+        "keyboard ownership survives stick release"
+    );
+    assert_eq!(
+        state.dpad_p3_pressed(),
+        8,
+        "remote ownership survives stick release"
+    );
+    assert_eq!(state.dpad_p4_pressed(), 0);
+    assert_eq!(state.dpad_p5_pressed(), 0);
+}
+
+#[test]
 fn clearing_keyboard_preserves_gamepad_and_remote_sources() {
     let mut state = HostInputState::new();
     state.set_keyboard(HostButton::A, true);

@@ -1,87 +1,81 @@
+use super::{BindingSource, controller_diagram::DiagramAction, joypad};
 use crate::debug::DebugWindowState;
 use crate::settings::{InputBindingAction, Settings, WonderSwanButton};
 
-pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut DebugWindowState) {
-    egui::CollapsingHeader::new("WonderSwan Controls")
-        .default_open(true)
+pub(super) fn draw_focused(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    state: &mut DebugWindowState,
+    source: BindingSource,
+) {
+    if source == BindingSource::Controller {
+        ui.label(egui::RichText::new("Additional direct mappings. The Player 1 D-pad already controls X horizontally and Y vertically. Unbound adds no extra mapping.").weak());
+        ui.add_space(8.0);
+    }
+    egui::Grid::new("wonderswan_bindings")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .striped(true)
         .show(ui, |ui| {
-            egui::Grid::new("wonderswan_key_bindings")
-                .num_columns(4)
-                .spacing([12.0, 4.0])
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.strong("Button");
-                    ui.strong("Keyboard");
-                    ui.strong("Gamepad");
-                    ui.strong("");
-                    ui.end_row();
-
-                    for &action in WonderSwanButton::ALL {
-                        ui.label(action.label());
-
-                        let key_name = format!("{:?}", settings.ws_key_bindings.get(action));
-                        let label = if state.rebinding_action
-                            == Some(InputBindingAction::WonderSwan(action))
-                        {
-                            format!("Press key... ({key_name})")
-                        } else {
-                            key_name
-                        };
-                        if ui.button(label).clicked() {
-                            state.rebinding_action = Some(InputBindingAction::WonderSwan(action));
-                            state.rebinding_gamepad = None;
-                            state.rebinding_gamepad_p2 = None;
-                            state.rebinding_ws_gamepad = None;
-                            state.rebinding_shortcut = None;
-                            state.rebinding_speedup = false;
-                            state.rebinding_rewind = false;
-                        }
-
-                        let button_name = settings.gamepad_bindings.get_ws(action);
-                        let display = if button_name.is_empty() {
-                            "(not bound)".to_string()
-                        } else {
-                            button_name.to_string()
-                        };
-                        let gp_label = if state.rebinding_ws_gamepad == Some(action) {
-                            format!("Press btn... ({display})")
-                        } else {
-                            display
-                        };
-                        if ui.button(gp_label).clicked() {
-                            state.rebinding_ws_gamepad = Some(action);
-                            state.rebinding_action = None;
-                            state.rebinding_gamepad = None;
-                            state.rebinding_gamepad_p2 = None;
-                            state.rebinding_shortcut = None;
-                            state.rebinding_speedup = false;
-                            state.rebinding_rewind = false;
-                        }
-                        if !settings.gamepad_bindings.get_ws(action).is_empty()
-                            && ui.small_button("Clear").clicked()
-                        {
+            ui.strong("Control");
+            ui.strong(match source {
+                BindingSource::Keyboard => "Keyboard key",
+                BindingSource::Controller => "Controller button",
+            });
+            ui.end_row();
+            for &action in WonderSwanButton::ALL {
+                ui.label(action.label());
+                let (capturing, label) = match source {
+                    BindingSource::Keyboard => (
+                        state.rebinding_action == Some(InputBindingAction::WonderSwan(action)),
+                        joypad::key_label(settings.ws_key_bindings.get(action)),
+                    ),
+                    BindingSource::Controller => (
+                        state.rebinding_ws_gamepad == Some(action),
+                        joypad::gamepad_label(settings.gamepad_bindings.get_ws(action)),
+                    ),
+                };
+                let label = if capturing {
+                    "Press a control…".to_owned()
+                } else {
+                    label
+                };
+                let response = ui.add_sized([170.0, 26.0], egui::Button::new(label));
+                if response.clicked() {
+                    joypad::begin_capture(state, 1, source, DiagramAction::WonderSwan(action));
+                }
+                if source == BindingSource::Controller {
+                    response.context_menu(|ui| {
+                        if ui.button("Clear this mapping").clicked() {
+                            let previous = settings.clone();
                             settings.gamepad_bindings.set_ws(action, "");
-                            state.rebinding_ws_gamepad = None;
+                            joypad::clear_capture(state);
+                            state.settings_ui.undo = Some(previous);
+                            state.settings_ui.undo_baseline = Some(settings.clone());
+                            state.settings_ui.undo_label =
+                                Some("Controller mapping cleared.".into());
+                            ui.close();
                         }
-
-                        ui.end_row();
-                    }
-                });
-
-            if ui.button("Reset WonderSwan keys to defaults").clicked() {
-                settings.ws_key_bindings = crate::settings::WonderSwanKeyBindings::default();
-                state.rebinding_action = None;
-            }
-            if ui.button("Reset WonderSwan gamepad to defaults").clicked() {
-                settings.gamepad_bindings.reset_wonderswan_defaults();
-                state.rebinding_ws_gamepad = None;
-            }
-            if ui
-                .button("Clear direct WonderSwan gamepad bindings")
-                .clicked()
-            {
-                settings.gamepad_bindings.clear_wonderswan_direct_bindings();
-                state.rebinding_ws_gamepad = None;
+                    });
+                }
+                ui.end_row();
             }
         });
+    ui.add_space(8.0);
+    if ui.button("Restore default mappings…").clicked() {
+        state.settings_ui.player_reset_confirmation = Some(match source {
+            BindingSource::Keyboard => super::super::PlayerResetTarget::WonderSwanKeyboard,
+            BindingSource::Controller => super::super::PlayerResetTarget::WonderSwanGamepad,
+        });
+    }
+    joypad::draw_player_reset_confirmation(ui, settings, state);
+    if source == BindingSource::Controller {
+        ui.menu_button("More options", |ui| {
+            if ui.button("Clear all direct mappings…").clicked() {
+                state.settings_ui.player_reset_confirmation =
+                    Some(super::super::PlayerResetTarget::WonderSwanClear);
+                ui.close();
+            }
+        });
+    }
 }

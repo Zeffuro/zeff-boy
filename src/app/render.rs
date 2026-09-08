@@ -115,6 +115,8 @@ impl App {
         let update_install_state = self.update_checker.install_state();
 
         let settings_was_open = self.show_settings_window;
+        let input_bindings_before =
+            settings_was_open.then(|| self.settings.capture_input_profile());
 
         let speed_label = ui_frame_data
             .and_then(|d| d.perf_info.as_ref())
@@ -447,13 +449,24 @@ impl App {
                     self.clear_rebinding_state();
                 }
                 self.egui_wants_keyboard = result.egui_wants_keyboard;
+                let game_view_was_focused = self.game_view_focused;
                 self.game_view_focused = result.game_view_focused;
+                if game_view_was_focused && !self.game_view_focused {
+                    self.clear_keyboard_state();
+                }
             }
             Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 let size = gfx.size();
                 gfx.resize(size.width, size.height);
             }
             Err(graphics::FrameError::Timeout) => {}
+        }
+
+        if input_bindings_before
+            .is_some_and(|before| self.settings.capture_input_profile() != before)
+        {
+            self.clear_keyboard_state();
+            self.settings.save();
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -514,6 +527,7 @@ impl App {
         &mut self,
         ui_frame_data: Option<&crate::ui::UiFrameData>,
     ) -> bool {
+        let input_bindings_before = self.settings.capture_input_profile();
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
@@ -521,7 +535,7 @@ impl App {
             .and_then(|data| data.perf_info.as_ref())
             .filter(|perf| perf.platform_name == "Game Boy")
             .map(|perf| perf.hardware_label.as_ref());
-        match gfx.render_settings_window(graphics::SettingsRenderContext {
+        let rendered = match gfx.render_settings_window(graphics::SettingsRenderContext {
             settings: &mut self.settings,
             state: &mut self.debug_windows,
             active_system: self.emu_thread.as_ref().map(|_| self.active_system),
@@ -536,7 +550,11 @@ impl App {
                 false
             }
             Err(graphics::FrameError::Timeout) => false,
+        };
+        if self.settings.capture_input_profile() != input_bindings_before {
+            self.clear_keyboard_state();
         }
+        rendered
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -604,10 +622,12 @@ impl App {
         self.debug_windows.rebinding_shortcut = None;
         self.debug_windows.rebinding_gamepad = None;
         self.debug_windows.rebinding_gamepad_p2 = None;
+        self.debug_windows.rebinding_gamepad_pce_multitap = None;
         self.debug_windows.rebinding_ws_gamepad = None;
         self.debug_windows.rebinding_gamepad_action = None;
         self.debug_windows.rebinding_speedup = false;
         self.debug_windows.rebinding_rewind = false;
+        self.sync_keyboard_capture(false);
     }
 }
 

@@ -5,9 +5,9 @@ use super::{MAGIC, TILT_VERSION, VERSION, decode_state, encode_state};
 use crate::emulator::Emulator;
 use crate::hardware::cartridge::{RtcDateTime, RtcState, SensorKind, TiltState};
 
-pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tas-determinism-v3";
+pub const TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tas-determinism-v4";
 pub const TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v12";
-pub const TILT_TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tilt-tas-determinism-v2";
+pub const TILT_TAS_DETERMINISM_ABI_ID: &str = "zeff-gba-tilt-tas-determinism-v3";
 pub const TILT_TAS_STATE_FORMAT_COMPATIBILITY_ID: &str = "zeff-gba-native-state-v13-tilt";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -59,9 +59,7 @@ impl App {
             return;
         }
         self.recompute_pause();
-        self.speed.fast_forward_held = false;
-        self.speed.turbo_held = false;
-        self.rewind.held = false;
+        self.clear_all_frontend_holds();
         self.debug_requests = DebugRequests::default();
         self.pending_debug_actions = crate::debug::DebugUiActions::none();
     }

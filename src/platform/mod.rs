@@ -7,6 +7,8 @@ mod managed_firmware;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
+mod settings_store;
+#[cfg(not(target_arch = "wasm32"))]
 mod stable_directory;
 #[cfg(target_arch = "wasm32")]
 mod web;

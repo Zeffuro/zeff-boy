@@ -19,11 +19,13 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         state.camera_devices_needs_refresh = false;
     }
 
-    ui.heading("Camera");
-
-    ui.separator();
-    ui.heading("Host Device");
-    ui.horizontal(|ui| {
+    ui.label(
+        egui::RichText::new("Choose the host camera used by supported games.")
+            .small()
+            .weak(),
+    );
+    ui.add_space(6.0);
+    ui.horizontal_wrapped(|ui| {
         if ui.button("Refresh devices").clicked() {
             state.camera_devices_needs_refresh = true;
         }
@@ -50,17 +52,24 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             }
         });
 
-    ui.add(
-        egui::DragValue::new(&mut settings.camera.device_index)
-            .range(0..=64)
-            .speed(1),
-    );
+    egui::CollapsingHeader::new("Advanced device selection").show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Device index");
+            ui.add(
+                egui::DragValue::new(&mut settings.camera.device_index)
+                    .range(0..=64)
+                    .speed(1),
+            );
+        });
+    });
 
     if let Some(err) = &state.camera_device_error {
         ui.label(egui::RichText::new(err).small().weak());
     }
 
-    ui.checkbox(&mut settings.camera.auto_levels, "Auto-levels");
+    ui.separator();
+    ui.heading("Image tuning");
+    ui.checkbox(&mut settings.camera.auto_levels, "Automatic levels");
 
     ui.add(
         egui::Slider::new(&mut settings.camera.brightness, -1.0..=1.0)

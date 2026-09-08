@@ -293,6 +293,17 @@ impl App {
             return;
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let settings_input_deadline = self
+            .live_input_settings_visible()
+            .then_some(self.last_settings_render + UI_RENDER_INTERVAL);
+        #[cfg(not(target_arch = "wasm32"))]
+        if settings_input_deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            && let Some(window) = gfx.settings_window()
+        {
+            window.request_redraw();
+        }
+
         match self.speed_mode() {
             SpeedMode::Normal | SpeedMode::SlowMotion => {
                 // WASM uses vsync-aligned rAF because timer pacing visibly hitches.
@@ -307,6 +318,9 @@ impl App {
                     let next_emu_frame_time = self.timing.last_frame_time + effective;
                     let next_ui_frame_time = self.timing.last_render_time + UI_RENDER_INTERVAL;
                     let mut next_frame_time = next_emu_frame_time.max(next_ui_frame_time);
+                    if let Some(settings_deadline) = settings_input_deadline {
+                        next_frame_time = next_frame_time.min(settings_deadline);
+                    }
                     if let Some(recording_wake) = self.realtime_tas_recording_next_wake(now) {
                         next_frame_time = next_frame_time.min(recording_wake);
                     }
@@ -364,6 +378,10 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn sync_settings_window(&mut self, event_loop: &ActiveEventLoop) {
+        self.cancel_hidden_settings_capture();
+        if !self.show_settings_window {
+            self.clear_rebinding_state();
+        }
         let Some(gfx) = self.gfx.as_mut() else {
             return;
         };

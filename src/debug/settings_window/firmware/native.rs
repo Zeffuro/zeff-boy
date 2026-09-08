@@ -18,16 +18,25 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
 
     let busy = state.firmware_inventory.scan_receiver.is_some()
         || state.firmware_inventory.import_receiver.is_some();
-    if ui
-        .add_enabled(!busy, egui::Button::new("Import firmware..."))
-        .clicked()
-        && let Some(path) = crate::platform::FileDialog::new()
-            .add_filter("Firmware", &["bin", "rom", "bios", "col", "sms", "gg"])
-            .set_title("Import firmware")
-            .pick_file()
-    {
-        begin_import(path, ui.ctx().clone(), state);
-    }
+    let mut start_scan = import_completed;
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(!busy, egui::Button::new("Import firmware..."))
+            .clicked()
+            && let Some(path) = crate::platform::FileDialog::new()
+                .add_filter("Firmware", &["bin", "rom", "bios", "col", "sms", "gg"])
+                .set_title("Import firmware")
+                .pick_file()
+        {
+            begin_import(path, ui.ctx().clone(), state);
+        }
+        if ui
+            .add_enabled(!busy, egui::Button::new("Scan now"))
+            .clicked()
+        {
+            start_scan = true;
+        }
+    });
     ui.label(
         egui::RichText::new(format!(
             "Recognized imports: {}",
@@ -37,11 +46,15 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         .small(),
     );
 
-    let mut start_scan = import_completed;
-    ui.horizontal(|ui| {
-        ui.label("Additional folder");
+    ui.label("Additional search folder");
+    ui.horizontal_wrapped(|ui| {
+        let field_width = ui.available_width().min(320.0);
         if ui
-            .text_edit_singleline(&mut settings.emulation.firmware_directory)
+            .add(
+                egui::TextEdit::singleline(&mut settings.emulation.firmware_directory)
+                    .hint_text("Optional folder")
+                    .desired_width(field_width),
+            )
             .changed()
         {
             state.firmware_inventory.needs_refresh = true;
@@ -58,10 +71,6 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                 state.firmware_inventory.needs_refresh = true;
                 state.firmware_inventory.inventory = None;
             }
-        }
-
-        if ui.add_enabled(!busy, egui::Button::new("Scan")).clicked() {
-            start_scan = true;
         }
     });
 

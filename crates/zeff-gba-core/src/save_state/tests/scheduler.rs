@@ -80,6 +80,37 @@ fn roundtrips_timer_global_divider_phase() {
 }
 
 #[test]
+fn roundtrips_timer0_count_up_bit_and_its_pending_overflow() {
+    let mut saved = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    saved.bus.write32(0x0400_0100, 0x00C5_FFFF);
+    saved.bus.step_cycles(13);
+    let bytes = encode_state(&saved).unwrap();
+
+    let mut restored = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    decode_state(&mut restored, &bytes).unwrap();
+    assert!(
+        encode_state(&restored).unwrap() == bytes,
+        "native bytes changed on restore"
+    );
+    assert_eq!(restored.bus.read16(0x0400_0102), 0x00C5);
+    assert_eq!(
+        restored.bus.timer_timing_state(),
+        saved.bus.timer_timing_state()
+    );
+
+    restored.bus.step_cycles(50);
+    assert_eq!(restored.bus.read16(0x0400_0202) & (1 << 3), 0);
+    restored.bus.step_cycles(1);
+    assert_ne!(restored.bus.read16(0x0400_0202) & (1 << 3), 0);
+    saved.bus.step_cycles(51);
+    assert_timers_eq(&restored.bus, &saved.bus);
+    assert!(
+        encode_state(&restored).unwrap() == encode_state(&saved).unwrap(),
+        "native continuation bytes differ"
+    );
+}
+
+#[test]
 fn roundtrips_pending_timer_start_delay() {
     let rom = minimal_rom();
     let mut saved = Emulator::new(&rom, 48_000).unwrap();

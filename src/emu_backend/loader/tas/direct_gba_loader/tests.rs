@@ -65,6 +65,29 @@ fn keypad_input() -> TasInputFrame {
     }
 }
 
+fn project_with_determinism_abi(
+    project: &TasProject,
+    project_id: &str,
+    determinism_abi: &str,
+) -> Result<TasProject> {
+    let mut identity = project.identity().clone();
+    identity.determinism_abi = determinism_abi.to_owned();
+    TasProject::new(
+        project_id.to_owned(),
+        identity,
+        project.start_state().to_vec(),
+        project.replay_start().clone(),
+        TasInitialBranch {
+            id: "main".to_owned(),
+            name: "Main".to_owned(),
+            frame_count: 0,
+            input_spans: Vec::new(),
+            events: Vec::new(),
+        },
+        BTreeMap::new(),
+    )
+}
+
 #[test]
 fn creates_and_executes_a_one_pad_direct_gba_project() -> Result<()> {
     let (directory, loader, rom) = loader("tas-direct-gba-isolated")?;
@@ -180,6 +203,36 @@ fn tilt_project_preserves_recorded_sensor_input_through_direct_execution_and_rep
     let imported =
         plan.import_replay_file(&replay_path, &directory.path().join("imported.ztas"), false)?;
     assert_eq!(imported.branch("main").unwrap().input_at(0), input);
+    Ok(())
+}
+
+#[test]
+fn rejects_pre_timer_fix_standard_and_tilt_determinism_abis() -> Result<()> {
+    let (_directory, standard_loader, _) = loader("tas-gba-old-standard-abi")?;
+    let standard = standard_loader.create_project()?;
+    assert!(DirectGbaTasExecutionLoader::validate_project_branch_scope(&standard, "main").is_ok());
+    let old_standard = project_with_determinism_abi(
+        &standard,
+        "gba-old-standard-abi",
+        "zeff-gba-tas-determinism-v3",
+    )?;
+    assert!(
+        DirectGbaTasExecutionLoader::validate_project_branch_scope(&old_standard, "main").is_err()
+    );
+
+    let tilt_directory = crate::test_support::test_directory("tas-gba-old-tilt-abi")?;
+    let tilt_path = tilt_directory.path().join("tilt.gba");
+    std::fs::write(&tilt_path, gba_tilt_rom())?;
+    std::fs::write(tilt_path.with_extension("sav"), vec![0; 0x2000])?;
+    let tilt_loader = DirectGbaTasExecutionLoader::new(tilt_path);
+    let tilt = tilt_loader.create_project()?;
+    assert!(DirectGbaTasExecutionLoader::validate_project_branch_scope(&tilt, "main").is_ok());
+    let old_tilt = project_with_determinism_abi(
+        &tilt,
+        "gba-old-tilt-abi",
+        "zeff-gba-tilt-tas-determinism-v2",
+    )?;
+    assert!(DirectGbaTasExecutionLoader::validate_project_branch_scope(&old_tilt, "main").is_err());
     Ok(())
 }
 

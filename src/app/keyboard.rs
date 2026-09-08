@@ -7,7 +7,26 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
 };
 
+mod pressed;
+
+use pressed::PressTarget;
+pub(in crate::app) use pressed::{HeldFrontendAction, HeldFrontendSources, PressedKeyboardTargets};
+
 impl App {
+    pub(super) fn handle_settings_capture_key(&mut self, key_event: &KeyEvent) -> bool {
+        let PhysicalKey::Code(key_code) = key_event.physical_key else {
+            return false;
+        };
+        if key_event.state == ElementState::Released && self.release_pressed_keyboard_key(key_code)
+        {
+            return true;
+        }
+        if self.cancel_binding_capture_with_escape(key_event, key_code) {
+            return true;
+        }
+        self.handle_rebinding_key(key_event, key_code)
+    }
+
     pub(super) fn handle_keyboard_input(
         &mut self,
         key_event: &KeyEvent,
@@ -27,6 +46,15 @@ impl App {
             self.modifiers.alt = key_event.state == ElementState::Pressed;
         }
 
+        if key_event.state == ElementState::Released && self.release_pressed_keyboard_key(key_code)
+        {
+            return;
+        }
+
+        if self.cancel_binding_capture_with_escape(key_event, key_code) {
+            return;
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         if key_event.state == ElementState::Pressed
             && matches!(
@@ -39,14 +67,14 @@ impl App {
             return;
         }
 
+        if self.handle_rebinding_key(key_event, key_code) {
+            return;
+        }
+
         let egui_has_kb_focus = self.egui_wants_keyboard;
 
         if egui_has_kb_focus && event_consumed_by_egui {
             self.handle_consumed_keyboard_release(key_event, key_code);
-            return;
-        }
-
-        if self.handle_rebinding_key(key_event, key_code) {
             return;
         }
 
@@ -88,6 +116,8 @@ impl App {
                 let player = if self.modifiers.shift { 2 } else { 1 };
                 self.host_input
                     .set_coleco_keyboard_keypad(player, key, true);
+                self.pressed_keyboard_targets
+                    .press(key_code, PressTarget::ColecoKeypad { player, key });
                 true
             }
             ElementState::Released => {
@@ -106,15 +136,15 @@ impl App {
 
         let speedup_code = self.settings.speedup_key_code();
         if key_code == speedup_code || key_code == KeyCode::Backquote {
-            self.speed.fast_forward_held = false;
+            self.set_keyboard_frontend_hold(HeldFrontendAction::FastForward, false);
         }
 
         if key_code == KeyCode::ShiftLeft {
-            self.speed.turbo_held = false;
+            self.set_keyboard_frontend_hold(HeldFrontendAction::Turbo, false);
         }
 
         if key_code == self.settings.rewind.key_code() {
-            self.rewind.held = false;
+            self.set_keyboard_frontend_hold(HeldFrontendAction::Rewind, false);
         }
 
         if let Some(gb_key) = self.map_key(key_code) {
@@ -192,6 +222,35 @@ impl App {
         true
     }
 
+    fn cancel_binding_capture_with_escape(
+        &mut self,
+        key_event: &KeyEvent,
+        key_code: KeyCode,
+    ) -> bool {
+        if key_code != KeyCode::Escape
+            || key_event.state != ElementState::Pressed
+            || key_event.repeat
+            || !self.any_binding_capture_active()
+        {
+            return false;
+        }
+        self.clear_rebinding_state();
+        self.sync_keyboard_capture(false);
+        true
+    }
+
+    fn any_binding_capture_active(&self) -> bool {
+        self.debug_windows.rebinding_speedup
+            || self.debug_windows.rebinding_rewind
+            || self.debug_windows.rebinding_shortcut.is_some()
+            || self.debug_windows.rebinding_action.is_some()
+            || self.debug_windows.rebinding_gamepad.is_some()
+            || self.debug_windows.rebinding_gamepad_p2.is_some()
+            || self.debug_windows.rebinding_gamepad_pce_multitap.is_some()
+            || self.debug_windows.rebinding_ws_gamepad.is_some()
+            || self.debug_windows.rebinding_gamepad_action.is_some()
+    }
+
     fn handle_shortcut_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
         let pressed = key_event.state == ElementState::Pressed && !key_event.repeat;
 
@@ -216,9 +275,15 @@ impl App {
             if key_code == speedup_code || key_code == KeyCode::Backquote {
                 match key_event.state {
                     ElementState::Pressed if !key_event.repeat => {
-                        self.speed.fast_forward_held = true
+                        self.set_keyboard_frontend_hold(HeldFrontendAction::FastForward, true);
+                        self.pressed_keyboard_targets.press(
+                            key_code,
+                            PressTarget::Frontend(HeldFrontendAction::FastForward),
+                        );
                     }
-                    ElementState::Released => self.speed.fast_forward_held = false,
+                    ElementState::Released => {
+                        self.set_keyboard_frontend_hold(HeldFrontendAction::FastForward, false)
+                    }
                     _ => {}
                 }
                 return true;
@@ -227,8 +292,14 @@ impl App {
 
         if !egui_kb && key_code == KeyCode::ShiftLeft {
             match key_event.state {
-                ElementState::Pressed if !key_event.repeat => self.speed.turbo_held = true,
-                ElementState::Released => self.speed.turbo_held = false,
+                ElementState::Pressed if !key_event.repeat => {
+                    self.set_keyboard_frontend_hold(HeldFrontendAction::Turbo, true);
+                    self.pressed_keyboard_targets
+                        .press(key_code, PressTarget::Frontend(HeldFrontendAction::Turbo));
+                }
+                ElementState::Released => {
+                    self.set_keyboard_frontend_hold(HeldFrontendAction::Turbo, false)
+                }
                 _ => {}
             }
             return true;
@@ -243,14 +314,18 @@ impl App {
                         ) {
                             self.toast_manager.error(error.to_string());
                         } else {
-                            self.rewind.held = true;
+                            self.set_keyboard_frontend_hold(HeldFrontendAction::Rewind, true);
+                            self.pressed_keyboard_targets
+                                .press(key_code, PressTarget::Frontend(HeldFrontendAction::Rewind));
                         }
                     }
-                    ElementState::Released => self.rewind.held = false,
+                    ElementState::Released => {
+                        self.set_keyboard_frontend_hold(HeldFrontendAction::Rewind, false)
+                    }
                     _ => {}
                 }
             } else {
-                self.rewind.held = false;
+                self.force_clear_frontend_hold(HeldFrontendAction::Rewind);
             }
             return true;
         }
@@ -506,11 +581,25 @@ impl App {
                 if !key_event.repeat {
                     if let Some(gb_key) = gb_key {
                         self.host_input.set_keyboard(gb_key, true);
+                        self.pressed_keyboard_targets.press(
+                            key_code,
+                            PressTarget::Joypad {
+                                player: 1,
+                                button: gb_key,
+                            },
+                        );
                     }
                     if let Some(gb_key) = gb_key_p2 {
                         self.host_input.set_keyboard_p2(gb_key, true);
+                        self.pressed_keyboard_targets.press(
+                            key_code,
+                            PressTarget::Joypad {
+                                player: 2,
+                                button: gb_key,
+                            },
+                        );
                     }
-                    self.set_pce_multitap_keyboard_key(key_code, true);
+                    self.press_pce_multitap_keyboard_key(key_code);
                     return true;
                 }
             }
@@ -543,6 +632,17 @@ impl App {
         }
     }
 
+    fn press_pce_multitap_keyboard_key(&mut self, key_code: KeyCode) {
+        for player in 3..=5 {
+            let Some(button) = self.map_key_pce_multitap(player, key_code) else {
+                continue;
+            };
+            self.set_keyboard_joypad(player, button, true);
+            self.pressed_keyboard_targets
+                .press(key_code, PressTarget::Joypad { player, button });
+        }
+    }
+
     fn handle_ws_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
         if self.active_system != ActiveSystem::WonderSwan {
             return false;
@@ -556,6 +656,8 @@ impl App {
             ElementState::Pressed => {
                 if !key_event.repeat {
                     self.host_input.set_ws_keyboard(ws_key, true);
+                    self.pressed_keyboard_targets
+                        .press(key_code, PressTarget::WonderSwan(ws_key));
                     return true;
                 }
             }
@@ -577,9 +679,105 @@ impl App {
             ElementState::Pressed => {
                 if !key_event.repeat {
                     self.host_input.set_tilt_keyboard(tilt_key, true);
+                    self.pressed_keyboard_targets
+                        .press(key_code, PressTarget::Tilt(tilt_key));
                 }
             }
             ElementState::Released => self.host_input.set_tilt_keyboard(tilt_key, false),
         }
+    }
+
+    fn set_keyboard_joypad(&mut self, player: u8, button: crate::input::HostButton, pressed: bool) {
+        match player {
+            1 => self.host_input.set_keyboard(button, pressed),
+            2 => self.host_input.set_keyboard_p2(button, pressed),
+            3 => self.host_input.set_keyboard_p3(button, pressed),
+            4 => self.host_input.set_keyboard_p4(button, pressed),
+            5 => self.host_input.set_keyboard_p5(button, pressed),
+            _ => {}
+        }
+    }
+
+    fn release_pressed_keyboard_key(&mut self, key_code: KeyCode) -> bool {
+        let targets = self.pressed_keyboard_targets.release(key_code);
+        let handled = !targets.is_empty();
+        for target in targets {
+            self.apply_keyboard_target(target, false);
+        }
+        handled
+    }
+
+    fn apply_keyboard_target(&mut self, target: PressTarget, pressed: bool) {
+        match target {
+            PressTarget::Joypad { player, button } => {
+                self.set_keyboard_joypad(player, button, pressed)
+            }
+            PressTarget::WonderSwan(button) => self.host_input.set_ws_keyboard(button, pressed),
+            PressTarget::Tilt(action) => self.host_input.set_tilt_keyboard(action, pressed),
+            PressTarget::ColecoKeypad { player, key } => self
+                .host_input
+                .set_coleco_keyboard_keypad(player, key, pressed),
+            PressTarget::Frontend(action) => self.set_keyboard_frontend_hold(action, pressed),
+        }
+    }
+
+    fn set_keyboard_frontend_hold(&mut self, action: HeldFrontendAction, held: bool) {
+        let effective = self.held_frontend_sources.set_keyboard(action, held);
+        self.set_effective_frontend_hold(action, effective);
+    }
+
+    pub(super) fn set_gamepad_frontend_hold(&mut self, action: HeldFrontendAction, held: bool) {
+        let effective = self.held_frontend_sources.set_gamepad(action, held);
+        self.set_effective_frontend_hold(action, effective);
+    }
+
+    pub(super) fn set_remote_frontend_hold(&mut self, action: HeldFrontendAction, held: bool) {
+        let effective = self.held_frontend_sources.set_remote(action, held);
+        self.set_effective_frontend_hold(action, effective);
+    }
+
+    pub(super) fn force_clear_frontend_hold(&mut self, action: HeldFrontendAction) {
+        self.held_frontend_sources.clear_action(action);
+        self.set_effective_frontend_hold(action, false);
+    }
+
+    fn set_effective_frontend_hold(&mut self, action: HeldFrontendAction, held: bool) {
+        match action {
+            HeldFrontendAction::FastForward => self.speed.fast_forward_held = held,
+            HeldFrontendAction::Rewind => self.rewind.held = held,
+            HeldFrontendAction::Turbo => self.speed.turbo_held = held,
+        }
+    }
+
+    pub(super) fn clear_keyboard_state(&mut self) {
+        let targets: Vec<_> = self.pressed_keyboard_targets.drain().collect();
+        for target in targets {
+            self.apply_keyboard_target(target, false);
+        }
+        self.host_input.clear_keyboard();
+        for action in [
+            HeldFrontendAction::FastForward,
+            HeldFrontendAction::Rewind,
+            HeldFrontendAction::Turbo,
+        ] {
+            let effective = self.held_frontend_sources.clear_keyboard(action);
+            self.set_effective_frontend_hold(action, effective);
+        }
+        self.modifiers = Default::default();
+    }
+
+    pub(super) fn sync_keyboard_capture(&mut self, capture_active: bool) {
+        let capture_started = capture_active && !self.keyboard_capture_active;
+        self.keyboard_capture_active = capture_active;
+        if capture_started {
+            self.clear_keyboard_state();
+        }
+    }
+
+    pub(super) fn clear_all_frontend_holds(&mut self) {
+        self.held_frontend_sources.clear_all();
+        self.speed.fast_forward_held = false;
+        self.rewind.held = false;
+        self.speed.turbo_held = false;
     }
 }

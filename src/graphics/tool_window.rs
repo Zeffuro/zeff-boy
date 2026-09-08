@@ -150,7 +150,11 @@ impl ToolWindow {
                 .max_rect(self.egui.context().content_rect()),
         );
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin::same(8)))
+            .frame(
+                egui::Frame::new()
+                    .fill(self.egui.context().global_style().visuals.panel_fill)
+                    .inner_margin(egui::Margin::same(8)),
+            )
             .show(&mut root_ui, draw);
         let output = self.egui.end_frame(&self.window);
 

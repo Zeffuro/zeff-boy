@@ -172,6 +172,13 @@ pub(super) fn draw(
     settings: &mut Settings,
     active_system: Option<ActiveSystem>,
 ) {
+    ui.label(
+        egui::RichText::new("Timing, rewind, and console-specific behavior.")
+            .small()
+            .weak(),
+    );
+
+    ui.separator();
     ui.heading("Speed");
     ui.add(
         egui::Slider::new(&mut settings.emulation.fast_forward_multiplier, 1..=16)
@@ -196,40 +203,6 @@ pub(super) fn draw(
     );
     ui.checkbox(&mut settings.emulation.frame_skip, "Frame skip when behind")
         .on_hover_text("Drops host timing debt; emulated frames still run.");
-    let recovery_save = ui.checkbox(
-        &mut settings.emulation.save_recovery_state,
-        "Save recovery state when stopping",
-    );
-    #[cfg(target_arch = "wasm32")]
-    recovery_save.on_hover_text(
-        "Keep this page open until saving finishes; abruptly closing it can interrupt browser storage.",
-    );
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = recovery_save;
-    ui.checkbox(
-        &mut settings.emulation.resume_recovery_state,
-        "Resume fresh recovery state automatically",
-    );
-    if settings.emulation.recovery_migration_notice_pending {
-        ui.group(|ui| {
-            ui.label("Automatic save and resume are now separate settings.");
-            ui.horizontal(|ui| {
-                if ui.button("Keep automatic resume").clicked() {
-                    settings.emulation.resume_recovery_state = true;
-                    settings.emulation.recovery_migration_notice_pending = false;
-                }
-                if ui.button("Keep resume off").clicked() {
-                    settings.emulation.resume_recovery_state = false;
-                    settings.emulation.recovery_migration_notice_pending = false;
-                }
-            });
-        });
-    }
-    ui.checkbox(
-        &mut settings.emulation.pause_on_unfocus,
-        "Pause when window loses focus",
-    );
-
     ui.separator();
     ui.heading("Archives");
     enum_combo_box(
@@ -242,8 +215,8 @@ pub(super) fn draw(
     ui.heading("Rewind");
     ui.checkbox(&mut settings.rewind.enabled, "Enable rewind")
         .on_hover_text("Hold the rewind key.");
-    ui.horizontal(|ui| {
-        ui.label("History (seconds):");
+    ui.horizontal_wrapped(|ui| {
+        ui.label("History (seconds)");
         ui.add(
             egui::DragValue::new(&mut settings.rewind.seconds)
                 .range(1..=120)
@@ -252,8 +225,8 @@ pub(super) fn draw(
     });
     enum_combo_box(ui, "Playback", &mut settings.rewind.mode);
     if settings.rewind.mode == RewindMode::Fast {
-        ui.horizontal(|ui| {
-            ui.label("Fast rewind step:");
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Fast rewind step");
             ui.add(
                 egui::DragValue::new(&mut settings.rewind.speed)
                     .range(1..=10)
@@ -274,10 +247,16 @@ pub(super) fn draw(
         &mut settings.emulation.sgb_border_enabled,
         "Enable SGB border rendering",
     );
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("TCP link address");
-        ui.text_edit_singleline(&mut settings.emulation.tcp_link_addr);
+        let field_width = ui.available_width().min(240.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut settings.emulation.tcp_link_addr)
+                .desired_width(field_width),
+        );
     });
+    ui.separator();
+    super::draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
     ui.checkbox(
         &mut settings.emulation.nes_zapper_enabled,
         "Enable NES Zapper (Light Gun)",
@@ -318,12 +297,13 @@ pub(super) fn draw(
     );
 
     ui.separator();
-    ui.horizontal(|ui| {
+    let sega_active = matches!(
+        active_system,
+        Some(ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000)
+    );
+    ui.horizontal_wrapped(|ui| {
         ui.heading("Sega 8-bit");
-        if matches!(
-            active_system,
-            Some(ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000)
-        ) {
+        if sega_active {
             ui.label(egui::RichText::new("(active)").weak().italics().small());
         }
     });

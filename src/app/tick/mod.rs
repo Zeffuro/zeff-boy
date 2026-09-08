@@ -72,6 +72,9 @@ impl App {
     }
 
     pub(super) fn tick(&mut self) {
+        if let Some(notice) = self.settings.take_persistence_notification() {
+            self.toast_manager.warning(notice);
+        }
         #[cfg(target_arch = "wasm32")]
         self.poll_retired_wasm_threads();
         #[cfg(not(target_arch = "wasm32"))]
@@ -132,7 +135,7 @@ impl App {
         let supports_rewind = self.core_supports_rewind();
         let rewind_available = supports_rewind && !self.recording.is_replay_active();
         if !rewind_available {
-            self.rewind.held = false;
+            self.force_clear_frontend_hold(crate::app::keyboard::HeldFrontendAction::Rewind);
         }
         let supports_audio = self.core_supports_audio();
         let supports_cheats = self.core_supports_cheats();
@@ -590,6 +593,19 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn live_input_settings_visible(&self) -> bool {
+        self.show_settings_window
+            && self.debug_windows.settings_ui.wants_live_input()
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::settings_window)
+                .is_some_and(|window| {
+                    window.is_visible() != Some(false) && window.is_minimized() != Some(true)
+                })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn render_native_auxiliary_windows(&mut self, data: Option<&crate::ui::UiFrameData>) {
         let now = Instant::now();
         let debugger_visible = self.active_debug_presentation
@@ -614,6 +630,7 @@ impl App {
                 .and_then(crate::graphics::Graphics::settings_window)
                 .is_some_and(|window| window.is_minimized() != Some(true));
         if settings_visible
+            && !self.debug_windows.settings_ui.wants_live_input()
             && now.duration_since(self.last_settings_render) >= SETTINGS_UPDATE_INTERVAL
         {
             let before = self.settings.clone();

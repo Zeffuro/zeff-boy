@@ -69,6 +69,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
             ui.separator();
             ui.strong("Tilt Key Bindings");
             if ui.button("Reset tilt keys to WASD").clicked() {
+                super::joypad::clear_capture(state);
                 settings.tilt.key_bindings.set_wasd_defaults();
             }
             egui::Grid::new("tilt_bindings")
@@ -89,6 +90,7 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                                 key_name
                             };
                         if ui.button(capture_label).clicked() {
+                            super::joypad::clear_capture(state);
                             state.rebinding_action = Some(InputBindingAction::Tilt(action));
                         }
                         ui.end_row();

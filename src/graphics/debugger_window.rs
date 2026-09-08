@@ -160,6 +160,11 @@ impl DebuggerWindow {
                 .layer_id(egui::LayerId::background())
                 .max_rect(self.egui.context().content_rect()),
         );
+        root_ui.painter().rect_filled(
+            root_ui.max_rect(),
+            0.0,
+            self.egui.context().global_style().visuals.panel_fill,
+        );
         egui::Panel::top("debugger_toolbar")
             .frame(
                 egui::Frame::new()

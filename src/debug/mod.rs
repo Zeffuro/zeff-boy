@@ -34,7 +34,7 @@ mod printer_viewer;
 mod rom_info;
 mod rom_viewer;
 mod sega8_tile_viewer;
-mod settings_window;
+pub(crate) mod settings_window;
 mod source_viewer;
 mod symbol_browser;
 #[cfg(not(target_arch = "wasm32"))]

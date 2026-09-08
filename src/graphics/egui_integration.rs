@@ -30,9 +30,7 @@ impl EguiRenderer {
         let density = UiDensity::default();
         let debug_monospace_scale = 1.0;
         let debug_colors = DebugColors::default();
-        ctx.set_visuals(build_visuals(theme));
-        ctx.set_global_style(build_style(density, debug_monospace_scale));
-        crate::debug::common::set_debug_colors(&ctx, debug_colors);
+        apply_egui_theme(&ctx, theme, density, debug_monospace_scale, debug_colors);
 
         let state = egui_winit::State::new(
             ctx.clone(),
@@ -64,17 +62,20 @@ impl EguiRenderer {
         debug_monospace_scale: f32,
         debug_colors: DebugColors,
     ) {
-        if theme != self.active_theme {
-            self.active_theme = theme;
-            self.ctx.set_visuals(build_visuals(theme));
-        }
-        if density != self.active_density
+        if theme != self.active_theme
+            || density != self.active_density
             || (debug_monospace_scale - self.active_debug_monospace_scale).abs() > f32::EPSILON
         {
+            self.active_theme = theme;
             self.active_density = density;
             self.active_debug_monospace_scale = debug_monospace_scale;
-            self.ctx
-                .set_global_style(build_style(density, debug_monospace_scale));
+            apply_egui_theme(
+                &self.ctx,
+                theme,
+                density,
+                debug_monospace_scale,
+                debug_colors,
+            );
         }
         if debug_colors != self.active_debug_colors {
             self.active_debug_colors = debug_colors;
@@ -200,10 +201,44 @@ fn submit_before_texture_cleanup(submit: impl FnOnce(), cleanup: impl FnOnce()) 
     cleanup();
 }
 
+pub(crate) fn apply_egui_theme(
+    ctx: &egui::Context,
+    theme: UiThemePreset,
+    density: UiDensity,
+    debug_monospace_scale: f32,
+    debug_colors: DebugColors,
+) {
+    let font_key = egui::Id::new("zeff_ui_fonts");
+    if !ctx.data(|data| data.get_temp::<bool>(font_key).unwrap_or(false)) {
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "Inter".into(),
+            egui::FontData::from_static(include_bytes!("../../assets/fonts/Inter-Regular.ttf"))
+                .into(),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "Inter".into());
+        ctx.set_fonts(fonts);
+        ctx.data_mut(|data| data.insert_temp(font_key, true));
+    }
+    let mut style = build_style(density, debug_monospace_scale);
+    style.visuals = build_visuals(theme);
+    ctx.set_theme(if style.visuals.dark_mode {
+        egui::Theme::Dark
+    } else {
+        egui::Theme::Light
+    });
+    ctx.set_global_style(style);
+    crate::debug::common::set_debug_colors(ctx, debug_colors);
+}
+
 pub(super) fn dock_style(ctx: &egui::Context, density: UiDensity) -> egui_dock::Style {
     let mut style = egui_dock::Style::from_egui(ctx.global_style().as_ref());
     if density == UiDensity::Compact {
-        style.tab_bar.height = 20.0;
+        style.tab_bar.height = 24.0;
         style.tab.spacing = 0.0;
         style.tab.tab_body.inner_margin = egui::Margin::same(2);
         style.separator.width = 1.0;
@@ -214,43 +249,36 @@ pub(super) fn dock_style(ctx: &egui::Context, density: UiDensity) -> egui_dock::
 
 fn build_style(density: UiDensity, debug_monospace_scale: f32) -> egui::Style {
     let mut style = egui::Style::default();
-    let (body, small, heading, monospace, item_spacing, button_padding, interact_size) =
-        match density {
-            UiDensity::Compact => (
-                12.5,
-                10.0,
-                15.0,
-                12.0,
-                egui::vec2(4.0, 2.0),
-                egui::vec2(4.0, 1.0),
-                egui::vec2(36.0, 18.0),
-            ),
-            UiDensity::Comfortable => (
-                14.0,
-                11.0,
-                18.0,
-                13.0,
-                egui::vec2(8.0, 4.0),
-                egui::vec2(6.0, 2.0),
-                egui::vec2(40.0, 20.0),
-            ),
-        };
+    let (monospace, item_spacing, button_padding, interact_size) = match density {
+        UiDensity::Compact => (
+            12.0,
+            egui::vec2(4.0, 2.0),
+            egui::vec2(6.0, 3.0),
+            egui::vec2(36.0, 24.0),
+        ),
+        UiDensity::Comfortable => (
+            13.0,
+            egui::vec2(8.0, 6.0),
+            egui::vec2(8.0, 5.0),
+            egui::vec2(40.0, 28.0),
+        ),
+    };
 
     style.text_styles.insert(
         egui::TextStyle::Body,
-        egui::FontId::new(body, egui::FontFamily::Proportional),
+        egui::FontId::new(15.0, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Button,
-        egui::FontId::new(body, egui::FontFamily::Proportional),
+        egui::FontId::new(15.0, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Small,
-        egui::FontId::new(small, egui::FontFamily::Proportional),
+        egui::FontId::new(13.0, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(heading, egui::FontFamily::Proportional),
+        egui::FontId::new(20.0, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Monospace,
@@ -277,6 +305,9 @@ fn build_visuals(preset: UiThemePreset) -> egui::Visuals {
 
 fn build_default_dark() -> egui::Visuals {
     let mut v = egui::Visuals::dark();
+    v.widgets.noninteractive.fg_stroke.color = egui::Color32::from_gray(220);
+    v.widgets.inactive.fg_stroke.color = egui::Color32::from_gray(225);
+    v.weak_text_color = Some(egui::Color32::from_gray(170));
 
     v.window_shadow = egui::Shadow {
         offset: [0, 2],
@@ -309,6 +340,7 @@ fn build_high_contrast_dark() -> egui::Visuals {
     v.selection.bg_fill = egui::Color32::from_rgb(30, 80, 180);
 
     v.override_text_color = Some(egui::Color32::from_gray(240));
+    v.weak_text_color = Some(egui::Color32::from_gray(210));
     v.faint_bg_color = egui::Color32::from_gray(18);
     v.extreme_bg_color = egui::Color32::from_gray(6);
 
@@ -317,6 +349,8 @@ fn build_high_contrast_dark() -> egui::Visuals {
 
 fn build_light() -> egui::Visuals {
     let mut v = egui::Visuals::light();
+    v.widgets.noninteractive.fg_stroke.color = egui::Color32::from_gray(40);
+    v.weak_text_color = Some(egui::Color32::from_gray(92));
 
     v.window_shadow = egui::Shadow {
         offset: [0, 2],
@@ -377,6 +411,7 @@ fn build_retro() -> egui::Visuals {
     v.selection.stroke = egui::Stroke::new(1.0_f32, fg);
 
     v.override_text_color = Some(fg);
+    v.weak_text_color = Some(egui::Color32::from_rgb(95, 165, 90));
     v.hyperlink_color = accent;
     v.faint_bg_color = egui::Color32::from_rgb(24, 27, 21);
     v.extreme_bg_color = egui::Color32::from_rgb(12, 14, 10);
@@ -388,7 +423,103 @@ fn build_retro() -> egui::Visuals {
 mod tests {
     use std::cell::RefCell;
 
-    use super::submit_before_texture_cleanup;
+    use super::{apply_egui_theme, build_style, build_visuals, submit_before_texture_cleanup};
+    use crate::settings::{DebugColors, UiDensity, UiThemePreset};
+
+    #[test]
+    fn density_changes_preserve_selected_theme_and_user_zoom() {
+        let ctx = egui::Context::default();
+        ctx.set_zoom_factor(1.5);
+        ctx.begin_pass(Default::default());
+        let _ = ctx.end_pass();
+        for theme in [
+            UiThemePreset::Light,
+            UiThemePreset::HighContrastDark,
+            UiThemePreset::Retro,
+        ] {
+            for density in [
+                UiDensity::Compact,
+                UiDensity::Comfortable,
+                UiDensity::Compact,
+            ] {
+                apply_egui_theme(&ctx, theme, density, 1.25, DebugColors::default());
+                let expected = build_visuals(theme);
+                let style = ctx.global_style();
+                assert_eq!(style.visuals.dark_mode, expected.dark_mode);
+                assert_eq!(style.visuals.panel_fill, expected.panel_fill);
+                assert_eq!(style.visuals.text_color(), expected.text_color());
+                assert_eq!(
+                    ctx.zoom_factor(),
+                    1.5,
+                    "styling must not replace the user's UI zoom"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compact_spacing_does_not_shrink_readable_labels_or_override_debug_font_scale() {
+        let compact = build_style(UiDensity::Compact, 1.0);
+        let comfortable = build_style(UiDensity::Comfortable, 1.0);
+        for text_style in [
+            egui::TextStyle::Body,
+            egui::TextStyle::Small,
+            egui::TextStyle::Heading,
+        ] {
+            assert_eq!(
+                compact.text_styles[&text_style],
+                comfortable.text_styles[&text_style]
+            );
+        }
+        assert!(compact.spacing.interact_size.y < comfortable.spacing.interact_size.y);
+        let scaled = build_style(UiDensity::Compact, 1.25);
+        assert_eq!(
+            scaled.text_styles[&egui::TextStyle::Monospace].size,
+            compact.text_styles[&egui::TextStyle::Monospace].size * 1.25
+        );
+        assert_eq!(
+            scaled.text_styles[&egui::TextStyle::Body],
+            compact.text_styles[&egui::TextStyle::Body]
+        );
+    }
+
+    #[test]
+    fn secondary_text_has_readable_contrast_on_each_theme_surface() {
+        fn luminance(color: egui::Color32) -> f64 {
+            let channel = |byte: u8| {
+                let value = f64::from(byte) / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+        }
+        for theme in [
+            UiThemePreset::DefaultDark,
+            UiThemePreset::HighContrastDark,
+            UiThemePreset::Light,
+            UiThemePreset::Retro,
+        ] {
+            let visuals = build_visuals(theme);
+            let foreground = visuals.weak_text_color();
+            assert_eq!(foreground.a(), 255);
+            for background in [
+                visuals.panel_fill,
+                visuals.window_fill,
+                visuals.extreme_bg_color,
+            ] {
+                let a = luminance(foreground);
+                let b = luminance(background);
+                let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(
+                    ratio >= 4.5,
+                    "{theme:?} secondary text contrast was {ratio:.2}:1"
+                );
+            }
+        }
+    }
 
     #[test]
     fn freed_textures_are_cleaned_up_only_after_submission() {

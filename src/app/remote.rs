@@ -88,7 +88,10 @@ impl App {
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::SetFastForward(enabled) => {
-                self.speed.fast_forward_held = enabled;
+                self.set_remote_frontend_hold(
+                    crate::app::keyboard::HeldFrontendAction::FastForward,
+                    enabled,
+                );
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::SetUncapped(enabled) => {

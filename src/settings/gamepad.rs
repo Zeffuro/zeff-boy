@@ -401,10 +401,12 @@ impl GamepadBindings {
         None
     }
 
+    #[cfg(test)]
     pub(crate) fn get(&self, action: BindingAction) -> &str {
         self.get_for_player(action, 1)
     }
 
+    #[cfg(test)]
     pub(crate) fn get_p2(&self, action: BindingAction) -> &str {
         self.get_for_player(action, 2)
     }

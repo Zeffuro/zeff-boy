@@ -20,54 +20,47 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
                 .show(ui, |ui| {
                     ui.label("Speed-up (hold)");
                     let key_label = if state.rebinding_speedup {
-                        format!("Press key... ({})", settings.speedup_key)
+                        "Press a key…".to_owned()
                     } else {
-                        settings.speedup_key.clone()
+                        super::joypad::key_label(settings.speedup_key_code())
                     };
-                    if ui.button(key_label).clicked() {
+                    if ui
+                        .add_sized([170.0, 26.0], egui::Button::new(key_label))
+                        .clicked()
+                    {
+                        super::joypad::clear_capture(state);
                         state.rebinding_speedup = true;
-                        state.rebinding_action = None;
-                        state.rebinding_gamepad = None;
-                        state.rebinding_gamepad_p2 = None;
-                        state.rebinding_ws_gamepad = None;
-                        state.rebinding_shortcut = None;
-                        state.rebinding_rewind = false;
                     }
                     ui.end_row();
 
                     ui.label("Rewind (hold)");
                     let rewind_label = if state.rebinding_rewind {
-                        format!("Press key... ({})", settings.rewind.key)
+                        "Press a key…".to_owned()
                     } else {
-                        settings.rewind.key.clone()
+                        super::joypad::key_label(settings.rewind.key_code())
                     };
-                    if ui.button(rewind_label).clicked() {
+                    if ui
+                        .add_sized([170.0, 26.0], egui::Button::new(rewind_label))
+                        .clicked()
+                    {
+                        super::joypad::clear_capture(state);
                         state.rebinding_rewind = true;
-                        state.rebinding_action = None;
-                        state.rebinding_gamepad = None;
-                        state.rebinding_gamepad_p2 = None;
-                        state.rebinding_ws_gamepad = None;
-                        state.rebinding_shortcut = None;
-                        state.rebinding_speedup = false;
                     }
                     ui.end_row();
 
                     for &action in ShortcutAction::ALL {
                         ui.label(action.label());
-                        let key_str = settings.shortcut_bindings.key_str(action).to_owned();
                         let capture_label = if state.rebinding_shortcut == Some(action) {
-                            format!("Press key... ({key_str})")
+                            "Press a key…".to_owned()
                         } else {
-                            key_str
+                            super::joypad::key_label(settings.shortcut_bindings.get(action))
                         };
-                        if ui.button(capture_label).clicked() {
+                        if ui
+                            .add_sized([170.0, 26.0], egui::Button::new(capture_label))
+                            .clicked()
+                        {
+                            super::joypad::clear_capture(state);
                             state.rebinding_shortcut = Some(action);
-                            state.rebinding_action = None;
-                            state.rebinding_gamepad = None;
-                            state.rebinding_gamepad_p2 = None;
-                            state.rebinding_ws_gamepad = None;
-                            state.rebinding_speedup = false;
-                            state.rebinding_rewind = false;
                         }
                         ui.end_row();
                     }
