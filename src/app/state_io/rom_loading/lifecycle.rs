@@ -145,6 +145,7 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         self.reevaluate_tas_execution_attachment();
         self.rom_info.rom_hash = None;
+        self.set_loaded_input_game(None, None);
         self.rom_info.pce_controller_profile_hash = None;
         self.rom_info.replay_metadata = None;
         self.symbols = crate::symbols::SymbolSession::default();

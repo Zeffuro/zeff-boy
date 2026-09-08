@@ -4,7 +4,6 @@ use super::App;
 use super::command_gate::EmuCommandSendError;
 #[cfg(test)]
 use crate::emu_backend::CoreCapabilities;
-use crate::emu_thread::EmuCommand;
 #[cfg(test)]
 use crate::input::HostButton;
 use crate::live_control::{LiveCommand, LiveInput, LiveReply, PendingButtonRelease};
@@ -51,6 +50,7 @@ impl App {
         {
             set_remote_input(&mut self.host_input, player, input, false);
         }
+        self.observe_autofire_host_transitions();
     }
 
     fn handle_live_command(&mut self, command: LiveCommand) -> LiveReply {
@@ -95,12 +95,12 @@ impl App {
                 LiveReply::ok(self.live_status_json())
             }
             LiveCommand::SetUncapped(enabled) => {
-                if let Err(error) = self.send_emu_command_checked(EmuCommand::SetUncapped(
-                    enabled && self.recording.allows_uncapped_worker(),
-                )) {
+                let previous = self.timing.uncapped_speed;
+                self.timing.uncapped_speed = enabled;
+                if let Err(error) = self.sync_uncapped_worker() {
+                    self.timing.uncapped_speed = previous;
                     return LiveReply::error(error.to_string());
                 }
-                self.timing.uncapped_speed = enabled;
                 self.settings.emulation.uncapped_speed = enabled;
                 LiveReply::ok(self.live_status_json())
             }
@@ -116,10 +116,12 @@ impl App {
                 }
                 let input = LiveInput::Button(key);
                 set_remote_input(&mut self.host_input, player, input, pressed);
+                self.observe_autofire_host_transitions();
                 if !pressed {
                     self.live_button_releases
                         .retain(|release| !same_pending_input(release, player, input));
                 }
+                let _ = self.sync_uncapped_worker();
                 LiveReply::ok(self.live_input_json())
             }
             LiveCommand::Tap {
@@ -134,6 +136,7 @@ impl App {
                 }
                 let input = LiveInput::Button(key);
                 set_remote_input(&mut self.host_input, player, input, true);
+                self.observe_autofire_host_transitions();
                 self.live_button_releases
                     .retain(|release| !same_pending_input(release, player, input));
                 self.live_button_releases.push(PendingButtonRelease {
@@ -141,6 +144,7 @@ impl App {
                     input,
                     frames_remaining: frames,
                 });
+                let _ = self.sync_uncapped_worker();
                 LiveReply::ok(self.live_input_json())
             }
             LiveCommand::ColecoKeypad {

@@ -1,4 +1,4 @@
-use crate::debug::ui_helpers::{EnumLabel, enum_combo_box};
+use crate::debug::ui_helpers::EnumLabel;
 use crate::emu_backend::ActiveSystem;
 use crate::settings::{
     PceArcadeCardPreference, PceCdArchiveMemoryLimit, PceConsoleWiringPreference,
@@ -172,131 +172,205 @@ pub(super) fn draw(
     settings: &mut Settings,
     active_system: Option<ActiveSystem>,
 ) {
-    ui.label(
+    use super::{
+        layout::{checkbox, enum_combo, helper, row},
+        search::{self, SettingId as Id},
+    };
+
+    helper(
+        ui,
         egui::RichText::new("Timing, rewind, and console-specific behavior.")
             .small()
             .weak(),
     );
-
-    ui.separator();
+    ui.add_space(14.0);
     ui.heading("Speed");
-    ui.add(
-        egui::Slider::new(&mut settings.emulation.fast_forward_multiplier, 1..=16)
-            .text("Fast-forward multiplier"),
-    );
-    ui.checkbox(
-        &mut settings.emulation.slow_motion_enabled,
-        "Start in slow-motion mode",
-    );
-    ui.add(
-        egui::Slider::new(&mut settings.emulation.slow_motion_divisor, 2..=16)
-            .text("Slow-motion divisor"),
-    );
-    ui.add(
-        egui::Slider::new(&mut settings.emulation.uncapped_frames_per_tick, 1..=240)
-            .text("Uncapped frames/tick"),
-    )
-    .on_hover_text("Higher values trade input latency for throughput.");
-    ui.checkbox(
-        &mut settings.emulation.uncapped_speed,
-        "Start in uncapped mode",
-    );
-    ui.checkbox(&mut settings.emulation.frame_skip, "Frame skip when behind")
-        .on_hover_text("Drops host timing debt; emulated frames still run.");
-    ui.separator();
-    ui.heading("Archives");
-    enum_combo_box(
+    row(ui, Id::EmulationFastForwardMultiplier, None, |ui| {
+        ui.add_sized(
+            [240.0, 30.0],
+            egui::Slider::new(&mut settings.emulation.fast_forward_multiplier, 1..=16),
+        )
+    });
+    checkbox(
         ui,
-        "7z decoder memory limit",
+        Id::EmulationStartInSlowMotionMode,
+        None,
+        &mut settings.emulation.slow_motion_enabled,
+    );
+    row(ui, Id::EmulationSlowMotionDivisor, None, |ui| {
+        ui.add_sized(
+            [240.0, 30.0],
+            egui::Slider::new(&mut settings.emulation.slow_motion_divisor, 2..=16),
+        )
+    });
+    row(ui, Id::EmulationUncappedFramesTick, None, |ui| {
+        ui.add_sized(
+            [240.0, 30.0],
+            egui::Slider::new(&mut settings.emulation.uncapped_frames_per_tick, 1..=240),
+        )
+        .on_hover_text("Higher values trade input latency for throughput.")
+    });
+    checkbox(
+        ui,
+        Id::EmulationStartInUncappedMode,
+        None,
+        &mut settings.emulation.uncapped_speed,
+    );
+    checkbox(
+        ui,
+        Id::EmulationFrameSkipWhenBehind,
+        None,
+        &mut settings.emulation.frame_skip,
+    )
+    .on_hover_text("Drops host timing debt; emulated frames still run.");
+
+    ui.add_space(22.0);
+    ui.heading("Archives");
+    enum_combo(
+        ui,
+        Id::Emulation7zDecoderMemoryLimit,
+        "emulation_archive_memory",
+        None,
         &mut settings.emulation.pce_cd_archive_memory_limit,
     );
 
-    ui.separator();
+    ui.add_space(22.0);
     ui.heading("Rewind");
-    ui.checkbox(&mut settings.rewind.enabled, "Enable rewind")
-        .on_hover_text("Hold the rewind key.");
-    ui.horizontal_wrapped(|ui| {
-        ui.label("History (seconds)");
-        ui.add(
-            egui::DragValue::new(&mut settings.rewind.seconds)
-                .range(1..=120)
-                .speed(1),
-        );
-    });
-    enum_combo_box(ui, "Playback", &mut settings.rewind.mode);
-    if settings.rewind.mode == RewindMode::Fast {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Fast rewind step");
+    checkbox(
+        ui,
+        Id::EmulationEnableRewind,
+        None,
+        &mut settings.rewind.enabled,
+    )
+    .on_hover_text("Hold the rewind key.");
+    row(
+        ui,
+        Id::EmulationRewindHistoryLength,
+        Some("History (seconds)"),
+        |ui| {
             ui.add(
-                egui::DragValue::new(&mut settings.rewind.speed)
-                    .range(1..=10)
+                egui::DragValue::new(&mut settings.rewind.seconds)
+                    .range(1..=120)
                     .speed(1),
-            );
-            ui.label(format!("({} snapshots)", settings.rewind.speed));
+            )
+        },
+    );
+    enum_combo(
+        ui,
+        Id::EmulationRewindPlaybackMode,
+        "emulation_rewind_mode",
+        None,
+        &mut settings.rewind.mode,
+    );
+    search::conditional(
+        ui,
+        Id::EmulationFastRewindStep,
+        Id::EmulationRewindPlaybackMode,
+        settings.rewind.mode == RewindMode::Fast,
+        "Choose Fast rewind playback to edit its step size.",
+    );
+    if settings.rewind.mode == RewindMode::Fast {
+        row(ui, Id::EmulationFastRewindStep, None, |ui| {
+            ui.horizontal(|ui| {
+                let response = ui.add(
+                    egui::DragValue::new(&mut settings.rewind.speed)
+                        .range(1..=10)
+                        .speed(1),
+                );
+                ui.label(format!("({} snapshots)", settings.rewind.speed));
+                response
+            })
+            .inner
         });
     }
 
-    ui.separator();
+    ui.add_space(22.0);
     super::draw_console_section_header(ui, "Game Boy", active_system, ActiveSystem::GameBoy);
-    enum_combo_box(
+    enum_combo(
         ui,
-        "Hardware mode",
+        Id::EmulationGameBoyHardwareMode,
+        "emulation_gb_hardware",
+        None,
         &mut settings.emulation.hardware_mode_preference,
     );
-    ui.checkbox(
+    checkbox(
+        ui,
+        Id::EmulationEnableSgbBorderRendering,
+        None,
         &mut settings.emulation.sgb_border_enabled,
-        "Enable SGB border rendering",
     );
-    ui.horizontal_wrapped(|ui| {
-        ui.label("TCP link address");
-        let field_width = ui.available_width().min(240.0);
+    row(ui, Id::EmulationTcpLinkAddress, None, |ui| {
         ui.add(
-            egui::TextEdit::singleline(&mut settings.emulation.tcp_link_addr)
-                .desired_width(field_width),
-        );
+            egui::TextEdit::singleline(&mut settings.emulation.tcp_link_addr).desired_width(240.0),
+        )
     });
-    ui.separator();
+
+    ui.add_space(22.0);
     super::draw_console_section_header(ui, "NES", active_system, ActiveSystem::Nes);
-    ui.checkbox(
+    checkbox(
+        ui,
+        Id::EmulationEnableNesZapper,
+        None,
         &mut settings.emulation.nes_zapper_enabled,
-        "Enable NES Zapper (Light Gun)",
     );
 
-    ui.separator();
+    ui.add_space(22.0);
     super::draw_console_section_header(ui, "PC Engine", active_system, ActiveSystem::Pce);
-    enum_combo_box(
+    enum_combo(
         ui,
-        "Console wiring",
+        Id::EmulationPcEngineConsoleWiring,
+        "emulation_pce_wiring",
+        None,
         &mut settings.emulation.pce_console_wiring,
     );
-    enum_combo_box(ui, "Controller", &mut settings.emulation.pce_controller);
-    ui.label(
-        egui::RichText::new("Force mouse can break unsupported games.")
-            .weak()
-            .small(),
-    );
-    enum_combo_box(ui, "Arcade Card", &mut settings.emulation.pce_arcade_card);
-    ui.label(
-        egui::RichText::new("Enabled requires System Card v3.")
-            .weak()
-            .small(),
-    );
-    enum_combo_box(
+    enum_combo(
         ui,
-        "Memory Base 128",
+        Id::EmulationPcEngineController,
+        "emulation_pce_controller",
+        None,
+        &mut settings.emulation.pce_controller,
+    );
+    helper(
+        ui,
+        egui::RichText::new("Force mouse can break unsupported games.")
+            .small()
+            .weak(),
+    );
+    enum_combo(
+        ui,
+        Id::EmulationPcEngineArcadeCard,
+        "emulation_pce_arcade_card",
+        None,
+        &mut settings.emulation.pce_arcade_card,
+    );
+    helper(
+        ui,
+        egui::RichText::new("Enabled requires System Card v3.")
+            .small()
+            .weak(),
+    );
+    enum_combo(
+        ui,
+        Id::EmulationMemoryBase128,
+        "emulation_pce_memory_base",
+        None,
         &mut settings.emulation.pce_memory_base,
     );
-    enum_combo_box(
+    enum_combo(
         ui,
-        "Mouse cursor",
+        Id::EmulationPcEngineMouseCursor,
+        "emulation_pce_mouse_cursor",
+        None,
         &mut settings.emulation.pce_mouse_cursor_mode,
     );
-    ui.add(
-        egui::Slider::new(&mut settings.emulation.pce_mouse_sensitivity, 0.25..=4.0)
-            .text("Mouse sensitivity"),
-    );
+    row(ui, Id::EmulationPcEngineMouseSensitivity, None, |ui| {
+        ui.add_sized(
+            [240.0, 30.0],
+            egui::Slider::new(&mut settings.emulation.pce_mouse_sensitivity, 0.25..=4.0),
+        )
+    });
 
-    ui.separator();
+    ui.add_space(22.0);
     let sega_active = matches!(
         active_system,
         Some(ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000)
@@ -307,14 +381,18 @@ pub(super) fn draw(
             ui.label(egui::RichText::new("(active)").weak().italics().small());
         }
     });
-    enum_combo_box(
+    enum_combo(
         ui,
-        "Video standard",
+        Id::EmulationSegaVideoStandard,
+        "emulation_sega_video",
+        None,
         &mut settings.emulation.sega8_video_standard,
     );
-    enum_combo_box(
+    enum_combo(
         ui,
-        "Console region",
+        Id::EmulationSegaConsoleRegion,
+        "emulation_sega_region",
+        None,
         &mut settings.emulation.sega8_console_region,
     );
 }

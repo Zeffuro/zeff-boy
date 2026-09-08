@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::settings::{
-    GamepadAssignment, GamepadBindings, GamepadFingerprint, InputDeviceSettings,
+    AxisDirection, BindingAction, BindingExpression, BindingExpressionKind, BindingSet,
+    BindingTarget, GamepadAssignment, GamepadBindings, GamepadFingerprint, GameplayBindingSource,
+    InputAxis, InputDeviceSettings, ResolvedGameplayInput,
 };
 
 /// Monotonically allocated per connection; deliberately not serializable.
@@ -10,6 +12,7 @@ pub(crate) struct RuntimeGamepadId(pub(crate) u64);
 
 #[derive(Debug, Clone)]
 pub(crate) enum GamepadCommand {
+    Neutralize,
     Identify {
         player: u8,
         device: RuntimeGamepadId,
@@ -30,8 +33,12 @@ pub(crate) struct GamepadDeviceSnapshot {
     pub(crate) id: RuntimeGamepadId,
     pub(crate) fingerprint: GamepadFingerprint,
     pub(crate) buttons: Vec<String>,
+    /// Raw normalized backend values, retained for diagnostics and calibration.
     pub(crate) left_stick: (f32, f32),
     pub(crate) right_stick: (f32, f32),
+    /// Model calibration is applied before the gameplay transform.
+    pub(crate) calibrated_left_stick: (f32, f32),
+    pub(crate) calibrated_right_stick: (f32, f32),
     pub(crate) waiting_for_neutral: bool,
 }
 
@@ -46,8 +53,10 @@ pub(crate) struct GamepadPlayerSnapshot {
 pub(crate) struct GamepadSnapshot {
     pub(crate) devices: Vec<GamepadDeviceSnapshot>,
     pub(crate) players: [GamepadPlayerSnapshot; 5],
+    pub(crate) wonderswan_buttons: u16,
     pub(crate) capture_active: bool,
     pub(crate) capture_ready: bool,
+    pub(crate) sample_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +84,17 @@ struct DeviceState {
     stick: (f32, f32),
     right_stick: (f32, f32),
     waiting_for_neutral: bool,
+    calibration_waiting_for_neutral: bool,
+    actions_waiting_for_neutral: bool,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+struct TypedGamepadBinding {
+    target: BindingTarget,
+    bindings: BindingSet,
+}
+
+type AxisLatchKey = (RuntimeGamepadId, usize, u64, InputAxis, AxisDirection);
 
 #[derive(Default)]
 pub(super) struct GamepadRouter {
@@ -85,14 +104,46 @@ pub(super) struct GamepadRouter {
     require_identification: [bool; 5],
     preferences: InputDeviceSettings,
     bindings: Option<GamepadBindings>,
+    legacy_bindings: Option<GamepadBindings>,
+    typed_bindings: Vec<TypedGamepadBinding>,
+    typed_configuration_changed: bool,
+    axis_latches: BTreeSet<AxisLatchKey>,
     snapshot: GamepadSnapshot,
     capture_active: bool,
     capture_ready: bool,
     neutral_threshold: f32,
     pending_pause_presses: Vec<RuntimeGamepadId>,
+    sample_generation: u64,
 }
 
 impl GamepadRouter {
+    pub(super) fn configure_typed(&mut self, resolved: &ResolvedGameplayInput) {
+        let incoming = || {
+            resolved
+                .typed_binding_sets()
+                .filter_map(|(target, source, bindings)| {
+                    (source == GameplayBindingSource::Gamepad).then_some((target, bindings))
+                })
+        };
+        if self
+            .typed_bindings
+            .iter()
+            .map(|binding| (binding.target, &binding.bindings))
+            .eq(incoming())
+        {
+            return;
+        }
+        self.typed_bindings = incoming()
+            .map(|(target, bindings)| TypedGamepadBinding {
+                target,
+                bindings: bindings.clone(),
+            })
+            .collect();
+        self.typed_configuration_changed = true;
+        self.axis_latches.clear();
+        self.capture_ready = false;
+    }
+
     pub(super) fn connect(&mut self, id: RuntimeGamepadId, fingerprint: GamepadFingerprint) {
         self.devices.entry(id).or_insert(DeviceState {
             fingerprint,
@@ -100,11 +151,14 @@ impl GamepadRouter {
             stick: (0.0, 0.0),
             right_stick: (0.0, 0.0),
             waiting_for_neutral: self.capture_active,
+            calibration_waiting_for_neutral: false,
+            actions_waiting_for_neutral: false,
         });
     }
 
     pub(super) fn disconnect(&mut self, id: RuntimeGamepadId) {
         self.devices.remove(&id);
+        self.axis_latches.retain(|key| key.0 != id);
         for selected in &mut self.identified {
             if *selected == Some(id) {
                 *selected = None;
@@ -130,6 +184,7 @@ impl GamepadRouter {
         if new_press
             && !self.capture_active
             && !device.waiting_for_neutral
+            && !device.actions_waiting_for_neutral
             && self.assigned[0] == Some(id)
             && self.bindings.as_ref().is_some_and(|bindings| {
                 bindings.map_action_button_name(name) == Some(crate::settings::GamepadAction::Pause)
@@ -137,7 +192,8 @@ impl GamepadRouter {
         {
             self.pending_pause_presses.push(id);
         }
-        self.arm_capture_if_neutral();
+        let preferences = self.preferences.clone();
+        self.arm_capture_if_neutral(&preferences);
         new_press
     }
 
@@ -149,6 +205,14 @@ impl GamepadRouter {
 
     pub(super) fn apply_command(&mut self, command: GamepadCommand) {
         match command {
+            GamepadCommand::Neutralize => {
+                self.pending_pause_presses.clear();
+                self.axis_latches.clear();
+                self.capture_ready = false;
+                for device in self.devices.values_mut() {
+                    device.waiting_for_neutral = true;
+                }
+            }
             GamepadCommand::Identify { player, device } => {
                 if let Some(index) = player.checked_sub(1).map(usize::from).filter(|&i| i < 5)
                     && self.devices.contains_key(&device)
@@ -177,13 +241,17 @@ impl GamepadRouter {
         !self.capture_active || self.capture_ready
     }
 
-    fn arm_capture_if_neutral(&mut self) {
+    fn arm_capture_if_neutral(&mut self, preferences: &InputDeviceSettings) {
         if self.capture_active
             && !self.capture_ready
-            && self.devices.values().all(|device| {
-                device.buttons.is_empty()
-                    && device.stick.0.abs() < self.neutral_threshold
-                    && device.stick.1.abs() < self.neutral_threshold
+            && self.devices.iter().all(|(id, device)| {
+                device_is_neutral(
+                    preferences,
+                    device,
+                    self.neutral_threshold,
+                    assigned_player(&self.assigned, *id),
+                    &self.typed_bindings,
+                )
             })
         {
             self.capture_ready = true;
@@ -197,10 +265,9 @@ impl GamepadRouter {
             .filter(|&id| {
                 !self.capture_active
                     && self.assigned[0] == Some(id)
-                    && self
-                        .devices
-                        .get(&id)
-                        .is_some_and(|device| !device.waiting_for_neutral)
+                    && self.devices.get(&id).is_some_and(|device| {
+                        !device.waiting_for_neutral && !device.actions_waiting_for_neutral
+                    })
             })
             .count()
     }
@@ -212,6 +279,7 @@ impl GamepadRouter {
         capture_active: bool,
         deadzone: f32,
     ) -> EffectiveGamepads {
+        self.sample_generation = self.sample_generation.saturating_add(1);
         self.neutral_threshold = if deadzone.is_finite() {
             deadzone.clamp(0.01, 1.0)
         } else {
@@ -221,7 +289,7 @@ impl GamepadRouter {
             self.capture_ready = false;
         }
         self.capture_active = capture_active;
-        self.arm_capture_if_neutral();
+        self.arm_capture_if_neutral(preferences);
         let old_assigned = self.assigned;
         let mut assigned = [None; 5];
         let mut status = [GamepadAssignmentStatus::Waiting; 5];
@@ -299,8 +367,16 @@ impl GamepadRouter {
                 }
             }
         }
-        let bindings_changed = self.bindings.as_ref().is_some_and(|old| old != bindings);
-        if bindings_changed {
+        let bindings_changed = self
+            .bindings
+            .as_ref()
+            .is_some_and(|old| !old.gameplay_eq(bindings));
+        let typed_changed = std::mem::take(&mut self.typed_configuration_changed);
+        let actions_changed = self
+            .bindings
+            .as_ref()
+            .is_some_and(|old| !old.actions_eq(bindings));
+        if bindings_changed || typed_changed || actions_changed {
             self.pending_pause_presses.clear();
         }
         for (index, (&old, &new)) in old_assigned.iter().zip(&assigned).enumerate() {
@@ -313,6 +389,7 @@ impl GamepadRouter {
                 || self.preferences.players[index] != preferences.players[index]
             {
                 for id in old.into_iter().chain(new) {
+                    self.axis_latches.retain(|key| key.0 != id);
                     if let Some(device) = self.devices.get_mut(&id) {
                         device.waiting_for_neutral = true;
                     }
@@ -320,14 +397,36 @@ impl GamepadRouter {
             }
         }
         let threshold = self.neutral_threshold;
-        for device in self.devices.values_mut() {
-            if capture_active || bindings_changed {
+        for (id, device) in &mut self.devices {
+            let calibration_changed =
+                calibration_for(&self.preferences, device) != calibration_for(preferences, device);
+            if calibration_changed {
                 device.waiting_for_neutral = true;
-            } else if device.buttons.is_empty()
-                && device.stick.0.abs() < threshold
-                && device.stick.1.abs() < threshold
-            {
+                device.calibration_waiting_for_neutral = true;
+            }
+            if actions_changed {
+                device.actions_waiting_for_neutral = true;
+            } else if device.buttons.is_empty() {
+                device.actions_waiting_for_neutral = false;
+            }
+            let neutral = device_is_neutral(
+                preferences,
+                device,
+                threshold,
+                assigned_player(&assigned, *id),
+                &self.typed_bindings,
+            );
+            if capture_active || bindings_changed || typed_changed {
+                device.waiting_for_neutral = true;
+            } else if device.calibration_waiting_for_neutral {
+                if neutral {
+                    device.calibration_waiting_for_neutral = false;
+                }
+            } else if neutral {
                 device.waiting_for_neutral = false;
+            }
+            if device.waiting_for_neutral {
+                self.axis_latches.retain(|key| key.0 != *id);
             }
         }
         self.capture_active = capture_active;
@@ -342,9 +441,21 @@ impl GamepadRouter {
         if self.preferences != *preferences {
             self.preferences = preferences.clone();
         }
-        if self.bindings.as_ref() != Some(bindings) {
+        if self.bindings.as_ref() != Some(bindings) || typed_changed {
+            let mut legacy = bindings.clone();
+            for binding in &self.typed_bindings {
+                match binding.target {
+                    BindingTarget::Joypad { player, action } => {
+                        legacy.set_for_player(action, player, "")
+                    }
+                    BindingTarget::WonderSwan(action) => legacy.set_ws(action, ""),
+                    BindingTarget::Tilt(_) => {}
+                }
+            }
+            self.legacy_bindings = Some(legacy);
             self.bindings = Some(bindings.clone());
         }
+        let legacy = self.legacy_bindings.as_ref().unwrap_or(bindings);
         let mut effective = EffectiveGamepads::default();
         for (index, id) in assigned.iter().enumerate() {
             let Some(device) = id.and_then(|id| self.devices.get(&id)) else {
@@ -354,17 +465,60 @@ impl GamepadRouter {
                 continue;
             }
             let player = u8::try_from(index + 1).unwrap_or(1);
-            effective.players[index].stick = device.stick;
+            effective.players[index].stick = calibrated_left_stick(preferences, device);
             for name in &device.buttons {
-                if let Some(button) = bindings.map_button_name_for_player(name, player) {
+                if let Some(button) = legacy.map_button_name_for_player(name, player) {
                     effective.players[index].buttons |= button.host_mask_bit();
                 }
                 if index == 0 {
-                    if let Some(action) = bindings.map_action_button_name(name) {
+                    if !device.actions_waiting_for_neutral
+                        && let Some(action) = bindings.map_action_button_name(name)
+                    {
                         effective.actions |= action_bit(action);
                     }
-                    if let Some(button) = bindings.map_ws_button_name(name) {
+                    if let Some(button) = legacy.map_ws_button_name(name) {
                         effective.ws |= ws_bit(button);
+                    }
+                }
+            }
+            let left = calibrated_left_stick(preferences, device);
+            let right = calibrated_right_stick(preferences, device);
+            for (binding_index, binding) in self.typed_bindings.iter().enumerate() {
+                if !target_matches_player(binding.target, player) {
+                    continue;
+                }
+                let active = binding.bindings.evaluate(|alternative, atom| match atom {
+                    BindingExpressionKind::GamepadButton(button) => {
+                        device.buttons.contains(button.as_str())
+                    }
+                    BindingExpressionKind::Axis(axis) => {
+                        let key = (
+                            id.expect("assigned device"),
+                            binding_index,
+                            alternative,
+                            axis.axis,
+                            axis.direction,
+                        );
+                        let active = axis.evaluate(
+                            axis.axis.value(left, right),
+                            self.axis_latches.contains(&key),
+                        );
+                        if active {
+                            self.axis_latches.insert(key);
+                        } else {
+                            self.axis_latches.remove(&key);
+                        }
+                        active
+                    }
+                    _ => false,
+                });
+                if active {
+                    match binding.target {
+                        BindingTarget::Joypad { action, .. } => {
+                            effective.players[index].buttons |= host_button(action).host_mask_bit()
+                        }
+                        BindingTarget::WonderSwan(action) => effective.ws |= ws_bit(action),
+                        BindingTarget::Tilt(_) => {}
                     }
                 }
             }
@@ -383,6 +537,8 @@ impl GamepadRouter {
                         .collect(),
                     left_stick: device.stick,
                     right_stick: device.right_stick,
+                    calibrated_left_stick: calibrated_left_stick(preferences, device),
+                    calibrated_right_stick: calibrated_right_stick(preferences, device),
                     waiting_for_neutral: device.waiting_for_neutral,
                 })
                 .collect(),
@@ -391,11 +547,130 @@ impl GamepadRouter {
                 device: assigned[index],
                 buttons: effective.players[index].buttons,
             }),
+            wonderswan_buttons: effective.ws,
             capture_active,
             capture_ready: self.capture_ready,
+            sample_generation: self.sample_generation,
         };
         effective
     }
+}
+
+fn assigned_player(assigned: &[Option<RuntimeGamepadId>; 5], id: RuntimeGamepadId) -> Option<u8> {
+    assigned
+        .iter()
+        .position(|selected| *selected == Some(id))
+        .map(|index| index as u8 + 1)
+}
+
+fn target_matches_player(target: BindingTarget, player: u8) -> bool {
+    match target {
+        BindingTarget::Joypad { player: target, .. } => target == player,
+        BindingTarget::WonderSwan(_) => player == 1,
+        BindingTarget::Tilt(_) => false,
+    }
+}
+
+fn expression_uses_right_stick(expression: &BindingExpression) -> bool {
+    if !expression.is_supported() {
+        return false;
+    }
+    match &expression.kind {
+        BindingExpressionKind::Axis(axis) => {
+            matches!(axis.axis, InputAxis::RightX | InputAxis::RightY)
+        }
+        BindingExpressionKind::Chord(atoms) => atoms.iter().any(expression_uses_right_stick),
+        _ => false,
+    }
+}
+
+fn expression_axes_are_neutral(
+    expression: &BindingExpression,
+    left: (f32, f32),
+    right: (f32, f32),
+) -> bool {
+    if !expression.is_supported() {
+        return true;
+    }
+    match &expression.kind {
+        BindingExpressionKind::Axis(axis) => !axis.evaluate(axis.axis.value(left, right), true),
+        BindingExpressionKind::Chord(atoms) => atoms
+            .iter()
+            .all(|atom| expression_axes_are_neutral(atom, left, right)),
+        _ => true,
+    }
+}
+
+fn device_is_neutral(
+    preferences: &InputDeviceSettings,
+    device: &DeviceState,
+    threshold: f32,
+    player: Option<u8>,
+    typed_bindings: &[TypedGamepadBinding],
+) -> bool {
+    if !device.buttons.is_empty() {
+        return false;
+    }
+    let left = calibrated_left_stick(preferences, device);
+    if !left_stick_is_neutral(left, threshold) {
+        return false;
+    }
+    let right = calibrated_right_stick(preferences, device);
+    for binding in typed_bindings.iter().filter(|binding| {
+        player.is_some_and(|player| target_matches_player(binding.target, player))
+    }) {
+        for alternative in &binding.bindings.alternatives {
+            if expression_uses_right_stick(&alternative.expression)
+                && !left_stick_is_neutral(right, threshold)
+            {
+                return false;
+            }
+            if !expression_axes_are_neutral(&alternative.expression, left, right) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn host_button(action: BindingAction) -> super::HostButton {
+    use super::HostButton;
+    match action {
+        BindingAction::Right => HostButton::Right,
+        BindingAction::Left => HostButton::Left,
+        BindingAction::Up => HostButton::Up,
+        BindingAction::Down => HostButton::Down,
+        BindingAction::A => HostButton::A,
+        BindingAction::B => HostButton::B,
+        BindingAction::X => HostButton::X,
+        BindingAction::Y => HostButton::Y,
+        BindingAction::L => HostButton::L,
+        BindingAction::R => HostButton::R,
+        BindingAction::Start => HostButton::Start,
+        BindingAction::Select => HostButton::Select,
+    }
+}
+
+fn calibration_for(
+    preferences: &InputDeviceSettings,
+    device: &DeviceState,
+) -> crate::settings::GamepadCalibration {
+    preferences
+        .calibration_for(&device.fingerprint)
+        .filter(|calibration| calibration.is_valid())
+        .unwrap_or_default()
+}
+
+fn calibrated_left_stick(preferences: &InputDeviceSettings, device: &DeviceState) -> (f32, f32) {
+    calibration_for(preferences, device).apply_left(device.stick)
+}
+
+fn calibrated_right_stick(preferences: &InputDeviceSettings, device: &DeviceState) -> (f32, f32) {
+    calibration_for(preferences, device).apply_right(device.right_stick)
+}
+
+fn left_stick_is_neutral(stick: (f32, f32), threshold: f32) -> bool {
+    stick.0.abs() < threshold && stick.1.abs() < threshold
 }
 
 fn normalize_axis(value: f32) -> f32 {

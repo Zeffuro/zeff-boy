@@ -41,26 +41,6 @@ impl ShortcutAction {
         Self::DebugStep,
     ];
 
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Pause => "Pause / Resume",
-            Self::Fullscreen => "Fullscreen",
-            Self::SlowMotion => "Toggle slow motion",
-            Self::UncappedSpeed => "Toggle uncapped",
-            Self::MuteToggle => "Mute toggle",
-            Self::Screenshot => "Screenshot",
-            Self::ResetGame => "Reset game",
-            Self::FrameAdvance => "Frame advance",
-            Self::QuickSave => "Quick save",
-            Self::QuickLoad => "Quick load",
-            Self::SlotNext => "Next save slot",
-            Self::SlotPrev => "Prev save slot",
-            Self::RotateWs => "Rotate WonderSwan",
-            Self::DebugContinue => "Run (debug)",
-            Self::DebugStep => "Step (debug)",
-        }
-    }
-
     fn default_keycode(self) -> KeyCode {
         match self {
             Self::Pause => KeyCode::KeyP,

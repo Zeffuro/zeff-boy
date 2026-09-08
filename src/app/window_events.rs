@@ -162,6 +162,12 @@ impl App {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_settings_window_event(&mut self, event: WindowEvent) {
+        if matches!(
+            &event,
+            WindowEvent::CloseRequested | WindowEvent::Occluded(true)
+        ) {
+            self.debug_windows.settings_ui.input_timing.pause();
+        }
         if matches!(&event, WindowEvent::RedrawRequested) && self.live_input_settings_visible() {
             self.poll_gamepad();
         }
@@ -169,9 +175,9 @@ impl App {
         // A tool window has its own egui event stream. Capture must reach the app
         // without sending ordinary Settings typing through gameplay or hotkeys.
         let capture_consumed = if let WindowEvent::KeyboardInput { event, .. } = &event {
-            let before = self.settings.capture_input_profile();
+            let before = self.settings.clone();
             let consumed = self.handle_settings_capture_key(event);
-            if self.settings.capture_input_profile() != before {
+            if self.settings != before {
                 self.settings.save();
             }
             consumed
@@ -244,6 +250,10 @@ impl App {
             }
             WindowEvent::Focused(focused) => {
                 self.settings_window_focused = focused;
+                if !focused {
+                    self.debug_windows.settings_ui.binding_keyboard_down.clear();
+                    self.clear_rebinding_state();
+                }
                 self.focus_state_dirty = true;
             }
             _ if needs_repaint
@@ -778,6 +788,7 @@ impl App {
         }
         if !focused {
             self.clear_keyboard_state();
+            self.debug_windows.settings_ui.binding_keyboard_down.clear();
         }
         self.game_window_focused = focused;
         self.focus_state_dirty = true;

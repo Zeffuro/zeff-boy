@@ -23,6 +23,7 @@ use zeff_emu_common::address::Address;
 
 pub(super) use crate::camera::{CameraCapture, CameraHostSettings};
 
+mod autofire;
 mod bindings;
 #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
 pub(crate) mod browser_speculation_test;
@@ -31,6 +32,7 @@ mod command_gate;
 mod display;
 mod frame_result;
 mod input;
+mod input_configuration;
 mod keyboard;
 mod lifecycle;
 mod link;
@@ -93,6 +95,11 @@ pub(crate) fn run(
         .clamp(1, crate::emu_thread::MAX_UNCAPPED_BATCH_SIZE);
     let vsync_mode = settings.video.vsync_mode;
     let initial_audio_output_sample_rate = settings.audio.output_sample_rate;
+    #[cfg(not(target_arch = "wasm32"))]
+    let initial_audio_host_config = (
+        settings.audio.output_device_id.clone(),
+        settings.audio.buffer_policy,
+    );
     let initial_debug_presentation =
         lifecycle::effective_debug_presentation(settings.ui.debug_presentation);
     let initial_debug_dock = restore_dock_layout(
@@ -159,22 +166,27 @@ pub(crate) fn run(
         debug_dock: initial_debug_dock,
         active_debug_presentation: initial_debug_presentation,
         exit_requested: false,
+        input_configuration: input_configuration::ScopedInputRuntime::new(&settings),
         settings,
         timing: TimingState {
             last_frame_time: Instant::now(),
             last_render_time: Instant::now(),
             last_viewer_update: Instant::now(),
             uncapped_speed,
+            uncapped_worker_enabled: false,
             last_uncapped_frames_per_tick: uncapped_frames_per_tick,
             last_vsync_mode: vsync_mode,
             last_speed_mode: SpeedMode::Normal,
         },
         last_audio_output_sample_rate: initial_audio_output_sample_rate,
+        #[cfg(not(target_arch = "wasm32"))]
+        last_audio_host_config: initial_audio_host_config,
+        #[cfg(not(target_arch = "wasm32"))]
+        last_audio_recovery: None,
         speed: SpeedState {
             paused: false,
             fast_forward_held: false,
             turbo_held: false,
-            turbo_counter: 0,
         },
         pressed_keyboard_targets: Default::default(),
         held_frontend_sources: Default::default(),
@@ -292,6 +304,14 @@ pub(crate) fn run(
         tas_repair: tas_control::repair::TasRepairManager::new(),
         #[cfg(not(target_arch = "wasm32"))]
         pending_tas_repair_activation: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        pending_tas_autofire: None,
+        autofire_state: autofire::AutofireState::default(),
+        autofire_rearm_pending: false,
+        autofire_released_targets: [[false; 8]; 5],
+        autofire_legacy_release_pending: false,
+        autofire_observed_buttons: [0; 5],
+        autofire_observed_legacy_held: false,
         #[cfg(not(target_arch = "wasm32"))]
         tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder::default(),
         #[cfg(not(target_arch = "wasm32"))]
@@ -412,8 +432,13 @@ struct App {
     active_debug_presentation: DebugPresentation,
     exit_requested: bool,
     settings: Settings,
+    input_configuration: input_configuration::ScopedInputRuntime,
     timing: TimingState,
     last_audio_output_sample_rate: u32,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_audio_host_config: (Option<String>, crate::settings::AudioBufferPolicy),
+    #[cfg(not(target_arch = "wasm32"))]
+    last_audio_recovery: Option<Instant>,
     speed: SpeedState,
     pressed_keyboard_targets: keyboard::PressedKeyboardTargets,
     held_frontend_sources: keyboard::HeldFrontendSources,
@@ -481,6 +506,14 @@ struct App {
     tas_repair: tas_control::repair::TasRepairManager,
     #[cfg(not(target_arch = "wasm32"))]
     pending_tas_repair_activation: Option<tas_control::repair::TasPreparedRepair>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pending_tas_autofire: Option<autofire::AutofireState>,
+    autofire_state: autofire::AutofireState,
+    autofire_rearm_pending: bool,
+    autofire_released_targets: [[bool; 8]; 5],
+    autofire_legacy_release_pending: bool,
+    autofire_observed_buttons: [u8; 5],
+    autofire_observed_legacy_held: bool,
     #[cfg(not(target_arch = "wasm32"))]
     tas_realtime_recorder: tas_control::realtime::TasRealtimeRecorder,
     #[cfg(not(target_arch = "wasm32"))]
@@ -688,21 +721,24 @@ impl App {
     }
 
     fn left_stick_controls_tilt(&self, is_mbc7: bool) -> bool {
-        match self.settings.tilt.left_stick_mode {
+        match self.input_configuration.resolved.tilt.left_stick_mode {
             LeftStickMode::Tilt => true,
-            LeftStickMode::Dpad => false,
+            LeftStickMode::Dpad | LeftStickMode::BindingsOnly => false,
             LeftStickMode::Auto => is_mbc7,
         }
     }
 
     fn left_stick_controls_dpad(&self, is_mbc7: bool) -> bool {
-        !self.left_stick_controls_tilt(is_mbc7)
+        self.input_configuration.resolved.tilt.left_stick_mode != LeftStickMode::BindingsOnly
+            && !self.left_stick_controls_tilt(is_mbc7)
     }
 
     fn sync_host_input_with_stick_mode(&mut self, is_mbc7: bool) {
         if self.left_stick_controls_dpad(is_mbc7) {
-            self.host_input
-                .set_gamepad_stick_dpad(self.tilt.left_stick, self.settings.tilt.deadzone);
+            self.host_input.set_gamepad_stick_dpad(
+                self.tilt.left_stick,
+                self.input_configuration.resolved.tilt.deadzone,
+            );
         } else {
             self.host_input.clear_gamepad_stick_dpad();
         }
@@ -714,12 +750,12 @@ impl App {
 
     fn tilt_config(&self) -> TiltConfig {
         TiltConfig {
-            sensitivity: self.settings.tilt.sensitivity,
-            invert_x: self.settings.tilt.invert_x,
-            invert_y: self.settings.tilt.invert_y,
-            deadzone: self.settings.tilt.deadzone,
-            stick_bypass_lerp: self.settings.tilt.stick_bypass_lerp,
-            lerp: self.settings.tilt.lerp,
+            sensitivity: self.input_configuration.resolved.tilt.sensitivity,
+            invert_x: self.input_configuration.resolved.tilt.invert_x,
+            invert_y: self.input_configuration.resolved.tilt.invert_y,
+            deadzone: self.input_configuration.resolved.tilt.deadzone,
+            stick_bypass_lerp: self.input_configuration.resolved.tilt.stick_bypass_lerp,
+            lerp: self.input_configuration.resolved.tilt.lerp,
         }
     }
 
@@ -734,7 +770,7 @@ impl App {
         let cfg = self.tilt_config();
         tilt::compute_target_tilt(
             is_mbc7,
-            self.settings.tilt.input_mode,
+            self.input_configuration.resolved.tilt.input_mode,
             &mut self.tilt.auto_source,
             &tilt::TiltInputSources {
                 keyboard,

@@ -269,6 +269,27 @@ impl Default for GamepadBindings {
 }
 
 impl GamepadBindings {
+    pub(crate) fn gameplay_eq(&self, other: &Self) -> bool {
+        (1..=5).all(|player| {
+            BindingAction::ALL.iter().all(|&action| {
+                self.get_for_player(action, player) == other.get_for_player(action, player)
+            })
+        }) && WonderSwanButton::ALL
+            .iter()
+            .all(|&button| self.get_ws(button) == other.get_ws(button))
+    }
+
+    pub(crate) fn actions_eq(&self, other: &Self) -> bool {
+        [
+            GamepadAction::SpeedUp,
+            GamepadAction::Rewind,
+            GamepadAction::Pause,
+            GamepadAction::Turbo,
+        ]
+        .into_iter()
+        .all(|action| self.get_action(action) == other.get_action(action))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn map_button_name(&self, name: &str) -> Option<crate::input::HostButton> {
         self.map_button_name_for_player(name, 1)
@@ -301,6 +322,7 @@ impl GamepadBindings {
         self.wonderswan_defaults_initialized = true;
     }
 
+    #[cfg(test)]
     pub(crate) fn clear_wonderswan_direct_bindings(&mut self) {
         self.ws_x1.clear();
         self.ws_x2.clear();

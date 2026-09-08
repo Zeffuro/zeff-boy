@@ -149,7 +149,10 @@ impl RecordingState {
             || self.is_replay_start_pending()
             || self.is_replay_finalizing()
             || self.replay_player.is_some()
-            || !self.pending_replay_batches.is_empty()
+            || self
+                .pending_replay_batches
+                .iter()
+                .any(|batch| batch.record || batch.playback)
             || !self.pending_replay_checkpoint_hashes.is_empty()
     }
 
@@ -183,6 +186,12 @@ impl RecordingState {
         self.should_stage_replay_recording_input()
             || self.replay_player.is_some()
             || !self.pending_replay_batches.is_empty()
+    }
+
+    pub(super) fn has_pending_autofire(&self) -> bool {
+        self.pending_replay_batches
+            .iter()
+            .any(|batch| !batch.autofire_states.is_empty())
     }
 
     pub(super) fn replay_recorder_for_commits(
@@ -314,6 +323,7 @@ pub(super) struct PendingReplayBatch {
     pub(super) frames: Vec<crate::emu_thread::ReplayJoypadFrame>,
     pub(super) record: bool,
     pub(super) playback: bool,
+    pub(super) autofire_states: Vec<crate::app::autofire::AutofireState>,
 }
 
 pub(super) struct TimingState {
@@ -321,6 +331,7 @@ pub(super) struct TimingState {
     pub(super) last_render_time: Instant,
     pub(super) last_viewer_update: Instant,
     pub(super) uncapped_speed: bool,
+    pub(super) uncapped_worker_enabled: bool,
     pub(super) last_uncapped_frames_per_tick: usize,
     pub(super) last_vsync_mode: crate::settings::VsyncMode,
     pub(super) last_speed_mode: SpeedMode,
@@ -372,7 +383,6 @@ pub(super) struct SpeedState {
     pub(super) paused: bool,
     pub(super) fast_forward_held: bool,
     pub(super) turbo_held: bool,
-    pub(super) turbo_counter: u8,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -492,6 +502,7 @@ mod tests {
             frames: Vec::new(),
             record: false,
             playback: true,
+            autofire_states: Vec::new(),
         });
         assert!(state.is_replay_active());
         assert!(!state.allows_cheat_updates());
@@ -515,6 +526,20 @@ mod tests {
         state.pending_replay_batches.clear();
         state.pending_replay_checkpoint_hashes.clear();
         assert!(state.allows_cheat_updates());
+    }
+
+    #[test]
+    fn pending_autofire_serializes_frames_without_becoming_replay_activity() {
+        let mut state = recording_state();
+        state.pending_replay_batches.push_back(PendingReplayBatch {
+            frames: Vec::new(),
+            record: false,
+            playback: false,
+            autofire_states: vec![crate::app::autofire::AutofireState::default()],
+        });
+        assert!(!state.is_replay_active());
+        assert!(state.allows_cheat_updates());
+        assert!(state.limits_in_flight_for_replay());
     }
 
     #[test]

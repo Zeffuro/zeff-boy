@@ -126,18 +126,36 @@ pub(crate) enum DiagramAction {
     WonderSwan(WonderSwanButton),
 }
 
+pub(crate) struct DiagramInteraction {
+    pub(crate) activated: Option<DiagramAction>,
+    pub(crate) highlighted: Option<DiagramAction>,
+    #[cfg(test)]
+    pub(crate) hit_rects: Vec<(DiagramAction, egui::Rect)>,
+    #[cfg(test)]
+    pub(crate) diagram_rect: egui::Rect,
+}
+
 pub(super) fn draw(
     ui: &mut egui::Ui,
     kind: DiagramKind,
     pressed_host_mask: u16,
     selected: Option<DiagramAction>,
-) -> Option<DiagramAction> {
+    highlighted: Option<DiagramAction>,
+) -> DiagramInteraction {
     let width = ui.available_width().min(420.0);
-    let height = width
-        * if kind == DiagramKind::Coleco {
-            0.94
-        } else {
-            0.60
+    let height = width / 360.0
+        * match kind {
+            DiagramKind::Coleco => 316.0,
+            DiagramKind::WonderSwan => 252.0,
+            DiagramKind::GameBoy => 270.0,
+            DiagramKind::GameBoyAdvance
+            | DiagramKind::Nes
+            | DiagramKind::PceTwoButton
+            | DiagramKind::SegaMasterSystem
+            | DiagramKind::Sg1000 => 180.0,
+            DiagramKind::StandardGamepad | DiagramKind::PceSixButton | DiagramKind::GameGear => {
+                190.0
+            }
         };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
@@ -149,8 +167,12 @@ pub(super) fn draw(
         kind,
         pressed_host_mask,
         selected,
+        highlighted,
         palette,
-        clicked: None,
+        activated: None,
+        interaction_highlighted: None,
+        #[cfg(test)]
+        hit_rects: Vec::new(),
     };
 
     match kind {
@@ -165,7 +187,14 @@ pub(super) fn draw(
         DiagramKind::Coleco => diagram.draw_coleco(),
         _ => diagram.draw_pad(),
     }
-    diagram.clicked
+    DiagramInteraction {
+        activated: diagram.activated,
+        highlighted: diagram.interaction_highlighted,
+        #[cfg(test)]
+        hit_rects: diagram.hit_rects,
+        #[cfg(test)]
+        diagram_rect: rect,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -199,11 +228,18 @@ struct DiagramPainter<'a> {
     kind: DiagramKind,
     pressed_host_mask: u16,
     selected: Option<DiagramAction>,
+    highlighted: Option<DiagramAction>,
     palette: Palette,
-    clicked: Option<DiagramAction>,
+    activated: Option<DiagramAction>,
+    interaction_highlighted: Option<DiagramAction>,
+    #[cfg(test)]
+    hit_rects: Vec<(DiagramAction, egui::Rect)>,
 }
 
 impl DiagramPainter<'_> {
+    const FULL_TARGET_CANVAS_WIDTH: f32 = 360.0;
+    const TARGET_SIZE: f32 = 36.0;
+
     fn pos(&self, x: f32, y: f32) -> egui::Pos2 {
         egui::pos2(
             self.rect.left() + self.rect.width() * x / 360.0,
@@ -293,7 +329,7 @@ impl DiagramPainter<'_> {
         {
             self.control_rect(
                 egui::Rect::from_center_size(
-                    self.pos(82.0, 51.0),
+                    self.pos(82.0, 38.0),
                     egui::vec2(self.scale(66.0), self.scale(17.0)),
                 ),
                 DiagramAction::Joypad(BindingAction::L),
@@ -304,7 +340,7 @@ impl DiagramPainter<'_> {
         {
             self.control_rect(
                 egui::Rect::from_center_size(
-                    self.pos(278.0, 51.0),
+                    self.pos(278.0, 38.0),
                     egui::vec2(self.scale(66.0), self.scale(17.0)),
                 ),
                 DiagramAction::Joypad(BindingAction::R),
@@ -315,25 +351,25 @@ impl DiagramPainter<'_> {
     fn draw_game_boy(&mut self) {
         self.title(self.kind.label());
         let body = egui::Rect::from_center_size(
-            self.pos(180.0, 117.0),
-            egui::vec2(self.scale(154.0), self.scale(188.0)),
+            self.pos(180.0, 140.0),
+            egui::vec2(self.scale(180.0), self.scale(230.0)),
         );
         self.shell(body, self.scale(16.0));
         let screen = egui::Rect::from_center_size(
-            self.pos(180.0, 79.0),
-            egui::vec2(self.scale(104.0), self.scale(57.0)),
+            self.pos(180.0, 74.0),
+            egui::vec2(self.scale(104.0), self.scale(70.0)),
         );
         self.screen(screen);
         let actions = self.kind.actions();
-        self.draw_dpad_at(&actions, 145.0, 146.0);
+        self.draw_dpad_at(&actions, 144.0, 165.0);
         self.draw_face_at(
             &actions,
             &[
-                (BindingAction::B, 211.0, 146.0),
-                (BindingAction::A, 239.0, 129.0),
+                (BindingAction::B, 216.0, 165.0),
+                (BindingAction::A, 252.0, 145.0),
             ],
         );
-        self.draw_center_at(&actions, 194.0, 149.0, 211.0);
+        self.draw_center_at(&actions, 225.0, 188.0, 234.0);
     }
 
     fn draw_handheld(&mut self) {
@@ -362,7 +398,7 @@ impl DiagramPainter<'_> {
             self.shell(body, self.scale(31.0));
         }
         let screen = egui::Rect::from_center_size(
-            self.pos(180.0, 103.0),
+            self.pos(184.0, 103.0),
             egui::vec2(self.scale(116.0), self.scale(62.0)),
         );
         self.screen(screen);
@@ -371,22 +407,22 @@ impl DiagramPainter<'_> {
         self.draw_face_at(
             &actions,
             &[
-                (BindingAction::B, 271.0, 130.0),
-                (BindingAction::A, 301.0, 112.0),
+                (BindingAction::B, 270.0, 130.0),
+                (BindingAction::A, 306.0, 112.0),
             ],
         );
         self.draw_center_at(&actions, 156.0, 161.0, 204.0);
         if self.kind == DiagramKind::GameBoyAdvance {
             self.control_rect(
                 egui::Rect::from_center_size(
-                    self.pos(76.0, 52.0),
+                    self.pos(76.0, 38.0),
                     egui::vec2(self.scale(70.0), self.scale(17.0)),
                 ),
                 DiagramAction::Joypad(BindingAction::L),
             );
             self.control_rect(
                 egui::Rect::from_center_size(
-                    self.pos(284.0, 52.0),
+                    self.pos(284.0, 38.0),
                     egui::vec2(self.scale(70.0), self.scale(17.0)),
                 ),
                 DiagramAction::Joypad(BindingAction::R),
@@ -406,7 +442,7 @@ impl DiagramPainter<'_> {
         self.draw_face_at(
             &actions,
             &[
-                (BindingAction::B, 264.0, 128.0),
+                (BindingAction::B, 263.0, 128.0),
                 (BindingAction::A, 299.0, 111.0),
             ],
         );
@@ -421,7 +457,7 @@ impl DiagramPainter<'_> {
         );
         self.shell(body, self.scale(34.0));
         let actions = self.kind.actions();
-        self.draw_dpad_at(&actions, 82.0, 116.0);
+        self.draw_dpad_at(&actions, 72.0, 116.0);
         self.draw_center_at(&actions, 147.0, 151.0, 196.0);
         self.draw_face_at(
             &actions,
@@ -444,11 +480,11 @@ impl DiagramPainter<'_> {
         );
         self.shell(body, self.scale(13.0));
         let actions = self.kind.actions();
-        self.draw_dpad_at(&actions, 79.0, 112.0);
+        self.draw_dpad_at(&actions, 76.0, 112.0);
         self.draw_face_at(
             &actions,
             &[
-                (BindingAction::B, 272.0, 128.0),
+                (BindingAction::B, 271.0, 128.0),
                 (BindingAction::A, 307.0, 111.0),
             ],
         );
@@ -485,31 +521,16 @@ impl DiagramPainter<'_> {
     }
 
     fn draw_dpad(&mut self, actions: &[DiagramAction]) {
-        for (action, x, y) in [
-            (BindingAction::Up, 86.0, 92.0),
-            (BindingAction::Left, 62.0, 116.0),
-            (BindingAction::Right, 110.0, 116.0),
-            (BindingAction::Down, 86.0, 140.0),
-        ] {
-            if actions.contains(&DiagramAction::Joypad(action)) {
-                self.control_rect(
-                    egui::Rect::from_center_size(
-                        self.pos(x, y),
-                        egui::vec2(self.scale(28.0), self.scale(28.0)),
-                    ),
-                    DiagramAction::Joypad(action),
-                );
-            }
-        }
+        self.draw_dpad_at(actions, 74.0, 116.0);
     }
 
     fn draw_face_buttons(&mut self, actions: &[DiagramAction]) {
         let positions = if self.kind == DiagramKind::StandardGamepad {
             vec![
-                (BindingAction::X, 282.0, 92.0),
-                (BindingAction::Y, 255.0, 120.0),
-                (BindingAction::A, 309.0, 120.0),
-                (BindingAction::B, 282.0, 148.0),
+                (BindingAction::X, 282.0, 90.0),
+                (BindingAction::Y, 246.0, 126.0),
+                (BindingAction::A, 318.0, 126.0),
+                (BindingAction::B, 282.0, 162.0),
             ]
         } else if self.kind == DiagramKind::PceSixButton {
             vec![
@@ -585,7 +606,7 @@ impl DiagramPainter<'_> {
         for row in 0..4 {
             for column in 0..3 {
                 let key = egui::Rect::from_center_size(
-                    self.pos(151.0 + column as f32 * 29.0, 183.0 + row as f32 * 25.0),
+                    self.pos(144.0 + column as f32 * 36.0, 183.0 + row as f32 * 25.0),
                     egui::vec2(self.scale(22.0), self.scale(18.0)),
                 );
                 let label = if row == 3 {
@@ -623,25 +644,33 @@ impl DiagramPainter<'_> {
     }
 
     fn draw_dpad_at(&mut self, actions: &[DiagramAction], x: f32, y: f32) {
-        let hub = egui::Rect::from_center_size(
-            self.pos(x, y),
-            egui::vec2(self.scale(26.0), self.scale(26.0)),
-        );
-        self.painter.rect(
-            hub,
+        let center = self.pos(x, y);
+        let half_width = 14.0;
+        let reach = 50.0;
+        self.painter.rect_filled(
+            egui::Rect::from_center_size(
+                center,
+                egui::vec2(self.scale(reach * 2.0), self.scale(half_width * 2.0)),
+            ),
             self.scale(3.0),
             self.palette.control,
-            egui::Stroke::new(1.0, self.palette.outline),
-            egui::StrokeKind::Inside,
+        );
+        self.painter.rect_filled(
+            egui::Rect::from_center_size(
+                center,
+                egui::vec2(self.scale(half_width * 2.0), self.scale(reach * 2.0)),
+            ),
+            self.scale(3.0),
+            self.palette.control,
         );
         for (action, dx, dy) in [
-            (BindingAction::Up, 0.0, -24.0),
-            (BindingAction::Left, -24.0, 0.0),
-            (BindingAction::Right, 24.0, 0.0),
-            (BindingAction::Down, 0.0, 24.0),
+            (BindingAction::Up, 0.0, -36.0),
+            (BindingAction::Left, -36.0, 0.0),
+            (BindingAction::Right, 36.0, 0.0),
+            (BindingAction::Down, 0.0, 36.0),
         ] {
             if actions.contains(&DiagramAction::Joypad(action)) {
-                self.control_rect(
+                self.dpad_direction(
                     egui::Rect::from_center_size(
                         self.pos(x + dx, y + dy),
                         egui::vec2(self.scale(28.0), self.scale(28.0)),
@@ -650,18 +679,43 @@ impl DiagramPainter<'_> {
                 );
             }
         }
+        let outline = [
+            (-half_width, -reach),
+            (half_width, -reach),
+            (half_width, -half_width),
+            (reach, -half_width),
+            (reach, half_width),
+            (half_width, half_width),
+            (half_width, reach),
+            (-half_width, reach),
+            (-half_width, half_width),
+            (-reach, half_width),
+            (-reach, -half_width),
+            (-half_width, -half_width),
+        ]
+        .map(|(dx, dy)| self.pos(x + dx, y + dy));
+        self.painter.add(egui::Shape::closed_line(
+            outline.to_vec(),
+            egui::Stroke::new(1.0, self.palette.outline),
+        ));
+        self.painter.circle(
+            center,
+            self.scale(10.0),
+            self.palette.control,
+            egui::Stroke::new(1.0, self.palette.outline),
+        );
     }
 
     fn draw_wonderswan(&mut self) {
         self.title("WonderSwan direct controls");
         let body = egui::Rect::from_center_size(
-            self.pos(180.0, 112.0),
-            egui::vec2(self.scale(326.0), self.scale(145.0)),
+            self.pos(180.0, 136.0),
+            egui::vec2(self.scale(326.0), self.scale(220.0)),
         );
-        self.shell(body, self.scale(28.0));
+        self.shell(body, self.scale(24.0));
         self.ws_cluster(
-            73.0,
-            78.0,
+            74.0,
+            80.0,
             [
                 WonderSwanButton::Y1,
                 WonderSwanButton::Y2,
@@ -670,8 +724,8 @@ impl DiagramPainter<'_> {
             ],
         );
         self.ws_cluster(
-            73.0,
-            145.0,
+            74.0,
+            188.0,
             [
                 WonderSwanButton::X1,
                 WonderSwanButton::X2,
@@ -680,23 +734,23 @@ impl DiagramPainter<'_> {
             ],
         );
         let screen = egui::Rect::from_center_size(
-            self.pos(183.0, 111.0),
-            egui::vec2(self.scale(92.0), self.scale(53.0)),
+            self.pos(190.0, 120.0),
+            egui::vec2(self.scale(124.0), self.scale(78.0)),
         );
         self.screen(screen);
         self.control_circle(
-            self.pos(280.0, 100.0),
+            self.pos(282.0, 100.0),
             self.scale(15.0),
             DiagramAction::WonderSwan(WonderSwanButton::A),
         );
         self.control_circle(
-            self.pos(311.0, 123.0),
+            self.pos(318.0, 138.0),
             self.scale(15.0),
             DiagramAction::WonderSwan(WonderSwanButton::B),
         );
         self.control_rect(
             egui::Rect::from_center_size(
-                self.pos(183.0, 151.0),
+                self.pos(190.0, 198.0),
                 egui::vec2(self.scale(50.0), self.scale(18.0)),
             ),
             DiagramAction::WonderSwan(WonderSwanButton::Start),
@@ -704,11 +758,21 @@ impl DiagramPainter<'_> {
     }
 
     fn ws_cluster(&mut self, x: f32, y: f32, buttons: [WonderSwanButton; 4]) {
+        self.painter.rect(
+            egui::Rect::from_center_size(
+                self.pos(x, y),
+                egui::vec2(self.scale(104.0), self.scale(104.0)),
+            ),
+            self.scale(28.0),
+            egui::Color32::from_black_alpha(28),
+            egui::Stroke::new(1.0, self.palette.outline),
+            egui::StrokeKind::Inside,
+        );
         for (button, dx, dy) in [
-            (buttons[0], 0.0, -24.0),
-            (buttons[3], -24.0, 0.0),
-            (buttons[1], 24.0, 0.0),
-            (buttons[2], 0.0, 24.0),
+            (buttons[0], 0.0, -36.0),
+            (buttons[3], -36.0, 0.0),
+            (buttons[1], 36.0, 0.0),
+            (buttons[2], 0.0, 36.0),
         ] {
             self.control_rect(
                 egui::Rect::from_center_size(
@@ -720,12 +784,71 @@ impl DiagramPainter<'_> {
         }
     }
 
+    fn dpad_direction(&mut self, visual_rect: egui::Rect, action: DiagramAction) {
+        let hit_rect = self.hit_rect(visual_rect);
+        let id = self
+            .ui
+            .id()
+            .with(("controller_diagram", self.kind, action_id(action)));
+        let response = self.ui.interact(hit_rect, id, egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{}: {}", self.kind.label(), self.kind.action_label(action)),
+            )
+        });
+        if self.selected == Some(action) || is_pressed(action, self.pressed_host_mask) {
+            self.painter
+                .rect_filled(visual_rect, self.scale(2.0), self.fill(action));
+        }
+        if response.hovered() || response.has_focus() || self.highlighted == Some(action) {
+            self.painter.rect_stroke(
+                visual_rect,
+                self.scale(2.0),
+                egui::Stroke::new(
+                    if response.has_focus() { 2.0 } else { 1.5 },
+                    if response.has_focus() {
+                        self.palette.text
+                    } else {
+                        self.palette.accent
+                    },
+                ),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if let Some(direction) = direction_vector(action) {
+            let arrow = direction * self.scale(13.0);
+            self.painter.arrow(
+                visual_rect.center() - arrow * 0.5,
+                arrow,
+                egui::Stroke::new(1.8, self.control_text_color(action)),
+            );
+        }
+        if response.hovered() || response.has_focus() {
+            self.interaction_highlighted = Some(action);
+        }
+        if response.clicked() {
+            self.activated = Some(action);
+        }
+        #[cfg(test)]
+        self.hit_rects.push((action, hit_rect));
+    }
+
     fn control_rect(&mut self, rect: egui::Rect, action: DiagramAction) {
         let id = self
             .ui
             .id()
             .with(("controller_diagram", self.kind, action_id(action)));
-        let response = self.ui.interact(rect, id, egui::Sense::click());
+        let hit_rect = self.hit_rect(rect);
+        let response = self.ui.interact(hit_rect, id, egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{}: {}", self.kind.label(), self.kind.action_label(action)),
+            )
+        });
         let fill = self.fill(action);
         self.painter.rect_filled(rect, self.scale(5.0), fill);
         self.painter.rect_stroke(
@@ -734,11 +857,18 @@ impl DiagramPainter<'_> {
             egui::Stroke::new(1.0, self.palette.outline),
             egui::StrokeKind::Inside,
         );
-        if response.hovered() {
+        if response.hovered() || response.has_focus() || self.highlighted == Some(action) {
             self.painter.rect_stroke(
-                rect,
-                self.scale(5.0),
-                egui::Stroke::new(1.5, self.palette.accent),
+                hit_rect,
+                self.scale(6.0),
+                egui::Stroke::new(
+                    if response.has_focus() { 2.0 } else { 1.5 },
+                    if response.has_focus() {
+                        self.palette.text
+                    } else {
+                        self.palette.accent
+                    },
+                ),
                 egui::StrokeKind::Outside,
             );
         }
@@ -758,25 +888,50 @@ impl DiagramPainter<'_> {
                 self.control_text_color(action),
             );
         }
-        if response.clicked() {
-            self.clicked = Some(action);
+        if response.hovered() || response.has_focus() {
+            self.interaction_highlighted = Some(action);
         }
+        if response.clicked() {
+            self.activated = Some(action);
+        }
+        #[cfg(test)]
+        self.hit_rects.push((action, hit_rect));
     }
 
     fn control_circle(&mut self, center: egui::Pos2, radius: f32, action: DiagramAction) {
-        let rect = egui::Rect::from_center_size(center, egui::vec2(radius * 2.0, radius * 2.0));
+        let visual_rect =
+            egui::Rect::from_center_size(center, egui::vec2(radius * 2.0, radius * 2.0));
+        let hit_rect = self.hit_rect(visual_rect);
         let id = self
             .ui
             .id()
             .with(("controller_diagram", self.kind, action_id(action)));
-        let response = self.ui.interact(rect, id, egui::Sense::click());
+        let response = self.ui.interact(hit_rect, id, egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{}: {}", self.kind.label(), self.kind.action_label(action)),
+            )
+        });
         self.painter
             .circle_filled(center, radius, self.fill(action));
         self.painter
             .circle_stroke(center, radius, egui::Stroke::new(1.0, self.palette.outline));
-        if response.hovered() {
-            self.painter
-                .circle_stroke(center, radius, egui::Stroke::new(1.5, self.palette.accent));
+        if response.hovered() || response.has_focus() || self.highlighted == Some(action) {
+            self.painter.rect_stroke(
+                hit_rect,
+                hit_rect.width().min(hit_rect.height()) * 0.5,
+                egui::Stroke::new(
+                    if response.has_focus() { 2.0 } else { 1.5 },
+                    if response.has_focus() {
+                        self.palette.text
+                    } else {
+                        self.palette.accent
+                    },
+                ),
+                egui::StrokeKind::Outside,
+            );
         }
         self.painter.text(
             center,
@@ -785,9 +940,29 @@ impl DiagramPainter<'_> {
             egui::FontId::proportional(12.0),
             self.control_text_color(action),
         );
-        if response.clicked() {
-            self.clicked = Some(action);
+        if response.hovered() || response.has_focus() {
+            self.interaction_highlighted = Some(action);
         }
+        if response.clicked() {
+            self.activated = Some(action);
+        }
+        #[cfg(test)]
+        self.hit_rects.push((action, hit_rect));
+    }
+
+    fn hit_rect(&self, visual_rect: egui::Rect) -> egui::Rect {
+        let target = if self.rect.width() >= Self::FULL_TARGET_CANVAS_WIDTH {
+            Self::TARGET_SIZE.min(40.0)
+        } else {
+            self.scale(Self::TARGET_SIZE)
+        };
+        egui::Rect::from_center_size(
+            visual_rect.center(),
+            egui::vec2(
+                visual_rect.width().max(target),
+                visual_rect.height().max(target),
+            ),
+        )
     }
 
     fn fill(&self, action: DiagramAction) -> egui::Color32 {
@@ -883,5 +1058,104 @@ const fn action_id(action: DiagramAction) -> u8 {
         DiagramAction::WonderSwan(WonderSwanButton::A) => 20,
         DiagramAction::WonderSwan(WonderSwanButton::B) => 21,
         DiagramAction::WonderSwan(WonderSwanButton::Start) => 22,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DiagramAction, DiagramInteraction, DiagramKind, draw};
+    use crate::settings::BindingAction;
+
+    #[test]
+    fn continuous_dpad_keeps_four_actions_and_an_inert_center() {
+        fn frame(context: &egui::Context, events: Vec<egui::Event>) -> DiagramInteraction {
+            let mut interaction = None;
+            let _ = context.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(360.0);
+                    interaction = Some(draw(ui, DiagramKind::StandardGamepad, 0, None, None));
+                },
+            );
+            interaction.unwrap()
+        }
+        for target in [
+            None,
+            Some(BindingAction::Up),
+            Some(BindingAction::Down),
+            Some(BindingAction::Left),
+            Some(BindingAction::Right),
+        ] {
+            let context = egui::Context::default();
+            let initial = frame(&context, vec![]);
+            let center = |action| {
+                initial
+                    .hit_rects
+                    .iter()
+                    .find(|(candidate, _)| *candidate == DiagramAction::Joypad(action))
+                    .unwrap()
+                    .1
+                    .center()
+            };
+            let position = target.map_or_else(
+                || center(BindingAction::Up).lerp(center(BindingAction::Down), 0.5),
+                center,
+            );
+            for pressed in [true, false] {
+                let interaction = frame(
+                    &context,
+                    vec![
+                        egui::Event::PointerMoved(position),
+                        egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+                if !pressed {
+                    assert_eq!(interaction.activated, target.map(DiagramAction::Joypad));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn full_size_diagrams_have_distinct_minimum_hit_targets() {
+        for kind in DiagramKind::ALL {
+            let context = egui::Context::default();
+            let mut interaction = None;
+            let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_width(360.0);
+                interaction = Some(draw(ui, kind, 0, None, None));
+            });
+            let DiagramInteraction {
+                hit_rects,
+                diagram_rect,
+                ..
+            } = interaction.expect("diagram rendered");
+            assert_eq!(hit_rects.len(), kind.actions().len(), "{kind:?}");
+            for (action, rect) in &hit_rects {
+                assert!(rect.width() >= 36.0, "{kind:?} {action:?}: {rect:?}");
+                assert!(rect.height() >= 36.0, "{kind:?} {action:?}: {rect:?}");
+                assert!(
+                    diagram_rect.expand(0.01).contains_rect(*rect),
+                    "{kind:?} {action:?} escapes {diagram_rect:?}: {rect:?}"
+                );
+            }
+            for (index, (left_action, left)) in hit_rects.iter().enumerate() {
+                for (right_action, right) in &hit_rects[index + 1..] {
+                    let overlap = left.intersect(*right);
+                    assert!(
+                        overlap.width() <= 0.01 || overlap.height() <= 0.01,
+                        "{kind:?} {left_action:?} overlaps {right_action:?}: {overlap:?}"
+                    );
+                }
+            }
+        }
     }
 }

@@ -67,13 +67,15 @@ fn save_with(
     // Hold the lease across stale-writer comparison, backup publication, and
     // primary replacement so cooperating processes cannot both pass the check.
     let _write_lock = acquire_write_lock(path)?;
-    if !preserve_original
-        && let Some(current) = read(path)?
-        && previous != Some(current.as_str())
-    {
-        anyhow::bail!(
-            "settings changed in another instance; restart before saving to keep those changes"
-        );
+    if !preserve_original && let Some(current) = read(path)? {
+        if previous != Some(current.as_str()) {
+            anyhow::bail!(
+                "settings changed in another instance; restart before saving to keep those changes"
+            );
+        }
+        if current == json {
+            return Ok(());
+        }
     }
     if preserve_original {
         match std::fs::read(path) {
@@ -116,6 +118,35 @@ fn save_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_followed_by_identical_autosave_preserves_the_previous_backup() {
+        let dir = crate::test_support::test_directory("settings-import-autosave").unwrap();
+        let path = dir.path().join("settings.json");
+        let original = r#"{"schema_version":1,"original":true}"#;
+        let imported = r#"{"schema_version":1,"imported":true}"#;
+        std::fs::write(&path, original).unwrap();
+        save(&path, imported, Some(original), false).unwrap();
+        save_with(&path, imported, Some(imported), false, |_, _| {
+            panic!("an identical document must not be republished")
+        })
+        .unwrap();
+        assert_eq!(read(&path).unwrap().as_deref(), Some(imported));
+        assert_eq!(
+            read(&path.with_extension("json.bak")).unwrap().as_deref(),
+            Some(original)
+        );
+        assert!(save(&path, imported, Some(original), false).is_err());
+    }
+
+    #[test]
+    fn missing_primary_is_recreated_even_when_it_matches_the_recovery_document() {
+        let dir = crate::test_support::test_directory("settings-missing-primary").unwrap();
+        let path = dir.path().join("settings.json");
+        let recovered = r#"{"schema_version":1}"#;
+        save(&path, recovered, Some(recovered), false).unwrap();
+        assert_eq!(read(&path).unwrap().as_deref(), Some(recovered));
+    }
 
     #[test]
     fn publication_failure_preserves_prior_primary_and_valid_backup() {

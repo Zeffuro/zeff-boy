@@ -110,6 +110,7 @@ impl App {
             backend,
             self.settings.emulation.save_recovery_state,
         ));
+        self.timing.uncapped_worker_enabled = false;
         self.pause_state.clear_runtime_fault();
         self.recompute_pause();
         queue_current_layer_policy(&self.debug_windows, &mut self.pending_debug_actions);
@@ -132,9 +133,7 @@ impl App {
         self.fps_tracker = FpsTracker::new();
         self.timing.last_frame_time = Instant::now();
 
-        if self.timing.uncapped_speed && self.recording.allows_uncapped_worker() {
-            let _ = self.send_emu_command_checked(EmuCommand::SetUncapped(true));
-        }
+        let _ = self.sync_uncapped_worker();
     }
 }
 

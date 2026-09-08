@@ -11,11 +11,8 @@ use super::{
 };
 use crate::platform;
 
-const SCHEMA_VERSION: u64 = 1;
+const SCHEMA_VERSION: u64 = 3;
 
-/// The persisted document is independent of the runtime Settings adapter.
-/// These are global defaults; only explicitly typed domains may gain system or
-/// content overrides later. A host device reservation is never a core setting.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 struct SettingsDocument {
@@ -23,6 +20,7 @@ struct SettingsDocument {
     global: GlobalPreferences,
     input_profiles: InputProfileCatalog,
     input_devices: InputDeviceSettings,
+    input_overrides: super::InputOverrides,
     extensions: Map<String, Value>,
 }
 
@@ -53,6 +51,10 @@ impl Default for GlobalPreferences {
 
 impl GlobalPreferences {
     fn from_settings(settings: &Settings) -> Self {
+        let mut input = settings.capture_input_profile();
+        input.keyboard_unbound.clear();
+        input.binding_sets.clear();
+        input.autofire.clear();
         Self {
             emulation: settings.emulation.clone(),
             interface: settings.ui.clone(),
@@ -60,7 +62,7 @@ impl GlobalPreferences {
             video: settings.video.clone(),
             rewind: RewindPreferences::from(&settings.rewind),
             camera: settings.camera.clone(),
-            input: settings.capture_input_profile(),
+            input,
             recent_roms: settings.recent_roms.clone(),
         }
     }
@@ -73,11 +75,15 @@ impl SettingsDocument {
             global: GlobalPreferences::from_settings(settings),
             input_profiles: settings.input_profiles.clone(),
             input_devices: settings.input_devices.clone(),
+            input_overrides: settings.input_overrides.clone(),
             extensions: Map::new(),
         }
     }
 
     fn into_settings(self) -> Settings {
+        let global_keyboard_unbound = self.input_overrides.global_keyboard_unbound.clone();
+        let global_binding_sets = self.input_overrides.global_binding_sets.clone();
+        let global_autofire = self.input_overrides.global_autofire.clone();
         let mut settings = Settings {
             emulation: self.global.emulation,
             ui: self.global.interface,
@@ -88,9 +94,13 @@ impl SettingsDocument {
             recent_roms: self.global.recent_roms,
             input_profiles: self.input_profiles,
             input_devices: self.input_devices,
+            input_overrides: self.input_overrides,
             ..Settings::default()
         };
         settings.apply_input_profile(&self.global.input);
+        settings.input_overrides.global_keyboard_unbound = global_keyboard_unbound;
+        settings.input_overrides.global_binding_sets = global_binding_sets;
+        settings.input_overrides.global_autofire = global_autofire;
         settings
     }
 }
@@ -134,16 +144,25 @@ impl From<RewindPreferences> for RewindSettings {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct PersistenceState {
     template: Option<Value>,
     previous_json: Option<String>,
     load_notice: Option<String>,
     save_error: Option<String>,
     read_only: bool,
+    storage_write_protected: bool,
     preserve_original: bool,
     load_notified: bool,
     notified_save_error: Option<String>,
+    #[cfg(any(target_arch = "wasm32", test))]
+    browser_generation: u64,
+    #[cfg(any(target_arch = "wasm32", test))]
+    browser_pending_sequence: Option<u64>,
+    #[cfg(any(target_arch = "wasm32", test))]
+    browser_persisted_sequence: u64,
+    #[cfg(any(target_arch = "wasm32", test))]
+    browser_pending_count: usize,
 }
 
 /// Runtime storage diagnostics are shared by edit/undo snapshots, but excluded
@@ -158,8 +177,28 @@ impl PartialEq for PersistenceMetadata {
 }
 
 impl PersistenceMetadata {
+    pub(super) fn can_retry_save(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        let Ok(state) = self.0.lock() else {
+            return false;
+        };
+        #[cfg(target_arch = "wasm32")]
+        let Ok(mut state) = self.0.lock() else {
+            return false;
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            refresh_browser_status(&mut state);
+            if state.browser_pending_count > 0 {
+                return false;
+            }
+        }
+        state.save_error.is_some() && !state.read_only && !state.storage_write_protected
+    }
     pub(super) fn take_notification(&self) -> Option<String> {
         let mut state = self.0.lock().ok()?;
+        #[cfg(target_arch = "wasm32")]
+        refresh_browser_status(&mut state);
         if !state.load_notified {
             state.load_notified = true;
             if state.load_notice.is_some() {
@@ -174,12 +213,65 @@ impl PersistenceMetadata {
     }
 
     pub(super) fn notice(&self) -> Option<String> {
+        #[cfg(not(target_arch = "wasm32"))]
         let state = self.0.lock().ok()?;
+        #[cfg(target_arch = "wasm32")]
+        let mut state = self.0.lock().ok()?;
+        #[cfg(target_arch = "wasm32")]
+        {
+            refresh_browser_status(&mut state);
+            if state.browser_pending_count > 0
+                && state.save_error.is_none()
+                && state.load_notice.is_none()
+            {
+                return Some(
+                    "Saving settings to browser storage… Keep this tab open until saving finishes."
+                        .to_owned(),
+                );
+            }
+        }
         match (&state.load_notice, &state.save_error) {
             (Some(load), Some(save)) => Some(format!("{load}\n{save}")),
             (Some(notice), None) | (None, Some(notice)) => Some(notice.clone()),
             (None, None) => None,
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn refresh_browser_status(state: &mut PersistenceState) {
+    if state.browser_generation == platform::settings_storage_generation() {
+        return;
+    }
+    let status = platform::settings_storage_status();
+    apply_browser_status(state, status);
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn apply_browser_status(state: &mut PersistenceState, status: platform::SettingsStorageStatus) {
+    state.browser_generation = status.generation;
+    state.browser_pending_count = status.pending;
+    state.storage_write_protected |= status.write_protected;
+    if status.persisted_sequence > state.browser_persisted_sequence {
+        state.browser_persisted_sequence = status.persisted_sequence;
+        if let Some(json) = status.persisted_json {
+            state.template = serde_json::from_str(&json).ok();
+            state.previous_json = Some(json);
+            state.preserve_original = false;
+        }
+    }
+    if state.storage_write_protected {
+        state.save_error = Some("Browser settings use a newer storage format. Export your current changes and update Zeff Boy before saving.".to_owned());
+    } else if let Some(error) = status.error {
+        state.save_error = Some(format!(
+            "Settings could not be saved: {error}. Export your changes before reloading."
+        ));
+    } else if state
+        .browser_pending_sequence
+        .is_some_and(|sequence| status.persisted_sequence >= sequence)
+    {
+        state.save_error = None;
+        state.browser_pending_sequence = None;
     }
 }
 
@@ -252,6 +344,16 @@ fn decode(json: &str) -> Result<Settings> {
                 extensions.insert(key.clone(), value.clone());
             }
         }
+    }
+    let discarded_calibrations = settings.input_devices.discard_invalid_calibrations();
+    if discarded_calibrations > 0 {
+        let notice = format!(
+            "Ignored {discarded_calibrations} invalid controller calibration record(s). Normalized device input will be used until recalibrated."
+        );
+        load_notice = Some(match load_notice.take() {
+            Some(existing) => format!("{existing}\n{notice}"),
+            None => notice,
+        });
     }
     if let Err(error) =
         validate_profiles(&settings).and_then(|()| super::validation::validate(&settings))
@@ -373,6 +475,13 @@ fn overlay_known(template: &mut Value, current: Value) {
     }
 }
 
+fn calibration_identity(value: &Value) -> Option<(&str, &str)> {
+    Some((
+        value.pointer("/fingerprint/name")?.as_str()?,
+        value.pointer("/fingerprint/uuid")?.as_str()?,
+    ))
+}
+
 fn encode(settings: &Settings, template: Option<&Value>) -> Result<String> {
     validate_profiles(settings)?;
     super::validation::validate(settings)?;
@@ -389,43 +498,489 @@ fn encode(settings: &Settings, template: Option<&Value>) -> Result<String> {
         {
             if let Some(previous) = old_profiles.iter().find(|old| old["id"] == profile["id"]) {
                 let mut merged = previous.clone();
+                if let Some(old_bindings) =
+                    merged.get_mut("bindings").and_then(Value::as_object_mut)
+                {
+                    old_bindings.remove("binding_sets");
+                    old_bindings.remove("autofire");
+                }
                 overlay_known(&mut merged, profile.clone());
                 *profile = merged;
             }
         }
     }
+    // Calibration records are an editable model list. Preserve extensions by
+    // the known fingerprint identity so reordering cannot transfer fields and
+    // deleting a model cannot restore its old record.
+    if let Some(old_calibrations) = template
+        .and_then(|value| value.pointer("/input_devices/calibrations"))
+        .and_then(Value::as_array)
+    {
+        for calibration in current["input_devices"]["calibrations"]
+            .as_array_mut()
+            .expect("calibration array")
+        {
+            let Some(identity) = calibration_identity(calibration) else {
+                continue;
+            };
+            if let Some(previous) = old_calibrations
+                .iter()
+                .find(|old| calibration_identity(old) == Some(identity))
+            {
+                let mut merged = previous.clone();
+                overlay_known(&mut merged, calibration.clone());
+                *calibration = merged;
+            }
+        }
+    }
     let mut value = template.cloned().unwrap_or(Value::Null);
+    // Sparse-map deletions must not be restored by the additive settings overlay.
+    if let Some(old) = value.get_mut("input_overrides") {
+        let mut overrides = current["input_overrides"].clone();
+        for collection in ["systems", "games"] {
+            if let Some(scopes) = overrides[collection].as_object_mut() {
+                for (key, patch) in scopes {
+                    if let Some(previous) = old[collection].get(key) {
+                        for field in ["bindings", "transforms"] {
+                            if let Some(entries) = patch[field].as_object_mut() {
+                                for (name, entry) in entries {
+                                    if let Some(previous_entry) = previous[field].get(name) {
+                                        let mut merged = previous_entry.clone();
+                                        if field == "bindings"
+                                            && entry["state"] == "unbound"
+                                            && let Some(record) = merged.as_object_mut()
+                                        {
+                                            record.remove("value");
+                                        }
+                                        overlay_known(&mut merged, entry.clone());
+                                        *entry = merged;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        *old = overrides.clone();
+        current["input_overrides"] = overrides;
+    }
+    if let Some(input) = value
+        .pointer_mut("/global/input")
+        .and_then(Value::as_object_mut)
+    {
+        input.remove("binding_sets");
+        input.remove("autofire");
+    }
     overlay_known(&mut value, current);
     Ok(serde_json::to_string_pretty(&value)?)
 }
 
 pub(super) fn save(settings: &Settings) {
+    let _ = try_save(settings);
+}
+
+fn try_save(settings: &Settings) -> Result<()> {
     let Ok(mut state) = settings.persistence.0.lock() else {
-        log::error!("settings storage state lock is poisoned");
-        return;
+        bail!("Settings storage state is unavailable");
     };
-    if state.read_only {
-        return;
+    #[cfg(target_arch = "wasm32")]
+    refresh_browser_status(&mut state);
+    if state.read_only || state.storage_write_protected {
+        bail!("Settings are protected because they require a newer version");
     }
     let result = encode(settings, state.template.as_ref()).and_then(|json| {
-        platform::save_settings_json(
-            &json,
-            state.previous_json.as_deref(),
-            state.preserve_original,
-        )?;
-        state.template = Some(serde_json::from_str(&json)?);
-        state.previous_json = Some(json);
-        state.preserve_original = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            platform::save_settings_json(
+                &json,
+                state.previous_json.as_deref(),
+                state.preserve_original,
+            )?;
+            state.template = Some(serde_json::from_str(&json)?);
+            state.previous_json = Some(json);
+            state.preserve_original = false;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let sequence = platform::save_settings_json(
+                &json,
+                state.previous_json.as_deref(),
+                state.preserve_original,
+            )?;
+            state.browser_pending_sequence = Some(sequence);
+            state.browser_generation = 0;
+        }
         Ok(())
     });
-    state.save_error = result.err().map(|error| {
+    if let Err(error) = &result {
         log::error!("could not save settings: {error:#}");
-        format!("Settings could not be saved: {error:#}. Changes may be lost. Retry after correcting the storage problem.")
-    });
+        state.save_error = Some(format!(
+            "Settings could not be saved: {error:#}. Changes may be lost. Retry after correcting the storage problem."
+        ));
+    } else {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            state.save_error = None;
+        }
+    }
+    result
+}
+
+pub(super) fn export(settings: &Settings) -> Result<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let state = settings
+        .persistence
+        .0
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Settings storage state is unavailable"))?;
+    #[cfg(target_arch = "wasm32")]
+    let mut state = settings
+        .persistence
+        .0
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Settings storage state is unavailable"))?;
+    #[cfg(target_arch = "wasm32")]
+    refresh_browser_status(&mut state);
+    if state.read_only {
+        return state
+            .previous_json
+            .clone()
+            .context("The original read-only settings document is unavailable");
+    }
+    encode(settings, state.template.as_ref())
+}
+
+pub(super) fn import(settings: &mut Settings, json: &str) -> Result<()> {
+    let imported = prepare_import(settings, json)?;
+    try_save(&imported)?;
+    *settings = imported;
+    Ok(())
+}
+
+fn prepare_import(settings: &Settings, json: &str) -> Result<Settings> {
+    if json.len() > 4 * 1024 * 1024 {
+        bail!("The settings file exceeds the 4 MiB limit");
+    }
+    #[cfg(target_arch = "wasm32")]
+    if platform::settings_storage_status().pending > 0 {
+        bail!("Wait for pending settings saves before importing");
+    }
+    let mut imported = decode(json)?;
+    let template = {
+        let state = imported
+            .persistence
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Settings storage state is unavailable"))?;
+        if state.read_only {
+            bail!("This file requires a newer version of Zeff Boy");
+        }
+        state.template.clone()
+    };
+    let mut metadata = {
+        #[cfg(not(target_arch = "wasm32"))]
+        let state = settings
+            .persistence
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Settings storage state is unavailable"))?;
+        #[cfg(target_arch = "wasm32")]
+        let mut state = settings
+            .persistence
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Settings storage state is unavailable"))?;
+        #[cfg(target_arch = "wasm32")]
+        refresh_browser_status(&mut state);
+        if state.read_only || state.storage_write_protected {
+            bail!("The current settings are protected because they require a newer version");
+        }
+        state.clone()
+    };
+    metadata.template = template;
+    imported.persistence = PersistenceMetadata(Arc::new(Mutex::new(metadata)));
+    Ok(imported)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(super) fn accept_browser_settings(settings: &mut Settings) -> Result<()> {
+    let status = platform::settings_storage_status();
+    let json = status
+        .conflicting_json
+        .context("No saved settings conflict is available")?;
+    let candidate = decode(&json)?;
+    let accepted = platform::accept_latest_settings_after_conflict()?
+        .context("No saved settings conflict is available")?;
+    if accepted != json {
+        bail!("Saved settings changed during recovery; try again");
+    }
+    *settings = candidate;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn browser_pending_and_failed_saves_do_not_advance_durable_metadata() {
+        let mut state = super::PersistenceState {
+            previous_json: Some("old".into()),
+            template: Some(serde_json::json!({"old": true})),
+            preserve_original: true,
+            browser_pending_sequence: Some(2),
+            ..Default::default()
+        };
+        super::apply_browser_status(
+            &mut state,
+            crate::platform::SettingsStorageStatus {
+                generation: 1,
+                pending: 1,
+                latest_requested_sequence: 2,
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.previous_json.as_deref(), Some("old"));
+        assert!(state.preserve_original);
+        super::apply_browser_status(
+            &mut state,
+            crate::platform::SettingsStorageStatus {
+                generation: 2,
+                error_sequence: Some(2),
+                error: Some("full".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.previous_json.as_deref(), Some("old"));
+        assert!(state.preserve_original);
+        assert!(state.save_error.as_deref().unwrap().contains("full"));
+        super::apply_browser_status(
+            &mut state,
+            crate::platform::SettingsStorageStatus {
+                generation: 3,
+                persisted_sequence: 3,
+                persisted_json: Some(r#"{"saved":true}"#.into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.previous_json.as_deref(), Some(r#"{"saved":true}"#));
+        assert_eq!(state.template, Some(serde_json::json!({"saved": true})));
+        assert!(!state.preserve_original);
+        assert!(state.save_error.is_none());
+        assert!(state.browser_pending_sequence.is_none());
+    }
+
+    #[test]
+    fn newer_browser_storage_blocks_writes_but_exports_current_local_edits() {
+        let mut settings = super::decode(r#"{"schema_version":3}"#).unwrap();
+        settings.audio.volume = 0.4;
+        super::apply_browser_status(
+            &mut settings.persistence.0.lock().unwrap(),
+            crate::platform::SettingsStorageStatus {
+                generation: 1,
+                write_protected: true,
+                ..Default::default()
+            },
+        );
+        assert!(!settings.can_retry_settings_save());
+        assert!(super::prepare_import(&settings, r#"{"schema_version":3}"#).is_err());
+        assert!(super::try_save(&settings).is_err());
+        let exported: serde_json::Value =
+            serde_json::from_str(&super::export(&settings).unwrap()).unwrap();
+        assert_eq!(
+            exported["global"]["audio"]["master_volume"],
+            serde_json::json!(0.4_f32)
+        );
+    }
+
+    #[test]
+    fn import_preparation_validates_without_mutating_preferences_or_backup() {
+        let original =
+            super::decode(r#"{"schema_version":2,"global":{"audio":{"volume":0.4}}}"#).unwrap();
+        let before = super::export(&original).unwrap();
+        let candidate = super::prepare_import(
+            &original,
+            r#"{"schema_version":3,"extensions":{"kept":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(super::export(&original).unwrap(), before);
+        assert_eq!(
+            candidate.persistence.0.lock().unwrap().previous_json,
+            original.persistence.0.lock().unwrap().previous_json
+        );
+        assert!(super::export(&candidate).unwrap().contains("kept"));
+        assert!(super::prepare_import(&original, "broken").is_err());
+        assert!(super::prepare_import(&original, r#"{"schema_version":999}"#).is_err());
+        assert!(super::prepare_import(&original, &" ".repeat(4 * 1024 * 1024 + 1)).is_err());
+        assert_eq!(super::export(&original).unwrap(), before);
+    }
+
+    #[test]
+    fn typed_document_reorder_delete_and_unbind_preserve_only_surviving_extensions() {
+        use crate::settings::{
+            BindingAction, BindingExpression, BindingSet, BindingTarget, GameplayBindingSource,
+            InputScope, Settings,
+        };
+        use winit::keyboard::KeyCode;
+        let mut settings = Settings::default();
+        let target = BindingTarget::Joypad {
+            player: 1,
+            action: BindingAction::A,
+        };
+        let source = GameplayBindingSource::Keyboard;
+        let mut set = BindingSet::new(BindingExpression::keyboard(KeyCode::KeyX));
+        set.add_expression(BindingExpression::keyboard(KeyCode::KeyZ))
+            .unwrap();
+        settings
+            .set_binding_set(&InputScope::Global, target, source, Some(set))
+            .unwrap();
+        let mut original: serde_json::Value =
+            serde_json::from_str(&super::encode(&settings, None).unwrap()).unwrap();
+        let record = &mut original["input_overrides"]["global_binding_sets"][source.key(target)];
+        record["owner_extension"] = serde_json::json!(42);
+        record["value"]["alternatives"][0]["extension"] = serde_json::json!("first");
+        record["value"]["alternatives"][1]["extension"] = serde_json::json!("second");
+        let mut decoded = super::decode(&original.to_string()).unwrap();
+        let mut set = decoded
+            .binding_set(&InputScope::Global, target, source)
+            .value
+            .unwrap();
+        set.alternatives.reverse();
+        set.alternatives.pop();
+        decoded
+            .set_binding_set(&InputScope::Global, target, source, Some(set))
+            .unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&super::encode(&decoded, Some(&original)).unwrap()).unwrap();
+        let record = &saved["input_overrides"]["global_binding_sets"][source.key(target)];
+        assert_eq!(record["value"]["alternatives"].as_array().unwrap().len(), 1);
+        assert_eq!(record["value"]["alternatives"][0]["extension"], "second");
+        assert_eq!(record["owner_extension"], 42);
+        decoded
+            .set_binding_set(&InputScope::Global, target, source, None)
+            .unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&super::encode(&decoded, Some(&original)).unwrap()).unwrap();
+        let record = &saved["input_overrides"]["global_binding_sets"][source.key(target)];
+        assert_eq!(record["state"], "unbound");
+        assert!(record.get("value").is_none());
+    }
+
+    #[test]
+    fn v1_migration_retains_hotkeys_and_starts_with_no_scoped_overrides() {
+        use crate::settings::{
+            BindingAction, BindingTarget, GameplayBindingSource, InputScope, InputSystem,
+            PhysicalBinding,
+        };
+        use winit::keyboard::KeyCode;
+        let original = serde_json::json!({
+            "schema_version": 1,
+            "global": { "input": { "speedup_key": "KeyQ", "keyboard": { "a": "KeyW" } } },
+            "input_profiles": { "profiles": [{"id":"old", "name":"Legacy", "bindings": {"speedup_key":"KeyE", "gamepad":{"pause":"North"}}}] }
+        });
+        let settings = super::decode(&original.to_string()).unwrap();
+        assert_eq!(settings.speedup_key, "KeyQ");
+        assert_eq!(
+            settings.input_profiles.profiles[0].bindings.speedup_key,
+            "KeyE"
+        );
+        assert_eq!(
+            settings.input_profiles.profiles[0].bindings.gamepad.pause,
+            "North"
+        );
+        let scope = InputScope::System(InputSystem::GameBoyAdvance);
+        let binding = settings.binding(
+            &scope,
+            BindingTarget::Joypad {
+                player: 1,
+                action: BindingAction::A,
+            },
+            GameplayBindingSource::Keyboard,
+        );
+        assert_eq!(
+            binding.value,
+            Some(PhysicalBinding::Keyboard(KeyCode::KeyW))
+        );
+        assert_eq!(binding.origin, InputScope::Global);
+        let encoded: serde_json::Value =
+            serde_json::from_str(&super::encode(&settings, Some(&original)).unwrap()).unwrap();
+        assert_eq!(encoded["schema_version"], SCHEMA_VERSION);
+        assert!(
+            encoded["input_overrides"]["systems"]
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn sparse_override_deletions_survive_save_without_losing_surviving_extensions() {
+        use crate::settings::{
+            BindingAction, BindingTarget, GameplayBindingSource, InputScope, InputSystem,
+            PhysicalBinding, Settings,
+        };
+        use winit::keyboard::KeyCode;
+        let mut settings = Settings::default();
+        let scope = InputScope::System(InputSystem::GameBoyAdvance);
+        let target = BindingTarget::Joypad {
+            player: 1,
+            action: BindingAction::A,
+        };
+        settings
+            .set_binding(
+                &scope,
+                target,
+                GameplayBindingSource::Keyboard,
+                Some(PhysicalBinding::Keyboard(KeyCode::KeyX)),
+            )
+            .unwrap();
+        settings
+            .set_binding(
+                &InputScope::Global,
+                target,
+                GameplayBindingSource::Keyboard,
+                None,
+            )
+            .unwrap();
+        let mut template: serde_json::Value =
+            serde_json::from_str(&super::encode(&settings, None).unwrap()).unwrap();
+        template["input_overrides"]["systems"]["gba"]["future_field"] =
+            serde_json::json!({"keep": true});
+        template["input_overrides"]["systems"]["gba"]["bindings"]["keyboard/p1.a"]["extension"] =
+            7.into();
+        let mut loaded = super::decode(&template.to_string()).unwrap();
+        assert!(
+            loaded
+                .binding(&InputScope::Global, target, GameplayBindingSource::Keyboard)
+                .value
+                .is_none()
+        );
+        loaded
+            .set_binding(&scope, target, GameplayBindingSource::Keyboard, None)
+            .unwrap();
+        let unbound: serde_json::Value =
+            serde_json::from_str(&super::encode(&loaded, Some(&template)).unwrap()).unwrap();
+        let entry = &unbound["input_overrides"]["systems"]["gba"]["bindings"]["keyboard/p1.a"];
+        assert_eq!(entry["state"], "unbound");
+        assert_eq!(entry["extension"], 7);
+        assert!(entry.get("value").is_none());
+        loaded.inherit_binding(&scope, target, GameplayBindingSource::Keyboard);
+        let encoded: serde_json::Value =
+            serde_json::from_str(&super::encode(&loaded, Some(&unbound)).unwrap()).unwrap();
+        assert!(
+            encoded["input_overrides"]["systems"]["gba"]["bindings"]
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            encoded["input_overrides"]["systems"]["gba"]["future_field"]["keep"],
+            true
+        );
+        loaded.reset_input_scope(&scope);
+        let reset: serde_json::Value =
+            serde_json::from_str(&super::encode(&loaded, Some(&encoded)).unwrap()).unwrap();
+        assert!(reset["input_overrides"]["systems"].get("gba").is_none());
+    }
     use super::*;
     use winit::keyboard::KeyCode;
 
@@ -456,6 +1011,96 @@ mod tests {
         let mut reloaded = decode(&encoded).unwrap();
         reloaded.reset_preferences();
         assert_ne!(reloaded.save_input_profile("After reset").unwrap(), removed);
+    }
+
+    #[test]
+    fn calibration_extensions_follow_fingerprint_identity_and_deletion() {
+        let alpha = crate::settings::GamepadFingerprint {
+            name: "Alpha Controller".into(),
+            uuid: "alpha-model".into(),
+        };
+        let beta = crate::settings::GamepadFingerprint {
+            name: "Beta Controller".into(),
+            uuid: "beta-model".into(),
+        };
+        let mut settings = Settings::default();
+        settings.input_devices.set_calibration(
+            alpha.clone(),
+            crate::settings::GamepadCalibration::default(),
+        );
+        settings
+            .input_devices
+            .set_calibration(beta.clone(), crate::settings::GamepadCalibration::default());
+        let mut raw: Value = serde_json::from_str(&encode(&settings, None).unwrap()).unwrap();
+        let records = raw["input_devices"]["calibrations"].as_array_mut().unwrap();
+        for record in records {
+            let model = record["fingerprint"]["uuid"].as_str().unwrap().to_owned();
+            record["future_model"] = format!("{model}-outer").into();
+            record["fingerprint"]["future_fingerprint"] = format!("{model}-fingerprint").into();
+            record["calibration"]["left"]["x"]["future_axis"] = format!("{model}-axis").into();
+        }
+
+        let mut restored = decode(&raw.to_string()).unwrap();
+        restored.input_devices.calibrations.reverse();
+        restored
+            .input_devices
+            .calibrations
+            .iter_mut()
+            .find(|entry| entry.fingerprint == alpha)
+            .unwrap()
+            .calibration
+            .left
+            .x
+            .center = 0.2;
+        let reordered_json = encode(&restored, Some(&raw)).unwrap();
+        let reordered: Value = serde_json::from_str(&reordered_json).unwrap();
+        let records = reordered["input_devices"]["calibrations"]
+            .as_array()
+            .unwrap();
+        assert_eq!(records[0]["fingerprint"]["uuid"], "beta-model");
+        assert_eq!(records[0]["future_model"], "beta-model-outer");
+        assert_eq!(
+            records[0]["fingerprint"]["future_fingerprint"],
+            "beta-model-fingerprint"
+        );
+        assert_eq!(
+            records[0]["calibration"]["left"]["x"]["future_axis"],
+            "beta-model-axis"
+        );
+        assert_eq!(records[1]["fingerprint"]["uuid"], "alpha-model");
+        assert_eq!(records[1]["future_model"], "alpha-model-outer");
+        assert_eq!(
+            records[1]["fingerprint"]["future_fingerprint"],
+            "alpha-model-fingerprint"
+        );
+        assert_eq!(
+            records[1]["calibration"]["left"]["x"]["future_axis"],
+            "alpha-model-axis"
+        );
+        assert_eq!(
+            records[1]["calibration"]["left"]["x"]["center"],
+            serde_json::json!(0.2_f32)
+        );
+
+        let mut roundtrip = decode(&reordered_json).unwrap();
+        assert!(roundtrip.input_devices.remove_calibration(&beta));
+        let surviving_json = encode(&roundtrip, Some(&reordered)).unwrap();
+        let surviving: Value = serde_json::from_str(&surviving_json).unwrap();
+        let records = surviving["input_devices"]["calibrations"]
+            .as_array()
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["fingerprint"]["uuid"], "alpha-model");
+        assert_eq!(records[0]["future_model"], "alpha-model-outer");
+        assert_eq!(
+            records[0]["fingerprint"]["future_fingerprint"],
+            "alpha-model-fingerprint"
+        );
+        assert_eq!(
+            records[0]["calibration"]["left"]["x"]["future_axis"],
+            "alpha-model-axis"
+        );
+        assert_eq!(decode(&surviving_json).unwrap(), roundtrip);
     }
 
     #[test]
@@ -504,7 +1149,7 @@ mod tests {
         let state = migrated.persistence.0.lock().unwrap();
         let encoded = encode(&migrated, state.template.as_ref()).unwrap();
         let document: Value = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(document["schema_version"], 1);
+        assert_eq!(document["schema_version"], SCHEMA_VERSION);
         assert_eq!(
             document["extensions"]["future_plugin_preference"]["enabled"],
             true

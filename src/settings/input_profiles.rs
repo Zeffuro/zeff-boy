@@ -20,6 +20,11 @@ pub(crate) struct InputProfileBindings {
     pub(crate) speedup_key: String,
     pub(crate) rewind_key: String,
     pub(crate) tilt: TiltSettings,
+    #[serde(default)]
+    pub(crate) keyboard_unbound: std::collections::BTreeSet<String>,
+    pub(crate) binding_sets: std::collections::BTreeMap<String, super::BindingSetOverride>,
+    #[serde(default)]
+    pub(crate) autofire: std::collections::BTreeMap<String, super::AutofireOverride>,
 }
 
 impl Default for InputProfileBindings {
@@ -34,6 +39,9 @@ impl Default for InputProfileBindings {
             speedup_key: "Space".to_owned(),
             rewind_key: super::RewindSettings::default().key,
             tilt: TiltSettings::default(),
+            keyboard_unbound: Default::default(),
+            binding_sets: Default::default(),
+            autofire: Default::default(),
         }
     }
 }
@@ -53,6 +61,52 @@ pub(crate) struct InputProfileCatalog {
 }
 
 impl Settings {
+    pub(crate) fn gameplay_input_matches(&self, profile: &InputProfileBindings) -> bool {
+        self.key_bindings == profile.keyboard
+            && self.key_bindings_p2 == profile.keyboard_p2
+            && self.pce_multitap_key_bindings == profile.pce_multitap_keyboard
+            && self.ws_key_bindings == profile.wonderswan_keyboard
+            && self.gamepad_bindings.gameplay_eq(&profile.gamepad)
+            && self.tilt == profile.tilt
+            && self.input_overrides.global_keyboard_unbound == profile.keyboard_unbound
+            && self.input_overrides.global_binding_sets == profile.binding_sets
+            && self.input_overrides.global_autofire == profile.autofire
+    }
+
+    pub(crate) fn save_controller_profile(
+        &mut self,
+        name: &str,
+        scope: &super::InputScope,
+    ) -> Result<String, String> {
+        let bindings = self.capture_controller_profile(scope);
+        let id = self.save_input_profile(name)?;
+        if let Some(profile) = self
+            .input_profiles
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == id)
+        {
+            profile.bindings = bindings;
+        }
+        Ok(id)
+    }
+
+    pub(crate) fn update_controller_profile(
+        &mut self,
+        id: &str,
+        scope: &super::InputScope,
+    ) -> Result<(), String> {
+        let mut bindings = self.capture_controller_profile(scope);
+        let profile = self
+            .input_profiles
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == id)
+            .ok_or_else(|| "That input profile no longer exists.".to_owned())?;
+        preserve_shortcuts(&mut bindings, &profile.bindings);
+        profile.bindings = bindings;
+        Ok(())
+    }
     pub(crate) fn capture_input_profile(&self) -> InputProfileBindings {
         InputProfileBindings {
             keyboard: self.key_bindings.clone(),
@@ -64,6 +118,9 @@ impl Settings {
             speedup_key: self.speedup_key.clone(),
             rewind_key: self.rewind.key.clone(),
             tilt: self.tilt.clone(),
+            keyboard_unbound: self.input_overrides.global_keyboard_unbound.clone(),
+            binding_sets: self.input_overrides.global_binding_sets.clone(),
+            autofire: self.input_overrides.global_autofire.clone(),
         }
     }
 
@@ -77,6 +134,9 @@ impl Settings {
         self.speedup_key = profile.speedup_key.clone();
         self.rewind.key = profile.rewind_key.clone();
         self.tilt = profile.tilt.clone();
+        self.input_overrides.global_keyboard_unbound = profile.keyboard_unbound.clone();
+        self.input_overrides.global_binding_sets = profile.binding_sets.clone();
+        self.input_overrides.global_autofire = profile.autofire.clone();
     }
 
     pub(crate) fn save_input_profile(&mut self, name: &str) -> Result<String, String> {
@@ -127,18 +187,6 @@ impl Settings {
         self.input_profiles.profiles.len() != before
     }
 
-    pub(crate) fn update_input_profile(&mut self, id: &str) -> Result<(), String> {
-        let bindings = self.capture_input_profile();
-        let profile = self
-            .input_profiles
-            .profiles
-            .iter_mut()
-            .find(|profile| profile.id == id)
-            .ok_or_else(|| "That input profile no longer exists.".to_owned())?;
-        profile.bindings = bindings;
-        Ok(())
-    }
-
     pub(crate) fn reset_input_profile(&mut self, id: &str) -> Result<(), String> {
         let profile = self
             .input_profiles
@@ -146,8 +194,26 @@ impl Settings {
             .iter_mut()
             .find(|profile| profile.id == id)
             .ok_or_else(|| "That input profile no longer exists.".to_owned())?;
-        profile.bindings = InputProfileBindings::default();
+        let mut bindings = InputProfileBindings::default();
+        preserve_shortcuts(&mut bindings, &profile.bindings);
+        profile.bindings = bindings;
         Ok(())
+    }
+}
+
+fn preserve_shortcuts(target: &mut InputProfileBindings, source: &InputProfileBindings) {
+    target.shortcuts = source.shortcuts.clone();
+    target.speedup_key = source.speedup_key.clone();
+    target.rewind_key = source.rewind_key.clone();
+    for action in [
+        super::GamepadAction::SpeedUp,
+        super::GamepadAction::Rewind,
+        super::GamepadAction::Pause,
+        super::GamepadAction::Turbo,
+    ] {
+        target
+            .gamepad
+            .set_action(action, source.gamepad.get_action(action));
     }
 }
 

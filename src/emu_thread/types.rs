@@ -193,6 +193,8 @@ pub(crate) struct FrameInput {
 
 pub(crate) struct FrameResult {
     pub(crate) advanced_frames: usize,
+    pub(crate) completed_step_requests: usize,
+    pub(crate) staged_input_frames: usize,
     pub(crate) delivery_merged: bool,
     pub(crate) replay_events: Vec<zeff_emu_common::replay::ReplayEvent>,
     pub(crate) replay_error: Option<String>,

@@ -1,24 +1,29 @@
 use super::App;
 use crate::emu_backend::ActiveSystem;
-use crate::emu_thread::EmuCommand;
 use crate::settings::{InputBindingAction, ShortcutAction};
 use winit::{
     event::{ElementState, KeyEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
 
+mod expressions;
 mod pressed;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;
 
 use pressed::PressTarget;
 pub(in crate::app) use pressed::{HeldFrontendAction, HeldFrontendSources, PressedKeyboardTargets};
 
 impl App {
     pub(super) fn handle_settings_capture_key(&mut self, key_event: &KeyEvent) -> bool {
+        self.sync_effective_input();
         let PhysicalKey::Code(key_code) = key_event.physical_key else {
             return false;
         };
-        if key_event.state == ElementState::Released && self.release_pressed_keyboard_key(key_code)
-        {
+        self.observe_physical_keyboard_key(key_code, key_event.state == ElementState::Pressed);
+        let released = key_event.state == ElementState::Released
+            && self.release_pressed_keyboard_key(key_code);
+        if self.handle_binding_editor_key(key_event, key_code) || released {
             return true;
         }
         if self.cancel_binding_capture_with_escape(key_event, key_code) {
@@ -32,22 +37,15 @@ impl App {
         key_event: &KeyEvent,
         event_consumed_by_egui: bool,
     ) {
+        self.sync_effective_input();
         let PhysicalKey::Code(key_code) = key_event.physical_key else {
             return;
         };
 
-        if matches!(key_code, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
-            self.modifiers.shift = key_event.state == ElementState::Pressed;
-        }
-        if matches!(key_code, KeyCode::ControlLeft | KeyCode::ControlRight) {
-            self.modifiers.ctrl = key_event.state == ElementState::Pressed;
-        }
-        if matches!(key_code, KeyCode::AltLeft | KeyCode::AltRight) {
-            self.modifiers.alt = key_event.state == ElementState::Pressed;
-        }
-
-        if key_event.state == ElementState::Released && self.release_pressed_keyboard_key(key_code)
-        {
+        self.observe_physical_keyboard_key(key_code, key_event.state == ElementState::Pressed);
+        let released = key_event.state == ElementState::Released
+            && self.release_pressed_keyboard_key(key_code);
+        if self.handle_binding_editor_key(key_event, key_code) || released {
             return;
         }
 
@@ -79,6 +77,7 @@ impl App {
         }
 
         if !egui_has_kb_focus
+            && !self.pressed_keyboard_targets.gameplay_blocked(key_code)
             && self.game_view_focused
             && !self.modifiers.ctrl
             && !self.modifiers.alt
@@ -95,7 +94,7 @@ impl App {
             return;
         }
 
-        if !self.game_view_focused {
+        if !self.game_view_focused || self.pressed_keyboard_targets.gameplay_blocked(key_code) {
             return;
         }
 
@@ -103,8 +102,22 @@ impl App {
             return;
         }
 
+        if key_event.state == ElementState::Pressed
+            && !key_event.repeat
+            && self
+                .input_configuration
+                .resolved
+                .typed_binding_sets()
+                .any(|(_, source, _)| source == crate::settings::GameplayBindingSource::Keyboard)
+        {
+            self.pressed_keyboard_targets.press_expression_key(key_code);
+            self.refresh_keyboard_expressions();
+        }
+
         self.handle_joypad_key(key_event, key_code);
         self.handle_tilt_key(key_event, key_code);
+        self.observe_autofire_host_transitions();
+        let _ = self.sync_uncapped_worker();
     }
 
     fn handle_coleco_keypad_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
@@ -167,6 +180,7 @@ impl App {
         if let Some(tilt_key) = self.map_tilt_key(key_code) {
             self.host_input.set_tilt_keyboard(tilt_key, false);
         }
+        self.observe_autofire_host_transitions();
     }
 
     fn handle_rebinding_key(&mut self, key_event: &KeyEvent, key_code: KeyCode) -> bool {
@@ -201,21 +215,22 @@ impl App {
         };
 
         if key_event.state == ElementState::Pressed && !key_event.repeat {
-            match action {
-                InputBindingAction::Joypad(a) => self.settings.key_bindings.set(a, key_code),
-                InputBindingAction::JoypadP2(a) => self.settings.key_bindings_p2.set(a, key_code),
+            use crate::settings::{BindingTarget, GameplayBindingSource, PhysicalBinding};
+            let target = match action {
+                InputBindingAction::Joypad(action) => BindingTarget::Joypad { player: 1, action },
+                InputBindingAction::JoypadP2(action) => BindingTarget::Joypad { player: 2, action },
                 InputBindingAction::PceMultitap { player, action } => {
-                    if let Some(bindings) = player.checked_sub(3).and_then(|index| {
-                        self.settings
-                            .pce_multitap_key_bindings
-                            .get_mut(usize::from(index))
-                    }) {
-                        bindings.set(action, key_code);
-                    }
+                    BindingTarget::Joypad { player, action }
                 }
-                InputBindingAction::Tilt(a) => self.settings.tilt.key_bindings.set(a, key_code),
-                InputBindingAction::WonderSwan(a) => self.settings.ws_key_bindings.set(a, key_code),
-            }
+                InputBindingAction::WonderSwan(action) => BindingTarget::WonderSwan(action),
+            };
+            self.commit_gameplay_binding(
+                target,
+                GameplayBindingSource::Keyboard,
+                PhysicalBinding::Keyboard(key_code),
+            );
+            self.pressed_keyboard_targets
+                .suppress_gameplay_until_release(key_code);
             self.debug_windows.rebinding_action = None;
         }
 
@@ -423,16 +438,14 @@ impl App {
 
         if key_code == bindings.get(ShortcutAction::UncappedSpeed) {
             if pressed {
-                let enable_uncapped = !self.timing.uncapped_speed;
-                if self
-                    .send_emu_command_checked(EmuCommand::SetUncapped(
-                        enable_uncapped && self.recording.allows_uncapped_worker(),
-                    ))
-                    .is_ok()
-                {
-                    self.timing.uncapped_speed = enable_uncapped;
+                let previous = self.timing.uncapped_speed;
+                let enable_uncapped = !previous;
+                self.timing.uncapped_speed = enable_uncapped;
+                if self.sync_uncapped_worker().is_ok() {
                     self.settings.emulation.uncapped_speed = enable_uncapped;
                     self.settings.save();
+                } else {
+                    self.timing.uncapped_speed = previous;
                 }
             }
             return true;
@@ -658,11 +671,13 @@ impl App {
                     self.host_input.set_ws_keyboard(ws_key, true);
                     self.pressed_keyboard_targets
                         .press(key_code, PressTarget::WonderSwan(ws_key));
+                    self.observe_autofire_host_transitions();
                     return true;
                 }
             }
             ElementState::Released => {
                 self.host_input.set_ws_keyboard(ws_key, false);
+                self.observe_autofire_host_transitions();
                 return true;
             }
         }
@@ -699,12 +714,76 @@ impl App {
     }
 
     fn release_pressed_keyboard_key(&mut self, key_code: KeyCode) -> bool {
+        let handled = self.pressed_keyboard_targets.contains_key(key_code);
         let targets = self.pressed_keyboard_targets.release(key_code);
-        let handled = !targets.is_empty();
         for target in targets {
             self.apply_keyboard_target(target, false);
         }
+        self.refresh_keyboard_expressions();
+        self.observe_autofire_host_transitions();
         handled
+    }
+
+    fn refresh_keyboard_expressions(&mut self) {
+        if self.egui_wants_keyboard
+            || self.keyboard_capture_active
+            || !self.game_view_focused
+            || !self.game_window_focused
+        {
+            self.release_gameplay_keyboard_state();
+            return;
+        }
+        let targets = expressions::active_targets(
+            &self.input_configuration.resolved,
+            self.active_system,
+            self.pressed_keyboard_targets.expression_keys(),
+            self.media_slot_snapshot.is_some(),
+        );
+        for (target, pressed) in self
+            .pressed_keyboard_targets
+            .replace_expression_targets(targets)
+        {
+            self.apply_keyboard_target(target, pressed);
+        }
+    }
+
+    fn observe_physical_keyboard_key(&mut self, key: KeyCode, pressed: bool) {
+        let keys = &mut self.debug_windows.settings_ui.binding_keyboard_down;
+        if pressed {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        } else {
+            keys.retain(|held| *held != key);
+        }
+        self.modifiers.shift = keys
+            .iter()
+            .any(|key| matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight));
+        self.modifiers.ctrl = keys
+            .iter()
+            .any(|key| matches!(key, KeyCode::ControlLeft | KeyCode::ControlRight));
+        self.modifiers.alt = keys
+            .iter()
+            .any(|key| matches!(key, KeyCode::AltLeft | KeyCode::AltRight));
+    }
+
+    fn handle_binding_editor_key(&mut self, event: &KeyEvent, key: KeyCode) -> bool {
+        if self
+            .debug_windows
+            .settings_ui
+            .binding_editor
+            .as_ref()
+            .is_some_and(|editor| editor.is_capturing())
+        {
+            self.sync_keyboard_capture(true);
+        }
+        self.debug_windows
+            .settings_ui
+            .binding_editor
+            .as_mut()
+            .is_some_and(|editor| {
+                editor.keyboard_event(key, event.state == ElementState::Pressed, event.repeat)
+            })
     }
 
     fn apply_keyboard_target(&mut self, target: PressTarget, pressed: bool) {
@@ -745,7 +824,10 @@ impl App {
         match action {
             HeldFrontendAction::FastForward => self.speed.fast_forward_held = held,
             HeldFrontendAction::Rewind => self.rewind.held = held,
-            HeldFrontendAction::Turbo => self.speed.turbo_held = held,
+            HeldFrontendAction::Turbo => {
+                self.speed.turbo_held = held;
+                self.observe_autofire_host_transitions();
+            }
         }
     }
 
@@ -755,6 +837,7 @@ impl App {
             self.apply_keyboard_target(target, false);
         }
         self.host_input.clear_keyboard();
+        self.observe_autofire_host_transitions();
         for action in [
             HeldFrontendAction::FastForward,
             HeldFrontendAction::Rewind,
@@ -764,6 +847,14 @@ impl App {
             self.set_effective_frontend_hold(action, effective);
         }
         self.modifiers = Default::default();
+    }
+
+    pub(super) fn release_gameplay_keyboard_state(&mut self) {
+        for target in self.pressed_keyboard_targets.drain_gameplay() {
+            self.apply_keyboard_target(target, false);
+        }
+        self.host_input.clear_keyboard();
+        self.observe_autofire_host_transitions();
     }
 
     pub(super) fn sync_keyboard_capture(&mut self, capture_active: bool) {
@@ -779,5 +870,6 @@ impl App {
         self.speed.fast_forward_held = false;
         self.rewind.held = false;
         self.speed.turbo_held = false;
+        self.observe_autofire_host_transitions();
     }
 }

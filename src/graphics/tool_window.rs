@@ -16,6 +16,8 @@ pub(super) struct ToolWindow {
     window: Arc<Window>,
     gpu: GpuContext,
     egui: EguiRenderer,
+    measure_submission: bool,
+    last_submission: Option<crate::platform::Instant>,
 }
 
 pub(super) struct ToolWindowConfig {
@@ -87,7 +89,13 @@ impl ToolWindow {
         });
         let egui = EguiRenderer::new(&window, &gpu.device, gpu.config.format)?;
         window.request_redraw();
-        Ok(Self { window, gpu, egui })
+        Ok(Self {
+            window,
+            gpu,
+            egui,
+            measure_submission: false,
+            last_submission: None,
+        })
     }
 
     pub(super) fn id(&self) -> WindowId {
@@ -96,6 +104,14 @@ impl ToolWindow {
 
     pub(super) fn window(&self) -> &Window {
         &self.window
+    }
+
+    pub(super) fn measure_submission(&mut self, enabled: bool) {
+        self.measure_submission = enabled;
+    }
+
+    pub(super) fn last_submission(&self) -> Option<crate::platform::Instant> {
+        self.last_submission
     }
 
     pub(super) fn handle_event(&mut self, event: &WindowEvent) -> bool {
@@ -115,6 +131,7 @@ impl ToolWindow {
         label: &'static str,
         draw: impl FnOnce(&mut egui::Ui),
     ) -> Result<(), FrameError> {
+        self.last_submission = None;
         let frame = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -190,8 +207,12 @@ impl ToolWindow {
             self.egui
                 .render_to_pass(&mut pass, &paint_jobs, &screen_desc);
         }
-        self.egui
-            .submit_and_cleanup(&self.gpu.queue, encoder, &output);
+        self.last_submission = self.egui.submit_and_cleanup_timed(
+            &self.gpu.queue,
+            encoder,
+            &output,
+            self.measure_submission,
+        );
         frame.present();
         Ok(())
     }

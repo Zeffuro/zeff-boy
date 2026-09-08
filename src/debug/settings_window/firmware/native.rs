@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use super::super::{
+    layout::{helper, row},
+    search::{self, SettingId as Id},
+};
 use crate::debug::DebugWindowState;
 use crate::debug::types::{
     FirmwareInventoryRow, FirmwareInventoryScanResult, FirmwareInventoryStatusKind,
@@ -19,25 +23,33 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
     let busy = state.firmware_inventory.scan_receiver.is_some()
         || state.firmware_inventory.import_receiver.is_some();
     let mut start_scan = import_completed;
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(!busy, egui::Button::new("Import firmware..."))
-            .clicked()
-            && let Some(path) = crate::platform::FileDialog::new()
-                .add_filter("Firmware", &["bin", "rom", "bios", "col", "sms", "gg"])
-                .set_title("Import firmware")
-                .pick_file()
-        {
-            begin_import(path, ui.ctx().clone(), state);
-        }
-        if ui
-            .add_enabled(!busy, egui::Button::new("Scan now"))
-            .clicked()
-        {
-            start_scan = true;
-        }
-    });
-    ui.label(
+    helper(
+        ui,
+        egui::RichText::new("Import recognized firmware or scan the configured folders.")
+            .small()
+            .weak(),
+    );
+    ui.add_space(12.0);
+    if row(ui, Id::FirmwareImportFirmware, None, |ui| {
+        ui.add_enabled(!busy, egui::Button::new("Import firmware..."))
+    })
+    .clicked()
+        && let Some(path) = crate::platform::FileDialog::new()
+            .add_filter("Firmware", &["bin", "rom", "bios", "col", "sms", "gg"])
+            .set_title("Import firmware")
+            .pick_file()
+    {
+        begin_import(path, ui.ctx().clone(), state);
+    }
+    if row(ui, Id::FirmwareScanFirmwareNow, None, |ui| {
+        ui.add_enabled(!busy, egui::Button::new("Scan now"))
+    })
+    .clicked()
+    {
+        start_scan = true;
+    }
+    helper(
+        ui,
         egui::RichText::new(format!(
             "Recognized imports: {}",
             crate::platform::managed_firmware_dir().display()
@@ -46,41 +58,43 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         .small(),
     );
 
-    ui.label("Additional search folder");
-    ui.horizontal_wrapped(|ui| {
-        let field_width = ui.available_width().min(320.0);
-        if ui
-            .add(
+    row(ui, Id::FirmwareAdditionalFirmwareSearchFolder, None, |ui| {
+        ui.horizontal(|ui| {
+            let field_width = ui.available_width().min(240.0);
+            let response = ui.add(
                 egui::TextEdit::singleline(&mut settings.emulation.firmware_directory)
                     .hint_text("Optional folder")
                     .desired_width(field_width),
-            )
-            .changed()
-        {
-            state.firmware_inventory.needs_refresh = true;
-            state.firmware_inventory.inventory = None;
-        }
-
-        if ui.button("Browse...").clicked() {
-            let mut dialog = crate::platform::FileDialog::new().set_title("Select firmware folder");
-            if let Some(current) = settings.emulation.firmware_directory_path() {
-                dialog = dialog.set_directory(current);
-            }
-            if let Some(path) = dialog.pick_folder() {
-                settings.emulation.firmware_directory = path.to_string_lossy().to_string();
+            );
+            if response.changed() {
                 state.firmware_inventory.needs_refresh = true;
                 state.firmware_inventory.inventory = None;
             }
-        }
+
+            if ui.button("Browse...").clicked() {
+                let mut dialog =
+                    crate::platform::FileDialog::new().set_title("Select firmware folder");
+                if let Some(current) = settings.emulation.firmware_directory_path() {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(path) = dialog.pick_folder() {
+                    settings.emulation.firmware_directory = path.to_string_lossy().to_string();
+                    state.firmware_inventory.needs_refresh = true;
+                    state.firmware_inventory.inventory = None;
+                }
+            }
+            response
+        })
+        .inner
     });
 
-    ui.separator();
+    ui.add_space(22.0);
     ui.strong("Game Boy / Game Boy Color");
     draw_gb_boot_mode(ui, settings);
-    ui.separator();
+    ui.add_space(22.0);
     ui.strong("Game Boy Advance");
     draw_gba_boot_mode(ui, settings);
-    ui.separator();
+    ui.add_space(22.0);
     ui.strong("Master System / Game Gear");
     draw_sega_boot_mode(ui, settings);
 
@@ -110,13 +124,28 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
     let showing_current_directory =
         !state.firmware_inventory.needs_refresh && state.firmware_inventory.directory == configured;
     if state.firmware_inventory.needs_refresh || !showing_current_directory {
-        ui.label(
+        search::conditional(
+            ui,
+            Id::FirmwareFirmwareFileDetails,
+            Id::FirmwareScanFirmwareNow,
+            false,
+            "Scan the configured folders before viewing firmware file details.",
+        );
+        search::conditional(
+            ui,
+            Id::FirmwareRemoveImportedFirmware,
+            Id::FirmwareScanFirmwareNow,
+            false,
+            "Scan the configured folders before removing an imported firmware file.",
+        );
+        helper(
+            ui,
             egui::RichText::new("Scan to update firmware status.")
                 .weak()
                 .small(),
         );
     }
-    if showing_current_directory && let Some(key) = draw_inventory(ui, state, !busy) {
+    if showing_current_directory && let Some(key) = draw_inventory(ui, settings, state, !busy) {
         match crate::platform::remove_managed_firmware(&key) {
             Ok(()) => {
                 state.firmware_inventory.needs_refresh = true;
@@ -132,8 +161,8 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         }
     }
 
-    ui.separator();
-    ui.label("FDS uses a recognized external BIOS when required.");
+    ui.add_space(22.0);
+    helper(ui, "FDS uses a recognized external BIOS when required.");
 }
 
 fn begin_import(path: PathBuf, context: egui::Context, state: &mut DebugWindowState) {

@@ -4,10 +4,12 @@ mod resampler;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use native::AudioOutput;
-#[cfg(not(target_arch = "wasm32"))]
 #[allow(unused_imports)]
 use native::*;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use native::{AudioBufferFallback, AudioOutputDevice};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use native::{AudioHostConfig, AudioHostStatus, AudioOutput, output_devices};
 
 #[cfg(target_arch = "wasm32")]
 mod web;

@@ -236,8 +236,13 @@ impl App {
     pub(super) fn process_frame_result(&mut self, mut result: FrameResult) {
         #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
         super::browser_speculation_test::record_frame_result(self, &result);
-        self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
-        if let Some(fault) = result.runtime_fault.take() {
+        self.frames_in_flight = self
+            .frames_in_flight
+            .saturating_sub(result.completed_step_requests);
+        let runtime_fault = result.runtime_fault.take();
+        self.record_replay_events(result.replay_events);
+        self.commit_replay_batch(result.staged_input_frames);
+        if let Some(fault) = runtime_fault {
             log::error!("Emulation stopped: {fault}");
             #[cfg(not(target_arch = "wasm32"))]
             self.terminalize_tas_control_runtime_fault();
@@ -248,21 +253,21 @@ impl App {
             self.force_clear_frontend_hold(crate::app::keyboard::HeldFrontendAction::Rewind);
             if let Some(thread) = &self.emu_thread {
                 thread.send(crate::emu_thread::EmuCommand::SetUncapped(false));
+                self.timing.uncapped_worker_enabled = false;
             }
             self.toast_manager
                 .error(format!("Emulation stopped: {fault}"));
-        }
-        self.record_replay_events(result.replay_events);
-        self.commit_replay_batch(result.advanced_frames);
-        #[cfg(not(target_arch = "wasm32"))]
-        self.schedule_replay_checkpoint();
-        if let Some(error) = result.replay_error.take() {
-            log::warn!("Replay stopped: {error}");
-            self.recording.replay_player = None;
-            self.recording.pending_replay_batches.clear();
-            self.recording.queued_replay_playback_frames = 0;
-            self.resume_uncapped_worker_after_replay();
-            self.toast_manager.error(format!("Replay stopped: {error}"));
+        } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            self.schedule_replay_checkpoint();
+            if let Some(error) = result.replay_error.take() {
+                log::warn!("Replay stopped: {error}");
+                self.recording.replay_player = None;
+                self.recording.pending_replay_batches.clear();
+                self.recording.queued_replay_playback_frames = 0;
+                self.resume_uncapped_worker_after_replay();
+                self.toast_manager.error(format!("Replay stopped: {error}"));
+            }
         }
 
         if let Some(thread) = &self.emu_thread {
@@ -558,13 +563,18 @@ impl App {
         }
     }
 
-    fn commit_replay_batch(&mut self, mut advanced_frames: usize) {
+    pub(in crate::app) fn commit_replay_batch(&mut self, mut advanced_frames: usize) {
         while advanced_frames > 0 {
             let Some(mut batch) = self.recording.pending_replay_batches.pop_front() else {
                 break;
             };
 
             let commit_count = advanced_frames.min(batch.frames.len());
+            if commit_count != 0
+                && let Some(state) = batch.autofire_states.get(commit_count - 1)
+            {
+                self.autofire_state = *state;
+            }
             if batch.record
                 && let Some(recorder) = self.recording.replay_recorder_for_commits()
             {
@@ -602,6 +612,13 @@ impl App {
             advanced_frames -= commit_count;
             if commit_count < batch.frames.len() {
                 batch.frames.drain(..commit_count);
+                if !batch.autofire_states.is_empty() {
+                    debug_assert_eq!(
+                        batch.autofire_states.len(),
+                        batch.frames.len() + commit_count
+                    );
+                    batch.autofire_states.drain(..commit_count);
+                }
                 self.recording.pending_replay_batches.push_front(batch);
                 break;
             }

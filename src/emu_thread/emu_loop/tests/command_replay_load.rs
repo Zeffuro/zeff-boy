@@ -10,20 +10,46 @@ fn direct_step_commands_are_inert_after_runtime_fault() {
     let frame_before = emu_loop.backend.frame_count();
     emu_loop.runtime_fault.latch(Some("fault".to_string()));
 
-    assert!(emu_loop.handle_command(EmuCommand::StepFrames(Box::new(frame_input(3)))));
+    let mut staged = frame_input(3);
+    staged.replay_joypad_frames = Some(vec![crate::emu_thread::ReplayJoypadFrame::default(); 3]);
+    assert!(emu_loop.handle_command(EmuCommand::StepFrames(Box::new(staged))));
     let first = emu_loop.drain_rx.recv().unwrap();
     assert_eq!(first.runtime_fault.as_deref(), Some("fault"));
     assert_eq!(first.advanced_frames, 0);
+    assert_eq!(first.completed_step_requests, 1);
+    assert_eq!(first.staged_input_frames, 0);
     assert_eq!(emu_loop.backend.frame_count(), frame_before);
 
     assert!(emu_loop.handle_command(EmuCommand::StepFrames(Box::new(frame_input(3)))));
     let second = emu_loop.drain_rx.recv().unwrap();
     assert_eq!(second.runtime_fault, None);
     assert_eq!(second.advanced_frames, 0);
+    assert_eq!(second.completed_step_requests, 1);
+    assert_eq!(second.staged_input_frames, 0);
     assert_eq!(emu_loop.backend.frame_count(), frame_before);
 
     assert!(emu_loop.handle_command(EmuCommand::SetUncapped(true)));
     assert!(!emu_loop.uncapped_mode);
+}
+
+#[test]
+fn step_response_counts_completed_requests_and_consumed_staged_prefixes() {
+    let (mut emu_loop, _responses) = test_loop();
+    for (requested, provided, staged) in [
+        (0, Some(4), 0),
+        (2, Some(5), 2),
+        (3, Some(1), 1),
+        (2, None, 0),
+    ] {
+        let mut input = frame_input(requested);
+        input.replay_joypad_frames =
+            provided.map(|count| vec![crate::emu_thread::ReplayJoypadFrame::default(); count]);
+        assert!(emu_loop.handle_command(EmuCommand::StepFrames(Box::new(input))));
+        let result = emu_loop.drain_rx.recv().unwrap();
+        assert_eq!(result.advanced_frames, requested);
+        assert_eq!(result.completed_step_requests, 1);
+        assert_eq!(result.staged_input_frames, staged);
+    }
 }
 
 #[test]

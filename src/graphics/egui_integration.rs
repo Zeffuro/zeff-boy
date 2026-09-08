@@ -167,12 +167,25 @@ impl EguiRenderer {
         encoder: wgpu::CommandEncoder,
         output: &EguiFrameOutput,
     ) {
+        let _ = self.submit_and_cleanup_timed(queue, encoder, output, false);
+    }
+
+    pub(crate) fn submit_and_cleanup_timed(
+        &mut self,
+        queue: &wgpu::Queue,
+        encoder: wgpu::CommandEncoder,
+        output: &EguiFrameOutput,
+        measure_timing: bool,
+    ) -> Option<crate::platform::Instant> {
+        let mut submitted = None;
         submit_before_texture_cleanup(
             || {
                 queue.submit(Some(encoder.finish()));
+                submitted = measure_timing.then(crate::platform::Instant::now);
             },
             || self.cleanup(output),
         );
+        submitted
     }
 
     pub(crate) fn register_native_texture(
@@ -212,15 +225,15 @@ pub(crate) fn apply_egui_theme(
     if !ctx.data(|data| data.get_temp::<bool>(font_key).unwrap_or(false)) {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
-            "Inter".into(),
-            egui::FontData::from_static(include_bytes!("../../assets/fonts/Inter-Regular.ttf"))
+            "Noto Sans".into(),
+            egui::FontData::from_static(include_bytes!("../../assets/fonts/NotoSans-Regular.ttf"))
                 .into(),
         );
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(0, "Inter".into());
+            .insert(0, "Noto Sans".into());
         ctx.set_fonts(fonts);
         ctx.data_mut(|data| data.insert_temp(font_key, true));
     }
@@ -252,33 +265,35 @@ fn build_style(density: UiDensity, debug_monospace_scale: f32) -> egui::Style {
     let (monospace, item_spacing, button_padding, interact_size) = match density {
         UiDensity::Compact => (
             12.0,
-            egui::vec2(4.0, 2.0),
             egui::vec2(6.0, 3.0),
+            egui::vec2(7.0, 2.0),
             egui::vec2(36.0, 24.0),
         ),
         UiDensity::Comfortable => (
             13.0,
-            egui::vec2(8.0, 6.0),
             egui::vec2(8.0, 5.0),
+            egui::vec2(9.0, 4.0),
             egui::vec2(40.0, 28.0),
         ),
     };
 
+    // Preserve the former Inter x-height when using Noto Sans.
+    const PROPORTIONAL_SCALE: f32 = 1.0185;
     style.text_styles.insert(
         egui::TextStyle::Body,
-        egui::FontId::new(15.0, egui::FontFamily::Proportional),
+        egui::FontId::new(15.0 * PROPORTIONAL_SCALE, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Button,
-        egui::FontId::new(15.0, egui::FontFamily::Proportional),
+        egui::FontId::new(15.0 * PROPORTIONAL_SCALE, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Small,
-        egui::FontId::new(13.0, egui::FontFamily::Proportional),
+        egui::FontId::new(13.0 * PROPORTIONAL_SCALE, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(20.0, egui::FontFamily::Proportional),
+        egui::FontId::new(20.0 * PROPORTIONAL_SCALE, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Monospace,
@@ -295,12 +310,38 @@ fn build_style(density: UiDensity, debug_monospace_scale: f32) -> egui::Style {
 }
 
 fn build_visuals(preset: UiThemePreset) -> egui::Visuals {
-    match preset {
+    let mut visuals = match preset {
         UiThemePreset::DefaultDark => build_default_dark(),
         UiThemePreset::HighContrastDark => build_high_contrast_dark(),
         UiThemePreset::Light => build_light(),
         UiThemePreset::Retro => build_retro(),
+    };
+    let border = match preset {
+        UiThemePreset::DefaultDark => egui::Color32::from_gray(72),
+        UiThemePreset::HighContrastDark => egui::Color32::from_gray(140),
+        UiThemePreset::Light => egui::Color32::from_gray(130),
+        UiThemePreset::Retro => visuals.widgets.noninteractive.fg_stroke.color,
+    };
+    for widget in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(8);
+        widget.expansion = 0.0;
     }
+    visuals.widgets.inactive.bg_fill = visuals.panel_fill;
+    visuals.widgets.inactive.weak_bg_fill = visuals.panel_fill;
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, border);
+    visuals.widgets.hovered.weak_bg_fill = visuals.widgets.hovered.bg_fill;
+    visuals.widgets.active.bg_fill = visuals.selection.bg_fill;
+    visuals.widgets.active.weak_bg_fill = visuals.selection.bg_fill;
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, visuals.selection.stroke.color);
+    visuals.widgets.open = visuals.widgets.hovered;
+    visuals.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.5 };
+    visuals.slider_trailing_fill = true;
+    visuals
 }
 
 fn build_default_dark() -> egui::Visuals {

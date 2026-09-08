@@ -1,51 +1,72 @@
 use super::App;
 use crate::input::HostButton;
-use crate::settings::{TiltBindingAction, WonderSwanButton};
+use crate::settings::{BindingTarget, TiltBindingAction, WonderSwanButton};
 use winit::keyboard::KeyCode;
 
 impl App {
     pub(super) fn map_key(&self, key: KeyCode) -> Option<HostButton> {
-        map_key_bindings(&self.settings.key_bindings, key)
+        map_key_bindings(&self.input_configuration.resolved, 1, key)
     }
 
     pub(super) fn map_key_p2(&self, key: KeyCode) -> Option<HostButton> {
-        map_key_bindings(&self.settings.key_bindings_p2, key)
+        map_key_bindings(&self.input_configuration.resolved, 2, key)
     }
 
     pub(super) fn map_key_pce_multitap(&self, player: u8, key: KeyCode) -> Option<HostButton> {
         if self.active_system != crate::emu_backend::ActiveSystem::Pce {
             return None;
         }
-        let bindings = player.checked_sub(3).and_then(|index| {
-            self.settings
-                .pce_multitap_key_bindings
-                .get(usize::from(index))
-        })?;
+        if !(3..=5).contains(&player) {
+            return None;
+        }
         crate::settings::BindingAction::ALL
             .iter()
             .copied()
             .find_map(|action| {
-                (bindings.get(action) == Some(key)).then(|| host_button_for_action(action))
+                (self
+                    .input_configuration
+                    .resolved
+                    .keyboard_binding(BindingTarget::Joypad { player, action })
+                    == Some(key)
+                    && !self.input_configuration.resolved.has_typed_binding(
+                        BindingTarget::Joypad { player, action },
+                        crate::settings::GameplayBindingSource::Keyboard,
+                    ))
+                .then(|| host_button_for_action(action))
             })
     }
 
     pub(super) fn map_tilt_key(&self, key: KeyCode) -> Option<TiltBindingAction> {
-        let tb = &self.settings.tilt.key_bindings;
-        let bindings: [(KeyCode, TiltBindingAction); 4] = [
-            (tb.left, TiltBindingAction::Left),
-            (tb.right, TiltBindingAction::Right),
-            (tb.up, TiltBindingAction::Up),
-            (tb.down, TiltBindingAction::Down),
-        ];
-        bindings.iter().find(|(k, _)| *k == key).map(|(_, a)| *a)
+        [
+            TiltBindingAction::Left,
+            TiltBindingAction::Right,
+            TiltBindingAction::Up,
+            TiltBindingAction::Down,
+        ]
+        .into_iter()
+        .find(|&action| {
+            self.input_configuration
+                .resolved
+                .keyboard_binding(BindingTarget::Tilt(action))
+                == Some(key)
+                && !self.input_configuration.resolved.has_typed_binding(
+                    BindingTarget::Tilt(action),
+                    crate::settings::GameplayBindingSource::Keyboard,
+                )
+        })
     }
 
     pub(super) fn map_ws_key(&self, key: KeyCode) -> Option<WonderSwanButton> {
-        let kb = &self.settings.ws_key_bindings;
-        WonderSwanButton::ALL
-            .iter()
-            .copied()
-            .find(|&action| kb.get(action) == key)
+        WonderSwanButton::ALL.iter().copied().find(|&action| {
+            self.input_configuration
+                .resolved
+                .keyboard_binding(BindingTarget::WonderSwan(action))
+                == Some(key)
+                && !self.input_configuration.resolved.has_typed_binding(
+                    BindingTarget::WonderSwan(action),
+                    crate::settings::GameplayBindingSource::Keyboard,
+                )
+        })
     }
 
     pub(super) fn coleco_keypad_key(&self, key: KeyCode) -> Option<u8> {
@@ -73,25 +94,27 @@ fn coleco_keypad_key(key: KeyCode) -> Option<u8> {
     })
 }
 
-fn map_key_bindings(kb: &crate::settings::KeyBindings, key: KeyCode) -> Option<HostButton> {
-    let bindings: [(KeyCode, HostButton); 12] = [
-        (kb.right, HostButton::Right),
-        (kb.left, HostButton::Left),
-        (kb.up, HostButton::Up),
-        (kb.down, HostButton::Down),
-        (kb.a, HostButton::A),
-        (kb.b, HostButton::B),
-        (kb.x, HostButton::X),
-        (kb.y, HostButton::Y),
-        (kb.l, HostButton::L),
-        (kb.r, HostButton::R),
-        (kb.start, HostButton::Start),
-        (kb.select, HostButton::Select),
-    ];
-    bindings.iter().find(|(k, _)| *k == key).map(|(_, j)| *j)
+fn map_key_bindings(
+    bindings: &crate::settings::ResolvedGameplayInput,
+    player: u8,
+    key: KeyCode,
+) -> Option<HostButton> {
+    use crate::settings::BindingAction::*;
+    [Right, Left, Up, Down, A, B, X, Y, L, R, Start, Select]
+        .into_iter()
+        .find(|&action| {
+            bindings.keyboard_binding(BindingTarget::Joypad { player, action }) == Some(key)
+                && !bindings.has_typed_binding(
+                    BindingTarget::Joypad { player, action },
+                    crate::settings::GameplayBindingSource::Keyboard,
+                )
+        })
+        .map(host_button_for_action)
 }
 
-const fn host_button_for_action(action: crate::settings::BindingAction) -> HostButton {
+pub(in crate::app) const fn host_button_for_action(
+    action: crate::settings::BindingAction,
+) -> HostButton {
     use crate::settings::BindingAction;
     match action {
         BindingAction::Up => HostButton::Up,

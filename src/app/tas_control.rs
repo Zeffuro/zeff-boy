@@ -883,4 +883,4 @@ impl TasControlCoordinator {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::app) mod tests;

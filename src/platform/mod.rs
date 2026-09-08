@@ -14,6 +14,8 @@ mod stable_directory;
 mod web;
 #[cfg(any(target_arch = "wasm32", test))]
 mod web_persistence;
+#[cfg(any(target_arch = "wasm32", test))]
+mod web_settings_state;
 #[cfg(target_arch = "wasm32")]
 mod web_storage;
 
@@ -34,11 +36,13 @@ pub(crate) use stable_directory::{StableDirectory, metadata_is_redirect};
 pub(crate) use web::*;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_persistence::{DirtyEpoch, SaveWrite};
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) use web_settings_state::SettingsStorageStatus;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_storage::{
     SaveBatchCompletion, capture_save_writes, commit_save_writes, firmware_inventory_snapshot,
-    firmware_storage_key, import_firmware, init_storage, read_save_data, read_sram_data,
-    remove_firmware, save_data_exists, save_writes_are_committed, write_save_data, write_sram_data,
+    firmware_storage_key, import_firmware, read_save_data, read_sram_data, remove_firmware,
+    save_data_exists, save_writes_are_committed, write_save_data, write_sram_data,
 };
 #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
 pub(crate) use web_storage::{
@@ -46,6 +50,12 @@ pub(crate) use web_storage::{
 };
 
 pub(crate) use time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn init_storage() {
+    web::init_settings_storage().await;
+    web_storage::init_storage().await;
+}
 
 mod time {
     #[cfg(not(target_arch = "wasm32"))]

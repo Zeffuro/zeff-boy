@@ -391,7 +391,14 @@ impl App {
                 }
             }
         }
-        self.record_live_tas_frame(input)
+        let autofire = self.preview_autofire_tas_input(&mut input);
+        self.record_live_tas_frame(input)?;
+        self.pending_tas_autofire = self
+            .tas_control
+            .live_frame_in_flight()
+            .then_some(autofire)
+            .flatten();
+        Ok(())
     }
 
     pub(super) fn handle_tas_editor_file_request(&mut self, request: TasEditorFileRequest) {

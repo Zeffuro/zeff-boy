@@ -10,7 +10,7 @@ mod fds_recording_roundtrip;
 mod game_gear_recording_roundtrip;
 mod gba_recording_roundtrip;
 mod gbc_recording_roundtrip;
-mod harness;
+pub(in crate::app) mod harness;
 mod live_recording;
 mod pause_ownership;
 mod pce_archive_recording_roundtrip;

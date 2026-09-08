@@ -7,9 +7,10 @@ use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use super::enums::{
-    AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset, EffectPreset,
-    EffectiveColorCorrection, GbaColorCorrection, NesPaletteMode, PceOverscanMode, PcePaletteMode,
-    ShaderParams, ShaderPreset, UiDensity, UiThemePreset, VsyncMode, WonderSwanColorCorrection,
+    AudioBufferPolicy, AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset,
+    EffectPreset, EffectiveColorCorrection, GbaColorCorrection, NesPaletteMode, PceOverscanMode,
+    PcePaletteMode, ShaderParams, ShaderPreset, UiDensity, UiThemePreset, VsyncMode,
+    WonderSwanColorCorrection,
 };
 use super::keycode_serde::keycode_from_string;
 use super::tilt_bindings::TiltKeyBindings;
@@ -202,6 +203,10 @@ pub(crate) struct AudioSettings {
         default = "default_output_sample_rate"
     )]
     pub(crate) output_sample_rate: u32,
+    #[serde(rename = "audio_output_device_id", default)]
+    pub(crate) output_device_id: Option<String>,
+    #[serde(rename = "audio_buffer_policy", default)]
+    pub(crate) buffer_policy: AudioBufferPolicy,
     #[serde(rename = "audio_low_pass_enabled", default)]
     pub(crate) low_pass_enabled: bool,
     #[serde(
@@ -219,6 +224,8 @@ impl Default for AudioSettings {
             mute_during_fast_forward: false,
             recording_format: AudioRecordingFormat::default(),
             output_sample_rate: default_output_sample_rate(),
+            output_device_id: None,
+            buffer_policy: AudioBufferPolicy::default(),
             low_pass_enabled: false,
             low_pass_cutoff_hz: default_audio_low_pass_cutoff_hz(),
         }

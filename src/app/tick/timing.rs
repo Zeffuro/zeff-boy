@@ -13,17 +13,36 @@ impl App {
         {
             self.timing.last_uncapped_frames_per_tick = uncapped_batch_size;
         }
-        if self.timing.uncapped_speed != self.settings.emulation.uncapped_speed {
-            let uncapped_speed = self.settings.emulation.uncapped_speed;
-            if self
-                .send_emu_command_checked(EmuCommand::SetUncapped(
-                    uncapped_speed && self.recording.allows_uncapped_worker(),
-                ))
-                .is_ok()
-            {
-                self.timing.uncapped_speed = uncapped_speed;
-            }
+        self.timing.uncapped_speed = self.settings.emulation.uncapped_speed;
+        let _ = self.sync_uncapped_worker();
+    }
+
+    pub(in crate::app) fn desired_uncapped_worker(&self) -> bool {
+        self.timing.uncapped_speed
+            && self.recording.allows_uncapped_worker()
+            && !self.autofire_requires_serialized_frame()
+            && !self.recording.has_pending_autofire()
+    }
+
+    pub(in crate::app) fn sync_uncapped_worker(
+        &mut self,
+    ) -> Result<(), crate::app::command_gate::EmuCommandSendError> {
+        let enabled = self.desired_uncapped_worker();
+        if enabled != self.timing.uncapped_worker_enabled {
+            self.send_emu_command_checked(EmuCommand::SetUncapped(enabled))?;
+            self.timing.uncapped_worker_enabled = enabled;
         }
+        Ok(())
+    }
+
+    pub(in crate::app) fn suspend_uncapped_worker(
+        &mut self,
+    ) -> Result<(), crate::app::command_gate::EmuCommandSendError> {
+        if self.timing.uncapped_worker_enabled {
+            self.send_emu_command_checked(EmuCommand::SetUncapped(false))?;
+            self.timing.uncapped_worker_enabled = false;
+        }
+        Ok(())
     }
 
     pub(super) fn compute_frames_to_step(&mut self, now: Instant) -> usize {
@@ -46,10 +65,10 @@ impl App {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    if self.recording.is_replay_active() {
-                        batch_size
-                    } else {
+                    if self.timing.uncapped_worker_enabled {
                         1
+                    } else {
+                        batch_size
                     }
                 }
             }

@@ -8,6 +8,7 @@ pub(crate) enum LeftStickMode {
     Tilt,
     #[default]
     Auto,
+    BindingsOnly,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

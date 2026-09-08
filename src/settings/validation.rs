@@ -3,6 +3,10 @@ use anyhow::{Result, bail};
 use super::{Settings, TiltSettings};
 
 pub(super) fn validate(settings: &Settings) -> Result<()> {
+    settings
+        .input_overrides
+        .validate()
+        .map_err(anyhow::Error::msg)?;
     validate_usize("global.rewind.seconds", settings.rewind.seconds, 1, 120)?;
     validate_usize("global.rewind.speed", settings.rewind.speed, 1, 10)?;
     validate_usize(
@@ -39,8 +43,21 @@ pub(super) fn validate(settings: &Settings) -> Result<()> {
         4.0,
     )?;
     validate_tilt("global.input.tilt", &settings.tilt)?;
+    if settings.input_devices.calibrations.len() > 64 {
+        bail!("input_devices.calibrations supports at most 64 controller models");
+    }
+    for (index, calibration) in settings.input_devices.calibrations.iter().enumerate() {
+        if !calibration.calibration.is_valid() {
+            bail!("input_devices.calibrations[{index}] requires finite min/center/max ranges");
+        }
+    }
 
     for (index, profile) in settings.input_profiles.profiles.iter().enumerate() {
+        let mut overrides = super::InputOverrides::default();
+        overrides.global_keyboard_unbound = profile.bindings.keyboard_unbound.clone();
+        overrides.global_binding_sets = profile.bindings.binding_sets.clone();
+        overrides.global_autofire = profile.bindings.autofire.clone();
+        overrides.validate().map_err(anyhow::Error::msg)?;
         validate_tilt(
             &format!("input_profiles.profiles[{index}].bindings.tilt"),
             &profile.bindings.tilt,

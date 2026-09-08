@@ -1,19 +1,127 @@
+mod autofire;
+pub(crate) mod binding_editor;
+pub(crate) mod calibration;
 pub(super) mod controller_diagram;
 mod gamepad_actions;
 mod joypad;
+mod profiles;
 mod shortcuts;
 pub(super) mod tilt;
 mod wonderswan;
+use super::search::{self, SettingId};
 use super::{InputDevicesPage, SettingsUiState};
 use crate::debug::DebugWindowState;
 use crate::emu_backend::ActiveSystem;
-use crate::settings::{GamepadAssignment, Settings};
+use crate::settings::{GamepadAssignment, InputScope, InputSystem, Settings};
 use controller_diagram::DiagramKind;
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum BindingSource {
     #[default]
     Controller,
     Keyboard,
+}
+
+pub(super) fn scope_label(scope: &InputScope) -> String {
+    match scope {
+        InputScope::Global => "Global".into(),
+        InputScope::System(system) => format!("System · {}", system.label()),
+        InputScope::Game(_) => "This game".into(),
+    }
+}
+
+fn draw_scope(ui: &mut egui::Ui, state: &mut DebugWindowState) {
+    let previous = state.settings_ui.input_scope.clone();
+    if let InputScope::Game(game) = &state.settings_ui.input_scope
+        && state.settings_ui.current_input_game.as_ref() != Some(game)
+    {
+        state.settings_ui.input_scope = InputScope::System(game.system);
+    }
+    super::layout::row(ui, SettingId::InputDevicesMappingScope, None, |ui| {
+        egui::ComboBox::from_id_salt("mapping_scope")
+            .width(240.0)
+            .selected_text(scope_label(&state.settings_ui.input_scope))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut state.settings_ui.input_scope,
+                    InputScope::Global,
+                    "Global",
+                );
+                for system in InputSystem::ALL {
+                    ui.selectable_value(
+                        &mut state.settings_ui.input_scope,
+                        InputScope::System(system),
+                        format!("System · {}", system.label()),
+                    );
+                }
+                if let Some(game) = &state.settings_ui.current_input_game {
+                    ui.selectable_value(
+                        &mut state.settings_ui.input_scope,
+                        InputScope::Game(game.clone()),
+                        "This game",
+                    );
+                } else {
+                    ui.add_enabled(false, egui::Button::new("This game · load a game first"));
+                }
+            })
+            .response
+    });
+    let explanation = match &state.settings_ui.input_scope {
+        InputScope::Global => {
+            "Base mappings for all games. System and game overrides take priority.".to_owned()
+        }
+        InputScope::System(system) => format!(
+            "Overrides for {}. Unchanged controls inherit Global mappings.",
+            system.label()
+        ),
+        InputScope::Game(_) => format!(
+            "Overrides for {}. Unchanged controls inherit System, then Global mappings.",
+            state
+                .settings_ui
+                .current_input_game_name
+                .as_deref()
+                .unwrap_or("the loaded game")
+        ),
+    };
+    super::layout::helper(ui, explanation);
+    if previous != state.settings_ui.input_scope {
+        cancel_capture(state);
+        state.settings_ui.player_reset_confirmation = None;
+        state.settings_ui.reset_confirmation = None;
+        state.settings_ui.profile_action_confirmation = None;
+    }
+}
+
+pub(super) fn prepare_search_target(state: &mut DebugWindowState, id: SettingId) {
+    match id {
+        SettingId::InputDevicesKeyboardMappings => {
+            state.settings_ui.binding_source = BindingSource::Keyboard
+        }
+        SettingId::InputDevicesControllerMappings
+        | SettingId::InputDevicesClearControllerMapping
+        | SettingId::InputDevicesClearWonderswanDirectMappings => {
+            state.settings_ui.binding_source = BindingSource::Controller
+        }
+        _ => {}
+    }
+    let title = search::metadata(id).title;
+    if title.starts_with("WonderSwan ")
+        || id == SettingId::InputDevicesClearWonderswanDirectMappings
+    {
+        state.settings_ui.controller_layout = Some(DiagramKind::WonderSwan);
+        state.settings_ui.selected_player = 1;
+    } else if title.ends_with(" mapping") || id == SettingId::InputDevicesClearControllerMapping {
+        state.settings_ui.controller_layout = Some(DiagramKind::StandardGamepad);
+    }
+    if matches!(
+        id,
+        SettingId::InputDevicesUpdateSelectedProfile
+            | SettingId::InputDevicesResetSelectedProfile
+            | SettingId::InputDevicesDeleteSelectedProfile
+            | SettingId::InputDevicesRenameSelectedProfile
+            | SettingId::InputDevicesLoadProfileShortcuts
+    ) {
+        state.settings_ui.profile_manage_open = true;
+    }
 }
 
 pub(super) fn draw(
@@ -25,18 +133,22 @@ pub(super) fn draw(
     let previous_page = state.settings_ui.input_page;
     ui.horizontal_wrapped(|ui| {
         for page in InputDevicesPage::ALL {
-            ui.selectable_value(&mut state.settings_ui.input_page, page, page.label());
+            super::layout::tab(ui, &mut state.settings_ui.input_page, page, page.label());
         }
     });
     if previous_page != state.settings_ui.input_page {
         cancel_capture(state);
     }
-    ui.add_space(8.0);
+    ui.add_space(4.0);
+    if state.settings_ui.input_page != InputDevicesPage::Hotkeys {
+        draw_scope(ui, state);
+        ui.add_space(4.0);
+    }
     draw_capture_status(ui, state);
     match state.settings_ui.input_page {
         InputDevicesPage::Controls => draw_controller_workspace(ui, settings, state, active_system),
         InputDevicesPage::Hotkeys => {
-            ui.label("Shortcuts control the emulator, independently of the controller layout.");
+            ui.label("Emulator shortcuts apply globally across all games and systems.");
             ui.add_space(8.0);
             shortcuts::draw(ui, settings, state);
             gamepad_actions::draw(ui, settings, state);
@@ -47,6 +159,16 @@ pub(super) fn draw(
             tilt::draw(ui, settings, state);
         }
     }
+    let state = &mut state.settings_ui;
+    binding_editor::draw(
+        ui.ctx(),
+        settings,
+        &mut state.binding_editor,
+        &state.gamepad_snapshot,
+        &mut state.gamepad_commands,
+        &state.binding_keyboard_down,
+        state.current_input_game.as_ref(),
+    );
 }
 
 fn draw_controller_workspace(
@@ -67,11 +189,9 @@ fn draw_controller_workspace(
     };
     let previous_layout = state.settings_ui.controller_layout;
     state.settings_ui.selected_player = state.settings_ui.selected_player.clamp(1, 5);
-    let narrow = ui.available_width() < 550.0;
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Player");
+    super::layout::row(ui, SettingId::InputDevicesPlayer, None, |ui| {
         egui::ComboBox::from_id_salt("controls_player")
-            .width(145.0)
+            .width(240.0)
             .selected_text(format!("Player {}", state.settings_ui.selected_player))
             .show_ui(ui, |ui| {
                 let max_player = if state
@@ -85,21 +205,34 @@ fn draw_controller_workspace(
                     5
                 };
                 for player in 1..=max_player {
-                    let label = format!("Player {player}");
                     if ui
-                        .selectable_value(&mut state.settings_ui.selected_player, player, label)
+                        .selectable_value(
+                            &mut state.settings_ui.selected_player,
+                            player,
+                            format!("Player {player}"),
+                        )
                         .changed()
                     {
                         joypad::clear_capture(state);
                     }
                 }
-            });
-        if narrow {
-            ui.end_row();
-        }
-        ui.label("Button layout");
+            })
+            .response
+    });
+    reconcile_layout(
+        state,
+        state
+            .settings_ui
+            .controller_layout
+            .unwrap_or(automatic_layout),
+    );
+    ui.add_space(4.0);
+    draw_player_connection(ui, settings, &mut state.settings_ui);
+    ui.add_space(6.0);
+    ui.strong("Mappings");
+    super::layout::row(ui, SettingId::InputDevicesButtonLayout, None, |ui| {
         egui::ComboBox::from_id_salt("controls_layout")
-            .width(190.0)
+            .width(240.0)
             .selected_text(state.settings_ui.controller_layout.map_or_else(
                 || format!("Automatic · {}", automatic_layout.label()),
                 |layout| layout.label().to_owned(),
@@ -117,7 +250,8 @@ fn draw_controller_workspace(
                         layout.label(),
                     );
                 }
-            });
+            })
+            .response
     });
     ui.add_space(6.0);
     let kind = state
@@ -128,66 +262,136 @@ fn draw_controller_workspace(
         cancel_capture(state);
     }
     reconcile_layout(state, kind);
-    draw_player_connection(ui, settings, &mut state.settings_ui);
-    ui.add_space(10.0);
     ui.horizontal_wrapped(|ui| {
         for (source, label) in [
             (BindingSource::Controller, "Controller"),
             (BindingSource::Keyboard, "Keyboard"),
         ] {
-            if ui
-                .selectable_value(&mut state.settings_ui.binding_source, source, label)
-                .changed()
-            {
+            let response =
+                super::layout::tab(ui, &mut state.settings_ui.binding_source, source, label);
+            search::target(
+                ui,
+                match source {
+                    BindingSource::Keyboard => SettingId::InputDevicesKeyboardMappings,
+                    BindingSource::Controller => SettingId::InputDevicesControllerMappings,
+                },
+                &response,
+            );
+            if response.changed() {
                 joypad::clear_capture(state);
             }
         }
-        ui.label(egui::RichText::new("Select a button or mapping to change it.").weak());
+        ui.label(
+            egui::RichText::new("Select a button or mapping to change it.")
+                .small()
+                .weak(),
+        );
     });
-    ui.add_space(8.0);
+    ui.add_space(4.0);
     let player = state.settings_ui.selected_player;
     let source = state.settings_ui.binding_source;
-    if ui.available_width() >= 720.0 {
-        ui.columns(2, |columns| {
-            draw_controller_reference(&mut columns[0], state, kind);
-            draw_mapping_table(&mut columns[1], settings, state, player, source, kind);
+    let side_by_side_width = if state.settings_ui.input_scope == InputScope::Global {
+        800.0
+    } else {
+        860.0
+    };
+    if ui.available_width() >= side_by_side_width {
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(360.0, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_max_width(360.0);
+                    draw_controller_reference(ui, settings, state, kind);
+                },
+            );
+            ui.add_space(10.0);
+            ui.vertical(|ui| {
+                draw_mapping_table(ui, settings, state, player, source, kind);
+            });
         });
     } else {
-        draw_controller_reference(ui, state, kind);
-        ui.add_space(8.0);
+        egui::CollapsingHeader::new("Controller diagram")
+            .id_salt("input_controller_diagram")
+            .default_open(false)
+            .show(ui, |ui| {
+                draw_controller_reference(ui, settings, state, kind)
+            });
+        ui.add_space(4.0);
         draw_mapping_table(ui, settings, state, player, source, kind);
     }
     ui.add_space(8.0);
     ui.label(
         egui::RichText::new(
-            "These mappings apply across games. Button layout changes the visual guide.",
+            "Diagram changes the visual guide. Physical device assignments apply globally.",
         )
         .weak(),
     );
     if player >= 3 {
         ui.label("Additional players depend on the game and connected controller ports.");
     }
+    autofire::draw(ui, settings, &state.settings_ui.input_scope, player, kind);
     ui.add_space(8.0);
     let mut profile_action = false;
+    let reveal_profiles = [
+        SettingId::InputDevicesApplyInputProfile,
+        SettingId::InputDevicesSaveCurrentAsProfile,
+        SettingId::InputDevicesUpdateSelectedProfile,
+        SettingId::InputDevicesResetSelectedProfile,
+        SettingId::InputDevicesDeleteSelectedProfile,
+        SettingId::InputDevicesRenameSelectedProfile,
+        SettingId::InputDevicesLoadProfileShortcuts,
+    ]
+    .iter()
+    .any(|&id| search::requested(ui, id));
     egui::CollapsingHeader::new(format!(
-        "Saved input profiles ({})",
+        "Controller profiles ({})",
         settings.input_profiles.profiles.len()
     ))
     .id_salt("saved_input_profiles")
+    .open(reveal_profiles.then_some(true))
     .show(ui, |ui| {
-        profile_action = draw_profiles(ui, settings, &mut state.settings_ui)
+        profile_action = profiles::draw(ui, settings, &mut state.settings_ui)
     });
     if profile_action {
         cancel_capture(state);
     }
 }
 
-fn draw_controller_reference(ui: &mut egui::Ui, state: &mut DebugWindowState, kind: DiagramKind) {
+fn draw_controller_reference(
+    ui: &mut egui::Ui,
+    settings: &Settings,
+    state: &mut DebugWindowState,
+    kind: DiagramKind,
+) {
     let player = state.settings_ui.selected_player;
     let selected = joypad::captured_action(state, player);
     let pressed = state.settings_ui.gamepad_snapshot.players[usize::from(player - 1)].buttons;
-    if let Some(action) = controller_diagram::draw(ui, kind, pressed, selected) {
-        joypad::begin_capture(state, player, state.settings_ui.binding_source, action);
+    let interaction = controller_diagram::draw(
+        ui,
+        kind,
+        pressed,
+        selected,
+        state.settings_ui.highlighted_mapping,
+    );
+    state.settings_ui.highlighted_mapping = interaction.highlighted;
+    if let Some(action) = interaction.activated {
+        use crate::settings::BindingTarget;
+        use controller_diagram::DiagramAction;
+        let (target, label) = match action {
+            DiagramAction::Joypad(button) => (
+                BindingTarget::Joypad {
+                    player,
+                    action: button,
+                },
+                kind.action_label(action),
+            ),
+            DiagramAction::WonderSwan(button) => {
+                (BindingTarget::WonderSwan(button), button.label())
+            }
+        };
+        let source = joypad::gameplay_source(state.settings_ui.binding_source);
+        joypad::open_binding_editor(settings, state, target, source, label.to_owned());
     }
 }
 
@@ -200,6 +404,12 @@ fn draw_mapping_table(
     kind: DiagramKind,
 ) {
     if kind == DiagramKind::WonderSwan {
+        let response = ui.strong("Direct WonderSwan mappings");
+        search::target(
+            ui,
+            SettingId::InputDevicesWonderswanDirectMappings,
+            &response,
+        );
         wonderswan::draw_focused(ui, settings, state, source);
     } else {
         joypad::draw_focused(ui, settings, state, player, source, kind);
@@ -222,8 +432,8 @@ fn draw_player_connection(
     let mut choice = None;
     egui::Frame::group(ui.style()).inner_margin(10.0).show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label("Input device");
-            egui::ComboBox::from_id_salt("player_device")
+            ui.label("Physical device");
+            let device_response = egui::ComboBox::from_id_salt("player_device")
                 .width(225.0)
                 .selected_text(selected_label)
                 .show_ui(ui, |ui| {
@@ -239,7 +449,8 @@ fn draw_player_connection(
                             choice = Some((GamepadAssignment::Reserved(device.fingerprint.clone()), Some(device.id)));
                         }
                     }
-                });
+                }).response;
+            search::target(ui, SettingId::InputDevicesInputDevice, &device_response);
             let connected = runtime.device.and_then(|id| settings_ui.gamepad_snapshot.devices.iter().find(|device| device.id == id));
             if let Some(device) = connected {
                 ui.label(egui::RichText::new(format!("Connected · {}", device.fingerprint.name)).color(ui.visuals().selection.stroke.color));
@@ -272,221 +483,9 @@ fn player_status_label(status: crate::input::GamepadAssignmentStatus) -> &'stati
         crate::input::GamepadAssignmentStatus::Connected => "Connected",
     }
 }
-fn draw_profiles(
-    ui: &mut egui::Ui,
-    settings: &mut Settings,
-    settings_ui: &mut SettingsUiState,
-) -> bool {
-    let mut acted = false;
-    let selected = settings_ui.selected_profile_id.as_deref().and_then(|id| {
-        settings
-            .input_profiles
-            .profiles
-            .iter()
-            .find(|profile| profile.id == id)
-    });
-    let selected_name = selected.map(|profile| profile.name.clone());
-    let differs =
-        selected.is_some_and(|profile| profile.bindings != settings.capture_input_profile());
-    if settings.input_profiles.profiles.is_empty() {
-        ui.label(egui::RichText::new("Save your current mappings to reuse them later.").weak());
-    } else {
-        ui.horizontal_wrapped(|ui| {
-            egui::ComboBox::from_id_salt("input_profile")
-                .width(240.0)
-                .selected_text(selected_name.as_deref().unwrap_or("Choose a profile"))
-                .show_ui(ui, |ui| {
-                    for profile in &settings.input_profiles.profiles {
-                        ui.selectable_value(
-                            &mut settings_ui.selected_profile_id,
-                            Some(profile.id.clone()),
-                            &profile.name,
-                        );
-                    }
-                });
-            if ui
-                .add_enabled(selected_name.is_some(), egui::Button::new("Load profile"))
-                .clicked()
-            {
-                let selected = settings_ui.selected_profile_id.as_deref().and_then(|id| {
-                    settings
-                        .input_profiles
-                        .profiles
-                        .iter()
-                        .find(|profile| profile.id == id)
-                        .map(|profile| (profile.name.clone(), profile.bindings.clone()))
-                });
-                if let Some((name, bindings)) = selected {
-                    acted = true;
-                    let previous = settings.clone();
-                    settings.apply_input_profile(&bindings);
-                    settings_ui.undo = Some(previous);
-                    settings_ui.undo_baseline = Some(settings.clone());
-                    settings_ui.undo_label = Some("Input profile applied.".into());
-                    settings_ui.profile_notice = Some(format!("Loaded {name}."));
-                }
-            }
-            ui.add_enabled_ui(selected_name.is_some(), |ui| {
-                ui.menu_button("Manage", |ui| {
-                    if ui.button("Replace with current mappings…").clicked() {
-                        settings_ui.profile_action_confirmation = settings_ui
-                            .selected_profile_id
-                            .clone()
-                            .map(super::ProfileAction::Update);
-                        ui.close();
-                    }
-                    if ui.button("Restore built-in mappings…").clicked() {
-                        settings_ui.profile_action_confirmation = settings_ui
-                            .selected_profile_id
-                            .clone()
-                            .map(super::ProfileAction::Reset);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Delete profile…").clicked() {
-                        settings_ui.profile_delete_confirmation =
-                            settings_ui.selected_profile_id.clone();
-                        ui.close();
-                    }
-                });
-            });
-        });
-        if differs {
-            ui.label(
-                egui::RichText::new("Current mappings differ from this profile.")
-                    .small()
-                    .weak(),
-            );
-        }
-    }
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut settings_ui.profile_name)
-                .hint_text("Name for a new profile")
-                .desired_width(240.0),
-        );
-        if ui
-            .add_enabled(
-                !settings_ui.profile_name.trim().is_empty(),
-                egui::Button::new("Save as new profile"),
-            )
-            .clicked()
-        {
-            acted = true;
-            let previous = settings.clone();
-            match settings.save_input_profile(&settings_ui.profile_name) {
-                Ok(id) => {
-                    settings_ui.selected_profile_id = Some(id);
-                    settings_ui.profile_name.clear();
-                    settings_ui.undo = Some(previous);
-                    settings_ui.undo_baseline = Some(settings.clone());
-                    settings_ui.undo_label = Some("Input profile saved.".into());
-                    settings_ui.profile_notice = Some("Saved input profile.".into());
-                }
-                Err(error) => settings_ui.profile_notice = Some(error),
-            }
-        }
-    });
-
-    if let Some(action) = settings_ui.profile_action_confirmation.clone() {
-        ui.group(|ui| {
-            let (id, label) = match &action {
-                super::ProfileAction::Update(id) => (
-                    id.as_str(),
-                    "Update this saved profile from current bindings?",
-                ),
-
-                super::ProfileAction::Reset(id) => (
-                    id.as_str(),
-                    "Reset this saved profile to built-in bindings? Live mappings will not change.",
-                ),
-            };
-
-            ui.label(label);
-
-            ui.horizontal(|ui| {
-                if ui.button("Confirm").clicked() {
-                    acted = true;
-                    let previous = settings.clone();
-
-                    let result = match &action {
-                        super::ProfileAction::Update(_) => settings.update_input_profile(id),
-
-                        super::ProfileAction::Reset(_) => settings.reset_input_profile(id),
-                    };
-
-                    match result {
-                        Ok(()) => {
-                            settings_ui.undo = Some(previous);
-
-                            settings_ui.undo_baseline = Some(settings.clone());
-
-                            let message = match action {
-                                super::ProfileAction::Update(_) => "Saved profile updated.",
-
-                                super::ProfileAction::Reset(_) => {
-                                    "Saved profile reset to built-in bindings."
-                                }
-                            };
-
-                            settings_ui.undo_label = Some("Input profile changed.".to_string());
-
-                            settings_ui.profile_notice = Some(message.to_string());
-                        }
-
-                        Err(error) => settings_ui.profile_notice = Some(error),
-                    }
-
-                    settings_ui.profile_action_confirmation = None;
-                }
-
-                if ui.button("Cancel").clicked() {
-                    settings_ui.profile_action_confirmation = None;
-                }
-            });
-        });
-    }
-
-    if let Some(id) = settings_ui.profile_delete_confirmation.clone() {
-        ui.group(|ui| {
-            ui.label("Delete this saved profile? Current live bindings will not change.");
-
-            ui.horizontal(|ui| {
-                if ui.button("Delete profile").clicked() {
-                    acted = true;
-                    let previous = settings.clone();
-
-                    if settings.delete_input_profile(&id) {
-                        settings_ui.selected_profile_id = None;
-
-                        settings_ui.undo = Some(previous);
-
-                        settings_ui.undo_baseline = Some(settings.clone());
-
-                        settings_ui.undo_label = Some("Input profile deleted.".to_string());
-
-                        settings_ui.profile_notice = Some("Deleted input profile.".to_string());
-                    }
-
-                    settings_ui.profile_delete_confirmation = None;
-                }
-
-                if ui.button("Cancel").clicked() {
-                    settings_ui.profile_delete_confirmation = None;
-                }
-            });
-        });
-    }
-
-    if let Some(message) = &settings_ui.profile_notice {
-        ui.label(egui::RichText::new(message).small().weak());
-    }
-    acted
-}
-
 fn draw_capture_status(ui: &mut egui::Ui, state: &mut DebugWindowState) {
-    let capturing = state.rebinding_action.is_some()
+    let capturing = state.settings_ui.captures_gameplay_input()
+        || state.rebinding_action.is_some()
         || state.rebinding_shortcut.is_some()
         || state.rebinding_gamepad.is_some()
         || state.rebinding_gamepad_p2.is_some()
@@ -496,11 +495,17 @@ fn draw_capture_status(ui: &mut egui::Ui, state: &mut DebugWindowState) {
         || state.rebinding_speedup
         || state.rebinding_rewind;
 
+    if !capturing && search::requested(ui, SettingId::InputDevicesCancelCapture) {
+        let response = ui.label("No capture is active.");
+        search::target(ui, SettingId::InputDevicesCancelCapture, &response);
+    }
     if capturing {
         ui.separator();
 
         ui.group(|ui| {
-            let message = if state.settings_ui.gamepad_snapshot.capture_active
+            let message = if state.settings_ui.calibration_capture.is_some() {
+                "Calibration is active. Follow the steps below."
+            } else if state.settings_ui.gamepad_snapshot.capture_active
                 && !state.settings_ui.gamepad_snapshot.capture_ready
             {
                 "Release held controller inputs before capture can begin…"
@@ -510,24 +515,10 @@ fn draw_capture_status(ui: &mut egui::Ui, state: &mut DebugWindowState) {
 
             ui.label(egui::RichText::new(message).color(egui::Color32::YELLOW));
 
-            if ui.button("Cancel capture").clicked() {
-                state.rebinding_action = None;
-
-                state.rebinding_shortcut = None;
-
-                state.rebinding_gamepad = None;
-
-                state.rebinding_gamepad_p2 = None;
-
-                state.rebinding_gamepad_pce_multitap = None;
-
-                state.rebinding_ws_gamepad = None;
-
-                state.rebinding_gamepad_action = None;
-
-                state.rebinding_speedup = false;
-
-                state.rebinding_rewind = false;
+            let response = ui.button("Cancel capture");
+            search::target(ui, SettingId::InputDevicesCancelCapture, &response);
+            if response.clicked() {
+                cancel_capture(state);
             }
         });
     }
@@ -538,7 +529,7 @@ fn draw_test_and_calibrate(
     settings: &mut Settings,
     settings_ui: &mut SettingsUiState,
 ) {
-    ui.label("Move either stick or press a button to inspect live input.");
+    ui.label("Move either stick or press a button to inspect live input. Stick values are normalized by the input backend, before gameplay transforms.");
     ui.add_space(8.0);
     let devices = &settings_ui.gamepad_snapshot.devices;
     if !devices
@@ -548,10 +539,18 @@ fn draw_test_and_calibrate(
         settings_ui.test_device = devices.first().map(|device| device.id);
     }
     if devices.is_empty() {
-        ui.group(|ui| {
-            ui.label("Connect a controller to test its buttons and sticks.");
-        });
-        return;
+        let response = ui
+            .group(|ui| {
+                ui.label("Connect a controller to test its buttons and sticks.");
+            })
+            .response;
+        for id in [
+            SettingId::InputDevicesTestControllerButtons,
+            SettingId::InputDevicesTestLeftStick,
+            SettingId::InputDevicesTestRightStick,
+        ] {
+            search::target(ui, id, &response);
+        }
     }
     let selected_name = devices
         .iter()
@@ -571,27 +570,57 @@ fn draw_test_and_calibrate(
                 );
             }
         });
-    if let Some(device) = devices
+    let selected_device = devices
         .iter()
         .find(|device| Some(device.id) == settings_ui.test_device)
-    {
+        .cloned();
+    if let Some(device) = &selected_device {
         egui::Frame::group(ui.style())
             .inner_margin(14.0)
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    stick_plot(
-                        ui,
-                        "Left stick",
-                        device.left_stick,
-                        Some(settings.tilt.deadzone),
-                    );
-                    ui.add_space(12.0);
-                    stick_plot(ui, "Right stick", device.right_stick, None);
-                });
+                let deadzone = settings
+                    .resolve_gameplay_input(&settings_ui.input_scope)
+                    .tilt
+                    .deadzone;
+                let columns = ((ui.available_width() + 12.0) / 184.0).floor().clamp(1.0, 4.0) as usize;
+                egui::Grid::new("stick_diagnostics")
+                    .num_columns(columns)
+                    .spacing([12.0, 12.0])
+                    .show(ui, |ui| {
+                        for (index, (title, value, threshold, target)) in [
+                            ("Left stick · raw input", device.left_stick, Some(deadzone), SettingId::InputDevicesTestLeftStick),
+                            ("Left stick · after calibration", device.calibrated_left_stick, Some(deadzone), SettingId::InputDevicesTestLeftStick),
+                            ("Right stick · raw input", device.right_stick, None, SettingId::InputDevicesTestRightStick),
+                            ("Right stick · after calibration", device.calibrated_right_stick, None, SettingId::InputDevicesTestRightStick),
+                        ].into_iter().enumerate() {
+                            let response = stick_plot(ui, title, value, threshold);
+                            search::target(ui, target, &response);
+                            if (index + 1) % columns == 0 { ui.end_row(); }
+                        }
+                    });
+                let output = crate::input::transforms::stick_dpad_vector(
+                    device.calibrated_left_stick,
+                    deadzone,
+                );
+                ui.strong("After Zeff transform · D-pad preview");
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Raw ({:+.2}, {:+.2}) → Calibrated ({:+.2}, {:+.2}) → Effective ({:+.0}, {:+.0})",
+                        device.left_stick.0,
+                        device.left_stick.1,
+                        device.calibrated_left_stick.0,
+                        device.calibrated_left_stick.1,
+                        output.0,
+                        output.1,
+                    ))
+                    .monospace(),
+                );
+                ui.label(egui::RichText::new("Calibration precedes the selected-scope deadzone and cardinal snap. Either stick can also drive an explicit axis binding, with its own curve and thresholds.").weak());
                 ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
-                    ui.strong("Buttons");
+                    let response = ui.strong(format!("Pressed: {}", device.buttons.len()));
+                    search::target(ui, SettingId::InputDevicesTestControllerButtons, &response);
                     if device.buttons.is_empty() {
                         ui.label(egui::RichText::new("No buttons pressed").weak());
                     } else {
@@ -611,14 +640,46 @@ fn draw_test_and_calibrate(
                 }
             });
     }
+    calibration::draw(ui, settings, settings_ui, selected_device.as_ref());
     ui.add_space(8.0);
-    ui.add(
-        egui::Slider::new(&mut settings.tilt.deadzone, 0.0..=0.5)
-            .text("Left-stick deadzone")
-            .step_by(0.01),
+    tilt::transform_row(
+        ui,
+        settings,
+        &settings_ui.input_scope,
+        crate::settings::GameplayTransform::Deadzone,
+        SettingId::InputDevicesLeftStickDeadzone,
     );
+    ui.label(egui::RichText::new("The shaded ring shows the selected scope’s implicit left-stick threshold. Explicit axis bindings have their own thresholds and curves.").weak());
     ui.add_space(8.0);
-    egui::CollapsingHeader::new("Player assignments").show(ui, |ui| {
+    egui::CollapsingHeader::new("Mapped state · live gameplay & player assignments").default_open(true).show(ui, |ui| {
+        ui.add(egui::Label::new("Controller buttons below reflect the loaded game’s active mappings and implicit stick directions, before per-frame autofire. Keyboard and remote input are separate sources.").wrap());
+        let ws: Vec<_> = crate::settings::WonderSwanButton::ALL.iter().enumerate()
+            .filter(|(index, _)| settings_ui.gamepad_snapshot.wonderswan_buttons & (1 << index) != 0)
+            .map(|(_, button)| button.label()).collect();
+        if !ws.is_empty() {
+            ui.label(format!("Direct WonderSwan controls: {}", ws.join(", ")));
+        }
+        if ui.available_width() < 640.0 {
+            for (index, player) in settings_ui.gamepad_snapshot.players.iter().enumerate() {
+                ui.group(|ui| {
+                    ui.set_max_width(ui.available_width());
+                    ui.strong(format!("Player {}", index + 1));
+                    ui.add(egui::Label::new(player_status_label(player.status)).wrap());
+                    ui.add(egui::Label::new(mapped_button_labels(player.buttons)).wrap());
+                });
+            }
+            return;
+        }
+        if ui.available_width() < 620.0 {
+            for (index, player) in settings_ui.gamepad_snapshot.players.iter().enumerate() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(format!("Player {}", index + 1));
+                    ui.label(player_status_label(player.status));
+                });
+                ui.label(mapped_button_labels(player.buttons));
+                ui.add_space(4.0);
+            }
+        } else {
         egui::Grid::new("test_player_assignments")
             .num_columns(3)
             .spacing([14.0, 8.0])
@@ -630,13 +691,69 @@ fn draw_test_and_calibrate(
                     ui.end_row();
                 }
             });
+        }
+    });
+    draw_input_timing(ui, &mut settings_ui.input_timing);
+}
+
+fn draw_input_timing(ui: &mut egui::Ui, timing: &mut crate::input::timing::InputTiming) {
+    egui::CollapsingHeader::new("Input timing measurements").show(ui, |ui| {
+        ui.label("Internal input polling and rendering timings. These do not measure controller-to-screen latency; presentation timestamps are unavailable.");
+        ui.horizontal_wrapped(|ui| {
+            let mut enabled = timing.enabled();
+            if ui.checkbox(&mut enabled, "Record measurements").changed() {
+                timing.set_enabled(enabled);
+            }
+            if ui.button("Clear measurements").clicked() {
+                timing.reset();
+            }
+            if ui.button("Copy report").clicked() {
+                ui.ctx().copy_text(timing.report());
+            }
+        });
+        let summary = timing.summary();
+        for (label, distribution) in [
+            ("Poll interval", summary.poll_interval),
+            ("Event observed to snapshot", summary.event_to_snapshot),
+            ("Snapshot to Settings frame", summary.snapshot_to_frame),
+            ("Settings frame to CPU submission", summary.frame_to_submission),
+            ("Event observed to CPU submission", summary.event_to_submission),
+        ] {
+            ui.strong(label);
+            if distribution.samples == 0 {
+                ui.weak("No samples yet");
+            } else {
+                ui.label(format!(
+                    "p50 {:.2} · p95 {:.2} · p99 {:.2} · max {:.2} ms · {} samples",
+                    distribution.p50_ms, distribution.p95_ms, distribution.p99_ms,
+                    distribution.max_ms, distribution.samples,
+                ));
+            }
+        }
+        ui.label(format!(
+            "{} events · {} polls · {} submitted frames",
+            summary.observed_events, summary.polls, summary.submitted_frames,
+        ));
+        ui.label(format!(
+            "{} coalesced events · {} redraws without new events · {} invalid samples",
+            summary.coalesced_events, summary.duplicate_frames, summary.invalid_samples,
+        ));
+        ui.weak("Coalesced events occurred between submitted snapshots. Physical missed transitions require independent hardware measurement. Distributions keep the latest 256 samples; counters cover this recording session.");
     });
 }
 
-fn stick_plot(ui: &mut egui::Ui, title: &str, value: (f32, f32), deadzone: Option<f32>) {
+fn stick_plot(
+    ui: &mut egui::Ui,
+    title: &str,
+    value: (f32, f32),
+    deadzone: Option<f32>,
+) -> egui::Response {
     ui.vertical(|ui| {
         ui.set_width(172.0);
-        ui.label(egui::RichText::new(title).strong());
+        ui.allocate_ui(egui::vec2(172.0, 44.0), |ui| {
+            ui.set_min_height(44.0);
+            ui.label(egui::RichText::new(title).strong());
+        });
         let (rect, _) = ui.allocate_exact_size(egui::vec2(160.0, 160.0), egui::Sense::hover());
         let painter = ui.painter();
         let center = rect.center();
@@ -682,7 +799,8 @@ fn stick_plot(ui: &mut egui::Ui, title: &str, value: (f32, f32), deadzone: Optio
                 .monospace()
                 .size(13.0),
         );
-    });
+    })
+    .response
 }
 
 fn mapped_button_labels(buttons: u16) -> String {
@@ -701,6 +819,7 @@ fn mapped_button_labels(buttons: u16) -> String {
 }
 
 pub(super) fn cancel_capture(state: &mut DebugWindowState) {
+    state.settings_ui.cancel_input_capture();
     joypad::clear_capture(state);
 }
 

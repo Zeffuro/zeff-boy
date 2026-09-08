@@ -284,9 +284,13 @@ impl EmuThread {
         }
 
         let audio_playback_speed = input.audio.playback_speed;
+        let staged_input_frames = input
+            .replay_joypad_frames
+            .as_ref()
+            .map_or(0, |frames| advanced_frames.min(frames.len()));
         let reusable_audio = input.buffers.audio.take();
         let ui_data = Self::collect_ui_snapshot(backend, &input.snapshot, input.buffers);
-        Self::build_frame_result(
+        let mut result = Self::build_frame_result(
             backend,
             runtime_fault,
             reusable_audio,
@@ -295,7 +299,9 @@ impl EmuThread {
             rewind_buffer.fill_ratio(),
             advanced_frames,
             audio_playback_speed,
-        )
+        );
+        result.staged_input_frames = staged_input_frames;
+        result
     }
 
     fn build_inert_frame_result(
@@ -801,6 +807,8 @@ impl EmuThread {
 
         FrameResult {
             advanced_frames,
+            completed_step_requests: 1,
+            staged_input_frames: 0,
             delivery_merged: false,
             replay_events: Vec::new(),
             replay_error: None,

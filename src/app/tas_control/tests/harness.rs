@@ -17,7 +17,7 @@ use crate::live_control::{LiveCommand, LiveReply};
 use crate::platform::Instant;
 use crate::settings::{DebugPresentation, Settings, VsyncMode};
 
-pub(super) fn app_with_worker(
+pub(in crate::app) fn app_with_worker(
     worker: EmuThread,
     worker_generation: u64,
     system: ActiveSystem,
@@ -49,17 +49,20 @@ pub(super) fn app_with_worker(
             last_render_time: now,
             last_viewer_update: now,
             uncapped_speed: false,
+            uncapped_worker_enabled: false,
             last_uncapped_frames_per_tick: 1,
             last_vsync_mode: VsyncMode::On,
             last_speed_mode: SpeedMode::Normal,
         },
         last_audio_output_sample_rate: 48_000,
+        last_audio_host_config: (None, crate::settings::AudioBufferPolicy::Auto),
+        last_audio_recovery: None,
+        input_configuration: crate::app::input_configuration::ScopedInputRuntime::new(&settings),
         settings,
         speed: SpeedState {
             paused: false,
             fast_forward_held: false,
             turbo_held: false,
-            turbo_counter: 0,
         },
         pressed_keyboard_targets: Default::default(),
         held_frontend_sources: Default::default(),
@@ -161,6 +164,13 @@ pub(super) fn app_with_worker(
         tas_control: TasControlCoordinator::new(),
         tas_repair: TasRepairManager::new(),
         pending_tas_repair_activation: None,
+        pending_tas_autofire: None,
+        autofire_state: crate::app::autofire::AutofireState::default(),
+        autofire_rearm_pending: false,
+        autofire_released_targets: [[false; 8]; 5],
+        autofire_legacy_release_pending: false,
+        autofire_observed_buttons: [0; 5],
+        autofire_observed_legacy_held: false,
         tas_realtime_recorder: TasRealtimeRecorder::default(),
         tas_playback_scheduler: TasPlaybackScheduler::default(),
         tas_verified_replay_export: None,

@@ -443,3 +443,18 @@ fn tilt_vector_diagonal() {
     state.set_tilt_keyboard(TiltBindingAction::Up, true);
     assert_eq!(state.tilt_vector(), (1.0, 1.0));
 }
+#[test]
+fn scoped_gamepad_barrier_preserves_other_input_sources() {
+    let mut input = super::HostInputState::new();
+    input.set_gamepad(crate::input::HostButton::A, true);
+    input.set_keyboard(crate::input::HostButton::B, true);
+    input.set_remote(crate::input::HostButton::Start, true);
+    let before = input.buttons_pressed();
+    input.clear_gamepad();
+    assert_ne!(input.buttons_pressed(), before);
+    assert_ne!(input.buttons_pressed(), 0);
+    input.set_keyboard(crate::input::HostButton::B, false);
+    assert_ne!(input.buttons_pressed(), 0);
+    input.set_remote(crate::input::HostButton::Start, false);
+    assert_eq!(input.buttons_pressed(), 0);
+}

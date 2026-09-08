@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use wasm_bindgen::prelude::*;
 
+mod settings_store;
+
 pub(crate) type FileDataSlot = std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>;
 
 #[wasm_bindgen(inline_js = r#"
@@ -282,64 +284,36 @@ pub(crate) fn cache_dir() -> PathBuf {
     settings_dir()
 }
 
-fn settings_storage() -> anyhow::Result<web_sys::Storage> {
-    web_sys::window()
-        .ok_or_else(|| anyhow::anyhow!("browser window is unavailable"))?
-        .local_storage()
-        .map_err(|error| anyhow::anyhow!("browser settings storage is unavailable: {error:?}"))?
-        .ok_or_else(|| anyhow::anyhow!("browser settings storage is disabled"))
+pub(crate) async fn init_settings_storage() {
+    settings_store::init().await;
 }
 
 pub(crate) fn load_settings_json() -> anyhow::Result<Option<String>> {
-    settings_storage()?
-        .get_item("zeff-boy-settings")
-        .map_err(|error| anyhow::anyhow!("could not read browser settings: {error:?}"))
+    settings_store::load_primary()
 }
 
 pub(crate) fn load_settings_backup_json() -> anyhow::Result<Option<String>> {
-    settings_storage()?
-        .get_item("zeff-boy-settings-backup")
-        .map_err(|error| anyhow::anyhow!("could not read browser settings backup: {error:?}"))
+    settings_store::load_backup()
 }
 
 pub(crate) fn save_settings_json(
     json: &str,
-    previous: Option<&str>,
+    _previous: Option<&str>,
     preserve_original: bool,
-) -> anyhow::Result<()> {
-    let storage = settings_storage()?;
-    let get = |key: &str| {
-        storage
-            .get_item(key)
-            .map_err(|error| anyhow::anyhow!("could not read browser settings: {error:?}"))
-    };
-    let set = |key: &str, value: &str| {
-        storage.set_item(key, value).map_err(|error| {
-            anyhow::anyhow!(
-                "could not save browser settings (storage may be full or blocked): {error:?}"
-            )
-        })
-    };
-    if !preserve_original
-        && let Some(current) = get("zeff-boy-settings")?
-        && previous != Some(current.as_str())
-    {
-        anyhow::bail!(
-            "settings changed in another tab; reload before saving to keep those changes"
-        );
-    }
-    if preserve_original && let Some(original) = get("zeff-boy-settings")? {
-        let key = format!("zeff-boy-settings-recovered-{}", js_sys::Date::now());
-        set(&key, &original)?;
-    }
-    if let Some(previous) = previous {
-        let value: serde_json::Value = serde_json::from_str(previous)?;
-        if value.get("schema_version").is_none() && get("zeff-boy-settings-legacy")?.is_none() {
-            set("zeff-boy-settings-legacy", previous)?;
-        }
-        set("zeff-boy-settings-backup", previous)?;
-    }
-    set("zeff-boy-settings", json)
+) -> anyhow::Result<u64> {
+    settings_store::save(json, preserve_original)
+}
+
+pub(crate) fn settings_storage_status() -> super::web_settings_state::SettingsStorageStatus {
+    settings_store::status()
+}
+
+pub(crate) fn settings_storage_generation() -> u64 {
+    settings_store::generation()
+}
+
+pub(crate) fn accept_latest_settings_after_conflict() -> anyhow::Result<Option<String>> {
+    settings_store::accept_latest_after_conflict()
 }
 
 pub(crate) fn download_file(filename: &str, bytes: &[u8]) {

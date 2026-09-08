@@ -1,8 +1,34 @@
 use super::BindingSource;
 use super::controller_diagram::{DiagramAction, DiagramKind};
 use crate::debug::DebugWindowState;
-use crate::settings::{BindingAction, InputBindingAction, Settings};
+use crate::debug::settings_window::search::{self, SettingId};
+use crate::settings::{
+    BindingAction, BindingSet, BindingTarget, GamepadAction, GameplayBindingSource,
+    InputBindingAction, InputScope, PhysicalBinding, Settings, ShortcutAction,
+};
 use winit::keyboard::KeyCode;
+
+const SHADED_MAPPING_WIDTH: f32 = 560.0;
+pub(super) const MAPPING_LABEL_WIDTH: f32 = 76.0;
+pub(super) const MAPPING_SOURCE_WIDTH: f32 = 60.0;
+const MIN_BINDING_WIDTH: f32 = 140.0;
+const BASE_ACTIONS_WIDTH: f32 = 88.0;
+const INHERIT_ACTION_WIDTH: f32 = 120.0;
+pub(super) const MAPPING_ROW_HEIGHT: f32 = 26.0;
+pub(super) const MAPPING_SPACING: f32 = 4.0;
+
+struct JoypadBindingRow<'a> {
+    settings: &'a mut Settings,
+    state: &'a mut DebugWindowState,
+    target: BindingTarget,
+    gameplay_source: GameplayBindingSource,
+    kind: DiagramKind,
+    action: BindingAction,
+    player: u8,
+    diagram_action: DiagramAction,
+    value: Option<BindingSet>,
+    origin: InputScope,
+}
 
 pub(super) fn draw_focused(
     ui: &mut egui::Ui,
@@ -12,47 +38,23 @@ pub(super) fn draw_focused(
     source: BindingSource,
     kind: DiagramKind,
 ) {
-    egui::Grid::new(("focused_joypad_bindings", player))
-        .num_columns(3)
-        .spacing([12.0, 6.0])
-        .striped(true)
-        .show(ui, |ui| {
-            ui.strong("Control");
-            ui.strong(match source {
-                BindingSource::Keyboard => "Keyboard key",
-                BindingSource::Controller => "Controller button",
-            });
-            ui.strong("");
-            ui.end_row();
-            for action in kind.actions() {
-                let DiagramAction::Joypad(action) = action else {
-                    continue;
-                };
-                ui.label(kind.action_label(DiagramAction::Joypad(action)));
-                let conflict = match source {
-                    BindingSource::Keyboard => {
-                        draw_keyboard_binding(ui, settings, state, player, action);
-                        keyboard_conflict(settings, player, action)
-                    }
-                    BindingSource::Controller => {
-                        draw_gamepad_binding(ui, settings, state, player, action);
-                        gamepad_conflict(settings, player, action)
-                    }
-                };
-                if let Some(other) = conflict {
-                    ui.label(egui::RichText::new("!").color(egui::Color32::from_rgb(240, 180, 70)))
-                        .on_hover_text(format!(
-                            "Also assigned to {}. Existing first-match priority applies.",
-                            joypad_label(other)
-                        ));
-                } else {
-                    ui.label("");
-                }
-                ui.end_row();
-            }
-        });
+    draw_mapping_header(
+        ui,
+        source,
+        state.settings_ui.input_scope != InputScope::Global,
+    );
+
+    for action in kind.actions() {
+        let DiagramAction::Joypad(action) = action else {
+            continue;
+        };
+        draw_binding_row(ui, settings, state, source, kind, action);
+    }
+
     ui.add_space(8.0);
-    if ui.button("Restore default mappings…").clicked() {
+    let restore = ui.button("Restore mappings for this scope…");
+    search::target(ui, SettingId::InputDevicesRestoreDefaultMappings, &restore);
+    if restore.clicked() {
         state.settings_ui.player_reset_confirmation = Some(match source {
             BindingSource::Keyboard => super::super::PlayerResetTarget::Keyboard(player),
             BindingSource::Controller => super::super::PlayerResetTarget::Gamepad(player),
@@ -61,6 +63,234 @@ pub(super) fn draw_focused(
     draw_player_reset_confirmation(ui, settings, state);
 }
 
+pub(super) fn draw_mapping_header(ui: &mut egui::Ui, source: BindingSource, scoped: bool) {
+    let binding_label = match source {
+        BindingSource::Keyboard => "Keyboard binding",
+        BindingSource::Controller => "Controller binding",
+    };
+    let binding_width = mapping_row_layout(ui, scoped).binding_width;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = MAPPING_SPACING;
+        ui.add_sized(
+            [MAPPING_LABEL_WIDTH, 20.0],
+            egui::Label::new(egui::RichText::new("Control").strong()),
+        );
+        ui.add_sized(
+            [binding_width, 20.0],
+            egui::Label::new(egui::RichText::new(binding_label).strong()),
+        );
+        ui.add_sized(
+            [MAPPING_SOURCE_WIDTH, 20.0],
+            egui::Label::new(egui::RichText::new("Source").strong()),
+        );
+    });
+}
+
+fn draw_binding_row(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    state: &mut DebugWindowState,
+    source: BindingSource,
+    kind: DiagramKind,
+    action: BindingAction,
+) {
+    let player = state.settings_ui.selected_player;
+    let diagram_action = DiagramAction::Joypad(action);
+    let target = BindingTarget::Joypad { player, action };
+    let gameplay_source = gameplay_source(source);
+    let resolved = settings.binding_set(&state.settings_ui.input_scope, target, gameplay_source);
+    let highlighted = state.settings_ui.highlighted_mapping == Some(diagram_action);
+    let mut row = JoypadBindingRow {
+        settings,
+        state,
+        target,
+        gameplay_source,
+        kind,
+        action,
+        player,
+        diagram_action,
+        value: resolved.value,
+        origin: resolved.origin,
+    };
+    let available_width = ui.available_width();
+    let layout = mapping_row_layout(
+        ui,
+        row.state.settings_ui.input_scope != InputScope::Global
+            && row.origin == row.state.settings_ui.input_scope,
+    );
+    let shaded = available_width < SHADED_MAPPING_WIDTH;
+    let frame = if highlighted || shaded {
+        egui::Frame::NONE.fill(if highlighted {
+            ui.visuals().selection.bg_fill
+        } else {
+            ui.visuals().faint_bg_color
+        })
+    } else {
+        egui::Frame::NONE
+    };
+    frame.show(ui, |ui| {
+        ui.spacing_mut().item_spacing.x = MAPPING_SPACING;
+        if layout.stacked {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [MAPPING_LABEL_WIDTH, MAPPING_ROW_HEIGHT],
+                    egui::Label::new(row.kind.action_label(row.diagram_action)),
+                );
+                draw_binding_button(ui, layout.binding_width, &mut row);
+                ui.add_sized(
+                    [MAPPING_SOURCE_WIDTH, MAPPING_ROW_HEIGHT],
+                    egui::Label::new(origin_label(&row.origin)).sense(egui::Sense::hover()),
+                )
+                .on_hover_text(format!(
+                    "This value comes from the {} scope.",
+                    origin_label(&row.origin)
+                ));
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(MAPPING_LABEL_WIDTH);
+                draw_binding_actions(ui, &mut row);
+            });
+        } else {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [MAPPING_LABEL_WIDTH, MAPPING_ROW_HEIGHT],
+                    egui::Label::new(row.kind.action_label(row.diagram_action)),
+                );
+                draw_binding_button(ui, layout.binding_width, &mut row);
+                ui.add_sized(
+                    [MAPPING_SOURCE_WIDTH, MAPPING_ROW_HEIGHT],
+                    egui::Label::new(origin_label(&row.origin)).sense(egui::Sense::hover()),
+                )
+                .on_hover_text(format!(
+                    "This value comes from the {} scope.",
+                    origin_label(&row.origin)
+                ));
+                draw_binding_actions(ui, &mut row);
+            });
+        }
+    });
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct MappingRowLayout {
+    pub(super) binding_width: f32,
+    pub(super) stacked: bool,
+}
+
+pub(super) fn mapping_row_layout(ui: &egui::Ui, has_inherit: bool) -> MappingRowLayout {
+    let actions_width = BASE_ACTIONS_WIDTH
+        + if has_inherit {
+            INHERIT_ACTION_WIDTH
+        } else {
+            0.0
+        };
+    let binding_width = header_binding_width(ui);
+    MappingRowLayout {
+        binding_width,
+        stacked: ui.available_width()
+            < MAPPING_LABEL_WIDTH
+                + MAPPING_SOURCE_WIDTH
+                + binding_width
+                + actions_width
+                + 3.0 * MAPPING_SPACING,
+    }
+}
+
+fn header_binding_width(ui: &egui::Ui) -> f32 {
+    (ui.available_width()
+        - MAPPING_LABEL_WIDTH
+        - MAPPING_SOURCE_WIDTH
+        - BASE_ACTIONS_WIDTH
+        - 3.0 * MAPPING_SPACING)
+        .clamp(MIN_BINDING_WIDTH, 170.0)
+}
+
+fn draw_binding_button(ui: &mut egui::Ui, width: f32, row: &mut JoypadBindingRow<'_>) {
+    let label = binding_set_label(row.value.as_ref());
+    let binding = ui
+        .add_sized(
+            [width, MAPPING_ROW_HEIGHT],
+            egui::Button::new(&label).truncate(),
+        )
+        .on_hover_text(format!("{label}\nOpen the binding editor"));
+    search::target(ui, mapping_search_id(row.action), &binding);
+    if binding.hovered() || binding.has_focus() {
+        row.state.settings_ui.highlighted_mapping = Some(row.diagram_action);
+    }
+    if binding.clicked() {
+        open_binding_editor(
+            row.settings,
+            row.state,
+            row.target,
+            row.gameplay_source,
+            row.kind.action_label(row.diagram_action).to_owned(),
+        );
+    }
+}
+
+fn draw_binding_actions(ui: &mut egui::Ui, row: &mut JoypadBindingRow<'_>) {
+    let gameplay_conflict = binding_conflict(
+        row.settings,
+        &row.state.settings_ui.input_scope,
+        row.player,
+        row.action,
+        row.gameplay_source,
+    );
+    let hotkey_conflicts = global_hotkey_conflicts_set(row.settings, row.value.as_ref());
+    if gameplay_conflict.is_some() || !hotkey_conflicts.is_empty() {
+        let mut message = gameplay_conflict
+            .map(|other| {
+                format!(
+                    "Also assigned to {}. Existing first-match priority applies.",
+                    row.kind.action_label(DiagramAction::Joypad(other))
+                )
+            })
+            .unwrap_or_default();
+        if !hotkey_conflicts.is_empty() {
+            if !message.is_empty() {
+                message.push(' ');
+            }
+            message.push_str(&format!(
+                "Also assigned to global {}.",
+                hotkey_conflicts.join(", ")
+            ));
+        }
+        ui.label(egui::RichText::new("!").color(egui::Color32::from_rgb(240, 180, 70)))
+            .on_hover_text(message);
+    } else {
+        ui.add_space(10.0);
+    }
+    let unbind = ui.small_button("Unbind");
+    search::target(ui, SettingId::InputDevicesClearControllerMapping, &unbind);
+    if unbind.clicked() {
+        edit_binding(
+            row.settings,
+            row.state,
+            row.target,
+            row.gameplay_source,
+            false,
+        );
+    }
+    if !matches!(row.state.settings_ui.input_scope, InputScope::Global)
+        && row.origin == row.state.settings_ui.input_scope
+    {
+        let inherited = row.origin != row.state.settings_ui.input_scope;
+        if ui
+            .add_enabled(!inherited, egui::Button::new("Use inherited"))
+            .clicked()
+        {
+            edit_binding(
+                row.settings,
+                row.state,
+                row.target,
+                row.gameplay_source,
+                true,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn begin_capture(
     state: &mut DebugWindowState,
     player: u8,
@@ -68,6 +298,7 @@ pub(super) fn begin_capture(
     action: DiagramAction,
 ) {
     clear_capture(state);
+    state.settings_ui.input_capture_scope = Some(state.settings_ui.input_scope.clone());
     match (source, action) {
         (BindingSource::Keyboard, DiagramAction::Joypad(action)) => {
             state.rebinding_action = Some(keyboard_capture_action(player, action))
@@ -87,13 +318,24 @@ pub(super) fn begin_capture(
 }
 
 pub(super) fn captured_action(state: &DebugWindowState, player: u8) -> Option<DiagramAction> {
+    if let Some(editor) = &state.settings_ui.binding_editor {
+        match editor.target() {
+            BindingTarget::Joypad {
+                player: target_player,
+                action,
+            } if target_player == player => return Some(DiagramAction::Joypad(action)),
+            BindingTarget::WonderSwan(action) if player == 1 => {
+                return Some(DiagramAction::WonderSwan(action));
+            }
+            _ => {}
+        }
+    }
     if let Some(action) = state.rebinding_action {
         return match action {
             InputBindingAction::Joypad(action)
             | InputBindingAction::JoypadP2(action)
             | InputBindingAction::PceMultitap { action, .. } => Some(DiagramAction::Joypad(action)),
             InputBindingAction::WonderSwan(action) => Some(DiagramAction::WonderSwan(action)),
-            InputBindingAction::Tilt(_) => None,
         };
     }
     if let Some(action) = state.rebinding_ws_gamepad {
@@ -140,25 +382,6 @@ pub(super) fn key_label(key: KeyCode) -> String {
     }
 }
 
-pub(super) fn gamepad_label(button: &str) -> String {
-    match button {
-        "" => "Unbound".into(),
-        "South" => "South (bottom)".into(),
-        "East" => "East (right)".into(),
-        "West" => "West (left)".into(),
-        "North" => "North (top)".into(),
-        "DPadUp" => "D-pad Up".into(),
-        "DPadDown" => "D-pad Down".into(),
-        "DPadLeft" => "D-pad Left".into(),
-        "DPadRight" => "D-pad Right".into(),
-        "LeftTrigger" => "Left shoulder".into(),
-        "RightTrigger" => "Right shoulder".into(),
-        "LeftTrigger2" => "Left trigger".into(),
-        "RightTrigger2" => "Right trigger".into(),
-        _ => button.to_owned(),
-    }
-}
-
 pub(super) fn draw_player_reset_confirmation(
     ui: &mut egui::Ui,
     settings: &mut Settings,
@@ -177,38 +400,21 @@ pub(super) fn draw_player_reset_confirmation(
         };
         let clearing = matches!(target, super::super::PlayerResetTarget::WonderSwanClear);
         ui.label(if clearing {
-            "Clear all direct WonderSwan controller mappings?".to_owned()
+            "Unbind all direct WonderSwan controller mappings in this scope?".to_owned()
         } else {
-            format!("Reset Player {player} {kind} mappings?")
+            format!("Restore Player {player} {kind} mappings for this scope?")
         });
         ui.horizontal(|ui| {
             if ui
-                .button(if clearing { "Clear" } else { "Reset" })
+                .button(if clearing { "Unbind all" } else { "Restore" })
                 .clicked()
             {
                 let previous = settings.clone();
-                match target {
-                    super::super::PlayerResetTarget::Keyboard(player) => {
-                        reset_keyboard_player(settings, player)
-                    }
-                    super::super::PlayerResetTarget::Gamepad(player) => {
-                        reset_gamepad_player(settings, player)
-                    }
-                    super::super::PlayerResetTarget::WonderSwanKeyboard => {
-                        settings.ws_key_bindings =
-                            crate::settings::WonderSwanKeyBindings::default();
-                    }
-                    super::super::PlayerResetTarget::WonderSwanGamepad => {
-                        settings.gamepad_bindings.reset_wonderswan_defaults();
-                    }
-                    super::super::PlayerResetTarget::WonderSwanClear => {
-                        settings.gamepad_bindings.clear_wonderswan_direct_bindings();
-                    }
-                }
+                reset_target_for_scope(settings, &state.settings_ui.input_scope, target);
                 clear_capture(state);
                 state.settings_ui.undo = Some(previous);
                 state.settings_ui.undo_baseline = Some(settings.clone());
-                state.settings_ui.undo_label = Some("Player mappings reset.".to_string());
+                state.settings_ui.undo_label = Some("Mappings restored for this scope.".to_owned());
                 state.settings_ui.player_reset_confirmation = None;
             }
             if ui.button("Cancel").clicked() {
@@ -218,74 +424,223 @@ pub(super) fn draw_player_reset_confirmation(
     });
 }
 
-fn draw_keyboard_binding(
-    ui: &mut egui::Ui,
+fn reset_target_for_scope(
     settings: &mut Settings,
-    state: &mut DebugWindowState,
-    player: u8,
-    action: BindingAction,
+    scope: &InputScope,
+    reset: super::super::PlayerResetTarget,
 ) {
-    let key = keyboard_binding(settings, player, action);
-    let key_name = key.map_or_else(|| "Unbound".to_owned(), key_label);
-    let capturing = state.rebinding_action == Some(keyboard_capture_action(player, action));
-    let label = if capturing {
-        format!("Press key… ({key_name})")
-    } else {
-        key_name
+    let (player, source, wonder_swan, clear) = match reset {
+        super::super::PlayerResetTarget::Keyboard(player) => {
+            (player, GameplayBindingSource::Keyboard, false, false)
+        }
+        super::super::PlayerResetTarget::Gamepad(player) => {
+            (player, GameplayBindingSource::Gamepad, false, false)
+        }
+        super::super::PlayerResetTarget::WonderSwanKeyboard => {
+            (1, GameplayBindingSource::Keyboard, true, false)
+        }
+        super::super::PlayerResetTarget::WonderSwanGamepad => {
+            (1, GameplayBindingSource::Gamepad, true, false)
+        }
+        super::super::PlayerResetTarget::WonderSwanClear => {
+            (1, GameplayBindingSource::Gamepad, true, true)
+        }
     };
-    if ui
-        .add_sized([170.0, 26.0], egui::Button::new(label))
-        .clicked()
-    {
-        begin_capture(
-            state,
-            player,
-            BindingSource::Keyboard,
-            DiagramAction::Joypad(action),
-        );
+    let targets = if wonder_swan {
+        crate::settings::WonderSwanButton::ALL
+            .iter()
+            .copied()
+            .map(BindingTarget::WonderSwan)
+            .collect::<Vec<_>>()
+    } else {
+        BindingAction::ALL
+            .iter()
+            .copied()
+            .map(|action| BindingTarget::Joypad { player, action })
+            .collect::<Vec<_>>()
+    };
+    if clear {
+        for target in targets {
+            let _ = settings.set_binding(scope, target, source, None);
+        }
+    } else if matches!(scope, InputScope::Global) {
+        let defaults = Settings::default();
+        for target in targets {
+            let value = defaults.binding(&InputScope::Global, target, source).value;
+            let _ = settings.set_binding(scope, target, source, value);
+        }
+    } else {
+        for target in targets {
+            settings.inherit_binding(scope, target, source);
+        }
     }
 }
 
-fn draw_gamepad_binding(
-    ui: &mut egui::Ui,
+pub(super) fn edit_binding(
     settings: &mut Settings,
     state: &mut DebugWindowState,
-    player: u8,
-    action: BindingAction,
+    target: BindingTarget,
+    source: GameplayBindingSource,
+    inherit: bool,
 ) {
-    let bound = settings.gamepad_bindings.get_for_player(action, player);
-    let display = gamepad_label(bound);
-    let capturing = match player {
-        1 => state.rebinding_gamepad == Some(action),
-        2 => state.rebinding_gamepad_p2 == Some(action),
-        _ => state.rebinding_gamepad_pce_multitap == Some((player, action)),
-    };
-    let label = if capturing {
-        format!("Press button… ({display})")
+    let previous = settings.clone();
+    if inherit {
+        settings.inherit_binding(&state.settings_ui.input_scope, target, source);
     } else {
-        display.to_owned()
-    };
-    if ui
-        .add_sized([170.0, 26.0], egui::Button::new(label))
-        .clicked()
-    {
-        begin_capture(
-            state,
-            player,
-            BindingSource::Controller,
-            DiagramAction::Joypad(action),
-        );
+        let _ = settings.set_binding(&state.settings_ui.input_scope, target, source, None);
+    }
+    clear_capture(state);
+    state.settings_ui.undo = Some(previous);
+    state.settings_ui.undo_baseline = Some(settings.clone());
+    state.settings_ui.undo_label = Some(if inherit {
+        "Inherited mapping restored.".to_owned()
+    } else {
+        "Mapping unbound.".to_owned()
+    });
+}
+
+pub(super) fn gameplay_source(source: BindingSource) -> GameplayBindingSource {
+    match source {
+        BindingSource::Keyboard => GameplayBindingSource::Keyboard,
+        BindingSource::Controller => GameplayBindingSource::Gamepad,
     }
 }
 
-fn keyboard_binding(settings: &Settings, player: u8, action: BindingAction) -> Option<KeyCode> {
-    match player {
-        1 => Some(settings.key_bindings.get(action)),
-        2 => Some(settings.key_bindings_p2.get(action)),
-        3..=5 => settings.pce_multitap_key_bindings[usize::from(player - 3)].get(action),
-        _ => Some(settings.key_bindings.get(action)),
+pub(super) fn origin_label(scope: &InputScope) -> &'static str {
+    match scope {
+        InputScope::Global => "Global",
+        InputScope::System(_) => "System",
+        InputScope::Game(_) => "Game",
     }
 }
+
+fn binding_conflict(
+    settings: &Settings,
+    scope: &InputScope,
+    player: u8,
+    current: BindingAction,
+    source: GameplayBindingSource,
+) -> Option<BindingAction> {
+    let current_target = BindingTarget::Joypad {
+        player,
+        action: current,
+    };
+    let value = settings.binding_set(scope, current_target, source).value?;
+    BindingAction::ALL.iter().copied().find(|&action| {
+        action != current
+            && settings
+                .binding_set(scope, BindingTarget::Joypad { player, action }, source)
+                .value
+                .is_some_and(|other| binding_sets_overlap(&value, &other))
+    })
+}
+
+pub(super) fn open_binding_editor(
+    settings: &Settings,
+    state: &mut DebugWindowState,
+    target: BindingTarget,
+    source: GameplayBindingSource,
+    action_label: String,
+) {
+    clear_capture(state);
+    let scope = state.settings_ui.input_scope.clone();
+    let resolved = settings.binding_set(&scope, target, source);
+    state.settings_ui.binding_editor = Some(super::binding_editor::BindingEditor::open(
+        scope,
+        target,
+        source,
+        action_label,
+        resolved,
+    ));
+}
+
+pub(super) fn binding_set_label(binding: Option<&BindingSet>) -> String {
+    binding.map_or_else(|| "Unbound".into(), BindingSet::label)
+}
+
+pub(super) fn binding_sets_overlap(left: &BindingSet, right: &BindingSet) -> bool {
+    left.alternatives.iter().any(|left| {
+        right
+            .alternatives
+            .iter()
+            .any(|right| left.expression == right.expression)
+    })
+}
+
+pub(super) fn global_hotkey_conflicts_set(
+    settings: &Settings,
+    binding: Option<&BindingSet>,
+) -> Vec<&'static str> {
+    let mut conflicts = Vec::new();
+    for alternative in binding.into_iter().flat_map(|set| &set.alternatives) {
+        for key in alternative.expression.keyboard_keys() {
+            conflicts.extend(global_hotkey_conflicts(
+                settings,
+                Some(&PhysicalBinding::Keyboard(key)),
+            ));
+        }
+        collect_gamepad_conflicts(settings, &alternative.expression, &mut conflicts);
+    }
+    conflicts.sort_unstable();
+    conflicts.dedup();
+    conflicts
+}
+
+fn collect_gamepad_conflicts(
+    settings: &Settings,
+    expression: &crate::settings::BindingExpression,
+    conflicts: &mut Vec<&'static str>,
+) {
+    match &expression.kind {
+        crate::settings::BindingExpressionKind::GamepadButton(button) => {
+            conflicts.extend(global_hotkey_conflicts(
+                settings,
+                Some(&PhysicalBinding::Gamepad(button.clone())),
+            ));
+        }
+        crate::settings::BindingExpressionKind::Chord(atoms) => {
+            for atom in atoms {
+                collect_gamepad_conflicts(settings, atom, conflicts);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(super) fn global_hotkey_conflicts(
+    settings: &Settings,
+    binding: Option<&PhysicalBinding>,
+) -> Vec<&'static str> {
+    match binding {
+        Some(PhysicalBinding::Keyboard(key)) => {
+            let mut ids = vec![
+                (settings.speedup_key_code() == *key).then_some(SettingId::InputDevicesSpeedUpKey),
+                (settings.rewind.key_code() == *key).then_some(SettingId::InputDevicesRewindKey),
+            ];
+            ids.extend(ShortcutAction::ALL.iter().copied().map(|action| {
+                (settings.shortcut_bindings.get(action) == *key)
+                    .then_some(super::shortcuts::shortcut_id(action))
+            }));
+            ids.into_iter()
+                .flatten()
+                .map(|id| search::metadata(id).title)
+                .collect()
+        }
+        Some(PhysicalBinding::Gamepad(button)) if !button.is_empty() => [
+            GamepadAction::SpeedUp,
+            GamepadAction::Rewind,
+            GamepadAction::Pause,
+            GamepadAction::Turbo,
+        ]
+        .into_iter()
+        .filter(|&action| settings.gamepad_bindings.get_action(action) == button.as_str())
+        .map(|action| search::metadata(super::gamepad_actions::action_id(action)).title)
+        .collect(),
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
 fn keyboard_capture_action(player: u8, action: BindingAction) -> InputBindingAction {
     match player {
         1 => InputBindingAction::Joypad(action),
@@ -294,50 +649,20 @@ fn keyboard_capture_action(player: u8, action: BindingAction) -> InputBindingAct
     }
 }
 
-fn keyboard_conflict(
-    settings: &Settings,
-    player: u8,
-    current: BindingAction,
-) -> Option<BindingAction> {
-    let key = keyboard_binding(settings, player, current)?;
-    BindingAction::ALL.iter().copied().find(|&action| {
-        keyboard_binding(settings, player, action) == Some(key) && action != current
-    })
-}
-
-fn gamepad_conflict(
-    settings: &Settings,
-    player: u8,
-    current: BindingAction,
-) -> Option<BindingAction> {
-    let button = settings.gamepad_bindings.get_for_player(current, player);
-    if button.is_empty() {
-        return None;
-    }
-    BindingAction::ALL.iter().copied().find(|&action| {
-        action != current && settings.gamepad_bindings.get_for_player(action, player) == button
-    })
-}
-
-fn reset_keyboard_player(settings: &mut Settings, player: u8) {
-    match player {
-        1 => settings.key_bindings = crate::settings::KeyBindings::default(),
-        2 => settings.key_bindings_p2 = crate::settings::KeyBindings::player_two_defaults(),
-        3..=5 => {
-            settings.pce_multitap_key_bindings[usize::from(player - 3)] =
-                crate::settings::PceMultitapKeyBindings::default();
-        }
-        _ => {}
-    }
-}
-
-fn reset_gamepad_player(settings: &mut Settings, player: u8) {
-    let defaults = crate::settings::GamepadBindings::default();
-    for &action in BindingAction::ALL {
-        let value = defaults.get_for_player(action, player);
-        settings
-            .gamepad_bindings
-            .set_for_player(action, player, value);
+fn mapping_search_id(action: BindingAction) -> SettingId {
+    match action {
+        BindingAction::Up => SettingId::InputDevicesDPadUpMapping,
+        BindingAction::Down => SettingId::InputDevicesDPadDownMapping,
+        BindingAction::Left => SettingId::InputDevicesDPadLeftMapping,
+        BindingAction::Right => SettingId::InputDevicesDPadRightMapping,
+        BindingAction::A => SettingId::InputDevicesAButtonMapping,
+        BindingAction::B => SettingId::InputDevicesBButtonMapping,
+        BindingAction::X => SettingId::InputDevicesXButtonMapping,
+        BindingAction::Y => SettingId::InputDevicesYButtonMapping,
+        BindingAction::L => SettingId::InputDevicesLShoulderMapping,
+        BindingAction::R => SettingId::InputDevicesRShoulderMapping,
+        BindingAction::Start => SettingId::InputDevicesStartButtonMapping,
+        BindingAction::Select => SettingId::InputDevicesSelectButtonMapping,
     }
 }
 
@@ -351,21 +676,111 @@ pub(super) fn clear_capture(state: &mut DebugWindowState) {
     state.rebinding_gamepad_action = None;
     state.rebinding_speedup = false;
     state.rebinding_rewind = false;
+    state.settings_ui.input_capture_scope = None;
 }
 
-fn joypad_label(action: BindingAction) -> &'static str {
-    match action {
-        BindingAction::Up => "Up",
-        BindingAction::Down => "Down",
-        BindingAction::Left => "Left",
-        BindingAction::Right => "Right",
-        BindingAction::A => "A",
-        BindingAction::B => "B",
-        BindingAction::X => "X",
-        BindingAction::Y => "Y",
-        BindingAction::L => "L",
-        BindingAction::R => "R",
-        BindingAction::Start => "Start",
-        BindingAction::Select => "Select",
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoped_mapping_rows_fit_narrow_widths_with_inherit_actions() {
+        for width in [340.0, 430.0, 464.0, 560.0] {
+            for wonderswan in [false, true] {
+                let context = egui::Context::default();
+                let mut settings = Settings::default();
+                crate::graphics::apply_egui_theme(
+                    &context,
+                    settings.ui.theme_preset,
+                    settings.ui.ui_density,
+                    settings.ui.debug_monospace_scale,
+                    settings.ui.effective_debug_colors(),
+                );
+                let mut state = DebugWindowState::new();
+                state.settings_ui.input_scope =
+                    InputScope::System(crate::settings::InputSystem::GameBoyAdvance);
+                let target = if wonderswan {
+                    state.settings_ui.input_scope =
+                        InputScope::System(crate::settings::InputSystem::WonderSwan);
+                    BindingTarget::WonderSwan(crate::settings::WonderSwanButton::X2)
+                } else {
+                    BindingTarget::Joypad {
+                        player: 1,
+                        action: BindingAction::A,
+                    }
+                };
+                settings
+                    .set_binding(
+                        &state.settings_ui.input_scope,
+                        target,
+                        GameplayBindingSource::Gamepad,
+                        Some(PhysicalBinding::Gamepad("North".into())),
+                    )
+                    .unwrap();
+                for _ in 0..2 {
+                    let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                        ui.set_width(width);
+                        let right = ui.max_rect().right();
+                        if wonderswan {
+                            super::super::wonderswan::draw_focused(
+                                ui,
+                                &mut settings,
+                                &mut state,
+                                BindingSource::Controller,
+                            );
+                        } else {
+                            draw_focused(
+                                ui,
+                                &mut settings,
+                                &mut state,
+                                1,
+                                BindingSource::Controller,
+                                DiagramKind::StandardGamepad,
+                            );
+                        }
+                        assert!(
+                            ui.min_rect().right() <= right + 0.5,
+                            "mapping overflow at {width}, WonderSwan={wonderswan}: {:?}",
+                            ui.min_rect()
+                        );
+                    });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_hotkey_collision_uses_the_shortcut_title() {
+        let mut settings = Settings::default();
+        let binding = PhysicalBinding::Keyboard(KeyCode::Space);
+        assert_eq!(
+            global_hotkey_conflicts(&settings, Some(&binding)),
+            vec!["Speed-up key"]
+        );
+        settings.speedup_key = "KeyQ".into();
+        assert!(global_hotkey_conflicts(&settings, Some(&binding)).is_empty());
+    }
+
+    #[test]
+    fn gamepad_hotkey_collision_uses_the_action_title() {
+        let mut settings = Settings::default();
+        settings
+            .gamepad_bindings
+            .set_action(GamepadAction::Turbo, "South");
+        let binding = PhysicalBinding::Gamepad("South".into());
+        assert_eq!(
+            global_hotkey_conflicts(&settings, Some(&binding)),
+            vec!["Gamepad turbo action"]
+        );
+    }
+
+    #[test]
+    fn unbound_mapping_has_no_hotkey_collision() {
+        let settings = Settings::default();
+        assert!(global_hotkey_conflicts(&settings, None).is_empty());
+        assert!(
+            global_hotkey_conflicts(&settings, Some(&PhysicalBinding::Gamepad(String::new())))
+                .is_empty()
+        );
     }
 }

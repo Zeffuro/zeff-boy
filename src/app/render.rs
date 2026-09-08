@@ -448,6 +448,9 @@ impl App {
                 if !self.show_settings_window {
                     self.clear_rebinding_state();
                 }
+                if result.egui_wants_keyboard && !self.egui_wants_keyboard {
+                    self.release_gameplay_keyboard_state();
+                }
                 self.egui_wants_keyboard = result.egui_wants_keyboard;
                 let game_view_was_focused = self.game_view_focused;
                 self.game_view_focused = result.game_view_focused;
@@ -618,6 +621,8 @@ impl App {
     }
 
     pub(super) fn clear_rebinding_state(&mut self) {
+        self.debug_windows.settings_ui.cancel_input_capture();
+        self.debug_windows.settings_ui.input_capture_scope = None;
         self.debug_windows.rebinding_action = None;
         self.debug_windows.rebinding_shortcut = None;
         self.debug_windows.rebinding_gamepad = None;

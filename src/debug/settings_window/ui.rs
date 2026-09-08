@@ -1,12 +1,22 @@
-use crate::debug::ui_helpers::enum_combo_box;
 use crate::settings::Settings;
 
+use super::{
+    layout::{checkbox, enum_combo, helper, row},
+    search::SettingId as Id,
+};
+
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
-    ui.label("Appearance, readability and window controls.");
-    ui.add_space(8.0);
+    helper(ui, "Appearance, readability and window controls.");
+    ui.add_space(14.0);
 
     let previous_theme = settings.ui.theme_preset;
-    enum_combo_box(ui, "UI theme", &mut settings.ui.theme_preset);
+    enum_combo(
+        ui,
+        Id::InterfaceUiTheme,
+        "interface_theme",
+        None,
+        &mut settings.ui.theme_preset,
+    );
     if previous_theme != settings.ui.theme_preset
         && settings.ui.debug_colors == crate::settings::DebugColors::for_theme(previous_theme)
     {
@@ -19,10 +29,21 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         settings.ui.debug_colors =
             crate::settings::DebugColors::for_theme(settings.ui.theme_preset);
     }
-    enum_combo_box(ui, "UI density", &mut settings.ui.ui_density);
-    ui.checkbox(&mut settings.ui.autohide_menu_bar, "Autohide menu bar");
+    enum_combo(
+        ui,
+        Id::InterfaceUiDensity,
+        "interface_density",
+        None,
+        &mut settings.ui.ui_density,
+    );
+    checkbox(
+        ui,
+        Id::InterfaceAutohideMenuBar,
+        None,
+        &mut settings.ui.autohide_menu_bar,
+    );
 
-    ui.horizontal(|ui| {
+    row(ui, Id::InterfaceUiScale, None, |ui| {
         const SCALES: &[(f32, &str)] = &[
             (0.75, "75%"),
             (1.0, "100%"),
@@ -35,15 +56,17 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings) {
         ];
         let current_label = SCALES
             .iter()
-            .find(|(v, _)| (*v - settings.ui.ui_scale).abs() < 0.01)
-            .map(|(_, l)| *l)
+            .find(|(value, _)| (*value - settings.ui.ui_scale).abs() < 0.01)
+            .map(|(_, label)| *label)
             .unwrap_or("Custom");
-        egui::ComboBox::from_label("UI scale")
+        egui::ComboBox::from_id_salt("interface_scale")
             .selected_text(current_label)
+            .width(220.0)
             .show_ui(ui, |ui| {
                 for &(value, label) in SCALES {
                     ui.selectable_value(&mut settings.ui.ui_scale, value, label);
                 }
-            });
+            })
+            .response
     });
 }

@@ -1,5 +1,6 @@
 use crate::emu_backend::ActiveSystem;
 use crate::input::HostButton;
+use crate::input::transforms::stick_dpad_mask;
 use crate::settings::{TiltBindingAction, WonderSwanButton};
 
 #[derive(Default)]
@@ -75,6 +76,19 @@ impl HostInputState {
         self.ws_keyboard_x_pressed = 0;
         self.ws_keyboard_y_pressed = 0;
         self.ws_keyboard_button_pressed = 0;
+    }
+
+    pub(super) fn clear_gamepad(&mut self) {
+        self.gamepad_pressed = 0;
+        self.gamepad_p2_pressed = 0;
+        self.gamepad_p3_pressed = 0;
+        self.gamepad_p4_pressed = 0;
+        self.gamepad_p5_pressed = 0;
+        self.gamepad_stick_dpad_pressed = 0;
+        self.gamepad_multiplayer_stick_dpad_pressed = [0; 4];
+        self.ws_gamepad_x_pressed = 0;
+        self.ws_gamepad_y_pressed = 0;
+        self.ws_gamepad_button_pressed = 0;
     }
 
     pub(super) fn set_keyboard_p3(&mut self, key: HostButton, pressed: bool) {
@@ -391,43 +405,6 @@ impl HostInputState {
             *mask &= !bit;
         }
     }
-}
-
-fn stick_dpad_mask(left_stick: (f32, f32), deadzone: f32) -> u8 {
-    let (x, y) = left_stick;
-    let ax = x.abs();
-    let ay = y.abs();
-
-    let mut use_x = ax > 0.0 && ax >= deadzone;
-    let mut use_y = ay > 0.0 && ay >= deadzone;
-
-    const CARDINAL_SNAP: f32 = 0.18; // ~tan(10deg)
-    if use_x && use_y {
-        if ay < ax * CARDINAL_SNAP {
-            use_y = false;
-        } else if ax < ay * CARDINAL_SNAP {
-            use_x = false;
-        }
-    }
-
-    let mut mask = 0u8;
-    if use_x {
-        if x >= deadzone {
-            mask |= 1 << 0;
-        }
-        if x <= -deadzone {
-            mask |= 1 << 1;
-        }
-    }
-    if use_y {
-        if y >= deadzone {
-            mask |= 1 << 2;
-        }
-        if y <= -deadzone {
-            mask |= 1 << 3;
-        }
-    }
-    mask
 }
 
 fn set_coleco_keypad_bit(mask: &mut u16, key: u8, pressed: bool) {

@@ -1,5 +1,41 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AudioBufferPolicy {
+    #[default]
+    Auto,
+    LowLatency,
+    Balanced,
+    Stable,
+}
+
+impl crate::debug::ui_helpers::EnumLabel for AudioBufferPolicy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto (current 200 ms queue)",
+            Self::LowLatency => "Low latency (75 ms queue)",
+            Self::Balanced => "Balanced (150 ms queue)",
+            Self::Stable => "Stable (300 ms queue)",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::LowLatency, Self::Balanced, Self::Stable]
+    }
+}
+
+impl AudioBufferPolicy {
+    pub(crate) const fn normal_queue_ms(self) -> usize {
+        match self {
+            Self::Auto => 200,
+            Self::LowLatency => 75,
+            Self::Balanced => 150,
+            Self::Stable => 300,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -55,7 +91,7 @@ impl AudioRecordingFormat {
 
 #[cfg(test)]
 mod tests {
-    use super::AudioRecordingFormat;
+    use super::{AudioBufferPolicy, AudioRecordingFormat};
     use crate::debug::ui_helpers::EnumLabel;
 
     #[test]
@@ -78,5 +114,20 @@ mod tests {
         assert_eq!(AudioRecordingFormat::default(), AudioRecordingFormat::Wav16);
         assert!(!AudioRecordingFormat::Wav16.supports_uncapped_recording());
         assert!(!AudioRecordingFormat::Midi.supports_uncapped_recording());
+    }
+
+    #[test]
+    fn audio_buffer_policy_serializes_and_keeps_legacy_queue_as_default() {
+        assert_eq!(AudioBufferPolicy::default(), AudioBufferPolicy::Auto);
+        assert_eq!(AudioBufferPolicy::Auto.normal_queue_ms(), 200);
+        assert_eq!(AudioBufferPolicy::LowLatency.normal_queue_ms(), 75);
+        assert_eq!(
+            serde_json::to_string(&AudioBufferPolicy::LowLatency).unwrap(),
+            "\"low_latency\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AudioBufferPolicy>("\"stable\"").unwrap(),
+            AudioBufferPolicy::Stable
+        );
     }
 }

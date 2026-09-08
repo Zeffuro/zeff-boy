@@ -599,6 +599,26 @@ fn audio_output_sample_rate_defaults_when_missing() {
 }
 
 #[test]
+fn audio_host_selection_defaults_and_roundtrips_without_game_state() {
+    let defaults: Settings =
+        serde_json::from_str(r#"{"hardware_mode_preference":"Auto","fast_forward_multiplier":4}"#)
+            .unwrap();
+    assert_eq!(defaults.audio.output_device_id, None);
+    assert_eq!(defaults.audio.buffer_policy, AudioBufferPolicy::Auto);
+
+    let mut settings = Settings::default();
+    settings.audio.output_device_id = Some("wasapi:stable-output-id".to_owned());
+    settings.audio.buffer_policy = AudioBufferPolicy::Stable;
+    let restored: Settings =
+        serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+    assert_eq!(
+        restored.audio.output_device_id.as_deref(),
+        Some("wasapi:stable-output-id")
+    );
+    assert_eq!(restored.audio.buffer_policy, AudioBufferPolicy::Stable);
+}
+
+#[test]
 fn audio_low_pass_settings_serde_roundtrip() {
     let mut s = Settings::default();
     s.audio.low_pass_enabled = true;

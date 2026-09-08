@@ -215,6 +215,10 @@ impl App {
             match self.init_backend(system, source_path, &rom_path, preloaded_data, config) {
                 Ok(result) => result,
                 Err(e) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if self.rom_info.rom_path.is_some() {
+                        self.stop_game();
+                    }
                     log::error!("Failed to load ROM '{}': {}", source_path.display(), e);
                     self.toast_manager.error(format!("Failed to load ROM: {e}"));
                     return;
@@ -683,6 +687,15 @@ impl App {
         rom_path_buf: PathBuf,
         source_path_buf: PathBuf,
     ) {
+        let input_digest = backend
+            .pce()
+            .and_then(|pce| pce.normalized_disc_hash())
+            .unwrap_or_else(|| backend.rom_hash());
+        let input_game = crate::settings::InputGameKey::new(system.into(), input_digest);
+        let input_name = rom_path_buf
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        self.set_loaded_input_game(Some(input_game), input_name);
         self.rom_info.is_mbc7 = backend.is_mbc7();
         self.rom_info.is_gba_tilt = backend.is_gba_tilt();
         self.rom_info.is_pocket_camera = backend.is_pocket_camera();

@@ -50,10 +50,6 @@ impl TiltKeyBindings {
             TiltBindingAction::Right => self.right = key,
         }
     }
-
-    pub(crate) fn set_wasd_defaults(&mut self) {
-        *self = Self::default();
-    }
 }
 
 impl Serialize for TiltKeyBindings {

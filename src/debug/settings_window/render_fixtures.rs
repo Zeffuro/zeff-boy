@@ -19,6 +19,198 @@ fn render_settings_fixtures() -> anyhow::Result<()> {
 
     for (name, category, input_page, width, height, scale) in [
         (
+            "binding-keyboard",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1100,
+            900,
+            1.0,
+        ),
+        (
+            "binding-axis-narrow",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            480,
+            720,
+            1.0,
+        ),
+        (
+            "binding-capture",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            800,
+            600,
+            1.0,
+        ),
+        (
+            "autofire-game",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1100,
+            1000,
+            1.0,
+        ),
+        (
+            "autofire-narrow",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            480,
+            1100,
+            1.0,
+        ),
+        (
+            "calibration-active",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::TestAndCalibrate,
+            1100,
+            1100,
+            1.0,
+        ),
+        (
+            "timing-active",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::TestAndCalibrate,
+            1100,
+            1500,
+            1.0,
+        ),
+        (
+            "audio-fallback",
+            SettingsCategory::Audio,
+            InputDevicesPage::Controls,
+            800,
+            900,
+            1.0,
+        ),
+        (
+            "storage-import",
+            SettingsCategory::Storage,
+            InputDevicesPage::Controls,
+            480,
+            900,
+            1.0,
+        ),
+        (
+            "main-menu-800x600",
+            SettingsCategory::General,
+            InputDevicesPage::Controls,
+            800,
+            600,
+            1.0,
+        ),
+        (
+            "controls-1280x720",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1280,
+            720,
+            1.0,
+        ),
+        (
+            "controls-1024x768",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1024,
+            768,
+            1.0,
+        ),
+        (
+            "controls-800x600",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            800,
+            600,
+            1.0,
+        ),
+        (
+            "controls-ws-1280x720",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1280,
+            720,
+            1.0,
+        ),
+        (
+            "controls-light",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1100,
+            1100,
+            1.0,
+        ),
+        (
+            "controls-high-contrast",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1100,
+            1100,
+            1.0,
+        ),
+        (
+            "controls-retro",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1100,
+            1100,
+            1.0,
+        ),
+        (
+            "controls-system",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1300,
+            1100,
+            1.0,
+        ),
+        (
+            "controls-game-narrow",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            480,
+            1200,
+            1.0,
+        ),
+        (
+            "profiles-manage",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1100,
+            1100,
+            1.0,
+        ),
+        (
+            "search-conditional",
+            SettingsCategory::Audio,
+            InputDevicesPage::Controls,
+            1100,
+            900,
+            1.0,
+        ),
+        (
+            "search-no-results",
+            SettingsCategory::General,
+            InputDevicesPage::Controls,
+            480,
+            900,
+            1.0,
+        ),
+        (
+            "input-tilt-scoped",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::TestAndCalibrate,
+            1100,
+            1000,
+            1.0,
+        ),
+        (
+            "controls-comfortable",
+            SettingsCategory::InputDevices,
+            InputDevicesPage::Controls,
+            1100,
+            1050,
+            1.0,
+        ),
+        (
             "general-desktop",
             SettingsCategory::General,
             InputDevicesPage::Controls,
@@ -351,7 +543,8 @@ fn render_settings_fixtures() -> anyhow::Result<()> {
         state.settings_ui.selected_profile_id = Some("profile-1".into());
         use controls::controller_diagram::DiagramKind;
         state.settings_ui.controller_layout = Some(match name {
-            "controls-standard" => DiagramKind::StandardGamepad,
+            "controls-standard" | "controls-1280x720" | "controls-1024x768"
+            | "controls-800x600" => DiagramKind::StandardGamepad,
             "controls-gb" => DiagramKind::GameBoy,
             "controls-nes" => DiagramKind::Nes,
             "controls-pce2" => DiagramKind::PceTwoButton,
@@ -359,15 +552,76 @@ fn render_settings_fixtures() -> anyhow::Result<()> {
             "controls-ms" => DiagramKind::SegaMasterSystem,
             "controls-gg" => DiagramKind::GameGear,
             "controls-sg1000" => DiagramKind::Sg1000,
-            "controls-ws" => DiagramKind::WonderSwan,
+            "controls-ws" | "controls-ws-1280x720" => DiagramKind::WonderSwan,
             "controls-coleco" => DiagramKind::Coleco,
             _ => DiagramKind::GameBoyAdvance,
         });
+        if matches!(
+            name,
+            "controls-system" | "controls-game-narrow" | "input-tilt-scoped"
+        ) {
+            use crate::settings::{
+                BindingAction, BindingTarget, GameplayBindingSource, InputGameKey, InputScope,
+                InputSystem, PhysicalBinding,
+            };
+            let system = InputSystem::GameBoyAdvance;
+            let game = InputGameKey::new(system, [0x42; 32]);
+            state.settings_ui.current_input_game = Some(game.clone());
+            state.settings_ui.current_input_game_name = Some("Example Adventure".into());
+            state.settings_ui.input_scope = if name == "controls-game-narrow" {
+                InputScope::Game(game)
+            } else {
+                InputScope::System(system)
+            };
+            settings
+                .set_binding(
+                    &state.settings_ui.input_scope,
+                    BindingTarget::Joypad {
+                        player: 1,
+                        action: BindingAction::A,
+                    },
+                    GameplayBindingSource::Gamepad,
+                    Some(PhysicalBinding::Gamepad("North".into())),
+                )
+                .map_err(anyhow::Error::msg)?;
+            settings
+                .set_binding(
+                    &state.settings_ui.input_scope,
+                    BindingTarget::Joypad {
+                        player: 1,
+                        action: BindingAction::B,
+                    },
+                    GameplayBindingSource::Gamepad,
+                    None,
+                )
+                .map_err(anyhow::Error::msg)?;
+        }
+        if name == "controls-comfortable" {
+            settings.ui.ui_density = crate::settings::UiDensity::Comfortable;
+        }
+        if name == "profiles-manage" {
+            state.settings_ui.profile_manage_open = true;
+        }
+        if name == "search-no-results" {
+            state.settings_ui.search = "xyzzy nonexistent".into();
+        }
+        if name == "search-conditional" {
+            settings.audio.low_pass_enabled = false;
+        }
         if name == "controls-gb" {
             state.settings_ui.binding_source = controls::BindingSource::Keyboard;
         }
-        if name == "interface-light" || name == "firmware-light" {
+        if matches!(
+            name,
+            "interface-light" | "firmware-light" | "controls-light"
+        ) {
             settings.ui.theme_preset = crate::settings::UiThemePreset::Light;
+        }
+        if name == "controls-high-contrast" {
+            settings.ui.theme_preset = crate::settings::UiThemePreset::HighContrastDark;
+        }
+        if name == "controls-retro" {
+            settings.ui.theme_preset = crate::settings::UiThemePreset::Retro;
         }
         state.camera_devices_needs_refresh = false;
         if name == "search-rewind" {
@@ -416,6 +670,16 @@ fn render_settings_fixtures() -> anyhow::Result<()> {
                     } else {
                         (0.0, 0.0)
                     },
+                    calibrated_left_stick: if index == 0 {
+                        (0.72, -0.15)
+                    } else {
+                        (0.02, 0.01)
+                    },
+                    calibrated_right_stick: if index == 0 {
+                        (-0.42, 0.65)
+                    } else {
+                        (0.0, 0.0)
+                    },
                     waiting_for_neutral: false,
                 });
             let player = &mut state.settings_ui.gamepad_snapshot.players[index as usize];
@@ -423,6 +687,10 @@ fn render_settings_fixtures() -> anyhow::Result<()> {
             player.device = Some(crate::input::RuntimeGamepadId(index + 1));
             player.buttons = if index == 0 {
                 crate::input::HostButton::A.host_mask_bit()
+                    | u16::from(crate::input::transforms::stick_dpad_mask(
+                        (0.72, -0.15),
+                        settings.tilt.deadzone,
+                    ))
             } else {
                 0
             };
@@ -430,6 +698,7 @@ fn render_settings_fixtures() -> anyhow::Result<()> {
         if name == "test-no-device" {
             state.settings_ui.gamepad_snapshot = crate::input::GamepadSnapshot::default();
         }
+        configure_roadmap_fixture(name, &mut settings, &mut state)?;
         render(
             &device,
             &queue,
@@ -440,6 +709,124 @@ fn render_settings_fixtures() -> anyhow::Result<()> {
             &mut settings,
             &mut state,
         )?;
+    }
+    Ok(())
+}
+
+fn configure_roadmap_fixture(
+    name: &str,
+    settings: &mut Settings,
+    state: &mut DebugWindowState,
+) -> anyhow::Result<()> {
+    use crate::settings::{
+        AutofireOverride, AutofirePattern, AutofireTarget, AxisBinding, AxisDirection,
+        BindingAction, BindingExpression, BindingSet, BindingTarget, GameplayBindingSource,
+        InputAxis, InputGameKey, InputScope, InputSystem,
+    };
+    if name.starts_with("binding-") {
+        let target = BindingTarget::Joypad {
+            player: 1,
+            action: BindingAction::A,
+        };
+        let source = if name == "binding-axis-narrow" {
+            GameplayBindingSource::Gamepad
+        } else {
+            state.settings_ui.binding_source = controls::BindingSource::Keyboard;
+            GameplayBindingSource::Keyboard
+        };
+        let expression = if source == GameplayBindingSource::Keyboard {
+            BindingExpression::chord(vec![
+                BindingExpression::keyboard(winit::keyboard::KeyCode::ControlRight),
+                BindingExpression::keyboard(winit::keyboard::KeyCode::KeyJ),
+            ])
+        } else {
+            BindingExpression::axis(AxisBinding::new(InputAxis::RightX, AxisDirection::Positive))
+        };
+        let mut set = BindingSet::new(expression);
+        set.add_expression(if source == GameplayBindingSource::Keyboard {
+            BindingExpression::keyboard(winit::keyboard::KeyCode::KeyK)
+        } else {
+            BindingExpression::gamepad_button("North")
+        })
+        .map_err(anyhow::Error::msg)?;
+        settings
+            .set_binding_set(&InputScope::Global, target, source, Some(set))
+            .map_err(anyhow::Error::msg)?;
+        state.settings_ui.last_controller_layout = state.settings_ui.controller_layout;
+        state.settings_ui.binding_editor = Some(controls::binding_editor::BindingEditor::open(
+            InputScope::Global,
+            target,
+            source,
+            "P1 A".into(),
+            settings.binding_set(&InputScope::Global, target, source),
+        ));
+    }
+    if name.starts_with("autofire-") {
+        let game = InputGameKey::new(InputSystem::GameBoyAdvance, [0x42; 32]);
+        state.settings_ui.current_input_game = Some(game.clone());
+        state.settings_ui.current_input_game_name = Some("Example Adventure".into());
+        state.settings_ui.input_scope = InputScope::Game(game);
+        settings
+            .set_autofire(
+                &InputScope::Global,
+                AutofireTarget {
+                    player: 1,
+                    action: BindingAction::B,
+                },
+                AutofireOverride::enabled(AutofirePattern::default()),
+            )
+            .map_err(anyhow::Error::msg)?;
+        settings
+            .set_autofire(
+                &state.settings_ui.input_scope,
+                AutofireTarget {
+                    player: 1,
+                    action: BindingAction::A,
+                },
+                AutofireOverride::enabled(AutofirePattern {
+                    period_frames: 6,
+                    on_frames: 2,
+                }),
+            )
+            .map_err(anyhow::Error::msg)?;
+    }
+    if name == "audio-fallback" {
+        settings.audio.output_device_id = Some("example-disconnected-device".into());
+        settings.audio.buffer_policy = crate::settings::AudioBufferPolicy::LowLatency;
+        state.settings_ui.audio_host_status = crate::audio::AudioHostStatus {
+            active_device: Some(crate::audio::AudioOutputDevice {
+                id: "example-default".into(),
+                name: "Speakers (default output)".into(),
+            }),
+            device_fallback: Some(
+                "The saved output is unavailable. Using the default output.".into(),
+            ),
+            buffer_fallback: Some(crate::audio::AudioBufferFallback {
+                requested: crate::settings::AudioBufferPolicy::LowLatency,
+                active: crate::settings::AudioBufferPolicy::Auto,
+                underrun_reports: 3,
+            }),
+        };
+    }
+    if name == "storage-import" {
+        state.settings_ui.settings_import_json = Some(settings.export_settings_json()?);
+        state.settings_ui.settings_file_notice = Some("Settings file ready to import.".into());
+    }
+    if name == "timing-active" {
+        use std::time::Duration;
+        let timing = &mut state.settings_ui.input_timing;
+        timing.set_enabled(true);
+        let start = crate::platform::Instant::now();
+        for index in 0..32 {
+            let event = start + Duration::from_millis(index * 8);
+            timing.observe_poll(crate::input::timing::InputPollTiming {
+                latest_event: Some(event),
+                observed_events: 1,
+                snapshot_complete: event + Duration::from_micros(700),
+            });
+            timing.frame_reached(event + Duration::from_millis(2));
+            timing.frame_submitted(event + Duration::from_millis(3));
+        }
     }
     Ok(())
 }
@@ -476,16 +863,44 @@ fn render(
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let open_label = if name.starts_with("profiles-") {
-        Some("Saved input profiles")
+    let open_label = if name == "main-menu-800x600" {
+        Some("File")
     } else if name == "debugger-colors" {
         Some("Debugger colors")
     } else if name == "firmware-details" {
         Some("File details")
+    } else if name == "binding-capture" {
+        Some("Add alternative")
+    } else if name == "binding-axis-narrow" {
+        Some("Right stick X options")
+    } else if name == "calibration-active" {
+        Some("Start center sampling")
+    } else if name == "timing-active" {
+        Some("Input timing measurements")
     } else {
         None
     };
     for frame in 0..24 {
+        if frame == 1 {
+            let target = if name == "search-conditional" {
+                Some(search::SettingId::AudioLowPassCutoff)
+            } else if name == "profiles-manage" {
+                Some(search::SettingId::InputDevicesRenameSelectedProfile)
+            } else if name.starts_with("profiles-") {
+                Some(search::SettingId::InputDevicesSaveCurrentAsProfile)
+            } else if name == "input-tilt-scoped" {
+                Some(search::SettingId::InputDevicesTiltSensitivity)
+            } else if name.starts_with("autofire-") {
+                Some(search::SettingId::InputDevicesAutofireA)
+            } else if name == "calibration-active" {
+                Some(search::SettingId::InputDevicesStartCalibration)
+            } else {
+                None
+            };
+            if let Some(target) = target {
+                search::begin(&context, target);
+            }
+        }
         let mut events = Vec::new();
         if (frame == 3 || frame == 4)
             && let Some(label) = open_label
@@ -510,6 +925,46 @@ fn render(
                 ..Default::default()
             },
             |ui| {
+                if name == "main-menu-800x600" {
+                    let labels = std::array::from_fn(|_| String::new());
+                    let occupied = [false; 10];
+                    let mut dock = egui_dock::DockState::new(Vec::new());
+                    crate::debug::draw_menu_bar(
+                        ui,
+                        &crate::debug::MenuBarContext {
+                            current_mode: crate::graphics::AspectRatioMode::KeepAspect,
+                            speed_mode_label: None,
+                            is_recording_audio: false,
+                            is_recording_replay: false,
+                            is_playing_replay: false,
+                            supports_save_states: false,
+                            supports_replay: false,
+                            supports_audio: false,
+                            supports_debugger: false,
+                            is_paused: false,
+                            active_system: ActiveSystem::Gb,
+                            media_slot_snapshot: None,
+                            media_event_change_allowed: false,
+                            game_boy_serial_device: Default::default(),
+                            game_boy_serial_device_change_allowed: false,
+                            ws_display_rotated: false,
+                            slot_labels: &labels,
+                            slot_occupied: &occupied,
+                            active_save_slot: 0,
+                            can_undo_load_state: false,
+                            can_undo_save_state: false,
+                            recovery_state_available: false,
+                            external_debugger: false,
+                            debugger_window_open: false,
+                            debug_presentation: settings.ui.debug_presentation,
+                        },
+                        &mut dock,
+                        settings,
+                        state,
+                    );
+                    egui::CentralPanel::default().show(ui, |_| {});
+                    return;
+                }
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()

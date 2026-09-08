@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use super::routing::{EffectiveGamepads, GamepadRawPress, GamepadRouter, action_bit, ws_bit};
 use super::{GamepadCommand, GamepadSnapshot, HostButton, RuntimeGamepadId};
-use crate::settings::{GamepadBindings, GamepadFingerprint, InputDeviceSettings};
+use crate::settings::{GamepadFingerprint, InputDeviceSettings, ResolvedGameplayInput};
 
 use super::GamepadPoll;
 
@@ -77,16 +77,25 @@ impl GamepadHandler {
 
     pub(crate) fn poll(
         &mut self,
-        bindings: &GamepadBindings,
+        resolved: &ResolvedGameplayInput,
         preferences: &InputDeviceSettings,
         capture_active: bool,
         deadzone: f32,
+        measure_timing: bool,
     ) -> GamepadPoll {
         let mut raw_pressed = Vec::new();
+        let mut latest_event = None;
+        let mut observed_events = 0u64;
+        let bindings = &resolved.gamepad;
+        self.router.configure_typed(resolved);
         // Apply capture/config changes before consuming new physical events.
         self.router
             .resolve(preferences, bindings, capture_active, deadzone);
         while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
+            if measure_timing {
+                latest_event = Some(crate::platform::Instant::now());
+                observed_events = observed_events.saturating_add(1);
+            }
             if matches!(event, EventType::Disconnected) {
                 if let Some((_, runtime)) = self.connected.remove(&usize::from(id)) {
                     self.router.disconnect(runtime);
@@ -142,6 +151,11 @@ impl GamepadHandler {
         let effective = self
             .router
             .resolve(preferences, bindings, capture_active, deadzone);
+        let timing = measure_timing.then(|| super::timing::InputPollTiming {
+            latest_event,
+            observed_events,
+            snapshot_complete: crate::platform::Instant::now(),
+        });
         let mut player_events: [Vec<(HostButton, bool)>; 5] = std::array::from_fn(|_| Vec::new());
         for (index, events) in player_events.iter_mut().enumerate() {
             for &button in HostButton::WITH_SIX_BUTTONS {
@@ -197,6 +211,7 @@ impl GamepadHandler {
         self.effective = effective;
         let [events, events_p2, events_p3, events_p4, events_p5] = player_events;
         GamepadPoll {
+            timing,
             events,
             events_p2,
             events_p3,

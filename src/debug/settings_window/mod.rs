@@ -5,6 +5,7 @@ mod debugger;
 mod emulation;
 mod firmware;
 mod general;
+mod layout;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod render_fixtures;
 mod search;
@@ -76,7 +77,7 @@ impl InputDevicesPage {
         match self {
             Self::Controls => "Controls",
             Self::Hotkeys => "Hotkeys",
-            Self::TestAndCalibrate => "Test & Calibrate",
+            Self::TestAndCalibrate => "Input Test & Calibration",
         }
     }
 }
@@ -85,6 +86,8 @@ impl InputDevicesPage {
 enum ProfileAction {
     Update(String),
     Reset(String),
+    Rename(String),
+    Shortcuts(String),
 }
 
 #[derive(Clone, Copy)]
@@ -96,9 +99,11 @@ enum PlayerResetTarget {
     WonderSwanClear,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ResetTarget {
     Page(SettingsCategory),
+    InputScope(crate::settings::InputScope),
+    Hotkeys,
     Preferences,
 }
 
@@ -110,11 +115,29 @@ pub(crate) struct SettingsUiState {
     pub(crate) controller_layout: Option<controls::controller_diagram::DiagramKind>,
     last_controller_layout: Option<controls::controller_diagram::DiagramKind>,
     pub(crate) binding_source: controls::BindingSource,
+    pub(crate) binding_editor: Option<controls::binding_editor::BindingEditor>,
+    pub(crate) binding_keyboard_down: Vec<winit::keyboard::KeyCode>,
     pub(crate) selected_profile_id: Option<String>,
     pub(crate) profile_name: String,
+    profile_rename: String,
+    profile_manage_open: bool,
     search_jump: bool,
+    search_selection: Option<usize>,
+    search_field_active: bool,
+    search_key: Option<egui::Key>,
+    pub(crate) input_scope: crate::settings::InputScope,
+    pub(crate) input_capture_scope: Option<crate::settings::InputScope>,
+    pub(crate) current_input_game: Option<crate::settings::InputGameKey>,
+    pub(crate) current_input_game_name: Option<String>,
+    highlighted_mapping: Option<controls::controller_diagram::DiagramAction>,
     test_device: Option<crate::input::RuntimeGamepadId>,
     profile_notice: Option<String>,
+    calibration_capture: Option<controls::calibration::CalibrationCapture>,
+    calibration_notice: Option<String>,
+    settings_import_json: Option<String>,
+    settings_file_notice: Option<String>,
+    #[cfg(target_arch = "wasm32")]
+    settings_import_file: crate::platform::FileDataSlot,
     profile_delete_confirmation: Option<String>,
     profile_action_confirmation: Option<ProfileAction>,
     player_reset_confirmation: Option<PlayerResetTarget>,
@@ -124,6 +147,11 @@ pub(crate) struct SettingsUiState {
     undo_baseline: Option<Settings>,
     pub(crate) gamepad_snapshot: crate::input::GamepadSnapshot,
     pub(crate) gamepad_commands: Vec<crate::input::GamepadCommand>,
+    pub(crate) input_timing: crate::input::timing::InputTiming,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) audio_host_status: crate::audio::AudioHostStatus,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) audio_retry_requested: bool,
 }
 
 impl Default for SettingsUiState {
@@ -136,11 +164,29 @@ impl Default for SettingsUiState {
             controller_layout: None,
             last_controller_layout: None,
             binding_source: controls::BindingSource::default(),
+            binding_editor: None,
+            binding_keyboard_down: Vec::new(),
             selected_profile_id: None,
             profile_name: String::new(),
+            profile_rename: String::new(),
+            profile_manage_open: false,
             search_jump: false,
+            search_selection: None,
+            search_field_active: false,
+            search_key: None,
+            input_scope: crate::settings::InputScope::Global,
+            input_capture_scope: None,
+            current_input_game: None,
+            current_input_game_name: None,
+            highlighted_mapping: None,
             test_device: None,
             profile_notice: None,
+            calibration_capture: None,
+            calibration_notice: None,
+            settings_import_json: None,
+            settings_file_notice: None,
+            #[cfg(target_arch = "wasm32")]
+            settings_import_file: Default::default(),
             profile_delete_confirmation: None,
             profile_action_confirmation: None,
             player_reset_confirmation: None,
@@ -150,12 +196,37 @@ impl Default for SettingsUiState {
             undo_baseline: None,
             gamepad_snapshot: crate::input::GamepadSnapshot::default(),
             gamepad_commands: Vec::new(),
+            input_timing: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            audio_host_status: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            audio_retry_requested: false,
         }
     }
 }
 impl SettingsUiState {
+    pub(crate) fn captures_gameplay_input(&self) -> bool {
+        self.binding_editor
+            .as_ref()
+            .is_some_and(|editor| editor.is_capturing())
+            || self.calibration_capture.is_some()
+    }
+
+    pub(crate) fn cancel_input_capture(&mut self) {
+        self.binding_editor = None;
+        if self.calibration_capture.take().is_some() {
+            self.calibration_notice =
+                Some("Calibration cancelled. Saved values were kept.".to_owned());
+        }
+    }
     pub(crate) fn wants_live_input(&self) -> bool {
         self.category == SettingsCategory::InputDevices && self.search.trim().is_empty()
+    }
+
+    pub(crate) fn wants_input_timing(&self) -> bool {
+        self.input_timing.enabled()
+            && self.wants_live_input()
+            && self.input_page == InputDevicesPage::TestAndCalibrate
     }
 }
 pub(crate) struct SettingsContext<'a> {
@@ -192,7 +263,13 @@ pub(crate) fn draw_settings_content(
     state: &mut DebugWindowState,
     emu: &SettingsContext<'_>,
 ) {
-    ui.spacing_mut().item_spacing.y = 6.0;
+    #[cfg(target_arch = "wasm32")]
+    if state.settings_ui.wants_input_timing() {
+        state
+            .settings_ui
+            .input_timing
+            .frame_reached(crate::platform::Instant::now());
+    }
     draw_persistence_notice(ui, settings);
     let previous_category = state.settings_ui.category;
     invalidate_stale_undo(settings, &mut state.settings_ui);
@@ -230,11 +307,19 @@ fn draw_persistence_notice(ui: &mut egui::Ui, settings: &Settings) {
     if let Some(notice) = settings.persistence_notice() {
         ui.group(|ui| {
             ui.label(egui::RichText::new(notice).color(egui::Color32::YELLOW));
-            if ui.small_button("Retry save").clicked() {
+            let response = ui.add_enabled(
+                settings.can_retry_settings_save(),
+                egui::Button::new("Retry save").small(),
+            );
+            search::target(ui, search::SettingId::StorageRetrySavingSettings, &response);
+            if response.clicked() {
                 settings.save();
             }
         });
         ui.add_space(4.0);
+    } else if search::requested(ui, search::SettingId::StorageRetrySavingSettings) {
+        let response = ui.label("There is no settings save error to retry.");
+        search::target(ui, search::SettingId::StorageRetrySavingSettings, &response);
     }
 }
 
@@ -278,18 +363,40 @@ fn draw_undo(
 }
 
 fn draw_search_field(ui: &mut egui::Ui, settings_ui: &mut SettingsUiState) {
+    if !settings_ui.search.is_empty()
+        && ui.memory(|memory| memory.has_focus(egui::Id::new("settings_search_field")))
+    {
+        settings_ui.search_key = [
+            egui::Key::ArrowDown,
+            egui::Key::ArrowUp,
+            egui::Key::Enter,
+            egui::Key::Escape,
+        ]
+        .into_iter()
+        .find(|&key| ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key)));
+    }
     ui.horizontal(|ui| {
-        let width = (ui.available_width() - 30.0).max(100.0);
-        ui.add(
+        let width = (ui.available_width() - 30.0 - ui.spacing().item_spacing.x).max(80.0);
+        let response = ui.add(
             egui::TextEdit::singleline(&mut settings_ui.search)
+                .id(egui::Id::new("settings_search_field"))
+                .margin(egui::Margin::symmetric(8, 3))
                 .hint_text("Search settings…")
                 .desired_width(width),
         );
+        settings_ui.search_field_active = response.has_focus() || response.lost_focus();
+        if response.changed() {
+            settings_ui.search_selection = None;
+            search::clear(ui.ctx());
+        }
         if ui
             .add_enabled(!settings_ui.search.is_empty(), egui::Button::new("×"))
             .clicked()
         {
             settings_ui.search.clear();
+            settings_ui.search_selection = None;
+            response.request_focus();
+            search::clear(ui.ctx());
         }
     });
 }
@@ -301,7 +408,7 @@ fn draw_sidebar(ui: &mut egui::Ui, settings_ui: &mut SettingsUiState) {
     for category in SettingsCategory::ALL {
         if ui
             .add_sized(
-                [ui.available_width(), 32.0],
+                [ui.available_width(), ui.spacing().interact_size.y + 2.0],
                 egui::Button::selectable(
                     settings_ui.search.is_empty() && settings_ui.category == category,
                     category.label(),
@@ -312,6 +419,7 @@ fn draw_sidebar(ui: &mut egui::Ui, settings_ui: &mut SettingsUiState) {
             settings_ui.category = category;
             settings_ui.search.clear();
             settings_ui.search_jump = true;
+            search::clear(ui.ctx());
         }
     }
 }
@@ -329,6 +437,7 @@ fn draw_compact_navigation(ui: &mut egui::Ui, settings_ui: &mut SettingsUiState)
                     {
                         settings_ui.search.clear();
                         settings_ui.search_jump = true;
+                        search::clear(ui.ctx());
                     }
                 }
             });
@@ -337,43 +446,121 @@ fn draw_compact_navigation(ui: &mut egui::Ui, settings_ui: &mut SettingsUiState)
 }
 
 fn draw_search_results(ui: &mut egui::Ui, state: &mut DebugWindowState) {
+    let search_key = state.settings_ui.search_key.take();
     let results = search::results(&state.settings_ui.search);
     ui.heading("Search results");
     ui.label(egui::RichText::new(format!("{} matching settings", results.len())).weak());
-    ui.label(
-        egui::RichText::new("Select a result to open its settings page.")
-            .small()
-            .weak(),
-    );
-    ui.add_space(8.0);
-    if results.is_empty() {
-        ui.label("No settings found. Try a setting name, system, or action.");
+    let keyboard_context = search_key.is_some()
+        || state.settings_ui.search_field_active
+        || results
+            .iter()
+            .any(|entry| ui.memory(|memory| memory.has_focus(search_result_id(entry.id))));
+    let mut moved = false;
+    let mut activate = false;
+    if keyboard_context {
+        if search_key == Some(egui::Key::Escape)
+            || ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            state.settings_ui.search.clear();
+            state.settings_ui.search_selection = None;
+            ui.memory_mut(|memory| memory.request_focus(egui::Id::new("settings_search_field")));
+            search::clear(ui.ctx());
+            return;
+        }
+        if !results.is_empty() {
+            if search_key == Some(egui::Key::ArrowDown)
+                || ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                })
+            {
+                state.settings_ui.search_selection = Some(
+                    state
+                        .settings_ui
+                        .search_selection
+                        .map_or(0, |index| (index + 1).min(results.len() - 1)),
+                );
+                moved = true;
+            }
+            if search_key == Some(egui::Key::ArrowUp)
+                || ui
+                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp))
+            {
+                state.settings_ui.search_selection = Some(
+                    state
+                        .settings_ui
+                        .search_selection
+                        .unwrap_or(0)
+                        .saturating_sub(1),
+                );
+                moved = true;
+            }
+            activate = search_key == Some(egui::Key::Enter)
+                || ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        }
     }
-    for entry in results {
-        let response = egui::Frame::group(ui.style())
-            .inner_margin(10.0)
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.strong(entry.title);
-                let location = if entry.category == SettingsCategory::InputDevices {
-                    format!("{} / {}", entry.category.label(), entry.input_page.label())
-                } else {
-                    entry.category.label().to_owned()
-                };
-                ui.label(egui::RichText::new(location).small().weak());
-            })
-            .response
-            .interact(egui::Sense::click())
+    if results.is_empty() {
+        ui.label(format!("No settings match “{}”.", state.settings_ui.search));
+    }
+    for (index, entry) in results.into_iter().enumerate() {
+        let height = if ui.spacing().item_spacing.y > 6.0 {
+            50.0
+        } else {
+            44.0
+        };
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), height),
+            egui::Sense::hover(),
+        );
+        let response = ui
+            .interact(rect, search_result_id(entry.id), egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-        if response.clicked() {
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, entry.title));
+        let selected = state.settings_ui.search_selection == Some(index) || response.has_focus();
+        let visuals = ui.style().interact_selectable(&response, selected);
+        let painter = ui.painter_at(rect);
+        painter.rect(
+            rect,
+            visuals.corner_radius,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            rect.left_top() + egui::vec2(10.0, 6.0),
+            egui::Align2::LEFT_TOP,
+            entry.title,
+            egui::TextStyle::Body.resolve(ui.style()),
+            visuals.text_color(),
+        );
+        painter.text(
+            rect.left_top() + egui::vec2(10.0, 25.0),
+            egui::Align2::LEFT_TOP,
+            search::breadcrumb(entry.id),
+            egui::TextStyle::Small.resolve(ui.style()),
+            ui.visuals().weak_text_color(),
+        );
+        if moved && selected {
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
+        if response.clicked()
+            || activate && state.settings_ui.search_selection.unwrap_or(0) == index
+        {
             state.settings_ui.category = entry.category;
             state.settings_ui.input_page = entry.input_page;
             state.settings_ui.search.clear();
             state.settings_ui.search_jump = true;
+            state.settings_ui.search_selection = None;
             controls::cancel_capture(state);
+            controls::prepare_search_target(state, entry.id);
+            search::begin(ui.ctx(), entry.id);
             break;
         }
     }
+}
+
+fn search_result_id(id: search::SettingId) -> egui::Id {
+    egui::Id::new(("settings_search_result", id))
 }
 
 fn draw_content(
@@ -410,14 +597,25 @@ fn draw_content_body(
     let category = state.settings_ui.category;
     ui.horizontal(|ui| {
         ui.heading(category.label());
-        ui.label(egui::RichText::new("Global defaults").weak().small());
+        let scope = if category == SettingsCategory::InputDevices
+            && state.settings_ui.input_page != InputDevicesPage::Hotkeys
+        {
+            controls::scope_label(&state.settings_ui.input_scope)
+        } else {
+            "Global defaults".to_owned()
+        };
+        ui.label(egui::RichText::new(scope).weak().small());
     });
     ui.separator();
+    if let Some(notice) = search::notice(ui) {
+        ui.label(egui::RichText::new(notice).weak());
+        ui.add_space(6.0);
+    }
 
     match category {
         SettingsCategory::General => general::draw(ui, settings),
         SettingsCategory::InputDevices => controls::draw(ui, settings, state, emu.active_system),
-        SettingsCategory::Audio => audio::draw(ui, settings),
+        SettingsCategory::Audio => audio::draw(ui, settings, &mut state.settings_ui),
         SettingsCategory::Video => video::draw(
             ui,
             settings,
@@ -429,7 +627,7 @@ fn draw_content_body(
         ),
         SettingsCategory::Emulation => emulation::draw(ui, settings, emu.active_system),
         SettingsCategory::Firmware => firmware::draw(ui, settings, state),
-        SettingsCategory::Storage => storage::draw(ui, settings),
+        SettingsCategory::Storage => storage::draw(ui, settings, &mut state.settings_ui),
         SettingsCategory::Camera => camera::draw(ui, settings, state),
         SettingsCategory::Interface => ui::draw(ui, settings),
         SettingsCategory::Debugger => debugger::draw(ui, settings),
@@ -449,25 +647,45 @@ fn draw_reset_controls(
 ) -> bool {
     let mut reset = false;
     ui.horizontal_wrapped(|ui| {
+        let input_scope_page = category == SettingsCategory::InputDevices
+            && settings_ui.input_page != InputDevicesPage::Hotkeys;
         if ui
-            .add_sized([180.0, 30.0], egui::Button::new("Reset this page…"))
+            .add_sized(
+                [180.0, 30.0],
+                egui::Button::new(if input_scope_page {
+                    "Reset this scope…"
+                } else {
+                    "Reset this page…"
+                }),
+            )
             .clicked()
         {
-            settings_ui.reset_confirmation = Some(ResetTarget::Page(category));
+            settings_ui.reset_confirmation = Some(if input_scope_page {
+                ResetTarget::InputScope(settings_ui.input_scope.clone())
+            } else if category == SettingsCategory::InputDevices {
+                ResetTarget::Hotkeys
+            } else {
+                ResetTarget::Page(category)
+            });
         }
-        if ui
-            .add_sized([180.0, 30.0], egui::Button::new("Reset all preferences…"))
-            .clicked()
-        {
+        let response = ui.add_sized([180.0, 30.0], egui::Button::new("Reset all preferences…"));
+        search::target(ui, search::SettingId::GeneralResetAllPreferences, &response);
+        if response.clicked() {
             settings_ui.reset_confirmation = Some(ResetTarget::Preferences);
         }
     });
 
-    let Some(target) = settings_ui.reset_confirmation else {
+    let Some(target) = settings_ui.reset_confirmation.clone() else {
         return false;
     };
     ui.group(|ui| {
-        let label = match target {
+        let label = match &target {
+            ResetTarget::Hotkeys => "Restore global emulator shortcuts to defaults?".to_owned(),
+            ResetTarget::InputScope(scope) => if *scope == crate::settings::InputScope::Global {
+                "Restore Global gameplay mappings and transforms to defaults? System and game overrides remain.".to_owned()
+            } else {
+                format!("Remove all {} overrides and use inherited gameplay mappings and transforms?", controls::scope_label(scope))
+            },
             ResetTarget::Page(SettingsCategory::InputDevices) => {
                 "Reset current input mappings and player assignments? Saved input profiles will remain.".to_string()
             }
@@ -485,6 +703,8 @@ fn draw_reset_controls(
                 reset = true;
                 let previous = settings.clone();
                 match target {
+                    ResetTarget::Hotkeys => settings.apply_profile_shortcuts(&Settings::default().capture_input_profile()),
+                    ResetTarget::InputScope(ref scope) => settings.reset_input_scope(scope),
                     ResetTarget::Page(category) => reset_page(settings, category),
                     ResetTarget::Preferences => settings.reset_preferences(),
                 }
@@ -590,6 +810,71 @@ pub(super) fn draw_console_section_header(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focused_search_supports_arrows_enter_and_escape() {
+        let context = egui::Context::default();
+        let mut settings = Settings::default();
+        let mut state = DebugWindowState::new();
+        state.settings_ui.search = "rewind".into();
+        let mut frame = |key: Option<egui::Key>, state: &mut DebugWindowState| {
+            context
+                .memory_mut(|memory| memory.request_focus(egui::Id::new("settings_search_field")));
+            let events = key
+                .map(|key| egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                })
+                .into_iter()
+                .collect();
+            let _ = context.run_ui(
+                egui::RawInput {
+                    events,
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1100.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    draw_settings_content(
+                        ui,
+                        &mut settings,
+                        state,
+                        &SettingsContext {
+                            active_system: None,
+                            gb_hardware_mode_label: None,
+                            is_pocket_camera: false,
+                            #[cfg(target_arch = "wasm32")]
+                            nes_palette_file_slot: crate::platform::FileDataSlot::default(),
+                        },
+                    )
+                },
+            );
+        };
+        frame(None, &mut state);
+        frame(Some(egui::Key::ArrowDown), &mut state);
+        assert_eq!(state.settings_ui.search_selection, Some(0));
+        frame(Some(egui::Key::ArrowDown), &mut state);
+        assert_eq!(state.settings_ui.search_selection, Some(1));
+        frame(Some(egui::Key::ArrowUp), &mut state);
+        assert_eq!(state.settings_ui.search_selection, Some(0));
+        let expected = search::results("rewind")[0];
+        frame(Some(egui::Key::Enter), &mut state);
+        assert!(state.settings_ui.search.is_empty());
+        assert_eq!(state.settings_ui.category, expected.category);
+        assert_eq!(state.settings_ui.input_page, expected.input_page);
+        state.settings_ui.search = "volume".into();
+        frame(Some(egui::Key::Escape), &mut state);
+        assert!(state.settings_ui.search.is_empty());
+        assert_eq!(
+            context.memory(|memory| memory.focused()),
+            Some(egui::Id::new("settings_search_field"))
+        );
+    }
 
     #[test]
     fn interface_reset_preserves_debugger_preferences_and_follows_theme_palette() {

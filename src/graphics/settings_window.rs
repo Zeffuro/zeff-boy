@@ -60,8 +60,17 @@ impl SettingsWindow {
 
     pub(super) fn render(&mut self, ctx: SettingsRenderContext<'_>) -> Result<(), FrameError> {
         let style = ToolWindowStyle::from(&*ctx.settings);
-        self.0
+        let measure = ctx.state.settings_ui.wants_input_timing();
+        self.0.measure_submission(measure);
+        let result = self
+            .0
             .render(style, "settings_root_ui", "settings egui pass", |ui| {
+                if measure {
+                    ctx.state
+                        .settings_ui
+                        .input_timing
+                        .frame_reached(crate::platform::Instant::now());
+                }
                 crate::debug::draw_settings_content(
                     ui,
                     ctx.settings,
@@ -72,6 +81,13 @@ impl SettingsWindow {
                         is_pocket_camera: ctx.is_pocket_camera,
                     },
                 );
-            })
+            });
+        if let Some(submitted) = self.0.last_submission() {
+            ctx.state
+                .settings_ui
+                .input_timing
+                .frame_submitted(submitted);
+        }
+        result
     }
 }

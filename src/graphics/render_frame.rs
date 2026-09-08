@@ -342,6 +342,7 @@ impl Graphics {
         action
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn submit_gpu_passes(
         &mut self,
         view: &wgpu::TextureView,
@@ -349,7 +350,8 @@ impl Graphics {
         render_framebuffer_directly: bool,
         has_game_view_in_dock: bool,
         menu_bar_height: f32,
-    ) {
+        measure_input_timing: bool,
+    ) -> Option<crate::platform::Instant> {
         let mut encoder = self
             .gpu
             .device
@@ -437,8 +439,12 @@ impl Graphics {
                 .render_to_pass(&mut render_pass, &paint_jobs, &screen_desc);
         }
 
-        self.egui
-            .submit_and_cleanup(&self.gpu.queue, encoder, full_output);
+        self.egui.submit_and_cleanup_timed(
+            &self.gpu.queue,
+            encoder,
+            full_output,
+            measure_input_timing,
+        )
     }
 
     pub(crate) fn render(&mut self, ctx: RenderContext<'_>) -> Result<RenderResult, FrameError> {
@@ -712,13 +718,24 @@ impl Graphics {
         let menu_bar_height =
             menu_actions.menu_bar_height_points * full_output.full_output.pixels_per_point;
 
-        self.submit_gpu_passes(
+        #[cfg(target_arch = "wasm32")]
+        let measure_input_timing = ctx.debug_windows.settings_ui.input_timing.frame_pending();
+        #[cfg(not(target_arch = "wasm32"))]
+        let measure_input_timing = false;
+        let input_submission = self.submit_gpu_passes(
             &view,
             &full_output,
             render_framebuffer_directly,
             has_game_view_in_dock,
             menu_bar_height,
+            measure_input_timing,
         );
+        if let Some(submitted) = input_submission {
+            ctx.debug_windows
+                .settings_ui
+                .input_timing
+                .frame_submitted(submitted);
+        }
 
         frame.present();
         #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]

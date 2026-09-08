@@ -343,6 +343,8 @@ pub(super) fn test_gb_loop_with_tcp() -> (
 pub(super) fn semantic_result() -> FrameResult {
     FrameResult {
         advanced_frames: 1,
+        completed_step_requests: 1,
+        staged_input_frames: 0,
         delivery_merged: false,
         replay_events: Vec::new(),
         replay_error: None,

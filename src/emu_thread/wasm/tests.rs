@@ -144,6 +144,34 @@ fn frame_input() -> FrameInput {
     }
 }
 
+#[wasm_bindgen_test]
+fn wasm_step_responses_count_only_executed_staged_inputs() {
+    let thread = sms_thread();
+    for (requested, provided, staged) in [(0, Some(4), 0), (2, Some(5), 2), (1, None, 0)] {
+        let mut input = frame_input();
+        input.frames = requested;
+        input.replay_joypad_frames =
+            provided.map(|count| vec![crate::emu_thread::ReplayJoypadFrame::default(); count]);
+        thread.send(EmuCommand::StepFrames(Box::new(input)));
+        let result = thread.try_recv_frame().unwrap();
+        assert_eq!(result.advanced_frames, requested);
+        assert_eq!(result.completed_step_requests, 1);
+        assert_eq!(result.staged_input_frames, staged);
+    }
+    thread
+        .inner
+        .borrow_mut()
+        .runtime_fault
+        .latch(Some("fault".into()));
+    let mut input = frame_input();
+    input.replay_joypad_frames = Some(vec![crate::emu_thread::ReplayJoypadFrame::default()]);
+    thread.send(EmuCommand::StepFrames(Box::new(input)));
+    let result = thread.try_recv_frame().unwrap();
+    assert_eq!(result.advanced_frames, 0);
+    assert_eq!(result.completed_step_requests, 1);
+    assert_eq!(result.staged_input_frames, 0);
+}
+
 fn gba_frame_input() -> FrameInput {
     let mut input = frame_input();
     input.snapshot.memory_view_start = 0x0200_0000;

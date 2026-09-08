@@ -6,7 +6,7 @@ mod theme;
 mod ui;
 mod video;
 
-pub(crate) use audio::AudioRecordingFormat;
+pub(crate) use audio::{AudioBufferPolicy, AudioRecordingFormat};
 pub(crate) use display::VsyncMode;
 pub(crate) use input::{LeftStickMode, TiltInputMode};
 pub(crate) use shader::{

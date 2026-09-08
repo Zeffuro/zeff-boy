@@ -20,6 +20,15 @@ fn replay_capture_id_reservation(current: u64) -> Option<(u64, u64)> {
     Some((current, current.checked_add(1)?))
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn finish_pending_replay_cancellation(
+    pending: &mut Option<PendingReplayStart>,
+    resume_result: Result<(), EmuCommandSendError>,
+) -> Result<(), EmuCommandSendError> {
+    *pending = None;
+    resume_result
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn commit_pending_replay_start(
     slot: &mut Option<PendingReplayStart>,
@@ -32,15 +41,6 @@ fn commit_pending_replay_start(
         *next_capture_id = reserved_next;
         *slot = Some(pending);
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn finish_pending_replay_cancellation(
-    pending: &mut Option<PendingReplayStart>,
-    resume_result: Result<(), EmuCommandSendError>,
-) -> Result<(), EmuCommandSendError> {
-    *pending = None;
-    resume_result
 }
 
 fn commit_checkpoint_marker(marker: &mut usize, frame: u64, sent: bool) {
@@ -154,9 +154,7 @@ impl App {
             replay_capture_id_reservation(self.recording.next_replay_capture_id)
                 .ok_or_else(|| anyhow::anyhow!("replay capture ID exhausted"))?;
 
-        if self.timing.uncapped_speed {
-            self.send_emu_command_checked(EmuCommand::SetUncapped(false))?;
-        }
+        self.suspend_uncapped_worker()?;
         if let Err(error) =
             self.send_emu_command_checked(EmuCommand::CaptureReplayStart { capture_id })
         {
@@ -164,7 +162,7 @@ impl App {
             return Err(error.into());
         }
 
-        self.clear_replay_progress();
+        self.clear_replay_progress_for_start();
         commit_pending_replay_start(
             &mut self.recording.pending_replay_start,
             &mut self.recording.next_replay_capture_id,
@@ -182,15 +180,10 @@ impl App {
         self.preflight_emu_command_kind(TasControlCommandKind::Replay)?;
         #[cfg(not(target_arch = "wasm32"))]
         if self.recording.pending_replay_start.is_some() {
-            let resume_result = self.try_resume_uncapped_worker_after_replay();
-            let resume_result = finish_pending_replay_cancellation(
-                &mut self.recording.pending_replay_start,
-                resume_result,
-            );
-            self.clear_replay_progress();
+            self.clear_replay_progress_for_start();
+            self.try_resume_uncapped_worker_after_replay()?;
             self.toast_manager.set_replay_recording(false);
             self.timing.last_frame_time = crate::platform::Instant::now();
-            resume_result?;
             self.toast_manager.info("Replay start canceled");
             return Ok(());
         }
@@ -312,10 +305,7 @@ impl App {
                     }
                     let total = player.total_frames();
                     let state_bytes = player.save_state().to_vec();
-                    if self.timing.uncapped_speed
-                        && let Err(error) =
-                            self.send_emu_command_checked(EmuCommand::SetUncapped(false))
-                    {
+                    if let Err(error) = self.suspend_uncapped_worker() {
                         self.toast_manager.error(error.to_string());
                         return;
                     }
@@ -373,14 +363,23 @@ impl App {
     }
 
     fn try_resume_uncapped_worker_after_replay(&mut self) -> Result<(), EmuCommandSendError> {
-        if self.timing.uncapped_speed {
-            self.send_emu_command_checked(EmuCommand::SetUncapped(true))?;
-        }
-        Ok(())
+        self.sync_uncapped_worker()
     }
 
     pub(in crate::app) fn resume_uncapped_worker_after_replay(&mut self) {
         let _ = self.try_resume_uncapped_worker_after_replay();
+    }
+
+    fn clear_replay_progress_for_start(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.recording.pending_replay_start = None;
+        }
+        self.recording.queued_replay_playback_frames = 0;
+        self.recording.replay_recording_origin = crate::app::types::ReplayCaptureOrigin::default();
+        self.recording.replay_media_events_pending = 0;
+        self.recording.last_replay_checkpoint_frame = 0;
+        self.recording.pending_replay_checkpoint_hashes.clear();
     }
 
     pub(in crate::app) fn clear_replay_progress(&mut self) {
@@ -493,11 +492,22 @@ impl App {
                     log::warn!("Ignoring stale replay start capture response {capture_id}");
                     return None;
                 }
+                while let Some(result) = self
+                    .emu_thread
+                    .as_ref()
+                    .and_then(|thread| thread.try_recv_frame())
+                {
+                    self.process_frame_result(result);
+                }
+                if !self.recording.replay_start_matches(capture_id) {
+                    return None;
+                }
                 let pending = self
                     .recording
                     .pending_replay_start
                     .take()
                     .expect("matching replay start should be pending");
+                self.recording.pending_replay_batches.clear();
                 if let Err(err) = self.finish_pending_replay_start(start, pending.path) {
                     log::error!("Failed to start replay recording: {err}");
                     self.clear_replay_progress();
@@ -512,8 +522,17 @@ impl App {
                     log::warn!("Ignoring stale replay start capture failure {capture_id}");
                     return None;
                 }
-                self.recording.pending_replay_start = None;
-                self.clear_replay_progress();
+                while let Some(result) = self
+                    .emu_thread
+                    .as_ref()
+                    .and_then(|thread| thread.try_recv_frame())
+                {
+                    self.process_frame_result(result);
+                }
+                if !self.recording.replay_start_matches(capture_id) {
+                    return None;
+                }
+                self.clear_replay_progress_for_start();
                 self.resume_uncapped_worker_after_replay();
                 self.timing.last_frame_time = crate::platform::Instant::now();
                 let message = format!("failed to capture replay start state: {error}");

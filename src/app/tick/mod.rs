@@ -57,6 +57,14 @@ fn commit_frame_send(frames_in_flight: &mut usize, sent: bool) -> bool {
     sent
 }
 
+const fn frame_execution_allowed(
+    frames_to_step: usize,
+    has_pending: bool,
+    replay_start_pending: bool,
+) -> bool {
+    !replay_start_pending && (frames_to_step > 0 || has_pending)
+}
+
 impl App {
     pub(super) fn update_debug_cache_edges(&mut self) {
         if is_tab_open(&self.debug_dock, DebugTab::TileViewer)
@@ -93,9 +101,9 @@ impl App {
             self.fence_tas_control_gameplay();
         }
         #[cfg(not(target_arch = "wasm32"))]
-        let gameplay_commands_allowed = self.worker_gameplay_commands_allowed();
+        let mut gameplay_commands_allowed = self.worker_gameplay_commands_allowed();
         #[cfg(target_arch = "wasm32")]
-        let gameplay_commands_allowed = true;
+        let mut gameplay_commands_allowed = true;
         if gameplay_commands_allowed {
             self.sync_speed_setting();
         }
@@ -111,13 +119,88 @@ impl App {
                     .error("Stop audio recording before changing output sample rate");
             }
             Some(AudioSampleRateChange::Applied) => {
-                self.last_audio_output_sample_rate = self.settings.audio.output_sample_rate;
-                self.reset_audio_output();
+                if !self.reset_audio_output() {
+                    self.settings.audio.output_sample_rate = self.last_audio_output_sample_rate;
+                }
                 self.settings.save();
             }
             Some(AudioSampleRateChange::Unchanged) | None => {}
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let host_changed = self.last_audio_host_config
+                != (
+                    self.settings.audio.output_device_id.clone(),
+                    self.settings.audio.buffer_policy,
+                );
+            let retry = std::mem::take(&mut self.debug_windows.settings_ui.audio_retry_requested);
+            if host_changed || retry {
+                let previous_fallback = self
+                    .debug_windows
+                    .settings_ui
+                    .audio_host_status
+                    .buffer_fallback
+                    .clone();
+                if retry {
+                    self.debug_windows
+                        .settings_ui
+                        .audio_host_status
+                        .buffer_fallback = None;
+                }
+                if !self.reset_audio_output_inner(false, true) {
+                    self.debug_windows
+                        .settings_ui
+                        .audio_host_status
+                        .buffer_fallback = previous_fallback;
+                }
+            }
+            if let Some(fallback) = self
+                .audio
+                .as_mut()
+                .and_then(crate::audio::AudioOutput::take_buffer_fallback_request)
+            {
+                let previous_fallback = self
+                    .debug_windows
+                    .settings_ui
+                    .audio_host_status
+                    .buffer_fallback
+                    .clone();
+                self.debug_windows
+                    .settings_ui
+                    .audio_host_status
+                    .buffer_fallback = Some(fallback);
+                if self.reset_audio_output_inner(false, true) {
+                    self.toast_manager.warning(
+                        "Audio underruns detected. Using the Auto buffer policy for this session.",
+                    );
+                } else {
+                    self.debug_windows
+                        .settings_ui
+                        .audio_host_status
+                        .buffer_fallback = previous_fallback;
+                }
+            }
+            if self.last_audio_recovery.is_none_or(|last| {
+                Instant::now().duration_since(last) >= std::time::Duration::from_secs(2)
+            }) && let Some(reason) = self
+                .audio
+                .as_ref()
+                .and_then(crate::audio::AudioOutput::take_device_error)
+            {
+                self.last_audio_recovery = Some(Instant::now());
+                if self.reset_audio_output_inner(true, true) {
+                    self.toast_manager.warning(reason.clone());
+                    self.debug_windows
+                        .settings_ui
+                        .audio_host_status
+                        .device_fallback = Some(reason);
+                }
+            }
+        }
         self.poll_gamepad();
+        if gameplay_commands_allowed && self.sync_uncapped_worker().is_err() {
+            gameplay_commands_allowed = false;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_rom_preparation();
 
@@ -195,7 +278,9 @@ impl App {
             }
             self.rewind.reset_pacing();
             self.rewind.frames_rewound = 0;
-            let max_in_flight = if self.recording.limits_in_flight_for_replay() {
+            let max_in_flight = if self.recording.limits_in_flight_for_replay()
+                || self.autofire_requires_serialized_frame()
+            {
                 1
             } else {
                 MAX_IN_FLIGHT
@@ -276,12 +361,15 @@ impl App {
                     );
                 }
 
-                if (frames_to_step > 0 || has_pending)
-                    && self
-                        .preflight_emu_command_kind(
-                            crate::emu_thread::TasControlCommandKind::FrameExecution,
-                        )
-                        .is_ok()
+                if frame_execution_allowed(
+                    frames_to_step,
+                    has_pending,
+                    self.recording.is_replay_start_pending(),
+                ) && self
+                    .preflight_emu_command_kind(
+                        crate::emu_thread::TasControlCommandKind::FrameExecution,
+                    )
+                    .is_ok()
                 {
                     let throttle_viewers = self.active_debug_presentation
                         == crate::settings::DebugPresentation::GameAndDebugger
@@ -707,6 +795,14 @@ mod tests {
         assert!(SpeculationBlockers::from_app_for_test(true, false).any());
         assert!(SpeculationBlockers::from_app_for_test(false, true).any());
         assert!(SpeculationBlockers::from_app_for_test(true, true).any());
+    }
+
+    #[test]
+    fn replay_start_pending_blocks_all_frame_execution() {
+        assert!(!frame_execution_allowed(1, false, true));
+        assert!(!frame_execution_allowed(0, true, true));
+        assert!(frame_execution_allowed(1, false, false));
+        assert!(frame_execution_allowed(0, true, false));
     }
 
     #[test]

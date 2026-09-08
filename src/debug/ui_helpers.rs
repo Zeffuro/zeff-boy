@@ -3,16 +3,6 @@ pub(crate) trait EnumLabel: Copy + PartialEq + 'static {
     fn all_variants() -> &'static [Self];
 }
 
-pub(crate) fn enum_combo_box<E: EnumLabel>(ui: &mut egui::Ui, combo_label: &str, value: &mut E) {
-    egui::ComboBox::from_label(combo_label)
-        .selected_text(value.label())
-        .show_ui(ui, |ui| {
-            for &variant in E::all_variants() {
-                ui.selectable_value(value, variant, variant.label());
-            }
-        });
-}
-
 pub(crate) fn draw_scaling_params(ui: &mut egui::Ui, settings: &mut crate::settings::Settings) {
     use crate::settings::ScalingMode;
     let p = &mut settings.video.shader_params;

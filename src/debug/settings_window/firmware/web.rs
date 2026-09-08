@@ -1,3 +1,7 @@
+use super::super::{
+    layout::{helper, row},
+    search::SettingId as Id,
+};
 use crate::debug::DebugWindowState;
 use crate::debug::types::{FirmwareInventoryRow, FirmwareInventoryStatusKind};
 use crate::settings::Settings;
@@ -32,37 +36,44 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         }
     }
 
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(
-                !state.firmware_inventory.web_operation_pending,
-                egui::Button::new("Import firmware..."),
-            )
-            .clicked()
-        {
-            crate::platform::FileDialog::new()
-                .add_filter("Firmware", &["bin", "rom", "bios", "col"])
-                .set_title("Import firmware")
-                .pick_file_web(state.firmware_inventory.pending_file.clone());
-        }
-    });
-    ui.label(
+    helper(
+        ui,
+        egui::RichText::new("Import recognized firmware for this browser.")
+            .small()
+            .weak(),
+    );
+    ui.add_space(12.0);
+    if row(ui, Id::FirmwareImportFirmware, None, |ui| {
+        ui.add_enabled(
+            !state.firmware_inventory.web_operation_pending,
+            egui::Button::new("Import firmware..."),
+        )
+    })
+    .clicked()
+    {
+        crate::platform::FileDialog::new()
+            .add_filter("Firmware", &["bin", "rom", "bios", "col"])
+            .set_title("Import firmware")
+            .pick_file_web(state.firmware_inventory.pending_file.clone());
+    }
+    helper(
+        ui,
         egui::RichText::new("Recognized firmware is stored in this browser.")
             .weak()
             .small(),
     );
 
-    ui.separator();
+    ui.add_space(22.0);
     ui.strong("Game Boy / Game Boy Color");
     draw_gb_boot_mode(ui, settings);
-    ui.separator();
+    ui.add_space(22.0);
     ui.strong("Game Boy Advance");
     draw_gba_boot_mode(ui, settings);
-    ui.separator();
+    ui.add_space(22.0);
     ui.strong("Master System / Game Gear");
     draw_sega_boot_mode(ui, settings);
     let removal_enabled = !state.firmware_inventory.web_operation_pending;
-    if let Some(key) = draw_inventory(ui, state, removal_enabled) {
+    if let Some(key) = draw_inventory(ui, settings, state, removal_enabled) {
         match crate::platform::remove_firmware(
             &key,
             state.firmware_inventory.web_operation_result.clone(),

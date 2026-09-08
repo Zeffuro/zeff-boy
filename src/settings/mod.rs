@@ -1,9 +1,13 @@
+mod autofire;
 mod binding_actions;
 mod document;
 mod enums;
 mod gamepad;
+mod input_bindings;
+mod input_calibration;
 mod input_devices;
 mod input_profiles;
+mod input_scopes;
 mod keyboard_bindings;
 mod keycode_serde;
 mod shortcuts;
@@ -11,18 +15,31 @@ mod structs;
 mod tilt_bindings;
 mod validation;
 
+pub(crate) use autofire::{AutofireOverride, AutofirePattern, AutofireTarget, ResolvedAutofire};
 pub(crate) use binding_actions::{BindingAction, InputBindingAction, WonderSwanButton};
 pub(crate) use enums::{
-    AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset, EffectPreset,
-    EffectiveColorCorrection, GbaColorCorrection, LeftStickMode, NesPaletteMode, PceOverscanMode,
-    PcePaletteMode, ScalingMode, TiltInputMode, UiDensity, UiThemePreset, VsyncMode,
-    WonderSwanColorCorrection, build_gpu_params, default_color_correction_matrix,
+    AudioBufferPolicy, AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset,
+    EffectPreset, EffectiveColorCorrection, GbaColorCorrection, LeftStickMode, NesPaletteMode,
+    PceOverscanMode, PcePaletteMode, ScalingMode, TiltInputMode, UiDensity, UiThemePreset,
+    VsyncMode, WonderSwanColorCorrection, build_gpu_params, default_color_correction_matrix,
     default_offscreen_scale, effective_gb_color_correction, effective_gba_color_correction,
     effective_wonderswan_color_correction,
 };
 pub(crate) use gamepad::{GamepadAction, GamepadBindings};
+pub(crate) use input_bindings::{
+    AxisBinding, AxisDirection, BindingExpression, BindingExpressionKind, BindingSet,
+    BindingSetOverride, InputAxis, MAX_BINDING_ALTERNATIVES, MAX_CHORD_ATOMS,
+};
+pub(crate) use input_calibration::{
+    AxisCalibration, GamepadCalibration, MIN_AXIS_SPAN, ModelCalibration, StickCalibration,
+};
 pub(crate) use input_devices::{GamepadAssignment, GamepadFingerprint, InputDeviceSettings};
 pub(crate) use input_profiles::{InputProfileBindings, InputProfileCatalog};
+pub(crate) use input_scopes::{
+    BindingTarget, GameplayBindingSource, GameplayTransform, InputGameKey, InputOverrides,
+    InputScope, InputSystem, PhysicalBinding, ResolvedBindingSet, ResolvedGameplayInput,
+    TransformValue,
+};
 pub(crate) use keyboard_bindings::{KeyBindings, PceMultitapKeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
@@ -74,6 +91,7 @@ pub(crate) struct Settings {
     pub(crate) gamepad_bindings: GamepadBindings,
     pub(crate) input_devices: InputDeviceSettings,
     pub(crate) input_profiles: InputProfileCatalog,
+    pub(crate) input_overrides: InputOverrides,
     #[serde(flatten)]
     pub(crate) camera: CameraSettings,
     #[serde(skip)]
@@ -99,6 +117,7 @@ impl Default for Settings {
             gamepad_bindings: GamepadBindings::default(),
             input_devices: InputDeviceSettings::default(),
             input_profiles: InputProfileCatalog::default(),
+            input_overrides: InputOverrides::default(),
             camera: CameraSettings::default(),
             persistence: document::PersistenceMetadata::default(),
         }
@@ -186,8 +205,25 @@ impl Settings {
         document::save(self);
     }
 
+    pub(crate) fn export_settings_json(&self) -> anyhow::Result<String> {
+        document::export(self)
+    }
+
+    pub(crate) fn import_settings_json(&mut self, json: &str) -> anyhow::Result<()> {
+        document::import(self, json)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn accept_browser_settings(&mut self) -> anyhow::Result<()> {
+        document::accept_browser_settings(self)
+    }
+
     pub(crate) fn persistence_notice(&self) -> Option<String> {
         self.persistence.notice()
+    }
+
+    pub(crate) fn can_retry_settings_save(&self) -> bool {
+        self.persistence.can_retry_save()
     }
 
     pub(crate) fn take_persistence_notification(&self) -> Option<String> {

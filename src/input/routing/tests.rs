@@ -9,6 +9,414 @@ fn fingerprint(name: &str) -> GamepadFingerprint {
     }
 }
 
+fn typed_target(player: u8, action: BindingAction) -> BindingTarget {
+    BindingTarget::Joypad { player, action }
+}
+
+fn bind_typed(
+    settings: &mut crate::settings::Settings,
+    target: BindingTarget,
+    bindings: BindingSet,
+) {
+    settings
+        .set_binding_set(
+            &crate::settings::InputScope::Global,
+            target,
+            GameplayBindingSource::Gamepad,
+            Some(bindings),
+        )
+        .unwrap();
+}
+
+fn typed_axis(press: f32, release: f32) -> BindingExpression {
+    let mut axis = crate::settings::AxisBinding::new(InputAxis::RightX, AxisDirection::Positive);
+    axis.press_threshold = press;
+    axis.release_threshold = release;
+    BindingExpression::axis(axis)
+}
+
+fn resolve_typed(
+    router: &mut GamepadRouter,
+    settings: &crate::settings::Settings,
+    capture: bool,
+) -> EffectiveGamepads {
+    let resolved = settings.resolve_gameplay_input(&crate::settings::InputScope::Global);
+    router.configure_typed(&resolved);
+    router.resolve(
+        &settings.input_devices,
+        &resolved.gamepad,
+        capture,
+        resolved.tilt.deadzone,
+    )
+}
+
+fn typed_router(settings: &crate::settings::Settings, pads: usize) -> GamepadRouter {
+    let mut router = GamepadRouter::default();
+    resolve_typed(&mut router, settings, false);
+    for index in 1..=pads {
+        connect(&mut router, index as u64, "pad");
+    }
+    resolve_typed(&mut router, settings, false);
+    router
+}
+
+#[test]
+fn typed_button_alternatives_release_only_after_the_last_held_control() {
+    let mut settings = crate::settings::Settings::default();
+    let mut alternatives = BindingSet::new(BindingExpression::gamepad_button("South"));
+    alternatives
+        .add_expression(BindingExpression::gamepad_button("East"))
+        .unwrap();
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        alternatives,
+    );
+    let mut router = typed_router(&settings, 1);
+    let id = RuntimeGamepadId(1);
+    let a = HostButton::A.host_mask_bit();
+    router.button(id, "South", true);
+    assert_ne!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons & a,
+        0
+    );
+    router.button(id, "East", true);
+    router.button(id, "South", false);
+    assert_ne!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons & a,
+        0
+    );
+    router.button(id, "East", false);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+}
+
+#[test]
+fn typed_singleton_is_removed_from_legacy_first_match_routing() {
+    let mut settings = crate::settings::Settings::default();
+    settings
+        .gamepad_bindings
+        .set_for_player(BindingAction::B, 1, "South");
+    let mut router = typed_router(&settings, 1);
+    let id = RuntimeGamepadId(1);
+    router.button(id, "South", true);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        BindingSet::new(BindingExpression::gamepad_button("South")),
+    );
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    router.button(id, "South", false);
+    resolve_typed(&mut router, &settings, false);
+    router.button(id, "South", true);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit() | HostButton::B.host_mask_bit()
+    );
+}
+
+#[test]
+fn typed_axis_chord_maintains_axis_state_when_its_button_is_released() {
+    let mut settings = crate::settings::Settings::default();
+    let chord = BindingExpression::chord(vec![
+        BindingExpression::gamepad_button("South"),
+        typed_axis(0.75, 0.25),
+    ]);
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        BindingSet::new(chord),
+    );
+    let mut router = typed_router(&settings, 1);
+    let id = RuntimeGamepadId(1);
+    router.right_stick(id, (0.8, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    router.button(id, "South", true);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+    router.right_stick(id, (0.5, 0.0));
+    router.button(id, "South", false);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    router.button(id, "South", true);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+    router.right_stick(id, (0.25, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    router.right_stick(id, (0.5, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    router.right_stick(id, (0.75, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+}
+
+#[test]
+fn hysteresis_is_separate_for_alternatives_players_and_devices() {
+    let mut settings = crate::settings::Settings::default();
+    let mut alternatives = BindingSet::new(typed_axis(0.8, 0.2));
+    alternatives.add_expression(typed_axis(0.5, 0.4)).unwrap();
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        alternatives.clone(),
+    );
+    bind_typed(
+        &mut settings,
+        typed_target(2, BindingAction::A),
+        alternatives,
+    );
+    let mut router = typed_router(&settings, 2);
+    router.right_stick(RuntimeGamepadId(1), (0.6, 0.0));
+    let first = resolve_typed(&mut router, &settings, false);
+    assert_eq!(first.players[0].buttons, HostButton::A.host_mask_bit());
+    assert_eq!(first.players[1].buttons, 0);
+    router.right_stick(RuntimeGamepadId(1), (0.3, 0.0));
+    router.right_stick(RuntimeGamepadId(2), (0.3, 0.0));
+    let next = resolve_typed(&mut router, &settings, false);
+    assert_eq!(next.players[0].buttons, 0);
+    assert_eq!(next.players[1].buttons, 0);
+    router.right_stick(RuntimeGamepadId(1), (0.9, 0.0));
+    resolve_typed(&mut router, &settings, false);
+    router.right_stick(RuntimeGamepadId(1), (0.3, 0.0));
+    let held = resolve_typed(&mut router, &settings, false);
+    assert_eq!(held.players[0].buttons, HostButton::A.host_mask_bit());
+    assert_eq!(held.players[1].buttons, 0);
+}
+
+#[test]
+fn rebind_below_global_deadzone_still_requires_axis_release_threshold() {
+    let mut settings = crate::settings::Settings::default();
+    settings.tilt.deadzone = 0.3;
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        BindingSet::new(typed_axis(0.1, 0.05)),
+    );
+    let mut router = typed_router(&settings, 1);
+    let id = RuntimeGamepadId(1);
+    router.right_stick(id, (0.2, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        BindingSet::new(typed_axis(0.15, 0.05)),
+    );
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    assert!(router.snapshot.devices[0].waiting_for_neutral);
+    router.right_stick(id, (0.04, 0.0));
+    resolve_typed(&mut router, &settings, false);
+    assert!(!router.snapshot.devices[0].waiting_for_neutral);
+    router.right_stick(id, (0.2, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+}
+
+#[test]
+fn capture_neutrality_includes_explicit_right_axes_only_for_their_player() {
+    let mut settings = crate::settings::Settings::default();
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        BindingSet::new(typed_axis(0.75, 0.25)),
+    );
+    let mut router = typed_router(&settings, 2);
+    let id = RuntimeGamepadId(1);
+    router.right_stick(id, (0.8, 0.0));
+    router.right_stick(RuntimeGamepadId(2), (0.9, 0.9));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, true),
+        EffectiveGamepads::default()
+    );
+    assert!(!router.snapshot.capture_ready);
+    router.right_stick(id, (0.0, 0.0));
+    resolve_typed(&mut router, &settings, true);
+    assert!(router.snapshot.capture_ready);
+    router.right_stick(id, (0.8, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    router.right_stick(id, (0.0, 0.0));
+    resolve_typed(&mut router, &settings, false);
+    router.right_stick(id, (0.8, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+}
+
+#[test]
+fn disconnect_and_reassignment_cannot_transfer_axis_latches() {
+    let mut settings = crate::settings::Settings::default();
+    for player in [1, 2] {
+        bind_typed(
+            &mut settings,
+            typed_target(player, BindingAction::A),
+            BindingSet::new(typed_axis(0.75, 0.25)),
+        );
+    }
+    let mut router = typed_router(&settings, 1);
+    router.right_stick(RuntimeGamepadId(1), (0.8, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+    router.disconnect(RuntimeGamepadId(1));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false),
+        EffectiveGamepads::default()
+    );
+    connect(&mut router, 2, "pad");
+    router.right_stick(RuntimeGamepadId(2), (0.5, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    router.right_stick(RuntimeGamepadId(2), (0.8, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        HostButton::A.host_mask_bit()
+    );
+    settings.input_devices.players[0] = GamepadAssignment::Disabled;
+    let moved = resolve_typed(&mut router, &settings, false);
+    assert_eq!(moved.players[0].buttons, 0);
+    assert_eq!(moved.players[1].buttons, 0);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[1].buttons,
+        0
+    );
+    router.right_stick(RuntimeGamepadId(2), (0.0, 0.0));
+    resolve_typed(&mut router, &settings, false);
+    router.right_stick(RuntimeGamepadId(2), (0.8, 0.0));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[1].buttons,
+        HostButton::A.host_mask_bit()
+    );
+}
+
+#[test]
+fn typed_inputs_preserve_quick_frontend_pause_edges() {
+    let mut settings = crate::settings::Settings::default();
+    settings
+        .gamepad_bindings
+        .set_action(GamepadAction::Pause, "South");
+    bind_typed(
+        &mut settings,
+        typed_target(1, BindingAction::A),
+        BindingSet::new(BindingExpression::gamepad_button("South")),
+    );
+    let mut router = typed_router(&settings, 1);
+    router.button(RuntimeGamepadId(1), "South", true);
+    router.button(RuntimeGamepadId(1), "South", false);
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).players[0].buttons,
+        0
+    );
+    assert_eq!(router.take_pause_presses(), 1);
+    assert_eq!(router.take_pause_presses(), 0);
+}
+
+#[test]
+fn wonderswan_typed_right_axis_uses_only_player_one_and_keeps_raw_diagnostics() {
+    let mut settings = crate::settings::Settings::default();
+    let axis = crate::settings::AxisBinding::new(InputAxis::RightY, AxisDirection::Negative);
+    bind_typed(
+        &mut settings,
+        BindingTarget::WonderSwan(crate::settings::WonderSwanButton::X1),
+        BindingSet::new(BindingExpression::axis(axis)),
+    );
+    let mut router = typed_router(&settings, 2);
+    router.right_stick(RuntimeGamepadId(2), (0.0, -0.8));
+    assert_eq!(resolve_typed(&mut router, &settings, false).ws, 0);
+    router.right_stick(RuntimeGamepadId(1), (0.0, -0.8));
+    assert_eq!(
+        resolve_typed(&mut router, &settings, false).ws,
+        ws_bit(crate::settings::WonderSwanButton::X1)
+    );
+    assert_eq!(router.snapshot.devices[0].right_stick, (0.0, -0.8));
+}
+
+#[test]
+fn action_rebind_preserves_held_gameplay_and_waits_for_a_new_press() {
+    let mut router = GamepadRouter::default();
+    let mut bindings = GamepadBindings::default();
+    let preferences = InputDeviceSettings::default();
+    connect(&mut router, 1, "pad");
+    router.resolve(&preferences, &bindings, false, 0.3);
+    router.button(RuntimeGamepadId(1), "South", true);
+    let before = router.resolve(&preferences, &bindings, false, 0.3);
+    assert_ne!(before.players[0].buttons, 0);
+    bindings.set_action(GamepadAction::Pause, "South");
+    let after = router.resolve(&preferences, &bindings, false, 0.3);
+    assert_eq!(after.players[0], before.players[0]);
+    assert_eq!(after.actions, 0);
+    assert_eq!(router.take_pause_presses(), 0);
+    router.resolve(&preferences, &bindings, false, 0.3);
+    assert_eq!(router.take_pause_presses(), 0);
+    router.button(RuntimeGamepadId(1), "South", false);
+    router.resolve(&preferences, &bindings, false, 0.3);
+    router.button(RuntimeGamepadId(1), "South", true);
+    assert_eq!(router.take_pause_presses(), 1);
+    assert_eq!(
+        router.resolve(&preferences, &bindings, false, 0.3).players[0],
+        before.players[0]
+    );
+}
+
+#[test]
+fn explicit_barrier_releases_unchanged_mapping_until_physical_neutral() {
+    let mut router = GamepadRouter::default();
+    connect(&mut router, 1, "pad");
+    resolve(&mut router);
+    router.button(RuntimeGamepadId(1), "South", true);
+    assert_ne!(resolve(&mut router).players[0].buttons, 0);
+    router.apply_command(GamepadCommand::Neutralize);
+    assert_eq!(resolve(&mut router).players[0].buttons, 0);
+    assert_eq!(resolve(&mut router).players[0].buttons, 0);
+    router.button(RuntimeGamepadId(1), "South", false);
+    resolve(&mut router);
+    router.button(RuntimeGamepadId(1), "South", true);
+    assert_ne!(resolve(&mut router).players[0].buttons, 0);
+}
+
 #[test]
 fn right_stick_diagnostics_do_not_change_gameplay_or_capture_readiness() {
     let mut router = GamepadRouter::default();
@@ -53,6 +461,129 @@ fn right_stick_diagnostics_normalize_invalid_axes() {
     router.right_stick(RuntimeGamepadId(1), (-2.0, 2.0));
     resolve(&mut router);
     assert_eq!(router.snapshot.devices[0].right_stick, (-1.0, 1.0));
+}
+
+#[test]
+fn model_calibration_preserves_raw_diagnostics_and_maps_both_sticks() {
+    let mut router = GamepadRouter::default();
+    let mut preferences = InputDeviceSettings::default();
+    let fingerprint = fingerprint("pad");
+    preferences.set_calibration(
+        fingerprint.clone(),
+        crate::settings::GamepadCalibration {
+            left: crate::settings::StickCalibration {
+                x: crate::settings::AxisCalibration {
+                    min: -0.8,
+                    center: 0.2,
+                    max: 0.8,
+                },
+                y: Default::default(),
+            },
+            right: crate::settings::StickCalibration {
+                x: Default::default(),
+                y: crate::settings::AxisCalibration {
+                    min: -0.9,
+                    center: -0.2,
+                    max: 0.6,
+                },
+            },
+        },
+    );
+    router.connect(RuntimeGamepadId(1), fingerprint);
+    // A preference transition establishes a calibrated-neutral rearm barrier.
+    router.resolve(&preferences, &GamepadBindings::default(), false, 0.3);
+    router.resolve(&preferences, &GamepadBindings::default(), false, 0.3);
+    router.stick(RuntimeGamepadId(1), (0.5, -0.4));
+    router.right_stick(RuntimeGamepadId(1), (0.25, 0.2));
+
+    let effective = router.resolve(&preferences, &GamepadBindings::default(), false, 0.3);
+    assert_eq!(effective.players[0].stick, (0.5, -0.4));
+    let device = &router.snapshot.devices[0];
+    assert_eq!(device.left_stick, (0.5, -0.4));
+    assert_eq!(device.calibrated_left_stick, (0.5, -0.4));
+    assert_eq!(device.right_stick, (0.25, 0.2));
+    assert_eq!(device.calibrated_right_stick, (0.25, 0.5));
+    assert!(router.snapshot.sample_generation > 0);
+}
+
+#[test]
+fn invalid_model_calibration_falls_back_to_normalized_raw_input() {
+    let mut router = GamepadRouter::default();
+    let mut preferences = InputDeviceSettings::default();
+    let fingerprint = fingerprint("pad");
+    preferences.set_calibration(
+        fingerprint.clone(),
+        crate::settings::GamepadCalibration {
+            left: crate::settings::StickCalibration {
+                x: crate::settings::AxisCalibration {
+                    min: -1.0,
+                    center: -0.99,
+                    max: 1.0,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    router.connect(RuntimeGamepadId(1), fingerprint);
+    router.stick(RuntimeGamepadId(1), (0.4, 0.0));
+    assert_eq!(
+        router
+            .resolve(&preferences, &GamepadBindings::default(), false, 0.3)
+            .players[0]
+            .stick,
+        (0.4, 0.0)
+    );
+}
+
+#[test]
+fn calibration_change_requires_calibrated_neutral_before_rearming() {
+    let mut router = GamepadRouter::default();
+    let fingerprint = fingerprint("pad");
+    let mut preferences = InputDeviceSettings::default();
+    router.connect(RuntimeGamepadId(1), fingerprint.clone());
+    router.resolve(&preferences, &GamepadBindings::default(), false, 0.3);
+    router.stick(RuntimeGamepadId(1), (0.4, 0.0));
+    assert_eq!(
+        router
+            .resolve(&preferences, &GamepadBindings::default(), false, 0.3)
+            .players[0]
+            .stick,
+        (0.4, 0.0)
+    );
+
+    preferences.set_calibration(
+        fingerprint,
+        crate::settings::GamepadCalibration {
+            left: crate::settings::StickCalibration {
+                x: crate::settings::AxisCalibration {
+                    min: -0.8,
+                    center: 0.4,
+                    max: 0.8,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        router.resolve(&preferences, &GamepadBindings::default(), false, 0.3),
+        EffectiveGamepads::default()
+    );
+    assert_eq!(
+        router.resolve(&preferences, &GamepadBindings::default(), false, 0.3),
+        EffectiveGamepads::default()
+    );
+    assert_eq!(
+        router
+            .resolve(&preferences, &GamepadBindings::default(), false, 0.3)
+            .players[0]
+            .stick,
+        (0.0, 0.0)
+    );
+
+    router.resolve(&preferences, &GamepadBindings::default(), true, 0.3);
+    assert!(router.capture_accepts_press());
 }
 
 #[test]

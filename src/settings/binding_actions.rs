@@ -1,6 +1,4 @@
-use super::tilt_bindings::TiltBindingAction;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum BindingAction {
     Up,
     Down,
@@ -82,9 +80,24 @@ impl WonderSwanButton {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputBindingAction {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "retained for the legacy gameplay capture bridge")
+    )]
     Joypad(BindingAction),
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "retained for the legacy gameplay capture bridge")
+    )]
     JoypadP2(BindingAction),
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "retained for the legacy gameplay capture bridge")
+    )]
     PceMultitap { player: u8, action: BindingAction },
-    Tilt(TiltBindingAction),
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "retained for the legacy gameplay capture bridge")
+    )]
     WonderSwan(WonderSwanButton),
 }

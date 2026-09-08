@@ -86,6 +86,12 @@ impl EmuThread {
         replacement.advanced_frames = replacement
             .advanced_frames
             .saturating_add(replaced.advanced_frames);
+        replacement.completed_step_requests = replacement
+            .completed_step_requests
+            .saturating_add(replaced.completed_step_requests);
+        replacement.staged_input_frames = replacement
+            .staged_input_frames
+            .saturating_add(replaced.staged_input_frames);
         replacement.delivery_merged = true;
         if replacement.replay_error.is_none() {
             replacement.replay_error = replaced.replay_error;
@@ -186,6 +192,8 @@ impl EmuThread {
     ) -> FrameResult {
         FrameResult {
             advanced_frames,
+            completed_step_requests: 0,
+            staged_input_frames: 0,
             delivery_merged: false,
             replay_events: Vec::new(),
             replay_error: None,
@@ -215,6 +223,8 @@ mod tests {
     fn empty_result() -> FrameResult {
         FrameResult {
             advanced_frames: 0,
+            completed_step_requests: 0,
+            staged_input_frames: 0,
             delivery_merged: false,
             replay_events: Vec::new(),
             replay_error: None,
@@ -347,6 +357,28 @@ mod tests {
     }
 
     #[test]
+    fn merged_autonomous_and_step_results_preserve_independent_completion_counts() {
+        let (frame_tx, frame_rx) = crossbeam_channel::bounded(2);
+        let drain_rx = frame_rx.clone();
+        let mut autonomous = empty_result();
+        autonomous.advanced_frames = 17;
+        frame_tx.send(autonomous).unwrap();
+        let mut zero_step = empty_result();
+        zero_step.completed_step_requests = 1;
+        frame_tx.send(zero_step).unwrap();
+        let mut staged = empty_result();
+        staged.advanced_frames = 2;
+        staged.completed_step_requests = 1;
+        staged.staged_input_frames = 2;
+        assert!(EmuThread::send_frame(&frame_tx, &drain_rx, staged, false));
+        let delivered = frame_rx.recv().unwrap();
+        assert_eq!(delivered.advanced_frames, 19);
+        assert_eq!(delivered.completed_step_requests, 2);
+        assert_eq!(delivered.staged_input_frames, 2);
+        assert!(delivered.delivery_merged);
+    }
+
+    #[test]
     fn replacement_drops_audio_from_a_different_playback_speed() {
         let mut older = empty_result();
         older.audio_samples = vec![1.0, 2.0];
@@ -467,6 +499,8 @@ mod tests {
 
         let result = frame_rx.recv().unwrap();
         assert_eq!(result.advanced_frames, 7);
+        assert_eq!(result.completed_step_requests, 0);
+        assert_eq!(result.staged_input_frames, 0);
         assert_eq!(result.audio_semantic_frames.len(), 7);
     }
 

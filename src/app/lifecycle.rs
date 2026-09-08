@@ -33,32 +33,117 @@ fn restore_focus_and_redraw(window: &winit::window::Window) {
 }
 
 impl App {
-    pub(super) fn reset_audio_output(&mut self) {
-        if let Err(error) =
-            self.preflight_emu_command_kind(TasControlCommandKind::AudioOrTimingConfiguration)
+    pub(super) fn reset_audio_output(&mut self) -> bool {
+        self.reset_audio_output_inner(false, false)
+    }
+
+    pub(super) fn reset_audio_output_inner(
+        &mut self,
+        force_default: bool,
+        preserve_sample_rate: bool,
+    ) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        let _ = force_default;
+        let previous_rate = self.audio.as_ref().map_or(
+            self.last_audio_output_sample_rate,
+            AudioOutput::emulator_sample_rate,
+        );
+        let preferred = if preserve_sample_rate {
+            previous_rate
+        } else {
+            self.settings.audio.output_sample_rate
+        };
+        if preferred != previous_rate
+            && let Err(error) =
+                self.preflight_emu_command_kind(TasControlCommandKind::AudioOrTimingConfiguration)
         {
             self.toast_manager.error(error.to_string());
-            return;
+            return false;
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let host_config = (
+            self.settings.audio.output_device_id.clone(),
+            self.settings.audio.buffer_policy,
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        let buffer_fallback = (self.last_audio_host_config == host_config)
+            .then(|| {
+                self.debug_windows
+                    .settings_ui
+                    .audio_host_status
+                    .buffer_fallback
+                    .clone()
+            })
+            .flatten()
+            .filter(|fallback| fallback.requested == self.settings.audio.buffer_policy);
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut next_host_status = None;
         let audio = if std::env::var("ZEFF_MUTE_AUDIO").as_deref() == Ok("1") {
             None
         } else {
-            let preferred = self.settings.audio.output_sample_rate;
-            AudioOutput::new(Some(preferred))
-                .map_err(|e| log::warn!("Audio init failed: {e}"))
-                .ok()
+            #[cfg(not(target_arch = "wasm32"))]
+            let result = AudioOutput::new_with_host_config(crate::audio::AudioHostConfig {
+                preferred_sample_rate: Some(preferred),
+                output_device_id: if force_default {
+                    None
+                } else {
+                    self.settings.audio.output_device_id.as_deref()
+                },
+                buffer_policy: buffer_fallback
+                    .as_ref()
+                    .map_or(self.settings.audio.buffer_policy, |fallback| {
+                        fallback.active
+                    }),
+            })
+            .map(|mut initialized| {
+                initialized.status.buffer_fallback = buffer_fallback;
+                next_host_status = Some(initialized.status);
+                initialized.output
+            });
+            #[cfg(target_arch = "wasm32")]
+            let result = AudioOutput::new(Some(preferred));
+            match result {
+                Ok(audio) => Some(audio),
+                Err(error) => {
+                    let message = format!("Audio output could not be opened: {error}");
+                    log::warn!("{message}");
+                    self.toast_manager.error(message.clone());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        self.last_audio_host_config = host_config;
+                        self.debug_windows
+                            .settings_ui
+                            .audio_host_status
+                            .device_fallback = Some(message);
+                    }
+                    return false;
+                }
+            }
         };
         let sample_rate = audio
             .as_ref()
-            .map_or(DEFAULT_AUDIO_SAMPLE_RATE, AudioOutput::emulator_sample_rate);
+            .map_or(preferred, AudioOutput::emulator_sample_rate);
         if self.emu_thread.is_some()
+            && sample_rate != previous_rate
             && let Err(error) =
                 self.send_emu_command_checked(EmuCommand::SetSampleRate(sample_rate))
         {
             self.toast_manager.error(error.to_string());
-            return;
+            return false;
         }
         self.audio = audio;
+        self.last_audio_output_sample_rate = preferred;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.last_audio_host_config = host_config;
+            if let Some(status) = next_host_status {
+                if let Some(reason) = &status.device_fallback {
+                    self.toast_manager.warning(reason.clone());
+                }
+                self.debug_windows.settings_ui.audio_host_status = status;
+            }
+        }
+        true
     }
 
     pub(super) fn ensure_emu_thread(&mut self) {
@@ -251,6 +336,7 @@ impl App {
     pub(super) fn check_tab_visibility(&mut self) {
         let visible = self.wasm_tab_visible.get();
         if visible != self.wasm_tab_was_visible {
+            self.debug_windows.settings_ui.input_timing.pause();
             self.wasm_tab_was_visible = visible;
             self.handle_focus_change(visible);
             if !visible && let Some(thread) = &self.emu_thread {

@@ -349,12 +349,19 @@ impl App {
                             .ok_or_else(|| anyhow::anyhow!("no TAS editor project is open"))
                             .and_then(TasEditorControlSnapshot::capture)
                     });
-                if committed.is_ok() {
+                let committed_ok = committed.is_ok();
+                if committed_ok {
                     live_audio = Some(audio_samples);
                     live_rumble = Some(rumble);
                     live_ui_data = ui_data;
                 }
-                self.tas_control.finish_live_frame_commit(committed)
+                let disposition = self.tas_control.finish_live_frame_commit(committed);
+                if let Some(autofire_state) = self.pending_tas_autofire.take()
+                    && committed_ok
+                {
+                    self.autofire_state = autofire_state;
+                }
+                disposition
             }
             ResponseDisposition::PresentPlaybackFrame {
                 rumble,
@@ -371,6 +378,9 @@ impl App {
                 .continue_execution_replay(self.debug_windows.tas_editor.active_session()),
             disposition => disposition,
         };
+        if self.pending_tas_autofire.is_some() && !self.tas_control.live_frame_in_flight() {
+            self.pending_tas_autofire = None;
+        }
         if self.tas_control.take_realtime_recording_start_request()
             && let Err(error) = self.start_realtime_tas_recording()
         {

@@ -4,6 +4,11 @@ use crate::{
     settings::Settings,
 };
 
+use super::{
+    layout::{checkbox, helper, row},
+    search::{self, SettingId as Id},
+};
+
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut DebugWindowState) {
     if state.camera_devices_needs_refresh {
         match query_host_cameras() {
@@ -19,80 +24,101 @@ pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut Debug
         state.camera_devices_needs_refresh = false;
     }
 
-    ui.label(
+    helper(
+        ui,
         egui::RichText::new("Choose the host camera used by supported games.")
             .small()
             .weak(),
     );
-    ui.add_space(6.0);
-    ui.horizontal_wrapped(|ui| {
-        if ui.button("Refresh devices").clicked() {
-            state.camera_devices_needs_refresh = true;
-        }
-        if !host_camera_supported() {
-            ui.label(egui::RichText::new("Host camera unavailable in this build").weak());
-        }
-    });
+    ui.add_space(12.0);
+    if row(ui, Id::CameraRefreshCameraDevices, None, |ui| {
+        ui.button("Refresh devices")
+    })
+    .clicked()
+    {
+        state.camera_devices_needs_refresh = true;
+    }
+    if !host_camera_supported() {
+        helper(
+            ui,
+            egui::RichText::new("Host camera unavailable in this build").weak(),
+        );
+    }
 
     let selected_label = state
         .camera_devices
         .iter()
-        .find(|d| d.index == settings.camera.device_index)
-        .map(|d| format!("{} ({})", d.name, d.index))
+        .find(|device| device.index == settings.camera.device_index)
+        .map(|device| format!("{} ({})", device.name, device.index))
         .unwrap_or_else(|| format!("Camera {}", settings.camera.device_index));
-    egui::ComboBox::from_label("Camera device")
-        .selected_text(selected_label)
-        .show_ui(ui, |ui| {
-            for dev in &state.camera_devices {
-                ui.selectable_value(
-                    &mut settings.camera.device_index,
-                    dev.index,
-                    format!("{} ({})", dev.name, dev.index),
-                );
-            }
-        });
-
-    egui::CollapsingHeader::new("Advanced device selection").show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Device index");
-            ui.add(
-                egui::DragValue::new(&mut settings.camera.device_index)
-                    .range(0..=64)
-                    .speed(1),
-            );
-        });
+    row(ui, Id::CameraCameraDevice, None, |ui| {
+        egui::ComboBox::from_id_salt("camera_device")
+            .selected_text(selected_label)
+            .width(240.0)
+            .show_ui(ui, |ui| {
+                for device in &state.camera_devices {
+                    ui.selectable_value(
+                        &mut settings.camera.device_index,
+                        device.index,
+                        format!("{} ({})", device.name, device.index),
+                    );
+                }
+            })
+            .response
     });
 
+    egui::CollapsingHeader::new("Advanced device selection")
+        .open(search::requested(ui, Id::CameraCameraDeviceIndex).then_some(true))
+        .show(ui, |ui| {
+            row(ui, Id::CameraCameraDeviceIndex, None, |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut settings.camera.device_index)
+                        .range(0..=64)
+                        .speed(1),
+                )
+            });
+        });
+
     if let Some(err) = &state.camera_device_error {
-        ui.label(egui::RichText::new(err).small().weak());
+        helper(ui, egui::RichText::new(err).small().weak());
     }
 
-    ui.separator();
+    ui.add_space(22.0);
     ui.heading("Image tuning");
-    ui.checkbox(&mut settings.camera.auto_levels, "Automatic levels");
-
-    ui.add(
-        egui::Slider::new(&mut settings.camera.brightness, -1.0..=1.0)
-            .text("Brightness")
-            .step_by(0.01),
+    checkbox(
+        ui,
+        Id::CameraAutomaticLevels,
+        None,
+        &mut settings.camera.auto_levels,
     );
-
-    ui.add(
-        egui::Slider::new(&mut settings.camera.contrast, 0.25..=3.0)
-            .text("Contrast")
-            .step_by(0.01),
-    );
-
-    ui.add(
-        egui::Slider::new(&mut settings.camera.gamma, 0.4..=2.5)
-            .text("Gamma")
-            .step_by(0.01),
-    );
-
-    if ui.button("Reset camera tuning").clicked() {
-        settings.camera.auto_levels = false;
-        settings.camera.brightness = 0.15;
-        settings.camera.contrast = 1.65;
-        settings.camera.gamma = 1.05;
-    }
+    row(ui, Id::CameraCameraBrightness, None, |ui| {
+        ui.add_sized(
+            [240.0, 30.0],
+            egui::Slider::new(&mut settings.camera.brightness, -1.0..=1.0).step_by(0.01),
+        )
+    });
+    row(ui, Id::CameraCameraContrast, None, |ui| {
+        ui.add_sized(
+            [240.0, 30.0],
+            egui::Slider::new(&mut settings.camera.contrast, 0.25..=3.0).step_by(0.01),
+        )
+    });
+    row(ui, Id::CameraCameraGamma, None, |ui| {
+        ui.add_sized(
+            [240.0, 30.0],
+            egui::Slider::new(&mut settings.camera.gamma, 0.4..=2.5).step_by(0.01),
+        )
+    });
+    ui.indent("camera_tuning_reset", |ui| {
+        if row(ui, Id::CameraResetCameraTuning, None, |ui| {
+            ui.small_button("Reset camera tuning")
+        })
+        .clicked()
+        {
+            settings.camera.auto_levels = false;
+            settings.camera.brightness = 0.15;
+            settings.camera.contrast = 1.65;
+            settings.camera.gamma = 1.05;
+        }
+    });
 }
