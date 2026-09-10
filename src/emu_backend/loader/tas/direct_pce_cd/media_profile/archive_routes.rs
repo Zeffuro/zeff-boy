@@ -16,26 +16,161 @@ pub(super) fn archive_route(
 pub(super) fn archive_ppf_sync_config(
     format: PceCdArchiveFormat,
     selection: PceCdArchiveSelection,
+    expansion: PceCdExpansion,
+    controller: PceControllerMode,
 ) -> TasDigest {
-    match (format, selection) {
-        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Unique) => {
+    if controller == PceControllerMode::Multitap {
+        return match (format, selection, expansion) {
+            (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
+                direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256()
+            }
+            (
+                PceCdArchiveFormat::SevenZip,
+                PceCdArchiveSelection::Unique,
+                PceCdExpansion::ArcadeCard,
+            ) => direct_pce_multitap_cd_archive_ppf_arcade_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::SevenZip,
+                PceCdArchiveSelection::Unique,
+                PceCdExpansion::MemoryBase128,
+            ) => direct_pce_multitap_cd_archive_ppf_memory_base_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::SevenZip,
+                PceCdArchiveSelection::Selected,
+                PceCdExpansion::None,
+            ) => direct_pce_multitap_cd_selected_archive_ppf_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::SevenZip,
+                PceCdArchiveSelection::Selected,
+                PceCdExpansion::ArcadeCard,
+            ) => direct_pce_multitap_cd_selected_archive_ppf_arcade_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::SevenZip,
+                PceCdArchiveSelection::Selected,
+                PceCdExpansion::MemoryBase128,
+            ) => direct_pce_multitap_cd_selected_archive_ppf_memory_base_tas_sync_config_sha256(),
+            (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
+                direct_pce_multitap_cd_rar_ppf_tas_sync_config_sha256()
+            }
+            (
+                PceCdArchiveFormat::Rar,
+                PceCdArchiveSelection::Unique,
+                PceCdExpansion::ArcadeCard,
+            ) => direct_pce_multitap_cd_rar_ppf_arcade_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::Rar,
+                PceCdArchiveSelection::Unique,
+                PceCdExpansion::MemoryBase128,
+            ) => direct_pce_multitap_cd_rar_ppf_memory_base_tas_sync_config_sha256(),
+            (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
+                direct_pce_multitap_cd_selected_rar_ppf_tas_sync_config_sha256()
+            }
+            (
+                PceCdArchiveFormat::Rar,
+                PceCdArchiveSelection::Selected,
+                PceCdExpansion::ArcadeCard,
+            ) => direct_pce_multitap_cd_selected_rar_ppf_arcade_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::Rar,
+                PceCdArchiveSelection::Selected,
+                PceCdExpansion::MemoryBase128,
+            ) => direct_pce_multitap_cd_selected_rar_ppf_memory_base_tas_sync_config_sha256(),
+            (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
+                direct_pce_multitap_cd_zip_ppf_tas_sync_config_sha256()
+            }
+            (
+                PceCdArchiveFormat::Zip,
+                PceCdArchiveSelection::Unique,
+                PceCdExpansion::ArcadeCard,
+            ) => direct_pce_multitap_cd_zip_ppf_arcade_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::Zip,
+                PceCdArchiveSelection::Unique,
+                PceCdExpansion::MemoryBase128,
+            ) => direct_pce_multitap_cd_zip_ppf_memory_base_tas_sync_config_sha256(),
+            (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
+                direct_pce_multitap_cd_selected_zip_ppf_tas_sync_config_sha256()
+            }
+            (
+                PceCdArchiveFormat::Zip,
+                PceCdArchiveSelection::Selected,
+                PceCdExpansion::ArcadeCard,
+            ) => direct_pce_multitap_cd_selected_zip_ppf_arcade_tas_sync_config_sha256(),
+            (
+                PceCdArchiveFormat::Zip,
+                PceCdArchiveSelection::Selected,
+                PceCdExpansion::MemoryBase128,
+            ) => direct_pce_multitap_cd_selected_zip_ppf_memory_base_tas_sync_config_sha256(),
+        };
+    }
+    assert_eq!(controller, PceControllerMode::TwoButton);
+    match (format, selection, expansion) {
+        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
             direct_pce_cd_archive_ppf_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Selected) => {
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Unique,
+            PceCdExpansion::ArcadeCard,
+        ) => direct_pce_cd_archive_ppf_arcade_tas_sync_config_sha256(),
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Unique,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_cd_archive_ppf_memory_base_tas_sync_config_sha256(),
+        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
             direct_pce_cd_selected_archive_ppf_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique) => {
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::ArcadeCard,
+        ) => direct_pce_cd_selected_archive_ppf_arcade_tas_sync_config_sha256(),
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_cd_selected_archive_ppf_memory_base_tas_sync_config_sha256(),
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
             direct_pce_cd_rar_ppf_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Selected) => {
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique, PceCdExpansion::ArcadeCard) => {
+            direct_pce_cd_rar_ppf_arcade_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique, PceCdExpansion::MemoryBase128) => {
+            direct_pce_cd_rar_ppf_memory_base_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
             direct_pce_cd_selected_rar_ppf_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique) => {
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Selected, PceCdExpansion::ArcadeCard) => {
+            direct_pce_cd_selected_rar_ppf_arcade_tas_sync_config_sha256()
+        }
+        (
+            PceCdArchiveFormat::Rar,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_cd_selected_rar_ppf_memory_base_tas_sync_config_sha256(),
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
             direct_pce_cd_zip_ppf_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Selected) => {
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique, PceCdExpansion::ArcadeCard) => {
+            direct_pce_cd_zip_ppf_arcade_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique, PceCdExpansion::MemoryBase128) => {
+            direct_pce_cd_zip_ppf_memory_base_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
             direct_pce_cd_selected_zip_ppf_tas_sync_config_sha256()
         }
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Selected, PceCdExpansion::ArcadeCard) => {
+            direct_pce_cd_selected_zip_ppf_arcade_tas_sync_config_sha256()
+        }
+        (
+            PceCdArchiveFormat::Zip,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_cd_selected_zip_ppf_memory_base_tas_sync_config_sha256(),
     }
 }
 
@@ -117,25 +252,74 @@ pub(super) fn archive_sync_config(
 pub(super) fn archive_multitap_sync_config(
     format: PceCdArchiveFormat,
     selection: PceCdArchiveSelection,
+    expansion: PceCdExpansion,
 ) -> TasDigest {
-    match (format, selection) {
-        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Unique) => {
+    match (format, selection, expansion) {
+        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
             direct_pce_multitap_cd_archive_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Selected) => {
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Unique,
+            PceCdExpansion::ArcadeCard,
+        ) => direct_pce_multitap_cd_archive_arcade_tas_sync_config_sha256(),
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Unique,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_multitap_cd_archive_memory_base_tas_sync_config_sha256(),
+        (PceCdArchiveFormat::SevenZip, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
             direct_pce_multitap_cd_selected_archive_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique) => {
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::ArcadeCard,
+        ) => direct_pce_multitap_cd_selected_archive_arcade_tas_sync_config_sha256(),
+        (
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_multitap_cd_selected_archive_memory_base_tas_sync_config_sha256(),
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
             direct_pce_multitap_cd_rar_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Selected) => {
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique, PceCdExpansion::ArcadeCard) => {
+            direct_pce_multitap_cd_rar_arcade_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique, PceCdExpansion::MemoryBase128) => {
+            direct_pce_multitap_cd_rar_memory_base_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
             direct_pce_multitap_cd_selected_rar_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique) => {
+        (PceCdArchiveFormat::Rar, PceCdArchiveSelection::Selected, PceCdExpansion::ArcadeCard) => {
+            direct_pce_multitap_cd_selected_rar_arcade_tas_sync_config_sha256()
+        }
+        (
+            PceCdArchiveFormat::Rar,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_multitap_cd_selected_rar_memory_base_tas_sync_config_sha256(),
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique, PceCdExpansion::None) => {
             direct_pce_multitap_cd_zip_tas_sync_config_sha256()
         }
-        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Selected) => {
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique, PceCdExpansion::ArcadeCard) => {
+            direct_pce_multitap_cd_zip_arcade_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique, PceCdExpansion::MemoryBase128) => {
+            direct_pce_multitap_cd_zip_memory_base_tas_sync_config_sha256()
+        }
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Selected, PceCdExpansion::None) => {
             direct_pce_multitap_cd_selected_zip_tas_sync_config_sha256()
         }
+        (PceCdArchiveFormat::Zip, PceCdArchiveSelection::Selected, PceCdExpansion::ArcadeCard) => {
+            direct_pce_multitap_cd_selected_zip_arcade_tas_sync_config_sha256()
+        }
+        (
+            PceCdArchiveFormat::Zip,
+            PceCdArchiveSelection::Selected,
+            PceCdExpansion::MemoryBase128,
+        ) => direct_pce_multitap_cd_selected_zip_memory_base_tas_sync_config_sha256(),
     }
 }

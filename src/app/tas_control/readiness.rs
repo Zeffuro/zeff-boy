@@ -259,8 +259,11 @@ pub(in crate::app) fn evaluate(
     );
     let exact_ppf_profile = unpatched_disc_witness
         && ((observation.profile == TasExecutionProfile::DirectPceMultitapCd
-            && identity.sync_config_sha256
-                == crate::emu_backend::loader::direct_pce_multitap_cd_ppf_tas_sync_config_sha256())
+            && (crate::emu_backend::loader::is_direct_pce_multitap_cd_ppf_tas_sync_config_sha256(
+                identity.sync_config_sha256,
+            ) || crate::emu_backend::loader::is_direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256(
+                identity.sync_config_sha256,
+            )))
             || (observation.profile == TasExecutionProfile::DirectPceCd
                 && crate::emu_backend::loader::is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
                     identity.sync_config_sha256,

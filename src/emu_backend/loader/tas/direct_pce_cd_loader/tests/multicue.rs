@@ -272,8 +272,17 @@ pub(super) fn write_multicue_archive_with_second_fill(
     kind: ArchiveKind,
     second_fill: u8,
 ) -> Result<()> {
+    write_multicue_archive_with_fills(path, kind, 0x11, second_fill)
+}
+
+pub(super) fn write_multicue_archive_with_fills(
+    path: &Path,
+    kind: ArchiveKind,
+    first_fill: u8,
+    second_fill: u8,
+) -> Result<()> {
     let cue = b"FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n";
-    let first = vec![0x11; 4 * zeff_pce_core::hardware::CD_USER_SECTOR_BYTES];
+    let first = vec![first_fill; 4 * zeff_pce_core::hardware::CD_USER_SECTOR_BYTES];
     let mut second = vec![second_fill; 4 * zeff_pce_core::hardware::CD_USER_SECTOR_BYTES];
     second[0..4].copy_from_slice(&[0x4D, 0x54, second_fill, second_fill.rotate_left(1)]);
     match kind {

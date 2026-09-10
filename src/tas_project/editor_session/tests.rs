@@ -334,7 +334,7 @@ fn assert_corrupt_history_restore_fails_atomically(session: &mut TasEditorSessio
             &mut session.history.redo.entries
         };
         let entry = entries.back_mut().expect("history entry should exist");
-        entry.project_bytes.truncate(8);
+        entry.project_bytes = entry.project_bytes[..8].into();
         entry.project_bytes.clone()
     };
     let package = session.project().encode().unwrap();
@@ -476,4 +476,111 @@ fn history_evicts_oldest_snapshots_at_its_entry_bound() {
     assert_eq!(session.project().project_comment(), "one");
     assert!(!session.undo().unwrap());
     assert_eq!(session.redo_count(), 2);
+}
+
+#[test]
+fn recording_checkpoint_restores_history_evicted_by_the_byte_budget() {
+    let root = crate::test_support::test_directory("tas-recording-history-byte-budget").unwrap();
+    let manual_path = root.path().join("movie.ztas");
+    let (autosaves, seek_cache) = stores(root.path(), &manual_path);
+    let mut session = TasEditorSession::new(
+        crate::tas_project::tests::project(),
+        &manual_path,
+        autosaves,
+        seek_cache,
+    )
+    .unwrap();
+    session
+        .edit_transaction(|edit| {
+            edit.set_input_range(
+                "main",
+                0,
+                1,
+                TasInputFrame {
+                    tilt_x_bits: 1,
+                    ..TasInputFrame::default()
+                },
+            )
+        })
+        .unwrap();
+    let snapshot_bytes =
+        session.project().encode().unwrap().len() + session.selected_branch_id().len();
+    let byte_budget = snapshot_bytes.saturating_mul(3) / 2;
+    assert!(snapshot_bytes <= byte_budget);
+    assert!(byte_budget < snapshot_bytes.saturating_mul(2));
+    session.history = TasEditorHistory::new(32, byte_budget);
+    session
+        .edit_transaction(|edit| {
+            edit.set_input_range(
+                "main",
+                0,
+                1,
+                TasInputFrame {
+                    tilt_x_bits: 2,
+                    ..TasInputFrame::default()
+                },
+            )
+        })
+        .unwrap();
+    let before_draft = session.project().encode().unwrap();
+    let checkpoint = session
+        .begin_recording_draft("main", session.selected_branch().frame_count())
+        .unwrap();
+    assert_eq!(session.undo_count(), 1);
+    session
+        .edit_transaction(|edit| {
+            edit.set_input_range(
+                "main",
+                12,
+                1,
+                TasInputFrame {
+                    tilt_x_bits: 3,
+                    ..TasInputFrame::default()
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(session.undo_count(), 1);
+
+    session.discard_recording_draft(&checkpoint).unwrap();
+    assert_eq!(session.project().encode().unwrap(), before_draft);
+    assert_eq!(session.undo_count(), 1);
+    assert!(!session.can_redo());
+    assert!(session.undo().unwrap());
+    assert_eq!(session.selected_branch().input_at(0).tilt_x_bits, 1);
+}
+
+#[test]
+fn recording_checkpoint_failure_and_restore_leave_prepared_frames_stale() {
+    let root = crate::test_support::test_directory("tas-recording-checkpoint-atomic").unwrap();
+    let manual_path = root.path().join("movie.ztas");
+    let (autosaves, seek_cache) = stores(root.path(), &manual_path);
+    let mut session = TasEditorSession::new(
+        crate::tas_project::tests::project(),
+        &manual_path,
+        autosaves,
+        seek_cache,
+    )
+    .unwrap();
+    let prepared = session
+        .prepare_live_frame(TasInputFrame::default())
+        .unwrap();
+    let checkpoint = session
+        .begin_recording_draft("main", session.selected_branch().frame_count())
+        .unwrap();
+    let draft = session.project().encode().unwrap();
+    let draft_cursor = session.cursor();
+    session.history = TasEditorHistory::new(32, 1);
+
+    assert!(
+        session
+            .begin_recording_draft("main", session.selected_branch().frame_count())
+            .is_err()
+    );
+    assert_eq!(session.project().encode().unwrap(), draft);
+    assert_eq!(session.cursor(), draft_cursor);
+    assert_eq!(session.undo_count(), 0);
+
+    session.discard_recording_draft(&checkpoint).unwrap();
+    assert!(session.commit_prepared_live_frame(prepared).is_err());
 }

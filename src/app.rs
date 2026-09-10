@@ -301,6 +301,8 @@ pub(crate) fn run(
         #[cfg(not(target_arch = "wasm32"))]
         tas_control: tas_control::TasControlCoordinator::new(),
         #[cfg(not(target_arch = "wasm32"))]
+        tas_editor_live_validation_cache: tas_editor::TasEditorLiveValidationCache::default(),
+        #[cfg(not(target_arch = "wasm32"))]
         tas_repair: tas_control::repair::TasRepairManager::new(),
         #[cfg(not(target_arch = "wasm32"))]
         pending_tas_repair_activation: None,
@@ -502,6 +504,8 @@ struct App {
     tcp_link_active: bool,
     #[cfg(not(target_arch = "wasm32"))]
     tas_control: tas_control::TasControlCoordinator,
+    #[cfg(not(target_arch = "wasm32"))]
+    tas_editor_live_validation_cache: tas_editor::TasEditorLiveValidationCache,
     #[cfg(not(target_arch = "wasm32"))]
     tas_repair: tas_control::repair::TasRepairManager,
     #[cfg(not(target_arch = "wasm32"))]

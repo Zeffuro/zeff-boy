@@ -105,14 +105,23 @@ fn hash_complete_branch(
     sync_identity: TasDigest,
     branch: &super::model::TasBranch,
 ) -> Result<TasDigest> {
-    let input_bytes = serde_json::to_vec(&branch.input_spans)?;
-    let event_bytes = encode_canonical_replay_event_stream(&branch.events)?;
-    hash_branch_bytes(
+    hash_complete_branch_parts(
         sync_identity,
         branch.frame_count,
-        &input_bytes,
-        &event_bytes,
+        &branch.input_spans,
+        &branch.events,
     )
+}
+
+pub(super) fn hash_complete_branch_parts(
+    sync_identity: TasDigest,
+    frame_count: u64,
+    input_spans: &[TasInputSpan],
+    events: &[zeff_emu_common::replay::ReplayEvent],
+) -> Result<TasDigest> {
+    let input_bytes = serde_json::to_vec(input_spans)?;
+    let event_bytes = encode_canonical_replay_event_stream(events)?;
+    hash_branch_bytes(sync_identity, frame_count, &input_bytes, &event_bytes)
 }
 
 pub(super) fn hash_branch(

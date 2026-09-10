@@ -12,13 +12,11 @@ impl TasEditorWindowState {
         let session = self.session_mut()?;
         let branch_id = session.selected_branch_id().to_owned();
         let cursor = session.selected_branch().frame_count();
-        let draft_undo_count = session.undo_count();
-        session.edit_transaction(|edit| edit.insert_frames(&branch_id, cursor, 1))?;
-        session.set_cursor(cursor)?;
+        let checkpoint = session.begin_recording_draft(&branch_id, cursor)?;
         self.recording = Some(TasEditorRecordingState {
             branch_id,
             cursor,
-            draft_undo_count,
+            checkpoint,
         });
         self.execution_preview.clear();
         Ok(Some(format!("Editing new input frame {cursor}")))
@@ -27,7 +25,7 @@ impl TasEditorWindowState {
     pub(super) fn capture_recording_frame(&mut self) -> Result<Option<String>> {
         let recording = self
             .recording
-            .clone()
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("frame recording is not active"))?;
         let session = self
             .session
@@ -37,11 +35,11 @@ impl TasEditorWindowState {
             || session.cursor() != recording.cursor
             || recording.cursor >= session.selected_branch().frame_count()
         {
-            self.recording = None;
-            bail!("the recording row changed; start recording again");
+            bail!("the recording row changed; finish manual row entry and start again");
         }
-        let next_cursor = recording
-            .cursor
+        let branch_id = recording.branch_id.clone();
+        let accepted_cursor = recording.cursor;
+        let next_cursor = accepted_cursor
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("TAS recording cursor overflow"))?;
         if matches!(
@@ -51,18 +49,21 @@ impl TasEditorWindowState {
             self.execute_private_seek(next_cursor)?;
         }
         let session = self.session_mut()?;
-        let branch_id = recording.branch_id.clone();
-        let draft_undo_count = session.undo_count();
-        session.edit_transaction(|edit| edit.insert_frames(&branch_id, next_cursor, 1))?;
-        session.set_cursor(next_cursor)?;
+        let checkpoint = match session.begin_recording_draft(&branch_id, next_cursor) {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                session.set_cursor(accepted_cursor)?;
+                return Err(error);
+            }
+        };
         self.recording = Some(TasEditorRecordingState {
             branch_id,
             cursor: next_cursor,
-            draft_undo_count,
+            checkpoint,
         });
         Ok(Some(format!(
             "Kept input frame {}; ready for frame {next_cursor}",
-            recording.cursor
+            accepted_cursor
         )))
     }
 
@@ -78,10 +79,19 @@ impl TasEditorWindowState {
         let Some(recording) = self.recording.take() else {
             return Ok(false);
         };
-        self.session_mut()?
-            .discard_edits_after(recording.draft_undo_count)?;
-        self.execution_preview.clear();
-        Ok(true)
+        match self
+            .session_mut()
+            .and_then(|session| session.discard_recording_draft(&recording.checkpoint))
+        {
+            Ok(()) => {
+                self.execution_preview.clear();
+                Ok(true)
+            }
+            Err(error) => {
+                self.recording = Some(recording);
+                Err(error)
+            }
+        }
     }
 }
 

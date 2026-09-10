@@ -207,18 +207,17 @@ fn tilt_project_preserves_recorded_sensor_input_through_direct_execution_and_rep
 }
 
 #[test]
-fn rejects_pre_timer_fix_standard_and_tilt_determinism_abis() -> Result<()> {
+fn rejects_prior_timer_and_irq_standard_and_tilt_determinism_abis() -> Result<()> {
     let (_directory, standard_loader, _) = loader("tas-gba-old-standard-abi")?;
     let standard = standard_loader.create_project()?;
     assert!(DirectGbaTasExecutionLoader::validate_project_branch_scope(&standard, "main").is_ok());
-    let old_standard = project_with_determinism_abi(
-        &standard,
-        "gba-old-standard-abi",
-        "zeff-gba-tas-determinism-v3",
-    )?;
-    assert!(
-        DirectGbaTasExecutionLoader::validate_project_branch_scope(&old_standard, "main").is_err()
-    );
+    for abi in ["zeff-gba-tas-determinism-v3", "zeff-gba-tas-determinism-v4"] {
+        let old_standard = project_with_determinism_abi(&standard, "gba-old-standard-abi", abi)?;
+        assert!(
+            DirectGbaTasExecutionLoader::validate_project_branch_scope(&old_standard, "main")
+                .is_err()
+        );
+    }
 
     let tilt_directory = crate::test_support::test_directory("tas-gba-old-tilt-abi")?;
     let tilt_path = tilt_directory.path().join("tilt.gba");
@@ -227,12 +226,15 @@ fn rejects_pre_timer_fix_standard_and_tilt_determinism_abis() -> Result<()> {
     let tilt_loader = DirectGbaTasExecutionLoader::new(tilt_path);
     let tilt = tilt_loader.create_project()?;
     assert!(DirectGbaTasExecutionLoader::validate_project_branch_scope(&tilt, "main").is_ok());
-    let old_tilt = project_with_determinism_abi(
-        &tilt,
-        "gba-old-tilt-abi",
+    for abi in [
         "zeff-gba-tilt-tas-determinism-v2",
-    )?;
-    assert!(DirectGbaTasExecutionLoader::validate_project_branch_scope(&old_tilt, "main").is_err());
+        "zeff-gba-tilt-tas-determinism-v3",
+    ] {
+        let old_tilt = project_with_determinism_abi(&tilt, "gba-old-tilt-abi", abi)?;
+        assert!(
+            DirectGbaTasExecutionLoader::validate_project_branch_scope(&old_tilt, "main").is_err()
+        );
+    }
     Ok(())
 }
 

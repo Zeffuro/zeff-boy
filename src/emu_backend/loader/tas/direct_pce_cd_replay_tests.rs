@@ -48,6 +48,8 @@ use crate::tas_project::{
 };
 
 mod archive_ppf;
+mod archive_ppf_combinations;
+mod direct_card_multitap;
 mod multicue;
 
 const SYSTEM_CARD_SHA256: [u8; 32] = [

@@ -207,7 +207,22 @@ fn direct_cue_arcade_multitap_requires_both_catalog_witnesses_and_exact_route() 
         &cue_path,
         vec![("disc.ppf".to_owned(), ppf1(0, &[0xA5]))],
     )?);
-    assert!(ppf.load_fresh_backend().is_err());
+    let ppf_backend = ppf.load_fresh_backend()?;
+    let ppf_inspection =
+        super::super::super::direct_pce_cd::validate_direct_pce_multitap_cd_tas_runtime(
+            &ppf_backend,
+            false,
+        )?;
+    assert!(ppf_inspection.arcade_card_enabled);
+    assert!(!ppf_inspection.memory_base_enabled);
+    assert!(ppf_inspection.controller_multitap.is_some());
+    let ppf_project = ppf.create_project()?;
+    assert_eq!(
+        ppf_project.identity().sync_config_sha256,
+        super::super::super::direct_pce_cd::direct_pce_multitap_cd_ppf_arcade_tas_sync_config_sha256()
+    );
+    ppf.load_editor_engine(&ppf_project)?;
+    assert!(ppf.load_editor_engine(&project).is_err());
     drop(arcade_catalog);
     Ok(())
 }

@@ -6,7 +6,10 @@ use zeff_pce_core::hardware::{
     PceArcadeCardMode, PceCartridgeHardware, PceConsoleWiring, PceControllerMode, PceMemoryBaseMode,
 };
 
-use super::DirectPceCdTasExecutionLoader;
+use super::{
+    DirectPceCdTasExecutionLoader, direct_pce_cd_arcade_eligible,
+    direct_pce_cd_memory_base_eligible, direct_pce_cd_memory_base_multitap_eligible,
+};
 use crate::emu_backend::loader::tas::direct_pce_cd::PceCdTasProfile;
 use crate::emu_backend::loader::{BackendLoadConfig, EmuBackend, has_extension};
 use crate::emu_backend::pce_cd::PceCdLoadError;
@@ -54,12 +57,26 @@ impl DirectPceCdTasExecutionLoader {
         let rar = has_extension(&self.source_path, "rar");
         let zip = has_extension(&self.source_path, "zip");
         let selected = self.archive_cue_member.is_some();
+        let source_disc_sha256 = load.unpatched_disc_sha256;
+        let multitap = self.controller_mode == PceControllerMode::Multitap;
+        let arcade_card = direct_pce_cd_arcade_eligible(false, source_disc_sha256);
+        let memory_base = if multitap {
+            direct_pce_cd_memory_base_multitap_eligible(source_disc_sha256)
+        } else {
+            direct_pce_cd_memory_base_eligible(false, false, false, source_disc_sha256)
+        };
+        ensure!(
+            !multitap
+                || crate::emu_backend::pce_profiles::automatic_controller_mode(source_disc_sha256,)
+                    == PceControllerMode::Multitap,
+            "PC Engine CD Multitap TAS requires an exact controller catalog witness"
+        );
         let profile = PceCdTasProfile::from_runtime_flags(
             (false, false, false, archive, rar, zip),
             true,
             (archive && selected, rar && selected, zip && selected),
-            (false, false),
-            PceControllerMode::TwoButton,
+            (arcade_card, memory_base),
+            self.controller_mode,
         )
         .context("archive PPF source describes an invalid execution profile")?;
         let patch_identities = load.patch_identities();
@@ -90,9 +107,17 @@ impl DirectPceCdTasExecutionLoader {
             pce_cd_tas_archive_cue: archive.then_some(identity),
             pce_cd_tas_rar_cue: rar.then_some(identity),
             pce_cd_tas_zip_cue: zip.then_some(identity),
-            pce_controller_mode: PceControllerMode::TwoButton,
-            pce_memory_base_mode: PceMemoryBaseMode::Disabled,
-            pce_arcade_card_mode: PceArcadeCardMode::Disabled,
+            pce_controller_mode: self.controller_mode,
+            pce_memory_base_mode: if memory_base {
+                PceMemoryBaseMode::Enabled
+            } else {
+                PceMemoryBaseMode::Disabled
+            },
+            pce_arcade_card_mode: if arcade_card {
+                PceArcadeCardMode::Enabled
+            } else {
+                PceArcadeCardMode::Disabled
+            },
             pce_load_battery_bram: false,
             firmware_search_dirs: self.firmware_search_dirs.clone(),
             #[cfg(test)]

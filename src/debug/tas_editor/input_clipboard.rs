@@ -1,5 +1,12 @@
+mod autofire;
+pub(super) mod digital_transform;
 mod events;
+pub(super) mod marked_ranges;
+mod marked_ranges_ui;
+mod masked_paste;
 mod presentation;
+pub(super) mod special_ranges;
+pub(super) mod special_transform_ui;
 
 use anyhow::{Result, bail};
 use zeff_emu_common::replay::ReplayEvent;
@@ -9,7 +16,14 @@ use super::{
     timeline_selection::TasInputSelection,
 };
 use crate::tas_project::{TasDigest, TasEditorSession, TasInputPattern};
+pub(super) use autofire::TasDigitalAutofireAction;
+use autofire::TasDigitalAutofireUiState;
+pub(super) use digital_transform::TasDigitalTransformAction;
+use digital_transform::TasDigitalTransformUiState;
 use events::{replacement_events, validate_copied_events};
+pub(super) use masked_paste::TasMaskedPasteAction;
+#[cfg(test)]
+pub(super) use masked_paste::TasMaskedPasteDestination;
 
 pub(super) fn draw_input_clipboard(
     ui: &mut egui::Ui,
@@ -26,6 +40,8 @@ struct TasInputPatternPasteWitness {
     target_branch_id: String,
     target_movie_sha256: TasDigest,
     expected_cursor: Option<u64>,
+    operation: &'static str,
+    no_change_message: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,6 +50,11 @@ pub(super) enum TasInputClipboardAction {
     PasteAtCursor(TasInputClipboardPasteAction),
     InsertAtCursor(TasInputClipboardPasteAction),
     TileAcrossSelection(TasInputClipboardTileAction),
+    ApplyDigitalAutofire(TasDigitalAutofireAction),
+    ApplyDigitalTransform(TasDigitalTransformAction),
+    PasteMaskedControls(TasMaskedPasteAction),
+    MarkedRanges(marked_ranges::TasMarkedRangesAction),
+    ApplySpecialTransform(special_ranges::TasSpecialRangeAction),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,6 +100,10 @@ struct TasInputClipboardEntry {
 pub(super) struct TasInputClipboardState {
     generation: u64,
     entry: Option<TasInputClipboardEntry>,
+    autofire: TasDigitalAutofireUiState,
+    digital_transform: TasDigitalTransformUiState,
+    pub(super) marked_ranges: marked_ranges::TasMarkedInputRangesState,
+    special_transform: special_transform_ui::TasSpecialTransformUiState,
 }
 
 impl TasInputClipboardAction {
@@ -229,10 +254,15 @@ impl TasInputClipboardState {
         Self {
             generation: 0,
             entry: None,
+            autofire: TasDigitalAutofireUiState::new(),
+            digital_transform: TasDigitalTransformUiState::new(),
+            marked_ranges: marked_ranges::TasMarkedInputRangesState::new(),
+            special_transform: special_transform_ui::TasSpecialTransformUiState::new(),
         }
     }
 
     pub(super) fn clear(&mut self) -> Result<()> {
+        self.marked_ranges.reset()?;
         if self.entry.is_some() {
             self.bump_generation()?;
             self.entry = None;
@@ -372,6 +402,8 @@ impl TasEditorWindowState {
                     target_branch_id: action.target_branch_id,
                     target_movie_sha256: action.target_movie_sha256,
                     expected_cursor: Some(action.cursor),
+                    operation: "Pasted input pattern",
+                    no_change_message: "Input pattern made no change",
                 };
                 self.apply_pattern_at_cursor(
                     witness,
@@ -390,6 +422,8 @@ impl TasEditorWindowState {
                     target_branch_id: action.target_branch_id,
                     target_movie_sha256: action.target_movie_sha256,
                     expected_cursor: Some(action.cursor),
+                    operation: "Inserted copied input frames",
+                    no_change_message: "Input pattern made no change",
                 };
                 self.insert_pattern_at_cursor(witness, action.cursor, pattern, events)
             }
@@ -415,6 +449,8 @@ impl TasEditorWindowState {
                     target_branch_id: action.target_branch_id,
                     target_movie_sha256: action.target_movie_sha256,
                     expected_cursor: None,
+                    operation: "Pasted input pattern",
+                    no_change_message: "Input pattern made no change",
                 };
                 self.apply_pattern_at_cursor(
                     witness,
@@ -424,7 +460,49 @@ impl TasEditorWindowState {
                     false,
                 )
             }
+            TasInputClipboardAction::ApplyDigitalAutofire(action) => {
+                self.apply_digital_autofire(action)
+            }
+            TasInputClipboardAction::ApplyDigitalTransform(action) => {
+                self.apply_digital_transform(action)
+            }
+            TasInputClipboardAction::PasteMaskedControls(action) => self.apply_masked_paste(action),
+            TasInputClipboardAction::MarkedRanges(action) => {
+                self.apply_marked_ranges_action(action)
+            }
+            TasInputClipboardAction::ApplySpecialTransform(action) => {
+                self.apply_special_range_transform(action)
+            }
         }
+    }
+
+    fn apply_digital_autofire(&mut self, action: TasDigitalAutofireAction) -> Result<String> {
+        let selected = {
+            let session = self
+                .session
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("open a TAS project first"))?;
+            self.timeline_selection.snapshot(session)
+        };
+        if selected.as_ref() != Some(&action.selection) {
+            bail!("input selection changed after this autofire was requested; retry it");
+        }
+        let pattern = {
+            let session = self
+                .session
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("open a TAS project first"))?;
+            autofire::build_pattern(session, &action)?
+        };
+        let witness = TasInputPatternPasteWitness {
+            expected_project_sha256: action.expected_project_sha256,
+            target_branch_id: action.target_branch_id,
+            target_movie_sha256: action.target_movie_sha256,
+            expected_cursor: None,
+            operation: "Applied digital autofire",
+            no_change_message: "Digital autofire made no change",
+        };
+        self.apply_pattern_at_cursor(witness, action.selection.start, pattern, Vec::new(), false)
     }
 
     fn apply_pattern_at_cursor(
@@ -435,6 +513,8 @@ impl TasEditorWindowState {
         relative_events: Vec<ReplayEvent>,
         include_events: bool,
     ) -> Result<String> {
+        let operation = witness.operation;
+        let no_change_message = witness.no_change_message;
         let end = start
             .checked_add(pattern.length())
             .ok_or_else(|| anyhow::anyhow!("pasted input pattern boundary overflow"))?;
@@ -496,7 +576,7 @@ impl TasEditorWindowState {
                 .as_ref()
                 .expect("open session was checked before applying input pattern");
             self.timeline_selection.select_range(session, start, end);
-            return Ok("Input pattern made no change".to_owned());
+            return Ok(no_change_message.to_owned());
         }
         let session = self
             .session
@@ -507,10 +587,10 @@ impl TasEditorWindowState {
         self.queue_linked_edit_reconstruction(start, end);
         if let Some(error) = self.detach_incompatible_execution() {
             return Ok(format!(
-                "Pasted input pattern; private execution detached because the edited project no longer matches it: {error:#}"
+                "{operation}; private execution detached because the edited project no longer matches it: {error:#}"
             ));
         }
-        Ok("Pasted input pattern".to_owned())
+        Ok(operation.to_owned())
     }
 
     fn insert_pattern_at_cursor(

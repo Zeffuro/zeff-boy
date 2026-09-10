@@ -162,6 +162,8 @@ pub(in crate::app) fn app_with_worker(
         live_button_releases: Vec::new(),
         tcp_link_active: false,
         tas_control: TasControlCoordinator::new(),
+        tas_editor_live_validation_cache:
+            crate::app::tas_editor::TasEditorLiveValidationCache::default(),
         tas_repair: TasRepairManager::new(),
         pending_tas_repair_activation: None,
         pending_tas_autofire: None,

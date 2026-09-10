@@ -30,8 +30,9 @@ pub(crate) use tas::{
     DirectNesTasExecutionLoader, DirectPceCdTasExecutionLoader, DirectPceTasExecutionLoader,
     DirectSg1000TasExecutionLoader, DirectSmsTasExecutionLoader, DirectWsTasExecutionLoader,
     GbRtcPersistenceWitness, PrivateTasExecutionLoader, classify_direct_tas_execution_profile,
-    direct_pce_multitap_cd_ppf_tas_sync_config_sha256, gb_rtc_persistence_witness,
-    is_direct_pce_cd_archive_ppf_tas_sync_config_sha256, select_private_tas_execution_attachment,
+    gb_rtc_persistence_witness, is_direct_pce_cd_archive_ppf_tas_sync_config_sha256,
+    is_direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256,
+    is_direct_pce_multitap_cd_ppf_tas_sync_config_sha256, select_private_tas_execution_attachment,
     select_private_tas_execution_loader, select_private_tas_execution_loader_for_project,
     select_private_tas_execution_loader_for_replay,
     select_private_tas_execution_loader_with_rom_path,
@@ -39,7 +40,9 @@ pub(crate) use tas::{
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use tas::{
     MAX_NES_CARTRIDGE_BYTES, direct_nes_tas_identity,
-    direct_pce_cd_archive_ppf_tas_sync_configs_for_test, read_nes_cartridge_bounded,
+    direct_pce_cd_archive_ppf_tas_sync_configs_for_test,
+    direct_pce_multitap_cd_archive_ppf_tas_sync_configs_for_test,
+    direct_pce_multitap_cd_ppf_tas_sync_configs_for_test, read_nes_cartridge_bounded,
 };
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(unused_imports)]

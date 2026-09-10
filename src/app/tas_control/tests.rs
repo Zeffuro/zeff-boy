@@ -18,11 +18,13 @@ mod pce_recording_roundtrip;
 mod playback;
 mod playback_roundtrip;
 mod project_binding;
+mod recording_recovery;
 mod repair_roundtrip;
 mod rom_load_transaction;
 mod sg1000_recording_roundtrip;
 mod sms_recording_roundtrip;
 mod unavailability;
+mod window_lifecycle;
 mod ws_recording_roundtrip;
 
 const WORKER_GENERATION: u64 = 4;

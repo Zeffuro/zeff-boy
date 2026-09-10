@@ -13,10 +13,19 @@ fn archive_ppf_all_six_routes_link_record_and_restore_with_selected_zip_keep() {
 }
 
 #[test]
+fn selected_archive_ppf_card_multitap_records_fifth_player_and_keeps_or_restores() {
+    for memory_base in [false, true] {
+        for keep in [false, true] {
+            run_live_profile_roundtrip(ArchiveKind::Zip, true, 0x69, keep, Some(memory_base));
+        }
+    }
+}
+
+#[test]
 fn selected_zip_archive_ppf_repair_reloads_exact_member_and_restores() {
     let root = crate::test_support::test_directory("tas-pce-cd-zip-selected-ppf-repair").unwrap();
     let archive_path = root.path().join("disc.zip");
-    write_archive_ppf(&archive_path, ArchiveKind::Zip, true, 0xB7);
+    write_archive_ppf(&archive_path, ArchiveKind::Zip, true, 0xB7, None);
     let rom_path = archive_path.join("second").join("disc.cue");
     let system_card = Box::leak(vec![0; 256 * 1024].into_boxed_slice());
     let firmware_sha256 = zeff_firmware::sha256_bytes(system_card);
@@ -85,14 +94,31 @@ fn selected_zip_archive_ppf_repair_reloads_exact_member_and_restores() {
 }
 
 fn run_live_roundtrip(archive: ArchiveKind, selected: bool, fill: u8, keep: bool) {
-    let name = format!("tas-pce-cd-{archive:?}-ppf-{selected}-{keep}").to_ascii_lowercase();
+    run_live_profile_roundtrip(archive, selected, fill, keep, None);
+}
+
+fn run_live_profile_roundtrip(
+    archive: ArchiveKind,
+    selected: bool,
+    fill: u8,
+    keep: bool,
+    memory_base: Option<bool>,
+) {
+    let name = format!("tas-pce-cd-{archive:?}-ppf-{selected}-{keep}-{memory_base:?}")
+        .to_ascii_lowercase();
     let root = crate::test_support::test_directory(&name).unwrap();
     let archive_path = root.path().join(match archive {
         ArchiveKind::SevenZip => "disc.7z",
         ArchiveKind::Rar => "disc.rar",
         ArchiveKind::Zip => "disc.zip",
     });
-    write_archive_ppf(&archive_path, archive, selected, fill);
+    write_archive_ppf(
+        &archive_path,
+        archive,
+        selected,
+        fill,
+        memory_base.map(|_| name.as_str()),
+    );
     let cue_directory = if selected { "second" } else { "set" };
     let rom_path = archive_path.join(cue_directory).join("disc.cue");
     let system_card = Box::leak(vec![0; 256 * 1024].into_boxed_slice());
@@ -112,13 +138,50 @@ fn run_live_roundtrip(archive: ArchiveKind, selected: bool, fill: u8, keep: bool
             firmware_sha256,
         )
     };
+    let source_hash = loader
+        .load_fresh_backend()
+        .unwrap()
+        .pce()
+        .unwrap()
+        .tas_load_provenance()
+        .unwrap()
+        .load
+        .source_disc_sha256
+        .unwrap();
+    let _arcade_catalog = (memory_base == Some(false)).then(|| {
+        crate::emu_backend::pce_profiles::register_test_arcade_card_catalog_hash(source_hash)
+    });
+    let _memory_catalog = (memory_base == Some(true)).then(|| {
+        crate::emu_backend::pce_profiles::register_test_memory_base_catalog_hash(source_hash)
+    });
+    let _controller_catalog = memory_base.map(|_| {
+        crate::emu_backend::pce_profiles::register_test_controller_catalog_hash(
+            source_hash,
+            zeff_pce_core::hardware::PceControllerMode::Multitap,
+        )
+    });
+    let loader = if memory_base.is_some() {
+        DirectPceCdTasExecutionLoader::new_multitap_with_rom_path_and_system_card_override(
+            archive_path.clone(),
+            rom_path.clone(),
+            system_card,
+            firmware_sha256,
+        )
+        .unwrap()
+    } else {
+        loader
+    };
     let project = loader.create_project().unwrap();
     assert_eq!(project.identity().patches.len(), 1);
-    assert!(
-        crate::emu_backend::loader::is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
-            project.identity().sync_config_sha256
+    assert!(if memory_base.is_some() {
+        crate::emu_backend::loader::is_direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256(
+            project.identity().sync_config_sha256,
         )
-    );
+    } else {
+        crate::emu_backend::loader::is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
+            project.identity().sync_config_sha256,
+        )
+    });
     let engine = loader.load_editor_engine(&project).unwrap();
     assert!(
         engine
@@ -152,7 +215,7 @@ fn run_live_roundtrip(archive: ArchiveKind, selected: bool, fill: u8, keep: bool
     live_ok(
         &mut app,
         LiveCommand::Button {
-            player: 1,
+            player: if memory_base.is_some() { 5 } else { 1 },
             key: HostButton::A,
             pressed: true,
         },
@@ -171,8 +234,8 @@ fn run_live_roundtrip(archive: ArchiveKind, selected: bool, fill: u8, keep: bool
             .unwrap()
             .selected_branch()
             .input_at(0)
-            .players[0]
-            .buttons,
+            .players[if memory_base.is_some() { 4 } else { 0 }]
+        .buttons,
         0x01
     );
 
@@ -189,13 +252,27 @@ fn run_live_roundtrip(archive: ArchiveKind, selected: bool, fill: u8, keep: bool
     assert_eq!(app.tas_control.state, TasControlState::Detached);
 }
 
-fn write_archive_ppf(path: &std::path::Path, archive: ArchiveKind, selected: bool, fill: u8) {
+fn write_archive_ppf(
+    path: &std::path::Path,
+    archive: ArchiveKind,
+    selected: bool,
+    fill: u8,
+    tag: Option<&str>,
+) {
     let target = if selected { "second" } else { "set" };
     let mut entries = Vec::new();
     if selected {
         entries.extend(cue_entries("first", fill ^ 0xFF));
     }
     entries.extend(cue_entries(target, fill));
+    if let Some(tag) = tag {
+        let disc = &mut entries
+            .iter_mut()
+            .find(|(name, _)| name == &format!("{target}/disc.bin"))
+            .unwrap()
+            .1;
+        disc[128..128 + tag.len()].copy_from_slice(tag.as_bytes());
+    }
     entries.push((
         format!("{target}/disc.ppf/0001.ppf"),
         ppf1(0, &[fill.rotate_left(1)]),

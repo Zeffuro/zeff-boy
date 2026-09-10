@@ -11,8 +11,9 @@ use crate::tas_project::{TasBranchOrigin, TasEditorSession, TasInputFrame};
 const FRAME_GUTTER_WIDTH: f32 = 80.0;
 const BRANCH_GUTTER_WIDTH: f32 = 32.0;
 
-pub(super) struct TimelineView {
+pub(super) struct TimelineView<'a> {
     pub(super) selected_input_range: Option<(u64, u64)>,
+    pub(super) marked_input_ranges: &'a [(u64, u64)],
     pub(super) execution_boundary: Option<u64>,
     pub(super) max_height: f32,
     pub(super) follow_cursor: bool,
@@ -23,7 +24,7 @@ pub(super) fn draw_timeline(
     ui: &mut egui::Ui,
     session: &TasEditorSession,
     actions: &mut Vec<TasEditorAction>,
-    view: TimelineView,
+    view: TimelineView<'_>,
 ) {
     queue_keyboard_navigation(ui, actions, view.go_to_selection_available);
     let system = session.project().identity().system.as_str();
@@ -60,16 +61,19 @@ pub(super) fn draw_timeline(
                 draw_input_headers(ui, player_count, &columns, is_coleco);
             });
             ui.separator();
+            let max_height = view.max_height.min(ui.available_height());
             let mut rows_scroll = egui::ScrollArea::vertical()
                 .id_salt("tas_editor_timeline_rows")
-                .max_height(view.max_height)
-                .min_scrolled_height(view.max_height)
+                .max_height(max_height)
+                .min_scrolled_height(max_height)
                 .auto_shrink([false, false]);
+            let row_height = ROW_HEIGHT.max(ui.spacing().interact_size.y);
             if view.follow_cursor {
-                let offset = (cursor as f32 * ROW_HEIGHT - view.max_height * 0.45).max(0.0);
+                let row_pitch = row_height + ui.spacing().item_spacing.y;
+                let offset = (cursor as f32 * row_pitch - max_height * 0.45).max(0.0);
                 rows_scroll = rows_scroll.vertical_scroll_offset(offset);
             }
-            rows_scroll.show_rows(ui, ROW_HEIGHT, visible_row_count, |ui, rows| {
+            rows_scroll.show_rows(ui, row_height, visible_row_count, |ui, rows| {
                 for row in rows {
                     let frame = row as u64;
                     paint_execution_boundary(ui, view.execution_boundary, frame);
@@ -91,6 +95,18 @@ pub(super) fn draw_timeline(
                                 ),
                             )
                             .interact(egui::Sense::click_and_drag());
+                        if view
+                            .marked_input_ranges
+                            .iter()
+                            .any(|&(start, end)| (start..end).contains(&frame))
+                        {
+                            let stripe = egui::Rect::from_min_max(
+                                response.rect.left_top(),
+                                response.rect.left_bottom() + egui::vec2(3.0, 0.0),
+                            );
+                            ui.painter()
+                                .rect_filled(stripe, 0.0, ui.visuals().warn_fg_color);
+                        }
                         queue_frame_gutter_interaction(
                             ui,
                             response,
@@ -470,7 +486,126 @@ pub(super) fn queue_digital_toggle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::{DebugColors, UiDensity, UiThemePreset};
     use crate::tas_project::TasDigest;
+
+    const FOLLOW_FRAME: u64 = 200_000;
+    const FOLLOW_FRAME_COUNT: u64 = 1_000_000;
+
+    fn test_context(density: UiDensity) -> egui::Context {
+        let context = egui::Context::default();
+        crate::graphics::apply_egui_theme(
+            &context,
+            UiThemePreset::DefaultDark,
+            density,
+            1.0,
+            DebugColors::default(),
+        );
+        context.global_style_mut(|style| {
+            style.animation_time = 0.0;
+            style.scroll_animation = egui::style::ScrollAnimation::none();
+        });
+        context
+    }
+
+    fn render_timeline(
+        context: &egui::Context,
+        state: &mut super::super::TasEditorWindowState,
+        size: egui::Vec2,
+        follow_cursor: bool,
+    ) -> egui::FullOutput {
+        let selected_input_range = {
+            let session = state.session.as_ref().unwrap();
+            state.timeline_selection.selected_range(session)
+        };
+        let mut actions = Vec::new();
+        let output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..egui::RawInput::default()
+            },
+            |ui| {
+                draw_timeline(
+                    ui,
+                    state.session.as_ref().unwrap(),
+                    &mut actions,
+                    TimelineView {
+                        selected_input_range,
+                        marked_input_ranges: &[],
+                        execution_boundary: None,
+                        max_height: size.y - 96.0,
+                        follow_cursor,
+                        go_to_selection_available: false,
+                    },
+                );
+            },
+        );
+        assert!(actions.is_empty());
+        output
+    }
+
+    fn settle_timeline_follow(
+        context: &egui::Context,
+        state: &mut super::super::TasEditorWindowState,
+        size: egui::Vec2,
+    ) -> egui::FullOutput {
+        let follow_cursor = std::mem::take(&mut state.timeline_follow_selection);
+        assert!(follow_cursor);
+        let mut output = render_timeline(context, state, size, follow_cursor);
+        for _ in 0..2 {
+            output = render_timeline(context, state, size, false);
+        }
+        output
+    }
+
+    fn assert_visible_text(output: &egui::FullOutput, expected: &str) {
+        let witness = output.shapes.iter().find_map(|shape| {
+            let egui::Shape::Text(text) = &shape.shape else {
+                return None;
+            };
+            (text.galley.job.text.trim() == expected).then(|| {
+                (
+                    egui::Rect::from_min_size(text.pos, text.galley.size()),
+                    shape.clip_rect,
+                )
+            })
+        });
+        let (rect, clip_rect) = witness.unwrap_or_else(|| {
+            let rendered_rows = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    let egui::Shape::Text(text) = &shape.shape else {
+                        return None;
+                    };
+                    text.galley.job.text.trim().parse::<u64>().ok()
+                })
+                .collect::<Vec<_>>();
+            panic!("timeline did not render {expected:?}; visible numeric rows: {rendered_rows:?}")
+        });
+        assert!(
+            clip_rect.contains_rect(rect),
+            "timeline row {expected:?} was only partially visible: {rect:?} within {clip_rect:?}"
+        );
+    }
+
+    fn jump_to(state: &mut super::super::TasEditorWindowState, cursor: u64) {
+        let action = {
+            let session = state.session.as_ref().unwrap();
+            super::super::branch_diff_editor::TasBranchDiffJumpAction::new(
+                session.project_content_sha256(),
+                session.selected_branch_id().to_owned(),
+                session
+                    .project()
+                    .branch_movie_sha256(session.selected_branch_id())
+                    .unwrap(),
+                cursor,
+            )
+        };
+        state
+            .reduce(TasEditorAction::JumpToBranchDiffHunk(action))
+            .unwrap();
+    }
 
     fn key_input(key: egui::Key) -> egui::RawInput {
         egui::RawInput {
@@ -513,6 +648,29 @@ mod tests {
             queue_keyboard_navigation(ui, &mut actions, true);
         });
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn branch_diff_jump_reveals_the_exact_distant_row_and_end_boundary() {
+        for (density, size) in [
+            (UiDensity::Compact, egui::vec2(360.0, 480.0)),
+            (UiDensity::Compact, egui::vec2(982.0, 672.0)),
+            (UiDensity::Comfortable, egui::vec2(360.0, 480.0)),
+            (UiDensity::Comfortable, egui::vec2(982.0, 672.0)),
+        ] {
+            let (_root, mut state) = super::super::tests::state_with_project(FOLLOW_FRAME_COUNT);
+            let context = test_context(density);
+            std::mem::take(&mut state.timeline_follow_selection);
+            let _ = render_timeline(&context, &mut state, size, false);
+
+            jump_to(&mut state, FOLLOW_FRAME);
+            let output = settle_timeline_follow(&context, &mut state, size);
+            assert_visible_text(&output, &FOLLOW_FRAME.to_string());
+
+            jump_to(&mut state, FOLLOW_FRAME_COUNT);
+            let output = settle_timeline_follow(&context, &mut state, size);
+            assert_visible_text(&output, "End");
+        }
     }
 
     #[test]

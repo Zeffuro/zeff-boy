@@ -17,15 +17,22 @@ use crate::tas_project::{
     TasPatchIdentity, TasProject, TasProjectIdentity,
 };
 
+#[path = "direct_pce_cd/archive_ppf_combinations_identity.rs"]
+mod archive_ppf_combinations_identity;
+pub(crate) use archive_ppf_combinations_identity::*;
 #[path = "direct_pce_cd/rar_identity.rs"]
 mod rar_identity;
 pub(crate) use rar_identity::{
+    arcade_multitap_sync_config_sha256 as direct_pce_multitap_cd_rar_arcade_tas_sync_config_sha256,
     arcade_sync_config_sha256 as direct_pce_cd_rar_arcade_tas_sync_config_sha256,
+    memory_base_multitap_sync_config_sha256 as direct_pce_multitap_cd_rar_memory_base_tas_sync_config_sha256,
     memory_base_sync_config_sha256 as direct_pce_cd_rar_memory_base_tas_sync_config_sha256,
     multitap_sync_config_sha256 as direct_pce_multitap_cd_rar_tas_sync_config_sha256,
     ppf_source_identity as direct_pce_cd_rar_ppf_source_identity,
     ppf_sync_config_sha256 as direct_pce_cd_rar_ppf_tas_sync_config_sha256,
+    selected_arcade_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_rar_arcade_tas_sync_config_sha256,
     selected_arcade_sync_config_sha256 as direct_pce_cd_selected_rar_arcade_tas_sync_config_sha256,
+    selected_memory_base_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_rar_memory_base_tas_sync_config_sha256,
     selected_memory_base_sync_config_sha256 as direct_pce_cd_selected_rar_memory_base_tas_sync_config_sha256,
     selected_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_rar_tas_sync_config_sha256,
     selected_ppf_sync_config_sha256 as direct_pce_cd_selected_rar_ppf_tas_sync_config_sha256,
@@ -36,12 +43,16 @@ pub(crate) use rar_identity::{
 #[path = "direct_pce_cd/seven_zip_identity.rs"]
 mod seven_zip_identity;
 pub(crate) use seven_zip_identity::{
+    arcade_multitap_sync_config_sha256 as direct_pce_multitap_cd_archive_arcade_tas_sync_config_sha256,
     arcade_sync_config_sha256 as direct_pce_cd_archive_arcade_tas_sync_config_sha256,
+    memory_base_multitap_sync_config_sha256 as direct_pce_multitap_cd_archive_memory_base_tas_sync_config_sha256,
     memory_base_sync_config_sha256 as direct_pce_cd_archive_memory_base_tas_sync_config_sha256,
     multitap_sync_config_sha256 as direct_pce_multitap_cd_archive_tas_sync_config_sha256,
     ppf_source_identity as direct_pce_cd_archive_ppf_source_identity,
     ppf_sync_config_sha256 as direct_pce_cd_archive_ppf_tas_sync_config_sha256,
+    selected_arcade_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_archive_arcade_tas_sync_config_sha256,
     selected_arcade_sync_config_sha256 as direct_pce_cd_selected_archive_arcade_tas_sync_config_sha256,
+    selected_memory_base_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_archive_memory_base_tas_sync_config_sha256,
     selected_memory_base_sync_config_sha256 as direct_pce_cd_selected_archive_memory_base_tas_sync_config_sha256,
     selected_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_archive_tas_sync_config_sha256,
     selected_ppf_sync_config_sha256 as direct_pce_cd_selected_archive_ppf_tas_sync_config_sha256,
@@ -52,12 +63,16 @@ pub(crate) use seven_zip_identity::{
 #[path = "direct_pce_cd/zip_identity.rs"]
 mod zip_identity;
 pub(crate) use zip_identity::{
+    arcade_multitap_sync_config_sha256 as direct_pce_multitap_cd_zip_arcade_tas_sync_config_sha256,
     arcade_sync_config_sha256 as direct_pce_cd_zip_arcade_tas_sync_config_sha256,
+    memory_base_multitap_sync_config_sha256 as direct_pce_multitap_cd_zip_memory_base_tas_sync_config_sha256,
     memory_base_sync_config_sha256 as direct_pce_cd_zip_memory_base_tas_sync_config_sha256,
     multitap_sync_config_sha256 as direct_pce_multitap_cd_zip_tas_sync_config_sha256,
     ppf_source_identity as direct_pce_cd_zip_ppf_source_identity,
     ppf_sync_config_sha256 as direct_pce_cd_zip_ppf_tas_sync_config_sha256,
+    selected_arcade_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_zip_arcade_tas_sync_config_sha256,
     selected_arcade_sync_config_sha256 as direct_pce_cd_selected_zip_arcade_tas_sync_config_sha256,
+    selected_memory_base_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_zip_memory_base_tas_sync_config_sha256,
     selected_memory_base_sync_config_sha256 as direct_pce_cd_selected_zip_memory_base_tas_sync_config_sha256,
     selected_multitap_sync_config_sha256 as direct_pce_multitap_cd_selected_zip_tas_sync_config_sha256,
     selected_ppf_sync_config_sha256 as direct_pce_cd_selected_zip_ppf_tas_sync_config_sha256,
@@ -78,6 +93,16 @@ pub(crate) use arcade_multitap_identity::sync_config_sha256 as direct_pce_multit
 #[path = "direct_pce_cd/memory_base_multitap_identity.rs"]
 mod memory_base_multitap_identity;
 pub(crate) use memory_base_multitap_identity::sync_config_sha256 as direct_pce_multitap_cd_memory_base_tas_sync_config_sha256;
+#[path = "direct_pce_cd/direct_card_multitap_identity.rs"]
+mod direct_card_multitap_identity;
+pub(crate) use direct_card_multitap_identity::{
+    chd_arcade_sync_config_sha256 as direct_pce_multitap_cd_chd_arcade_tas_sync_config_sha256,
+    chd_memory_base_sync_config_sha256 as direct_pce_multitap_cd_chd_memory_base_tas_sync_config_sha256,
+    iso_arcade_sync_config_sha256 as direct_pce_multitap_cd_iso_arcade_tas_sync_config_sha256,
+    iso_memory_base_sync_config_sha256 as direct_pce_multitap_cd_iso_memory_base_tas_sync_config_sha256,
+    ppf_arcade_sync_config_sha256 as direct_pce_multitap_cd_ppf_arcade_tas_sync_config_sha256,
+    ppf_memory_base_sync_config_sha256 as direct_pce_multitap_cd_ppf_memory_base_tas_sync_config_sha256,
+};
 #[path = "direct_pce_cd/media_profile.rs"]
 mod media_profile;
 use media_profile::arcade_sync_config;
@@ -121,20 +146,66 @@ pub(crate) fn is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
     direct_pce_cd_archive_ppf_tas_sync_configs().contains(&sync_config_sha256)
 }
 
-fn direct_pce_cd_archive_ppf_tas_sync_configs() -> [TasDigest; 6] {
+fn direct_pce_cd_archive_ppf_tas_sync_configs() -> [TasDigest; 18] {
     [
         direct_pce_cd_archive_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_archive_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_cd_archive_ppf_memory_base_tas_sync_config_sha256(),
         direct_pce_cd_selected_archive_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_selected_archive_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_cd_selected_archive_ppf_memory_base_tas_sync_config_sha256(),
         direct_pce_cd_rar_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_rar_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_cd_rar_ppf_memory_base_tas_sync_config_sha256(),
         direct_pce_cd_selected_rar_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_selected_rar_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_cd_selected_rar_ppf_memory_base_tas_sync_config_sha256(),
         direct_pce_cd_zip_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_zip_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_cd_zip_ppf_memory_base_tas_sync_config_sha256(),
         direct_pce_cd_selected_zip_ppf_tas_sync_config_sha256(),
+        direct_pce_cd_selected_zip_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_cd_selected_zip_ppf_memory_base_tas_sync_config_sha256(),
     ]
 }
 
 #[cfg(test)]
-pub(crate) fn direct_pce_cd_archive_ppf_tas_sync_configs_for_test() -> [TasDigest; 6] {
+pub(crate) fn direct_pce_cd_archive_ppf_tas_sync_configs_for_test() -> [TasDigest; 18] {
     direct_pce_cd_archive_ppf_tas_sync_configs()
+}
+
+pub(crate) fn is_direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256(
+    sync_config_sha256: TasDigest,
+) -> bool {
+    direct_pce_multitap_cd_archive_ppf_tas_sync_configs().contains(&sync_config_sha256)
+}
+
+fn direct_pce_multitap_cd_archive_ppf_tas_sync_configs() -> [TasDigest; 18] {
+    [
+        direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_archive_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_archive_ppf_memory_base_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_archive_ppf_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_archive_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_archive_ppf_memory_base_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_rar_ppf_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_rar_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_rar_ppf_memory_base_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_rar_ppf_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_rar_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_rar_ppf_memory_base_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_zip_ppf_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_zip_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_zip_ppf_memory_base_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_zip_ppf_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_zip_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_selected_zip_ppf_memory_base_tas_sync_config_sha256(),
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn direct_pce_multitap_cd_archive_ppf_tas_sync_configs_for_test() -> [TasDigest; 18] {
+    direct_pce_multitap_cd_archive_ppf_tas_sync_configs()
 }
 
 pub(crate) fn direct_pce_multitap_cd_chd_tas_sync_config_sha256() -> TasDigest {
@@ -147,6 +218,22 @@ pub(crate) fn direct_pce_multitap_cd_iso_tas_sync_config_sha256() -> TasDigest {
 
 pub(crate) fn direct_pce_multitap_cd_ppf_tas_sync_config_sha256() -> TasDigest {
     TasDigest::from_bytes(PCE_CD_PPF_MULTITAP_SYNC_CONFIGURATION)
+}
+
+pub(crate) fn is_direct_pce_multitap_cd_ppf_tas_sync_config_sha256(sync: TasDigest) -> bool {
+    PceCdTasProfile::from_sync(sync).is_some_and(|profile| {
+        profile.controller() == PceControllerMode::Multitap
+            && profile.media() == PceCdTasMediaRoute::Ppf
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn direct_pce_multitap_cd_ppf_tas_sync_configs_for_test() -> [TasDigest; 3] {
+    [
+        direct_pce_multitap_cd_ppf_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_ppf_arcade_tas_sync_config_sha256(),
+        direct_pce_multitap_cd_ppf_memory_base_tas_sync_config_sha256(),
+    ]
 }
 
 pub(crate) fn direct_pce_multitap_cd_sync_config(sync: TasDigest) -> bool {
@@ -517,7 +604,7 @@ fn validate_direct_pce_cd_tas_project_identity_for_controller(
         project.start_state(),
         arcade_card,
     )?;
-    let multitap_catalog_sha256 = if ppf_multitap {
+    let source_catalog_sha256 = if ppf_multitap || archive_ppf {
         match identity.patches.as_slice() {
             [patch] if patch.format == PCE_CD_UNPATCHED_DISC_PATCH_FORMAT => patch.sha256.0,
             _ => [0; 32],
@@ -530,20 +617,36 @@ fn validate_direct_pce_cd_tas_project_identity_for_controller(
         state.board == PceHuCardBoard::SystemCardV3
             && TasDigest(state.disc_sha256) == identity.effective_media_sha256
             && (!arcade_card
-                || arcade_ppf
-                || direct_pce_cd_arcade_eligible(false, state.disc_sha256))
+                || if archive_ppf {
+                    direct_pce_cd_arcade_eligible(false, source_catalog_sha256)
+                } else if multitap {
+                    direct_pce_cd_arcade_eligible(ppf_multitap, source_catalog_sha256)
+                } else {
+                    arcade_ppf || direct_pce_cd_arcade_eligible(false, state.disc_sha256)
+                })
             && (!memory_base
-                || (multitap
-                    && profile.media() == PceCdTasMediaRoute::Cue
-                    && direct_pce_cd_memory_base_multitap_eligible(state.disc_sha256))
-                || (!multitap
-                    && (memory_base_ppf
+                || if archive_ppf {
+                    if multitap {
+                        direct_pce_cd_memory_base_multitap_eligible(source_catalog_sha256)
+                    } else {
+                        direct_pce_cd_memory_base_eligible(
+                            false,
+                            false,
+                            false,
+                            source_catalog_sha256,
+                        )
+                    }
+                } else if multitap {
+                    direct_pce_cd_memory_base_multitap_eligible(source_catalog_sha256)
+                } else {
+                    memory_base_ppf
                         || direct_pce_cd_memory_base_eligible(
                             memory_base_chd,
                             memory_base_iso,
                             false,
                             state.disc_sha256,
-                        ))))
+                        )
+                })
             && !(arcade_card && memory_base)
             && profile.archive().is_some() == (archive || rar || zip)
             && (!cue
@@ -562,13 +665,11 @@ fn validate_direct_pce_cd_tas_project_identity_for_controller(
             && multitap == (controller_mode == PceControllerMode::Multitap)
             && (!multitap
                 || ((!memory_base
-                    || (profile.media() == PceCdTasMediaRoute::Cue
-                        && direct_pce_cd_memory_base_multitap_eligible(state.disc_sha256)))
+                    || direct_pce_cd_memory_base_multitap_eligible(source_catalog_sha256))
                     && (!arcade_card
-                        || (profile.media() == PceCdTasMediaRoute::Cue
-                            && direct_pce_cd_arcade_eligible(false, state.disc_sha256)))
+                        || direct_pce_cd_arcade_eligible(ppf_multitap, source_catalog_sha256))
                     && crate::emu_backend::pce_profiles::automatic_controller_mode(
-                        multitap_catalog_sha256,
+                        source_catalog_sha256,
                     ) == PceControllerMode::Multitap))
             && identity.devices == devices_for_controller(controller_mode)
             && identity.firmware.len() == 1,

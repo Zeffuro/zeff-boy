@@ -16,7 +16,9 @@ use crate::tas_project::{
 mod arcade_multitap;
 mod archive_multitap;
 mod archive_ppf;
+mod archive_ppf_combinations;
 mod chd_multitap;
+mod direct_card_multitap;
 mod iso_multitap;
 mod loaded_path;
 mod memory_base_multitap;

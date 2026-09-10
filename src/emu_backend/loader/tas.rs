@@ -111,10 +111,15 @@ pub(crate) use direct_pce::{
     zip_pce_tas_sync_config_sha256_for_profile,
 };
 #[cfg(test)]
-pub(crate) use direct_pce_cd::direct_pce_cd_archive_ppf_tas_sync_configs_for_test;
 pub(crate) use direct_pce_cd::{
-    direct_pce_multitap_cd_ppf_tas_sync_config_sha256,
+    direct_pce_cd_archive_ppf_tas_sync_configs_for_test,
+    direct_pce_multitap_cd_archive_ppf_tas_sync_configs_for_test,
+    direct_pce_multitap_cd_ppf_tas_sync_configs_for_test,
+};
+pub(crate) use direct_pce_cd::{
     is_direct_pce_cd_archive_ppf_tas_sync_config_sha256,
+    is_direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256,
+    is_direct_pce_multitap_cd_ppf_tas_sync_config_sha256,
     validate_direct_pce_cd_tas_execution_runtime, validate_direct_pce_cd_tas_project_identity,
     validate_direct_pce_cd_tas_project_witness, validate_direct_pce_cd_tas_runtime,
     validate_direct_pce_cd_tas_state, validate_direct_pce_multitap_cd_tas_execution_runtime,

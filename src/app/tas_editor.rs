@@ -8,6 +8,8 @@ use super::App;
 use crate::debug::{
     TasEditorFileRequest, TasEditorHostRequest, TasEditorLiveAction, TasEditorLiveStatus,
 };
+use crate::emu_thread::TasExecutionProfile;
+use crate::tas_project::{TasDigest, TasProject};
 
 mod conversion;
 mod selection;
@@ -20,7 +22,178 @@ use selection::{
     has_zip_extension, readiness_summary, tas_source_matches,
 };
 
+#[derive(Default)]
+pub(super) struct TasEditorLiveValidationCache {
+    profile: Option<TasEditorProfileValidation>,
+    branch_scope: Option<TasEditorBranchScopeValidation>,
+    #[cfg(test)]
+    profile_recomputations: usize,
+    #[cfg(test)]
+    branch_scope_recomputations: usize,
+}
+
+struct TasEditorProfileValidation {
+    project_sha256: TasDigest,
+    result: Result<TasExecutionProfile, String>,
+}
+
+struct TasEditorBranchScopeValidation {
+    project_sha256: TasDigest,
+    profile: TasExecutionProfile,
+    branch_id: String,
+    valid: bool,
+}
+
+impl TasEditorLiveValidationCache {
+    pub(in crate::app) fn profile(
+        &mut self,
+        project: &TasProject,
+        project_sha256: TasDigest,
+    ) -> Result<TasExecutionProfile, String> {
+        if self
+            .profile
+            .as_ref()
+            .is_some_and(|entry| entry.project_sha256 == project_sha256)
+        {
+            return self
+                .profile
+                .as_ref()
+                .expect("validated cache entry should exist")
+                .result
+                .clone();
+        }
+        let result = crate::emu_backend::loader::classify_direct_tas_execution_profile(project)
+            .map_err(|error| error.to_string());
+        self.profile = Some(TasEditorProfileValidation {
+            project_sha256,
+            result: result.clone(),
+        });
+        self.branch_scope = None;
+        #[cfg(test)]
+        {
+            self.profile_recomputations += 1;
+        }
+        result
+    }
+
+    fn branch_scope(
+        &mut self,
+        project: &TasProject,
+        project_sha256: TasDigest,
+        profile: TasExecutionProfile,
+        branch_id: &str,
+    ) -> bool {
+        if self.branch_scope.as_ref().is_some_and(|entry| {
+            entry.project_sha256 == project_sha256
+                && entry.profile == profile
+                && entry.branch_id == branch_id
+        }) {
+            return self
+                .branch_scope
+                .as_ref()
+                .expect("validated cache entry should exist")
+                .valid;
+        }
+        let valid = validate_tas_editor_branch_scope(project, profile, branch_id).is_ok();
+        self.branch_scope = Some(TasEditorBranchScopeValidation {
+            project_sha256,
+            profile,
+            branch_id: branch_id.to_owned(),
+            valid,
+        });
+        #[cfg(test)]
+        {
+            self.branch_scope_recomputations += 1;
+        }
+        valid
+    }
+
+    #[cfg(test)]
+    fn recomputations(&self) -> (usize, usize) {
+        (
+            self.profile_recomputations,
+            self.branch_scope_recomputations,
+        )
+    }
+}
+
+fn validate_tas_editor_branch_scope(
+    project: &TasProject,
+    profile: TasExecutionProfile,
+    branch_id: &str,
+) -> anyhow::Result<()> {
+    match profile {
+        TasExecutionProfile::DirectNesCartridge => {
+            crate::emu_backend::loader::DirectNesTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectFdsDisk => {
+            crate::emu_backend::loader::DirectFdsTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectGbCartridgeDmg => {
+            crate::emu_backend::loader::DirectGbTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectGbCartridgeCgb => {
+            crate::emu_backend::loader::DirectGbcTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectColecoCartridge => {
+            crate::emu_backend::loader::DirectColecoTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectSmsCartridge => {
+            crate::emu_backend::loader::DirectSmsTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectGameGearCartridge => {
+            crate::emu_backend::loader::DirectGameGearTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectGbaCartridge => {
+            crate::emu_backend::loader::DirectGbaTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectSg1000Cartridge => {
+            crate::emu_backend::loader::DirectSg1000TasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectWsCartridge => {
+            crate::emu_backend::loader::DirectWsTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectPceHuCard
+        | TasExecutionProfile::DirectPceSixButtonHuCard
+        | TasExecutionProfile::DirectPceMultitapHuCard => {
+            crate::emu_backend::loader::DirectPceTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+        TasExecutionProfile::DirectPceCd | TasExecutionProfile::DirectPceMultitapCd => {
+            crate::emu_backend::loader::DirectPceCdTasExecutionLoader::validate_project_branch_scope(
+                project, branch_id,
+            )
+        }
+    }
+}
+
 impl App {
+    #[cfg(test)]
+    pub(in crate::app) fn tas_editor_live_validation_recomputations(&self) -> (usize, usize) {
+        self.tas_editor_live_validation_cache.recomputations()
+    }
+
     pub(super) fn handle_tas_editor_host_request(&mut self, request: TasEditorHostRequest) {
         match request {
             TasEditorHostRequest::File(request) => self.handle_tas_editor_file_request(request),
@@ -160,22 +333,26 @@ impl App {
         Ok(())
     }
 
-    pub(in crate::app) fn detached_tas_editor_live_status(&self) -> TasEditorLiveStatus {
+    pub(in crate::app) fn detached_tas_editor_live_status(&mut self) -> TasEditorLiveStatus {
         if self.emu_thread.is_none() {
             return TasEditorLiveStatus::Unavailable("No game is running".to_owned());
         }
         let Some(session) = self.debug_windows.tas_editor.active_session() else {
             return TasEditorLiveStatus::Unavailable("Open or create a TAS project".to_owned());
         };
-        let profile = match crate::emu_backend::loader::classify_direct_tas_execution_profile(
-            session.project(),
-        ) {
+        let project = session.project();
+        let project_sha256 = session.project_content_sha256();
+        let selected_branch_id = session.selected_branch_id();
+        let profile = match self
+            .tas_editor_live_validation_cache
+            .profile(project, project_sha256)
+        {
             Ok(profile) => profile,
-            Err(error) => return TasEditorLiveStatus::Unavailable(error.to_string()),
+            Err(error) => return TasEditorLiveStatus::Unavailable(error),
         };
         let source_path = self.rom_info.source_path.as_deref();
-        let valid_source = match profile {
-            crate::emu_thread::TasExecutionProfile::DirectNesCartridge => {
+        let source_matches = match profile {
+            TasExecutionProfile::DirectNesCartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::Nes
                     && (source_path.is_some_and(has_nes_extension)
                         || (source_path.is_some_and(has_zip_extension)
@@ -184,10 +361,8 @@ impl App {
                                 .rom_path
                                 .as_deref()
                                 .is_some_and(has_nes_extension)))
-                    && crate::emu_backend::loader::DirectNesTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
             }
-            crate::emu_thread::TasExecutionProfile::DirectFdsDisk => {
+            TasExecutionProfile::DirectFdsDisk => {
                 self.active_system == crate::emu_backend::ActiveSystem::Nes
                     && (source_path.is_some_and(has_fds_extension)
                         || (source_path.is_some_and(has_zip_extension)
@@ -196,40 +371,48 @@ impl App {
                                 .rom_path
                                 .as_deref()
                                 .is_some_and(has_fds_extension)))
-                    && crate::emu_backend::loader::DirectFdsTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
             }
-            crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg => {
+            TasExecutionProfile::DirectGbCartridgeDmg => {
                 self.active_system == crate::emu_backend::ActiveSystem::GameBoy
-                    && tas_source_matches(source_path, self.rom_info.rom_path.as_deref(), has_gb_extension)
-                    && crate::emu_backend::loader::DirectGbTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        has_gb_extension,
+                    )
             }
-            crate::emu_thread::TasExecutionProfile::DirectGbCartridgeCgb => {
+            TasExecutionProfile::DirectGbCartridgeCgb => {
                 self.active_system == crate::emu_backend::ActiveSystem::GameBoy
-                    && tas_source_matches(source_path, self.rom_info.rom_path.as_deref(), has_gbc_extension)
-                    && crate::emu_backend::loader::DirectGbcTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        has_gbc_extension,
+                    )
             }
-            crate::emu_thread::TasExecutionProfile::DirectColecoCartridge => {
+            TasExecutionProfile::DirectColecoCartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::Coleco
-                    && tas_source_matches(source_path, self.rom_info.rom_path.as_deref(), has_coleco_extension)
-                    && crate::emu_backend::loader::DirectColecoTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        has_coleco_extension,
+                    )
             }
-            crate::emu_thread::TasExecutionProfile::DirectSmsCartridge => {
+            TasExecutionProfile::DirectSmsCartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::MasterSystem
-                    && tas_source_matches(source_path, self.rom_info.rom_path.as_deref(), has_sms_extension)
-                    && crate::emu_backend::loader::DirectSmsTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        has_sms_extension,
+                    )
             }
-            crate::emu_thread::TasExecutionProfile::DirectGameGearCartridge => {
+            TasExecutionProfile::DirectGameGearCartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::GameGear
-                    && tas_source_matches(source_path, self.rom_info.rom_path.as_deref(), has_game_gear_extension)
-                    && crate::emu_backend::loader::DirectGameGearTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        has_game_gear_extension,
+                    )
             }
-            crate::emu_thread::TasExecutionProfile::DirectGbaCartridge => {
+            TasExecutionProfile::DirectGbaCartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::GameBoyAdvance
                     && (source_path.is_some_and(has_gba_extension)
                         || (source_path.is_some_and(has_zip_extension)
@@ -238,24 +421,26 @@ impl App {
                                 .rom_path
                                 .as_deref()
                                 .is_some_and(has_gba_extension)))
-                    && crate::emu_backend::loader::DirectGbaTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
             }
-            crate::emu_thread::TasExecutionProfile::DirectSg1000Cartridge => {
+            TasExecutionProfile::DirectSg1000Cartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::Sg1000
-                    && tas_source_matches(source_path, self.rom_info.rom_path.as_deref(), has_sg1000_extension)
-                    && crate::emu_backend::loader::DirectSg1000TasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        has_sg1000_extension,
+                    )
             }
-            crate::emu_thread::TasExecutionProfile::DirectWsCartridge => {
+            TasExecutionProfile::DirectWsCartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::WonderSwan
-                    && tas_source_matches(source_path, self.rom_info.rom_path.as_deref(), has_ws_extension)
-                    && crate::emu_backend::loader::DirectWsTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        has_ws_extension,
+                    )
             }
-            crate::emu_thread::TasExecutionProfile::DirectPceHuCard
-            | crate::emu_thread::TasExecutionProfile::DirectPceSixButtonHuCard
-            | crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard => {
+            TasExecutionProfile::DirectPceHuCard
+            | TasExecutionProfile::DirectPceSixButtonHuCard
+            | TasExecutionProfile::DirectPceMultitapHuCard => {
                 self.active_system == crate::emu_backend::ActiveSystem::Pce
                     && (source_path.is_some_and(has_pce_extension)
                         || (source_path.is_some_and(has_zip_extension)
@@ -264,10 +449,8 @@ impl App {
                                 .rom_path
                                 .as_deref()
                                 .is_some_and(has_pce_extension)))
-                    && crate::emu_backend::loader::DirectPceTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
             }
-            crate::emu_thread::TasExecutionProfile::DirectPceCd => {
+            TasExecutionProfile::DirectPceCd => {
                 self.active_system == crate::emu_backend::ActiveSystem::Pce
                     && (source_path.is_some_and(has_pce_cd_extension)
                         || (source_path.is_some_and(has_zip_extension)
@@ -276,10 +459,8 @@ impl App {
                                 .rom_path
                                 .as_deref()
                                 .is_some_and(has_cue_extension)))
-                    && crate::emu_backend::loader::DirectPceCdTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
             }
-            crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => {
+            TasExecutionProfile::DirectPceMultitapCd => {
                 self.active_system == crate::emu_backend::ActiveSystem::Pce
                     && (source_path.is_some_and(has_direct_multitap_cd_extension)
                         || (source_path.is_some_and(has_pce_cd_archive_extension)
@@ -288,11 +469,16 @@ impl App {
                                 .rom_path
                                 .as_deref()
                                 .is_some_and(has_cue_extension)))
-                    && crate::emu_backend::loader::DirectPceCdTasExecutionLoader::validate_project_branch_scope(
-                        session.project(), session.selected_branch_id()).is_ok()
             }
         };
-        if !valid_source {
+        if !source_matches
+            || !self.tas_editor_live_validation_cache.branch_scope(
+                project,
+                project_sha256,
+                profile,
+                selected_branch_id,
+            )
+        {
             return TasEditorLiveStatus::Unavailable(
                 "The loaded game does not match this direct TAS profile".to_owned(),
             );
@@ -735,6 +921,10 @@ impl App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tas_editor/live_validation_tests.rs"]
+mod live_validation_tests;
 
 fn has_cue_extension(path: &std::path::Path) -> bool {
     path.extension()

@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use zeff_emu_common::{
     media::{MediaEvent, MediaSlotId},
     replay::ReplayEvent,
@@ -425,4 +426,54 @@ fn identical_and_unknown_branch_requests_are_safe() {
         .diff_branches("missing", "missing", TasBranchDiffLimits::default())
         .unwrap_err();
     assert!(error.to_string().contains("unknown TAS branch"));
+}
+
+#[test]
+fn background_snapshot_matches_the_direct_bounded_diff() {
+    let mut project = two_branch_project(6);
+    project.branches[0].input_spans = vec![TasInputSpan {
+        start: 2,
+        length: 1,
+        input: input(1),
+    }];
+    project.branches[1].events = vec![ReplayEvent::FdsDiskSide { frame: 3, side: 1 }];
+    project.validate().unwrap();
+
+    let direct = project
+        .diff_branches("main", "target", TasBranchDiffLimits::default())
+        .unwrap();
+    let snapshot = project
+        .branch_diff_snapshot_from_validated("main", "target")
+        .unwrap();
+    let cancellation = AtomicBool::new(false);
+    assert_eq!(snapshot.diff(&cancellation).unwrap(), Some(direct));
+}
+
+#[test]
+fn background_snapshot_rejects_longer_only_tail_before_copying_or_hashing() {
+    let mut project = two_branch_project(1);
+    project.branches[1].frame_count = MAX_BACKGROUND_BRANCH_DIFF_INPUT_SPANS as u64 + 1;
+    project.branches[1].input_spans = (0..=MAX_BACKGROUND_BRANCH_DIFF_INPUT_SPANS)
+        .map(|start| TasInputSpan {
+            start: start as u64,
+            length: 1,
+            input: input(if start % 2 == 0 { 1 } else { 2 }),
+        })
+        .collect();
+    project.validate().unwrap();
+
+    let error = project
+        .branch_diff_snapshot_from_validated("main", "target")
+        .unwrap_err();
+    assert!(error.to_string().contains("complete snapshot requires"));
+}
+
+#[test]
+fn background_snapshot_honors_a_cancelled_request() {
+    let project = two_branch_project(6);
+    let snapshot = project
+        .branch_diff_snapshot_from_validated("main", "target")
+        .unwrap();
+    let cancellation = AtomicBool::new(true);
+    assert_eq!(snapshot.diff(&cancellation).unwrap(), None);
 }

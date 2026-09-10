@@ -4,6 +4,7 @@ use zeff_emu_common::save_ram::SaveRamKind;
 use zeff_emu_common::time::{ClockRate, MasterTicks};
 
 mod frame_service;
+mod irq_timing;
 
 #[cfg(feature = "profiling")]
 #[test]

@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use anyhow::Result;
 
@@ -28,7 +29,7 @@ pub(super) fn project_witness(project: &TasProject) -> Result<TasEditorProjectWi
 
 #[derive(Clone, Debug)]
 pub(super) struct TasEditorHistoryEntry {
-    pub(super) project_bytes: Vec<u8>,
+    pub(super) project_bytes: Arc<[u8]>,
     pub(super) selected_branch_id: String,
     pub(super) cursor: u64,
 }

@@ -612,24 +612,38 @@ fn validate_suspend_profile(
         && backend.pce().and_then(crate::emu_backend::PceBackend::tas_load_provenance).is_some_and(
             |provenance| {
                 provenance.load.direct_pce_cd_ppf
-                    && provenance.load.tas_sync_config_sha256
-                        == crate::emu_backend::loader::direct_pce_multitap_cd_ppf_tas_sync_config_sha256().0
+                    && crate::emu_backend::loader::is_direct_pce_multitap_cd_ppf_tas_sync_config_sha256(
+                        TasDigest(provenance.load.tas_sync_config_sha256),
+                    )
+                    && crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_execution_runtime(
+                        backend, false,
+                    )
+                    .is_ok()
             },
         );
-    let archive_ppf_mods = identity.profile
-        == crate::emu_thread::TasExecutionProfile::DirectPceCd
+    let archive_ppf_mods = pce_cd_original
         && backend
             .pce()
             .and_then(crate::emu_backend::PceBackend::tas_load_provenance)
             .is_some_and(|provenance| {
                 provenance.load.direct_pce_cd_archive_ppf
-                    && crate::emu_backend::loader::is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
-                        crate::tas_project::TasDigest(provenance.load.tas_sync_config_sha256),
-                    )
-                    && crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
-                        backend, false,
-                    )
-                    .is_ok()
+                    && match identity.profile {
+                        crate::emu_thread::TasExecutionProfile::DirectPceCd => {
+                            crate::emu_backend::loader::is_direct_pce_cd_archive_ppf_tas_sync_config_sha256(
+                                TasDigest(provenance.load.tas_sync_config_sha256),
+                            ) && crate::emu_backend::loader::validate_direct_pce_cd_tas_execution_runtime(
+                                backend, false,
+                            ).is_ok()
+                        }
+                        crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => {
+                            crate::emu_backend::loader::is_direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256(
+                                TasDigest(provenance.load.tas_sync_config_sha256),
+                            ) && crate::emu_backend::loader::validate_direct_pce_multitap_cd_tas_execution_runtime(
+                                backend, false,
+                            ).is_ok()
+                        }
+                        _ => false,
+                    }
             });
     if !observation.identity_metadata_matches
         || !observation.load_provenance_available
@@ -821,3 +835,7 @@ fn proof_mismatch_reason(
 #[cfg(test)]
 #[path = "tas_repair/archive_ppf_tests.rs"]
 mod archive_ppf_tests;
+
+#[cfg(test)]
+#[path = "tas_repair/direct_card_multitap_tests.rs"]
+mod direct_card_multitap_tests;

@@ -12,11 +12,15 @@ impl App {
             self.tas_control.clear_readiness();
             return;
         };
-        let Ok(profile) =
-            crate::emu_backend::loader::classify_direct_tas_execution_profile(session.project())
-        else {
-            self.tas_control.clear_readiness();
-            return;
+        let profile = match self
+            .tas_editor_live_validation_cache
+            .profile(session.project(), session.project_content_sha256())
+        {
+            Ok(profile) => profile,
+            Err(_) => {
+                self.tas_control.clear_readiness();
+                return;
+            }
         };
         let key = TasReadinessKey {
             worker_generation: self.emu_worker_generation,

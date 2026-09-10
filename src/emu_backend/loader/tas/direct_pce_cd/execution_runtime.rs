@@ -101,26 +101,43 @@ pub(super) fn validate_direct_pce_cd_tas_execution_runtime_for_controller(
     )
     .context("PC Engine CD TAS provenance describes an invalid execution profile")?;
     validate_archive_ppf_provenance(provenance.load)?;
+    let card_multitap_media = matches!(
+        profile.media(),
+        PceCdTasMediaRoute::Cue
+            | PceCdTasMediaRoute::Chd
+            | PceCdTasMediaRoute::Iso
+            | PceCdTasMediaRoute::Ppf
+            | PceCdTasMediaRoute::Archive(_, _)
+            | PceCdTasMediaRoute::ArchivePpf(_, _)
+    );
     ensure!(
         !multitap
             || !arcade_card
-            || (profile.media() == PceCdTasMediaRoute::Cue
+            || (card_multitap_media
                 && crate::emu_backend::pce_profiles::automatic_arcade_card_enabled(Some(
                     provenance.load.source_disc_sha256.context(
                         "PC Engine CD Arcade Card Multitap omitted its catalog disc witness",
                     )?,
                 ))),
-        "PC Engine CD Arcade Card Multitap requires a direct CUE and independent Arcade Card catalog witness"
+        "PC Engine CD Arcade Card Multitap requires an exact supported source and independent Arcade Card catalog witness"
     );
     ensure!(
         !multitap
             || !memory_base
-            || (profile.media() == PceCdTasMediaRoute::Cue
+            || (card_multitap_media
                 && provenance
                     .load
                     .source_disc_sha256
                     .is_some_and(|hash| { direct_pce_cd_memory_base_multitap_eligible(hash) })),
-        "PC Engine CD Memory Base Multitap requires a direct CUE and independent Memory Base and Multitap catalog witnesses"
+        "PC Engine CD Memory Base Multitap requires an exact supported source and independent Memory Base and Multitap catalog witnesses"
+    );
+    ensure!(
+        !provenance.load.direct_pce_cd_archive_ppf
+            || provenance
+                .load
+                .source_disc_sha256
+                .is_some_and(|hash| { pce.source_disc_hash() == Some(hash) }),
+        "PC Engine CD archive PPF provenance differs from its original loaded disc"
     );
     ensure!(
         (provenance.load.direct_pce_cd_ppf
@@ -218,8 +235,7 @@ pub(super) fn validate_direct_pce_cd_tas_execution_runtime_for_controller(
         !memory_base
             || provenance.load.source_disc_sha256.is_some_and(|hash| {
                 if multitap {
-                    profile.media() == PceCdTasMediaRoute::Cue
-                        && direct_pce_cd_memory_base_multitap_eligible(hash)
+                    card_multitap_media && direct_pce_cd_memory_base_multitap_eligible(hash)
                 } else {
                     direct_pce_cd_memory_base_eligible(
                         provenance.load.direct_pce_cd_chd,

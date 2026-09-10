@@ -2,6 +2,15 @@ use anyhow::{Result, bail};
 
 use super::{MAX_PROJECT_FRAMES, MAX_PROJECT_INPUT_SPANS, TasBranch, TasInputFrame, TasInputSpan};
 
+mod autofire;
+mod digital_ranges;
+mod digital_transform;
+mod special_ranges;
+mod special_transform;
+
+pub use digital_transform::{TasDigitalInputMask, TasDigitalTransform};
+pub use special_transform::{TasSpecialInputMask, TasSpecialTransform};
+
 pub const MAX_TAS_INPUT_PATTERN_SPANS: usize = 4_096;
 pub const MAX_TAS_INPUT_PATTERN_TILE_STEPS: usize = 8_192;
 

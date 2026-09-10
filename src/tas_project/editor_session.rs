@@ -47,6 +47,12 @@ pub struct TasEditorAutosaveRecovery {
     pub path: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TasEditorRecordingDraftCheckpoint {
+    before: TasEditorHistoryEntry,
+    history: TasEditorHistory,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct TasEditorPersistenceBaseline {
     source: TasEditorSessionSource,
@@ -230,17 +236,59 @@ impl TasEditorSession {
         self.history.redo.len()
     }
 
-    pub(crate) fn discard_edits_after(&mut self, undo_count: usize) -> Result<()> {
-        if undo_count > self.history.undo.len() {
-            bail!("TAS editor discard point is no longer available");
+    pub(crate) fn begin_recording_draft(
+        &mut self,
+        branch_id: &str,
+        cursor: u64,
+    ) -> Result<TasEditorRecordingDraftCheckpoint> {
+        if self.live_frame_history_group.is_some() {
+            bail!("stop live recording before starting manual row entry");
         }
-        while self.history.undo.len() > undo_count {
-            self.restore_history_direction(true)?;
+        if branch_id != self.selected_branch_id || cursor != self.selected_branch().frame_count() {
+            bail!("manual recording row is no longer at the active branch end");
         }
-        if !self.history.redo.is_empty() {
-            self.history.redo.clear();
-            self.note_history_mutation();
+        let before = self.capture_history_entry()?;
+        let checkpoint = TasEditorRecordingDraftCheckpoint {
+            before: before.clone(),
+            history: self.history.clone(),
+        };
+        let mut project = self.project.clone();
+        let outcome = project.edit_transaction(|edit| edit.insert_frames(branch_id, cursor, 1))?;
+        if !outcome.changed {
+            bail!("manual recording row did not change the TAS project");
         }
+        let project_sha256 = project_sha256(&project)?;
+        self.project = project;
+        self.project_sha256 = project_sha256;
+        self.history.undo.push(before);
+        self.history.redo.clear();
+        self.note_history_mutation();
+        self.cursor = cursor;
+        Ok(checkpoint)
+    }
+
+    pub(crate) fn discard_recording_draft(
+        &mut self,
+        checkpoint: &TasEditorRecordingDraftCheckpoint,
+    ) -> Result<()> {
+        if self.live_frame_history_group.is_some() {
+            bail!("stop live recording before discarding manual row entry");
+        }
+        let project = TasProject::decode(&checkpoint.before.project_bytes)?;
+        let branch = project
+            .branch(&checkpoint.before.selected_branch_id)
+            .ok_or_else(|| anyhow::anyhow!("TAS recording checkpoint names an unknown branch"))?;
+        if checkpoint.before.cursor > branch.frame_count() {
+            bail!("TAS recording checkpoint cursor is past the restored branch end");
+        }
+        let project_sha256 = project_sha256(&project)?;
+
+        self.project = project;
+        self.selected_branch_id = checkpoint.before.selected_branch_id.clone();
+        self.cursor = checkpoint.before.cursor;
+        self.project_sha256 = project_sha256;
+        self.history = checkpoint.history.clone();
+        self.note_history_mutation();
         Ok(())
     }
 
@@ -404,7 +452,7 @@ impl TasEditorSession {
 
     fn capture_history_entry(&self) -> Result<TasEditorHistoryEntry> {
         let entry = TasEditorHistoryEntry {
-            project_bytes: self.project.encode_editor_history_snapshot()?,
+            project_bytes: self.project.encode_editor_history_snapshot()?.into(),
             selected_branch_id: self.selected_branch_id.clone(),
             cursor: self.cursor,
         };

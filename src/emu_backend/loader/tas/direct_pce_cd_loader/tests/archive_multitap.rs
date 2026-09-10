@@ -1,7 +1,31 @@
-use super::multicue::{ArchiveKind, write_multicue_archive_with_second_fill};
+use super::multicue::{
+    ArchiveKind, write_multicue_archive_with_fills, write_multicue_archive_with_second_fill,
+};
 use super::*;
 
 impl ArchiveKind {
+    fn arcade_multitap_sync(self, selected: bool) -> TasDigest {
+        match (self, selected) {
+            (Self::SevenZip, false) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_archive_arcade_tas_sync_config_sha256(),
+            (Self::SevenZip, true) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_selected_archive_arcade_tas_sync_config_sha256(),
+            (Self::Rar, false) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_rar_arcade_tas_sync_config_sha256(),
+            (Self::Rar, true) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_selected_rar_arcade_tas_sync_config_sha256(),
+            (Self::Zip, false) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_zip_arcade_tas_sync_config_sha256(),
+            (Self::Zip, true) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_selected_zip_arcade_tas_sync_config_sha256(),
+        }
+    }
+
+    fn memory_base_multitap_sync(self, selected: bool) -> TasDigest {
+        match (self, selected) {
+            (Self::SevenZip, false) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_archive_memory_base_tas_sync_config_sha256(),
+            (Self::SevenZip, true) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_selected_archive_memory_base_tas_sync_config_sha256(),
+            (Self::Rar, false) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_rar_memory_base_tas_sync_config_sha256(),
+            (Self::Rar, true) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_selected_rar_memory_base_tas_sync_config_sha256(),
+            (Self::Zip, false) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_zip_memory_base_tas_sync_config_sha256(),
+            (Self::Zip, true) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_selected_zip_memory_base_tas_sync_config_sha256(),
+        }
+    }
+
     fn multitap_sync(self, selected: bool) -> TasDigest {
         match (self, selected) {
             (Self::SevenZip, false) => super::super::super::direct_pce_cd::direct_pce_multitap_cd_archive_tas_sync_config_sha256(),
@@ -32,6 +56,342 @@ fn archive_multitap_six_routes_create_reopen_seek_and_bind_format_and_member() -
         exercise_route(kind, true, 0x91 + index as u8)?;
     }
     Ok(())
+}
+
+#[test]
+fn archive_arcade_multitap_six_routes_bind_catalogs_and_reauthenticate_sources() -> Result<()> {
+    for (index, kind) in [ArchiveKind::SevenZip, ArchiveKind::Rar, ArchiveKind::Zip]
+        .into_iter()
+        .enumerate()
+    {
+        exercise_arcade_route(kind, false, 0x72 + index as u8)?;
+        exercise_arcade_route(kind, true, 0x75 + index as u8)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn archive_memory_base_multitap_six_routes_bind_catalogs_and_native_state() -> Result<()> {
+    for (index, kind) in [ArchiveKind::SevenZip, ArchiveKind::Rar, ArchiveKind::Zip]
+        .into_iter()
+        .enumerate()
+    {
+        exercise_memory_base_route(kind, false, 0xD5 + index as u8)?;
+        exercise_memory_base_route(kind, true, 0xD8 + index as u8)?;
+    }
+    Ok(())
+}
+
+fn exercise_memory_base_route(kind: ArchiveKind, selected: bool, fill: u8) -> Result<()> {
+    let directory = crate::test_support::test_directory(&format!(
+        "pce-cd-tas-archive-memory-base-multitap-{kind:?}-{selected}"
+    ))?;
+    let path = directory.path().join(format!("disc.{}", kind.extension()));
+    if selected {
+        write_multicue_archive_with_fills(&path, kind, 0xDB + index_for_kind(kind), fill)?;
+    } else {
+        write_unique_archive(&path, kind, fill)?;
+    }
+    let system_card = Box::leak(vec![0; 256 * 1024].into_boxed_slice());
+    let rom_path = selected.then(|| path.join("second").join("disc.cue"));
+    let base = configured_loader(
+        DirectPceCdTasExecutionLoader::new_with_rom_path(
+            path.clone(),
+            rom_path.clone(),
+            Vec::new(),
+        )?,
+        system_card,
+    );
+    let disc_sha256 = base
+        .load_fresh_backend()?
+        .pce()
+        .and_then(crate::emu_backend::PceBackend::normalized_disc_hash)
+        .expect("fixture disc");
+    let memory_base_catalog =
+        crate::emu_backend::pce_profiles::register_test_memory_base_catalog_hash(disc_sha256);
+    let controller_catalog =
+        crate::emu_backend::pce_profiles::register_test_controller_catalog_hash(
+            disc_sha256,
+            PceControllerMode::Multitap,
+        );
+    let loader = configured_loader(
+        DirectPceCdTasExecutionLoader::new_multitap_with_rom_path(
+            path.clone(),
+            rom_path,
+            Vec::new(),
+        )?,
+        system_card,
+    );
+    let mut project = loader.create_project()?;
+    assert_eq!(
+        project.identity().sync_config_sha256,
+        kind.memory_base_multitap_sync(selected)
+    );
+    assert_eq!(project.identity().devices.len(), 5);
+    assert_eq!(
+        loader
+            .load_fresh_backend()?
+            .pce()
+            .expect("PCE backend")
+            .memory_base_mode(),
+        zeff_pce_core::hardware::PceMemoryBaseMode::Enabled
+    );
+    assert_eq!(
+        loader
+            .load_fresh_backend()?
+            .pce()
+            .expect("PCE backend")
+            .arcade_card_mode(),
+        zeff_pce_core::hardware::PceArcadeCardMode::Disabled
+    );
+    assert_eq!(loader.load_fresh_backend()?.flush_battery_sram()?, None);
+    let input = five_player_input();
+    project.edit_transaction(|edit| edit.set_input_range("main", 0, 1, input))?;
+    let manual = directory.path().join("movie.ztas");
+    let autosaves = TasAutosaveStore::beside_manual_save(&manual, TasAutosaveConfig::default())?;
+    let cache = TasSeekStateCache::open(directory.path().join("seek-cache"))?;
+    let mut editor = TasEditorSession::new(project.clone(), manual, autosaves, cache)?;
+    let mut engine = loader.load_editor_engine(&project)?;
+    assert!(engine.seek(&mut editor, 1)?.reached_target());
+    let reached = engine.backend().encode_state_bytes()?;
+    assert!(engine.seek(&mut editor, 0)?.reached_target());
+    assert!(engine.seek(&mut editor, 1)?.reached_target());
+    assert_eq!(engine.backend().encode_state_bytes()?, reached);
+    assert!(engine.seek(&mut editor, 0)?.reached_target());
+    let mut current = engine.into_backend();
+    let neutral_state = current.encode_state_bytes()?;
+    let native_memory_base = vec![0xA5; zeff_pce_core::hardware::MEMORY_BASE128_RAM_LEN];
+    let crate::emu_backend::EmuBackend::Pce(pce) = &mut current else {
+        unreachable!("Memory Base Multitap fixture must load a PC Engine backend");
+    };
+    pce.load_memory_base128(&native_memory_base)?;
+    let native_state = current.encode_state_bytes()?;
+    assert_ne!(native_state, neutral_state);
+    let mut restored = loader.load_fresh_backend()?;
+    restored.load_state_from_bytes(native_state.clone())?;
+    assert_eq!(restored.encode_state_bytes()?, native_state);
+    assert_eq!(restored.flush_battery_sram()?, None);
+    let loaded = loader.load_session(&native_state)?;
+    let seeded_project = TasProject::new(
+        "native-memory-base",
+        loaded.identity().clone(),
+        native_state.clone(),
+        Default::default(),
+        TasInitialBranch {
+            id: "main".to_owned(),
+            name: "Main".to_owned(),
+            frame_count: 1,
+            input_spans: Vec::new(),
+            events: Vec::new(),
+        },
+        BTreeMap::new(),
+    )?;
+    let seeded_engine = loader.load_editor_engine(&seeded_project)?;
+    assert_eq!(seeded_engine.backend().encode_state_bytes()?, native_state);
+
+    let mut reopened =
+        DirectPceCdTasExecutionLoader::new_for_project(path.clone(), Vec::new(), &project)?;
+    reopened.system_card_override = Some(system_card);
+    reopened.system_card_sha256_override = Some(TEST_SYSTEM_CARD_SHA256);
+    reopened.load_editor_engine(&project)?;
+
+    let other_path = directory
+        .path()
+        .join(format!("other.{}", kind.next().extension()));
+    write_unique_archive(&other_path, kind.next(), fill)?;
+    let other = configured_loader(
+        DirectPceCdTasExecutionLoader::new_multitap(other_path, Vec::new()),
+        system_card,
+    );
+    assert!(other.load_editor_engine(&project).is_err());
+    let mut wrong_source_identity = project.identity().clone();
+    wrong_source_identity.source_media_sha256 = TasDigest([0xA5; 32]);
+    assert!(
+        loader
+            .load_editor_engine(&project_with_identity(&project, wrong_source_identity)?)
+            .is_err()
+    );
+    if selected {
+        let first = path.join("first").join("disc.cue");
+        let wrong_base = configured_loader(
+            DirectPceCdTasExecutionLoader::new_with_rom_path(
+                path.clone(),
+                Some(first.clone()),
+                Vec::new(),
+            )?,
+            system_card,
+        );
+        let wrong_disc_sha256 = wrong_base
+            .load_fresh_backend()?
+            .pce()
+            .and_then(crate::emu_backend::PceBackend::normalized_disc_hash)
+            .expect("first member disc");
+        let _wrong_memory_base_catalog =
+            crate::emu_backend::pce_profiles::register_test_memory_base_catalog_hash(
+                wrong_disc_sha256,
+            );
+        let _wrong_controller_catalog =
+            crate::emu_backend::pce_profiles::register_test_controller_catalog_hash(
+                wrong_disc_sha256,
+                PceControllerMode::Multitap,
+            );
+        let wrong = configured_loader(
+            DirectPceCdTasExecutionLoader::new_multitap_with_rom_path(
+                path,
+                Some(first),
+                Vec::new(),
+            )?,
+            system_card,
+        );
+        assert!(wrong.load_editor_engine(&project).is_err());
+    }
+    drop(memory_base_catalog);
+    assert!(loader.load_editor_engine(&project).is_err());
+    let _memory_base_catalog =
+        crate::emu_backend::pce_profiles::register_test_memory_base_catalog_hash(disc_sha256);
+    drop(controller_catalog);
+    assert!(loader.load_editor_engine(&project).is_err());
+    Ok(())
+}
+
+fn exercise_arcade_route(kind: ArchiveKind, selected: bool, fill: u8) -> Result<()> {
+    let directory = crate::test_support::test_directory(&format!(
+        "pce-cd-tas-archive-arcade-multitap-{kind:?}-{selected}"
+    ))?;
+    let path = directory.path().join(format!("disc.{}", kind.extension()));
+    if selected {
+        write_multicue_archive_with_fills(&path, kind, 0xB8 + index_for_kind(kind), fill)?;
+    } else {
+        write_unique_archive(&path, kind, fill)?;
+    }
+    let system_card = Box::leak(vec![0; 256 * 1024].into_boxed_slice());
+    let rom_path = selected.then(|| path.join("second").join("disc.cue"));
+    let base = configured_loader(
+        DirectPceCdTasExecutionLoader::new_with_rom_path(
+            path.clone(),
+            rom_path.clone(),
+            Vec::new(),
+        )?,
+        system_card,
+    );
+    let disc_sha256 = base
+        .load_fresh_backend()?
+        .pce()
+        .and_then(crate::emu_backend::PceBackend::normalized_disc_hash)
+        .expect("fixture disc");
+    let arcade_catalog =
+        crate::emu_backend::pce_profiles::register_test_arcade_card_catalog_hash(disc_sha256);
+    let controller_catalog =
+        crate::emu_backend::pce_profiles::register_test_controller_catalog_hash(
+            disc_sha256,
+            PceControllerMode::Multitap,
+        );
+    let loader = configured_loader(
+        DirectPceCdTasExecutionLoader::new_multitap_with_rom_path(
+            path.clone(),
+            rom_path,
+            Vec::new(),
+        )?,
+        system_card,
+    );
+    let mut project = loader.create_project()?;
+    assert_eq!(
+        project.identity().sync_config_sha256,
+        kind.arcade_multitap_sync(selected)
+    );
+    assert_eq!(project.identity().devices.len(), 5);
+    assert_eq!(
+        loader
+            .load_fresh_backend()?
+            .pce()
+            .expect("PCE backend")
+            .arcade_card_mode(),
+        zeff_pce_core::hardware::PceArcadeCardMode::Enabled
+    );
+    let input = five_player_input();
+    project.edit_transaction(|edit| edit.set_input_range("main", 0, 1, input))?;
+    let manual = directory.path().join("movie.ztas");
+    let autosaves = TasAutosaveStore::beside_manual_save(&manual, TasAutosaveConfig::default())?;
+    let cache = TasSeekStateCache::open(directory.path().join("seek-cache"))?;
+    let mut editor = TasEditorSession::new(project.clone(), manual, autosaves, cache)?;
+    let mut engine = loader.load_editor_engine(&project)?;
+    assert!(engine.seek(&mut editor, 1)?.reached_target());
+    let reached = engine.backend().encode_state_bytes()?;
+    assert!(engine.seek(&mut editor, 0)?.reached_target());
+    assert!(engine.seek(&mut editor, 1)?.reached_target());
+    assert_eq!(engine.backend().encode_state_bytes()?, reached);
+
+    let mut reopened =
+        DirectPceCdTasExecutionLoader::new_for_project(path.clone(), Vec::new(), &project)?;
+    reopened.system_card_override = Some(system_card);
+    reopened.system_card_sha256_override = Some(TEST_SYSTEM_CARD_SHA256);
+    reopened.load_editor_engine(&project)?;
+
+    let other_path = directory
+        .path()
+        .join(format!("other.{}", kind.next().extension()));
+    write_unique_archive(&other_path, kind.next(), fill)?;
+    let other = configured_loader(
+        DirectPceCdTasExecutionLoader::new_multitap(other_path, Vec::new()),
+        system_card,
+    );
+    assert!(other.load_editor_engine(&project).is_err());
+    let mut wrong_source_identity = project.identity().clone();
+    wrong_source_identity.source_media_sha256 = TasDigest([0xA5; 32]);
+    assert!(
+        loader
+            .load_editor_engine(&project_with_identity(&project, wrong_source_identity)?)
+            .is_err()
+    );
+    if selected {
+        let first = path.join("first").join("disc.cue");
+        let wrong_base = configured_loader(
+            DirectPceCdTasExecutionLoader::new_with_rom_path(
+                path.clone(),
+                Some(first.clone()),
+                Vec::new(),
+            )?,
+            system_card,
+        );
+        let wrong_disc_sha256 = wrong_base
+            .load_fresh_backend()?
+            .pce()
+            .and_then(crate::emu_backend::PceBackend::normalized_disc_hash)
+            .expect("first member disc");
+        let _wrong_arcade_catalog =
+            crate::emu_backend::pce_profiles::register_test_arcade_card_catalog_hash(
+                wrong_disc_sha256,
+            );
+        let _wrong_controller_catalog =
+            crate::emu_backend::pce_profiles::register_test_controller_catalog_hash(
+                wrong_disc_sha256,
+                PceControllerMode::Multitap,
+            );
+        let wrong = configured_loader(
+            DirectPceCdTasExecutionLoader::new_multitap_with_rom_path(
+                path,
+                Some(first),
+                Vec::new(),
+            )?,
+            system_card,
+        );
+        assert!(wrong.load_editor_engine(&project).is_err());
+    }
+    drop(arcade_catalog);
+    assert!(loader.load_editor_engine(&project).is_err());
+    let _arcade_catalog =
+        crate::emu_backend::pce_profiles::register_test_arcade_card_catalog_hash(disc_sha256);
+    drop(controller_catalog);
+    assert!(loader.load_editor_engine(&project).is_err());
+    Ok(())
+}
+
+fn index_for_kind(kind: ArchiveKind) -> u8 {
+    match kind {
+        ArchiveKind::SevenZip => 0,
+        ArchiveKind::Rar => 1,
+        ArchiveKind::Zip => 2,
+    }
 }
 
 fn exercise_route(kind: ArchiveKind, selected: bool, fill: u8) -> Result<()> {
@@ -148,7 +508,15 @@ fn exercise_route(kind: ArchiveKind, selected: bool, fill: u8) -> Result<()> {
 
     let arcade =
         crate::emu_backend::pce_profiles::register_test_arcade_card_catalog_hash(disc_sha256);
-    assert!(loader.load_fresh_backend().is_err());
+    assert_eq!(
+        loader
+            .load_fresh_backend()?
+            .pce()
+            .expect("PCE backend")
+            .arcade_card_mode(),
+        zeff_pce_core::hardware::PceArcadeCardMode::Enabled
+    );
+    assert!(loader.load_editor_engine(&project).is_err());
     drop(arcade);
 
     if selected {

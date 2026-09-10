@@ -26,6 +26,12 @@ pub(super) fn draw_input_clipboard(
     let frame_count = session.selected_branch().frame_count();
     ui.collapsing("Input pattern", |ui| {
         let selection = selection.cloned();
+        super::autofire::draw(ui, session, state, selection.as_ref(), actions);
+        ui.separator();
+        super::digital_transform::draw(ui, session, state, selection.as_ref(), actions);
+        ui.separator();
+        super::special_transform_ui::draw(ui, session, state, selection.as_ref(), actions);
+        ui.separator();
         if let Some(selection) = selection.as_ref() {
             ui.small(format!(
                 "Selected frames {}..{}",
@@ -67,77 +73,71 @@ pub(super) fn draw_input_clipboard(
             entry.events.len()
         ));
         draw_pattern_spans(ui, &entry.pattern);
+        let cursor = session.cursor();
+        let cursor_fits = cursor
+            .checked_add(entry.pattern.length())
+            .is_some_and(|end| end <= frame_count);
+        let insertion_fits = frame_count
+            .checked_add(entry.pattern.length())
+            .is_some_and(|end| end <= MAX_PROJECT_FRAMES);
+        ui.small(if cursor_fits {
+            format!("Pattern fits at selected cursor {cursor}.")
+        } else {
+            format!("Pattern does not fit at selected cursor {cursor}.")
+        });
+        let paste = ui
+            .add_enabled(cursor_fits, egui::Button::new("Paste at selected cursor"))
+            .clicked();
+        let insert = ui
+            .add_enabled(
+                insertion_fits,
+                egui::Button::new("Insert copied frames at selected cursor"),
+            )
+            .on_hover_text("Insert frames without replacing existing movie input")
+            .on_disabled_hover_text("Inserting this pattern would exceed the movie frame limit")
+            .clicked();
+        let tile = ui
+            .add_enabled(
+                selection.is_some() && entry.events.is_empty(),
+                egui::Button::new("Tile across selection"),
+            )
+            .on_disabled_hover_text(if entry.events.is_empty() {
+                "Select timeline frames to tile the copied input"
+            } else {
+                "Copied drive events cannot be repeated safely"
+            })
+            .clicked();
+        if !paste && !insert && !tile {
+            return;
+        }
         match session
             .project()
             .branch_movie_sha256(session.selected_branch_id())
         {
             Ok(target_movie_sha256) => {
-                let cursor = session.cursor();
-                let cursor_fits = cursor
-                    .checked_add(entry.pattern.length())
-                    .is_some_and(|end| end <= frame_count);
-                let insertion_fits = cursor
-                    .checked_add(entry.pattern.length())
-                    .is_some_and(|end| end <= MAX_PROJECT_FRAMES);
-                ui.small(if cursor_fits {
-                    format!("Pattern fits at selected cursor {cursor}.")
-                } else {
-                    format!("Pattern does not fit at selected cursor {cursor}.")
-                });
-                if ui
-                    .add_enabled(cursor_fits, egui::Button::new("Paste at selected cursor"))
-                    .clicked()
-                {
-                    actions.push(TasEditorAction::InputClipboard(
-                        TasInputClipboardAction::PasteAtCursor(TasInputClipboardPasteAction {
-                            expected_project_sha256: session.project_content_sha256(),
-                            target_branch_id: session.selected_branch_id().to_owned(),
-                            target_movie_sha256,
-                            cursor,
-                            clipboard_generation: state.generation,
-                        }),
-                    ));
-                }
-                if ui
-                    .add_enabled(
-                        insertion_fits,
-                        egui::Button::new("Insert copied frames at selected cursor"),
-                    )
-                    .on_hover_text("Insert frames without replacing existing movie input")
-                    .clicked()
-                {
-                    actions.push(TasEditorAction::InputClipboard(
-                        TasInputClipboardAction::InsertAtCursor(TasInputClipboardPasteAction {
-                            expected_project_sha256: session.project_content_sha256(),
-                            target_branch_id: session.selected_branch_id().to_owned(),
-                            target_movie_sha256,
-                            cursor,
-                            clipboard_generation: state.generation,
-                        }),
-                    ));
-                }
-                let tile_fits = selection.is_some() && entry.events.is_empty();
-                if ui
-                    .add_enabled(tile_fits, egui::Button::new("Tile across selection"))
-                    .on_disabled_hover_text(if entry.events.is_empty() {
-                        "Select timeline frames to tile the copied input"
+                let action = if paste || insert {
+                    let action = TasInputClipboardPasteAction {
+                        expected_project_sha256: session.project_content_sha256(),
+                        target_branch_id: session.selected_branch_id().to_owned(),
+                        target_movie_sha256,
+                        cursor,
+                        clipboard_generation: state.generation,
+                    };
+                    if paste {
+                        TasInputClipboardAction::PasteAtCursor(action)
                     } else {
-                        "Copied drive events cannot be repeated safely"
+                        TasInputClipboardAction::InsertAtCursor(action)
+                    }
+                } else {
+                    TasInputClipboardAction::TileAcrossSelection(TasInputClipboardTileAction {
+                        expected_project_sha256: session.project_content_sha256(),
+                        target_branch_id: session.selected_branch_id().to_owned(),
+                        target_movie_sha256,
+                        selection: selection.expect("tiling requires a timeline selection"),
+                        clipboard_generation: state.generation,
                     })
-                    .clicked()
-                {
-                    actions.push(TasEditorAction::InputClipboard(
-                        TasInputClipboardAction::TileAcrossSelection(TasInputClipboardTileAction {
-                            expected_project_sha256: session.project_content_sha256(),
-                            target_branch_id: session.selected_branch_id().to_owned(),
-                            target_movie_sha256,
-                            selection: selection
-                                .clone()
-                                .expect("tiling requires a timeline selection"),
-                            clipboard_generation: state.generation,
-                        }),
-                    ));
-                }
+                };
+                actions.push(TasEditorAction::InputClipboard(action));
             }
             Err(error) => {
                 ui.colored_label(
@@ -195,20 +195,24 @@ fn copy_selection_action(
 }
 
 fn draw_pattern_spans(ui: &mut egui::Ui, pattern: &TasInputPattern) {
+    let row_height = PATTERN_ROW_HEIGHT.max(ui.text_style_height(&egui::TextStyle::Monospace));
     egui::ScrollArea::vertical()
         .id_salt("tas_input_pattern_spans")
         .max_height(112.0)
-        .show_rows(ui, PATTERN_ROW_HEIGHT, pattern.spans().len(), |ui, rows| {
+        .show_rows(ui, row_height, pattern.spans().len(), |ui, rows| {
             for row in rows {
                 let span = pattern.spans()[row];
-                ui.horizontal_wrapped(|ui| {
-                    ui.monospace(format!(
-                        "{}..{}",
-                        span.start,
-                        span.start.saturating_add(span.length)
-                    ));
-                    ui.label(raw_input_summary(span.input));
-                });
+                let detail = format!(
+                    "{}..{} {}",
+                    span.start,
+                    span.start.saturating_add(span.length),
+                    raw_input_summary(span.input)
+                );
+                ui.add_sized(
+                    [ui.available_width(), row_height],
+                    egui::Label::new(egui::RichText::new(detail.clone()).monospace()).truncate(),
+                )
+                .on_hover_text(detail);
             }
         });
     if pattern.spans().is_empty() {

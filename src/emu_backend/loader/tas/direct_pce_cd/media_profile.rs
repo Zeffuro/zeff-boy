@@ -4,6 +4,8 @@ use super::{
     direct_pce_cd_arcade_tas_sync_config_sha256,
     direct_pce_cd_archive_arcade_tas_sync_config_sha256,
     direct_pce_cd_archive_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_archive_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_cd_archive_ppf_memory_base_tas_sync_config_sha256,
     direct_pce_cd_archive_ppf_source_identity, direct_pce_cd_archive_ppf_tas_sync_config_sha256,
     direct_pce_cd_archive_source_identity, direct_pce_cd_archive_tas_sync_config_sha256,
     direct_pce_cd_chd_arcade_tas_sync_config_sha256,
@@ -14,35 +16,82 @@ use super::{
     direct_pce_cd_ppf_arcade_tas_sync_config_sha256,
     direct_pce_cd_ppf_memory_base_tas_sync_config_sha256, direct_pce_cd_ppf_tas_sync_config_sha256,
     direct_pce_cd_rar_arcade_tas_sync_config_sha256,
-    direct_pce_cd_rar_memory_base_tas_sync_config_sha256, direct_pce_cd_rar_ppf_source_identity,
-    direct_pce_cd_rar_ppf_tas_sync_config_sha256, direct_pce_cd_rar_source_identity,
-    direct_pce_cd_rar_tas_sync_config_sha256,
+    direct_pce_cd_rar_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_rar_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_cd_rar_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_rar_ppf_source_identity, direct_pce_cd_rar_ppf_tas_sync_config_sha256,
+    direct_pce_cd_rar_source_identity, direct_pce_cd_rar_tas_sync_config_sha256,
     direct_pce_cd_selected_archive_arcade_tas_sync_config_sha256,
     direct_pce_cd_selected_archive_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_selected_archive_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_cd_selected_archive_ppf_memory_base_tas_sync_config_sha256,
     direct_pce_cd_selected_archive_ppf_tas_sync_config_sha256,
     direct_pce_cd_selected_archive_tas_sync_config_sha256,
     direct_pce_cd_selected_rar_arcade_tas_sync_config_sha256,
     direct_pce_cd_selected_rar_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_selected_rar_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_cd_selected_rar_ppf_memory_base_tas_sync_config_sha256,
     direct_pce_cd_selected_rar_ppf_tas_sync_config_sha256,
     direct_pce_cd_selected_rar_tas_sync_config_sha256,
     direct_pce_cd_selected_zip_arcade_tas_sync_config_sha256,
     direct_pce_cd_selected_zip_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_selected_zip_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_cd_selected_zip_ppf_memory_base_tas_sync_config_sha256,
     direct_pce_cd_selected_zip_ppf_tas_sync_config_sha256,
     direct_pce_cd_selected_zip_tas_sync_config_sha256, direct_pce_cd_tas_sync_config_sha256,
     direct_pce_cd_zip_arcade_tas_sync_config_sha256,
-    direct_pce_cd_zip_memory_base_tas_sync_config_sha256, direct_pce_cd_zip_ppf_source_identity,
-    direct_pce_cd_zip_ppf_tas_sync_config_sha256, direct_pce_cd_zip_source_identity,
-    direct_pce_cd_zip_tas_sync_config_sha256, direct_pce_multitap_cd_arcade_tas_sync_config_sha256,
+    direct_pce_cd_zip_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_zip_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_cd_zip_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_cd_zip_ppf_source_identity, direct_pce_cd_zip_ppf_tas_sync_config_sha256,
+    direct_pce_cd_zip_source_identity, direct_pce_cd_zip_tas_sync_config_sha256,
+    direct_pce_multitap_cd_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_archive_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_archive_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_archive_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_archive_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256,
     direct_pce_multitap_cd_archive_tas_sync_config_sha256,
+    direct_pce_multitap_cd_chd_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_chd_memory_base_tas_sync_config_sha256,
     direct_pce_multitap_cd_chd_tas_sync_config_sha256,
+    direct_pce_multitap_cd_iso_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_iso_memory_base_tas_sync_config_sha256,
     direct_pce_multitap_cd_iso_tas_sync_config_sha256,
     direct_pce_multitap_cd_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_ppf_memory_base_tas_sync_config_sha256,
     direct_pce_multitap_cd_ppf_tas_sync_config_sha256,
+    direct_pce_multitap_cd_rar_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_rar_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_rar_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_rar_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_rar_ppf_tas_sync_config_sha256,
     direct_pce_multitap_cd_rar_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_archive_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_archive_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_archive_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_archive_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_archive_ppf_tas_sync_config_sha256,
     direct_pce_multitap_cd_selected_archive_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_rar_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_rar_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_rar_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_rar_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_rar_ppf_tas_sync_config_sha256,
     direct_pce_multitap_cd_selected_rar_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_zip_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_zip_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_zip_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_zip_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_selected_zip_ppf_tas_sync_config_sha256,
     direct_pce_multitap_cd_selected_zip_tas_sync_config_sha256,
     direct_pce_multitap_cd_tas_sync_config_sha256,
+    direct_pce_multitap_cd_zip_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_zip_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_zip_ppf_arcade_tas_sync_config_sha256,
+    direct_pce_multitap_cd_zip_ppf_memory_base_tas_sync_config_sha256,
+    direct_pce_multitap_cd_zip_ppf_tas_sync_config_sha256,
     direct_pce_multitap_cd_zip_tas_sync_config_sha256,
 };
 use crate::tas_project::TasDigest;
@@ -114,7 +163,6 @@ impl PceCdTasProfile {
             || rar_selected && !rar
             || zip_selected && !zip
             || archive_ppf && !(archive || rar || zip)
-            || archive_ppf && (cards.0 || cards.1 || controller != PceControllerMode::TwoButton)
             || cards.0 && cards.1
             || !matches!(
                 controller,
@@ -145,16 +193,6 @@ impl PceCdTasProfile {
         } else {
             PceCdExpansion::None
         };
-        if controller == PceControllerMode::Multitap
-            && !matches!(
-                (media, expansion),
-                (PceCdTasMediaRoute::Cue, PceCdExpansion::ArcadeCard)
-                    | (PceCdTasMediaRoute::Cue, PceCdExpansion::MemoryBase128)
-                    | (_, PceCdExpansion::None)
-            )
-        {
-            return None;
-        }
         Some(Self {
             media,
             expansion,
@@ -200,33 +238,29 @@ impl PceCdTasProfile {
                 if profile.sync_config() == sync {
                     return Some(profile);
                 }
-                if expansion == PceCdExpansion::None
-                    || (media == PceCdTasMediaRoute::Cue
-                        && matches!(
-                            expansion,
-                            PceCdExpansion::ArcadeCard | PceCdExpansion::MemoryBase128
-                        ))
-                {
-                    let profile = Self {
-                        media,
-                        expansion,
-                        controller: PceControllerMode::Multitap,
-                    };
-                    if profile.sync_config() == sync {
-                        return Some(profile);
-                    }
+                let profile = Self {
+                    media,
+                    expansion,
+                    controller: PceControllerMode::Multitap,
+                };
+                if profile.sync_config() == sync {
+                    return Some(profile);
                 }
             }
         }
         for format in archives {
             for selection in selections {
-                let profile = Self {
-                    media: PceCdTasMediaRoute::ArchivePpf(format, selection),
-                    expansion: PceCdExpansion::None,
-                    controller: PceControllerMode::TwoButton,
-                };
-                if profile.sync_config() == sync {
-                    return Some(profile);
+                for expansion in expansions {
+                    for controller in [PceControllerMode::TwoButton, PceControllerMode::Multitap] {
+                        let profile = Self {
+                            media: PceCdTasMediaRoute::ArchivePpf(format, selection),
+                            expansion,
+                            controller,
+                        };
+                        if profile.sync_config() == sync {
+                            return Some(profile);
+                        }
+                    }
                 }
             }
         }
@@ -248,19 +282,36 @@ impl PceCdTasProfile {
                 (PceCdTasMediaRoute::Chd, PceCdExpansion::None) => {
                     direct_pce_multitap_cd_chd_tas_sync_config_sha256()
                 }
+                (PceCdTasMediaRoute::Chd, PceCdExpansion::ArcadeCard) => {
+                    direct_pce_multitap_cd_chd_arcade_tas_sync_config_sha256()
+                }
+                (PceCdTasMediaRoute::Chd, PceCdExpansion::MemoryBase128) => {
+                    direct_pce_multitap_cd_chd_memory_base_tas_sync_config_sha256()
+                }
                 (PceCdTasMediaRoute::Iso, PceCdExpansion::None) => {
                     direct_pce_multitap_cd_iso_tas_sync_config_sha256()
+                }
+                (PceCdTasMediaRoute::Iso, PceCdExpansion::ArcadeCard) => {
+                    direct_pce_multitap_cd_iso_arcade_tas_sync_config_sha256()
+                }
+                (PceCdTasMediaRoute::Iso, PceCdExpansion::MemoryBase128) => {
+                    direct_pce_multitap_cd_iso_memory_base_tas_sync_config_sha256()
                 }
                 (PceCdTasMediaRoute::Ppf, PceCdExpansion::None) => {
                     direct_pce_multitap_cd_ppf_tas_sync_config_sha256()
                 }
-                (PceCdTasMediaRoute::Archive(format, selection), PceCdExpansion::None) => {
-                    archive_multitap_sync_config(format, selection)
+                (PceCdTasMediaRoute::Ppf, PceCdExpansion::ArcadeCard) => {
+                    direct_pce_multitap_cd_ppf_arcade_tas_sync_config_sha256()
                 }
-                (PceCdTasMediaRoute::ArchivePpf(_, _), _) => {
-                    unreachable!("archive PPF does not support PC Engine CD Multitap")
+                (PceCdTasMediaRoute::Ppf, PceCdExpansion::MemoryBase128) => {
+                    direct_pce_multitap_cd_ppf_memory_base_tas_sync_config_sha256()
                 }
-                _ => unreachable!("invalid PC Engine CD Multitap profile"),
+                (PceCdTasMediaRoute::Archive(format, selection), expansion) => {
+                    archive_multitap_sync_config(format, selection, expansion)
+                }
+                (PceCdTasMediaRoute::ArchivePpf(format, selection), expansion) => {
+                    archive_ppf_sync_config(format, selection, expansion, self.controller)
+                }
             };
         }
         match self.media {
@@ -294,8 +345,7 @@ impl PceCdTasProfile {
                 archive_sync_config(format, selection, self.expansion)
             }
             PceCdTasMediaRoute::ArchivePpf(format, selection) => {
-                assert_eq!(self.expansion, PceCdExpansion::None);
-                archive_ppf_sync_config(format, selection)
+                archive_ppf_sync_config(format, selection, self.expansion, self.controller)
             }
         }
     }
@@ -602,6 +652,138 @@ mod tests {
             assert_eq!(profile.sync_config(), sync);
         }
 
+        for (media, expansion, sync) in [
+            (
+                PceCdTasMediaRoute::Chd,
+                PceCdExpansion::ArcadeCard,
+                direct_pce_multitap_cd_chd_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Chd,
+                PceCdExpansion::MemoryBase128,
+                direct_pce_multitap_cd_chd_memory_base_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Iso,
+                PceCdExpansion::ArcadeCard,
+                direct_pce_multitap_cd_iso_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Iso,
+                PceCdExpansion::MemoryBase128,
+                direct_pce_multitap_cd_iso_memory_base_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Ppf,
+                PceCdExpansion::ArcadeCard,
+                direct_pce_multitap_cd_ppf_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Ppf,
+                PceCdExpansion::MemoryBase128,
+                direct_pce_multitap_cd_ppf_memory_base_tas_sync_config_sha256(),
+            ),
+        ] {
+            let profile =
+                PceCdTasProfile::from_sync(sync).expect("known direct card Multitap sync");
+            assert_eq!(profile.media(), media);
+            assert_eq!(profile.expansion(), expansion);
+            assert_eq!(profile.controller(), PceControllerMode::Multitap);
+            assert_eq!(profile.sync_config(), sync);
+        }
+
+        for (media, sync) in [
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::SevenZip,
+                    PceCdArchiveSelection::Unique,
+                ),
+                direct_pce_multitap_cd_archive_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::SevenZip,
+                    PceCdArchiveSelection::Selected,
+                ),
+                direct_pce_multitap_cd_selected_archive_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique),
+                direct_pce_multitap_cd_rar_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::Rar,
+                    PceCdArchiveSelection::Selected,
+                ),
+                direct_pce_multitap_cd_selected_rar_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique),
+                direct_pce_multitap_cd_zip_arcade_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::Zip,
+                    PceCdArchiveSelection::Selected,
+                ),
+                direct_pce_multitap_cd_selected_zip_arcade_tas_sync_config_sha256(),
+            ),
+        ] {
+            let profile =
+                PceCdTasProfile::from_sync(sync).expect("known archive Arcade Multitap sync");
+            assert_eq!(profile.media(), media);
+            assert_eq!(profile.expansion(), PceCdExpansion::ArcadeCard);
+            assert_eq!(profile.controller(), PceControllerMode::Multitap);
+            assert_eq!(profile.sync_config(), sync);
+        }
+
+        for (media, sync) in [
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::SevenZip,
+                    PceCdArchiveSelection::Unique,
+                ),
+                direct_pce_multitap_cd_archive_memory_base_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::SevenZip,
+                    PceCdArchiveSelection::Selected,
+                ),
+                direct_pce_multitap_cd_selected_archive_memory_base_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(PceCdArchiveFormat::Rar, PceCdArchiveSelection::Unique),
+                direct_pce_multitap_cd_rar_memory_base_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::Rar,
+                    PceCdArchiveSelection::Selected,
+                ),
+                direct_pce_multitap_cd_selected_rar_memory_base_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(PceCdArchiveFormat::Zip, PceCdArchiveSelection::Unique),
+                direct_pce_multitap_cd_zip_memory_base_tas_sync_config_sha256(),
+            ),
+            (
+                PceCdTasMediaRoute::Archive(
+                    PceCdArchiveFormat::Zip,
+                    PceCdArchiveSelection::Selected,
+                ),
+                direct_pce_multitap_cd_selected_zip_memory_base_tas_sync_config_sha256(),
+            ),
+        ] {
+            let profile =
+                PceCdTasProfile::from_sync(sync).expect("known archive Memory Base Multitap sync");
+            assert_eq!(profile.media(), media);
+            assert_eq!(profile.expansion(), PceCdExpansion::MemoryBase128);
+            assert_eq!(profile.controller(), PceControllerMode::Multitap);
+            assert_eq!(profile.sync_config(), sync);
+        }
+
         let arcade_multitap =
             PceCdTasProfile::from_sync(direct_pce_multitap_cd_arcade_tas_sync_config_sha256())
                 .expect("known Arcade Card Multitap sync");
@@ -629,6 +811,76 @@ mod tests {
             memory_base_multitap.sync_config(),
             direct_pce_multitap_cd_memory_base_tas_sync_config_sha256()
         );
+    }
+
+    #[test]
+    fn exact_profile_table_has_96_distinct_sync_roundtrips() {
+        let formats = [
+            PceCdArchiveFormat::SevenZip,
+            PceCdArchiveFormat::Rar,
+            PceCdArchiveFormat::Zip,
+        ];
+        let selections = [
+            PceCdArchiveSelection::Unique,
+            PceCdArchiveSelection::Selected,
+        ];
+        let direct = [
+            PceCdTasMediaRoute::Cue,
+            PceCdTasMediaRoute::Chd,
+            PceCdTasMediaRoute::Iso,
+            PceCdTasMediaRoute::Ppf,
+        ];
+        let expansions = [
+            PceCdExpansion::None,
+            PceCdExpansion::ArcadeCard,
+            PceCdExpansion::MemoryBase128,
+        ];
+        let controllers = [PceControllerMode::TwoButton, PceControllerMode::Multitap];
+        let mut profiles = Vec::new();
+        for media in direct
+            .into_iter()
+            .chain(formats.into_iter().flat_map(|format| {
+                selections
+                    .into_iter()
+                    .map(move |selection| PceCdTasMediaRoute::Archive(format, selection))
+            }))
+        {
+            for expansion in expansions {
+                for controller in controllers {
+                    profiles.push(PceCdTasProfile {
+                        media,
+                        expansion,
+                        controller,
+                    });
+                }
+            }
+        }
+        for format in formats {
+            for selection in selections {
+                for expansion in expansions {
+                    for controller in controllers {
+                        profiles.push(PceCdTasProfile {
+                            media: PceCdTasMediaRoute::ArchivePpf(format, selection),
+                            expansion,
+                            controller,
+                        });
+                    }
+                }
+            }
+        }
+
+        assert_eq!(profiles.len(), 96);
+        let syncs = profiles
+            .iter()
+            .map(|profile| profile.sync_config())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(syncs.len(), profiles.len());
+        for profile in profiles {
+            assert_eq!(
+                PceCdTasProfile::from_sync(profile.sync_config()),
+                Some(profile)
+            );
+        }
     }
 
     #[test]
@@ -671,30 +923,6 @@ mod tests {
                 none_selected,
                 (true, true),
                 PceControllerMode::TwoButton,
-            ),
-            (
-                (true, false, false, false, false, false),
-                none_selected,
-                (true, false),
-                PceControllerMode::Multitap,
-            ),
-            (
-                (false, false, false, true, false, false),
-                none_selected,
-                (true, false),
-                PceControllerMode::Multitap,
-            ),
-            (
-                (false, false, false, false, false, true),
-                (false, false, true),
-                (false, true),
-                PceControllerMode::Multitap,
-            ),
-            (
-                (true, false, false, false, false, false),
-                none_selected,
-                (false, true),
-                PceControllerMode::Multitap,
             ),
             (
                 (false, false, false, false, false, false),

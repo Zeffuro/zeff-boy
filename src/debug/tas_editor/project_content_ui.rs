@@ -73,6 +73,11 @@ pub(super) fn draw_project_content(
     );
 
     let input_selection = state.timeline_selection.snapshot(session);
+    let marked_input_ranges = state
+        .input_clipboard
+        .marked_ranges
+        .visible_ranges(session)
+        .to_vec();
     let selected_input_range = input_selection
         .as_ref()
         .map(|selection| (selection.start, selection.end));
@@ -95,7 +100,8 @@ pub(super) fn draw_project_content(
     if uses_two_pane_layout(ui.available_width()) {
         let spacing = ui.spacing().item_spacing.x;
         let sidebar_width = 330.0_f32.min(ui.available_width() * 0.38);
-        let timeline_width = ui.available_width() - sidebar_width - spacing;
+        let separator_width = spacing;
+        let timeline_width = ui.available_width() - sidebar_width - separator_width - 2.0 * spacing;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(timeline_width, timeline_height + 92.0),
@@ -108,6 +114,7 @@ pub(super) fn draw_project_content(
                             actions,
                             TimelinePanelContext {
                                 selected_input_range,
+                                marked_input_ranges: &marked_input_ranges,
                                 execution_boundary: state.live_status.execution_boundary(),
                                 height: timeline_height,
                                 follow_cursor: state.recording.is_some()
@@ -120,7 +127,7 @@ pub(super) fn draw_project_content(
                     });
                 },
             );
-            ui.separator();
+            ui.add(egui::Separator::default().spacing(separator_width));
             ui.allocate_ui_with_layout(
                 egui::vec2(sidebar_width, timeline_height + 92.0),
                 egui::Layout::top_down(egui::Align::Min),
@@ -183,6 +190,7 @@ pub(super) fn draw_project_content(
                 actions,
                 TimelinePanelContext {
                     selected_input_range,
+                    marked_input_ranges: &marked_input_ranges,
                     execution_boundary: state.live_status.execution_boundary(),
                     height: timeline_height,
                     follow_cursor: state.recording.is_some()

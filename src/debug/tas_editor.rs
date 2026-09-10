@@ -6,8 +6,9 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 
 use crate::tas_project::{
-    TasAutosaveConfig, TasAutosaveStore, TasEditorExecutionEngine, TasEditorSession,
-    TasEditorSessionSource, TasFrameRange, TasLiveRecordingMode, TasSeekStateCache,
+    TasAutosaveConfig, TasAutosaveStore, TasEditorExecutionEngine,
+    TasEditorRecordingDraftCheckpoint, TasEditorSession, TasEditorSessionSource, TasFrameRange,
+    TasLiveRecordingMode, TasSeekStateCache,
 };
 
 mod action;
@@ -80,11 +81,11 @@ pub(crate) enum TasEditorFileRequest {
     ExportReplay,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 struct TasEditorRecordingState {
     branch_id: String,
     cursor: u64,
-    draft_undo_count: usize,
+    checkpoint: TasEditorRecordingDraftCheckpoint,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -576,7 +577,14 @@ impl TasEditorWindowState {
             }
             TasEditorAction::JumpToBranchDiffHunk(action) => {
                 self.discard_recording_draft()?;
-                Ok(Some(self.apply_branch_diff_jump_action(action)?))
+                let message = self.apply_branch_diff_jump_action(action)?;
+                let session = self
+                    .session
+                    .as_ref()
+                    .expect("successful branch diff jump requires an open session");
+                self.timeline_selection.collapse_to_cursor(session);
+                self.timeline_follow_selection = true;
+                Ok(Some(message))
             }
             TasEditorAction::InputClipboard(action) => {
                 self.discard_recording_draft()?;
@@ -837,7 +845,17 @@ fn default_seek_cache_root() -> PathBuf {
 }
 
 #[cfg(test)]
+mod autofire_tests;
+#[cfg(test)]
+mod branch_diff_layout_tests;
+#[cfg(test)]
+mod branch_diff_responsiveness_tests;
+#[cfg(test)]
 mod branch_diff_tests;
+#[cfg(test)]
+mod clipboard_presentation_tests;
+#[cfg(test)]
+mod digital_transform_tests;
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]
@@ -847,9 +865,21 @@ mod input_clipboard_tests;
 #[cfg(test)]
 mod input_pattern_tests;
 #[cfg(test)]
+mod marked_ranges_tests;
+#[cfg(test)]
+mod marked_ranges_ui_tests;
+#[cfg(test)]
+mod masked_paste_tests;
+#[cfg(test)]
 mod metadata_tests;
 #[cfg(test)]
+mod recording_tests;
+#[cfg(test)]
 mod special_input_tests;
+#[cfg(test)]
+mod special_range_tests;
+#[cfg(test)]
+mod special_transform_ui_tests;
 #[cfg(test)]
 mod workflow_tests;
 

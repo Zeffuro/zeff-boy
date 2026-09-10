@@ -9,6 +9,7 @@ use crate::tas_project::{
 };
 
 pub(super) const NES_ZAPPER_DEVICE: &str = "nes-zapper";
+pub(super) const NES_STANDARD_OR_ZAPPER_DEVICE: &str = "nes-standard-or-zapper-controller";
 pub(super) const GAME_BOY_MBC7_DEVICE: &str = "game-boy-mbc7";
 pub(super) const GAME_BOY_POCKET_CAMERA_DEVICE: &str = "game-boy-pocket-camera";
 pub(super) const GBA_TILT_DEVICE: &str = "gba-tilt-sensor";
@@ -77,7 +78,8 @@ pub(super) fn special_input_capabilities(
             .any(|device| device.device == expected)
     };
     TasSpecialInputCapabilities {
-        nes_zapper: matches!(identity.system.as_str(), "nes") && has_device(NES_ZAPPER_DEVICE),
+        nes_zapper: identity.system == "nes"
+            && (has_device(NES_ZAPPER_DEVICE) || has_device(NES_STANDARD_OR_ZAPPER_DEVICE)),
         mbc7_tilt: matches!(identity.system.as_str(), "gb" | "game_boy")
             && has_device(GAME_BOY_MBC7_DEVICE),
         gba_tilt: identity.system == "gba" && has_device(GBA_TILT_DEVICE),

@@ -495,7 +495,8 @@ fn direct_cue_multitap_rejects_catalog_device_card_and_patch_near_misses() -> Re
     )?);
     let _arcade =
         crate::emu_backend::pce_profiles::register_test_arcade_card_catalog_hash(disc_sha256);
-    assert!(loader.load_fresh_backend().is_err());
+    loader.load_fresh_backend()?;
+    assert!(loader.load_editor_engine(&project).is_err());
     drop(_arcade);
     drop(catalog);
     Ok(())

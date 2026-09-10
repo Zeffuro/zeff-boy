@@ -98,7 +98,8 @@ fn direct_chd_multitap_binds_source_reopens_and_rejects_near_misses() -> Result<
     let disc_sha256 = project.identity().effective_media_sha256.0;
     let _arcade =
         crate::emu_backend::pce_profiles::register_test_arcade_card_catalog_hash(disc_sha256);
-    assert!(loader.load_fresh_backend().is_err());
+    loader.load_fresh_backend()?;
+    assert!(loader.load_editor_engine(&project).is_err());
     drop(_arcade);
     drop(catalog);
     let memory =

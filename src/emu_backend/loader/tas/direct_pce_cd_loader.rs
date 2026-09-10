@@ -488,11 +488,14 @@ impl DirectPceCdTasExecutionLoader {
         let archive = has_extension(&self.source_path, "7z");
         let rar = has_extension(&self.source_path, "rar");
         let zip = has_extension(&self.source_path, "zip");
-        if !multitap
-            && (archive || rar || zip)
+        if (archive || rar || zip)
             && let Some(backend) = self.try_load_archive_ppf_backend()?
         {
-            validate_direct_pce_cd_tas_runtime(&backend, false)?;
+            if multitap {
+                validate_direct_pce_multitap_cd_tas_runtime(&backend, false)?;
+            } else {
+                validate_direct_pce_cd_tas_runtime(&backend, false)?;
+            }
             return Ok(backend);
         }
         #[cfg(test)]
@@ -618,16 +621,8 @@ impl DirectPceCdTasExecutionLoader {
             )
         };
         let arcade_card = direct_pce_cd_arcade_eligible(ppf, disc.source_disc_sha256);
-        let memory_base_catalog = crate::emu_backend::pce_profiles::automatic_memory_base_enabled(
-            Some(disc.source_disc_sha256),
-        );
         let memory_base = if multitap {
-            ensure!(
-                !memory_base_catalog || !(chd || iso || ppf || archive || rar || zip),
-                "PC Engine CD Memory Base 128 plus Multitap TAS is limited to direct CUE media"
-            );
-            memory_base_catalog
-                && direct_pce_cd_memory_base_multitap_eligible(disc.source_disc_sha256)
+            direct_pce_cd_memory_base_multitap_eligible(disc.source_disc_sha256)
         } else {
             direct_pce_cd_memory_base_eligible(chd, iso, ppf, disc.source_disc_sha256)
         };

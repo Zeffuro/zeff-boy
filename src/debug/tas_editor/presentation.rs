@@ -51,8 +51,9 @@ pub(super) struct PlaybackPanelControls<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct TimelinePanelContext {
+pub(super) struct TimelinePanelContext<'a> {
     pub(super) selected_input_range: Option<(u64, u64)>,
+    pub(super) marked_input_ranges: &'a [(u64, u64)],
     pub(super) execution_boundary: Option<u64>,
     pub(super) height: f32,
     pub(super) follow_cursor: bool,
@@ -63,7 +64,7 @@ pub(super) fn draw_timeline_editor(
     ui: &mut egui::Ui,
     session: &TasEditorSession,
     actions: &mut Vec<TasEditorAction>,
-    context: TimelinePanelContext,
+    context: TimelinePanelContext<'_>,
     neutral_insert_count: &mut u64,
 ) {
     let cursor = session.cursor();
@@ -150,12 +151,16 @@ pub(super) fn draw_timeline_editor(
             "Click or drag frame numbers to select. Shift extends; ↑/↓ and Home/End navigate. Double-click moves a linked game when available.",
         );
     }
+    if !context.marked_input_ranges.is_empty() {
+        ui.colored_label(ui.visuals().warn_fg_color, "Bars mark the edit ranges.");
+    }
     timeline::draw_timeline(
         ui,
         session,
         actions,
         timeline::TimelineView {
             selected_input_range: context.selected_input_range,
+            marked_input_ranges: context.marked_input_ranges,
             execution_boundary: context.execution_boundary,
             max_height: context.height,
             follow_cursor: context.follow_cursor,

@@ -105,7 +105,7 @@ impl Emulator {
         let interrupt_pc = self.cpu.pc();
         let interrupt_cycle = self.cpu.cycles;
         let mut interrupt_serviced = false;
-        if self.cpu.at_instruction_boundary()
+        if self.cpu.can_service_irq()
             && self.bus.interrupt_ready()
             && (self.bus.has_external_bios() || self.bus.irq_handler_installed())
         {

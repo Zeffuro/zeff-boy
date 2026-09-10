@@ -985,11 +985,12 @@ impl Cpu {
         }
     }
 
+    pub(crate) fn can_service_irq(&self) -> bool {
+        self.at_instruction_boundary() && self.cpsr & CPSR_IRQ_DISABLE == 0
+    }
+
     pub(crate) fn try_service_irq(&mut self, _bus: &mut Bus, interrupt_pending: bool) -> bool {
-        if !self.at_instruction_boundary()
-            || !interrupt_pending
-            || self.cpsr & CPSR_IRQ_DISABLE != 0
-        {
+        if !interrupt_pending || !self.can_service_irq() {
             return false;
         }
 
