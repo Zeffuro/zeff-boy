@@ -76,6 +76,7 @@ fn preview_transitions_keep_song_rows_under_the_pointer() {
                         workspace,
                         &manifest.scan,
                         &source.bytes,
+                        &manifest.classifications,
                         |_| true,
                     );
                 },
@@ -207,6 +208,7 @@ fn natsume_music_and_control_rows_keep_the_same_table_position() {
                         &mut workspace,
                         &manifest.scan,
                         &source.bytes,
+                        &manifest.classifications,
                         |_| true,
                     );
                 },

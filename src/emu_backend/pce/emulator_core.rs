@@ -117,7 +117,7 @@ impl EmulatorCore for PceBackend {
     ) {
         self.update_controller_mode(mode);
         self.mouse_host_buttons = super::map_pad_buttons(buttons_pressed, 0);
-        if let Some(mouse) = self.machine.devices_mut().controller_mut().mouse_mut() {
+        if let Some(mouse) = self.machine.controller_input_mut().mouse_mut() {
             mouse.set_buttons(self.mouse_host_buttons);
             mouse.accumulate_motion(delta_x, delta_y);
         }

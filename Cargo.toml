@@ -40,7 +40,7 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 zeff-audio-discovery = { path = "crates/zeff-audio-discovery" }
-zeff-emu-common = { path = "crates/zeff-emu-common" }
+zeff-emu-common = { path = "crates/zeff-emu-common", features = ["serde"] }
 zeff-firmware = { path = "crates/zeff-firmware" }
 zeff-gb-core = { path = "crates/zeff-gb-core" }
 zeff-gba-core = { path = "crates/zeff-gba-core" }

@@ -228,12 +228,18 @@ pub(super) fn draw(
             "Plays the CD track from index 1, without its pregap. Preview uses the output device's sample rate; WAV and FLAC exports preserve the original 44.1 kHz PCM."
         } else if matches!(selection, SongId::GbNative(_)) {
             "Plays the original Game Boy music. Playback stops at the qualified song end or first complete loop; seeking replays from the start."
-        } else if matches!(selection, SongId::Gb(_)) {
+        } else if matches!(selection, SongId::GbQuickThunder(_) | SongId::GbGhx(_) | SongId::GbSoundSystem(_) | SongId::GbCarillon(_)) {
+            "Runs the original Game Boy sound driver under its reported hardware profile until the preview limit. Seeking replays from the start; automatic loop detection and individual channel controls are unavailable."
+        } else if matches!(selection, SongId::GbTose(_)) {
+            "Runs the original Game Boy sound driver with DMG timing until the preview limit. Seeking replays from the start; automatic loop detection and individual channel controls are unavailable."
+        } else if matches!(selection, SongId::Gb(_) | SongId::GbMusyx(_)) {
             "Runs the original Game Boy Color sound driver at normal speed until the preview limit. Seeking replays from the start; automatic loop detection and individual channel controls are unavailable."
-        } else if matches!(selection, SongId::NesNative(_)) {
+        } else if matches!(selection, SongId::NesNative(_) | SongId::Nes(_) | SongId::NesTose(_)) {
             "Runs the original NES driver with NTSC timing. Audio plays until the preview limit; seeking replays from the start. Automatic loop detection and individual channel controls are unavailable."
         } else if matches!(selection, SongId::SegaPsg(_)) {
             "Runs the original PSG driver with NTSC timing. Songs play until the preview limit; seeking replays from the start. Automatic loop detection and individual channel controls are unavailable."
+        } else if matches!(selection, SongId::WsTose(_)) {
+            "Runs the original WonderSwan driver under its reported hardware profile until the preview limit. Seeking replays from the start; automatic loop detection and individual channel controls are unavailable."
         } else {
             "Runs the original sound driver in a separate GBA emulator. Songs play until the preview limit; automatic loop detection and individual channel controls are unavailable. Seeking replays the driver from the start."
         });

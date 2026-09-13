@@ -22,6 +22,7 @@ pub(crate) mod song;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tracker;
+mod ws;
 
 pub(crate) trait PcmSession: Send {
     fn has_source_duration_limit(&self) -> bool {

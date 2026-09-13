@@ -132,6 +132,7 @@ impl Emulator {
     }
 
     pub fn io_write8(&mut self, port: u16, value: u8) {
+        self.invalidate_audio_trace();
         self.bus.io_write8(port, value);
     }
 

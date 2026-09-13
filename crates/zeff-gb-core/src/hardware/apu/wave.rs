@@ -15,7 +15,7 @@ impl Apu {
         }
     }
 
-    fn wave_ram_cpu_access_index(&self, addr: u16) -> Option<usize> {
+    pub(in crate::hardware) fn wave_ram_cpu_access_index(&self, addr: u16) -> Option<usize> {
         if !self.channels[2].enabled {
             return Some((addr - crate::hardware::types::constants::WAVE_RAM_START) as usize);
         }

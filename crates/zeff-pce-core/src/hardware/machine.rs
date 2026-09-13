@@ -2,6 +2,7 @@ use anyhow::bail;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use zeff_emu_common::address::Address;
+use zeff_emu_common::audio_trace::{AudioTraceInvalidation, Huc6280AudioTraceRecorder};
 use zeff_emu_common::cheats::CheatByteTarget;
 use zeff_emu_common::debug::{
     AddressDebugController, AddressWatchHit, AddressWatchpoint, BreakpointHitCondition, DebugEvent,
@@ -31,6 +32,7 @@ use super::vdc_scanline::{VceFrameLength, VdcExternalVceScanline, VdcScanlineAdv
 use super::vdc_video::{PceActiveOnlyVideoFrame, PcePresentedFrame, PceVideoRenderError};
 use super::vpc::VpcVdc;
 
+mod audio_trace;
 mod construction;
 mod debug;
 mod memory;
@@ -38,6 +40,7 @@ mod runtime;
 mod state;
 mod timed_bus;
 
+use audio_trace::TimedAudioTrace;
 use timed_bus::{TimedInstructionTrace, TimedMachineBus};
 
 pub const PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE: u64 = 1_365;
@@ -418,6 +421,7 @@ pub struct PceMachine {
     instruction_trace: InstructionTraceStore,
     trace_scratch: TimedInstructionTrace,
     trace_frame: u64,
+    audio_trace: Huc6280AudioTraceRecorder,
     debug: AddressDebugController,
     #[cfg(test)]
     plain_memory_lane_enabled: bool,
@@ -433,6 +437,8 @@ impl CheatByteTarget<u16> for PceMachine {
     }
 
     fn cheat_write8(&mut self, address: u16, value: u8) {
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         self.cpu.debug_write_logical(&mut self.bus, address, value);
     }
 }

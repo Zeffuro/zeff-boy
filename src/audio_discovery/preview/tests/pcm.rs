@@ -28,6 +28,26 @@ fn engine_preview_transport_and_wav_share_the_selected_song() -> anyhow::Result<
             System::Gb,
         ),
         (
+            zeff_audio_discovery::gb_tose::synthetic_rom(),
+            SongId::GbTose(0),
+            System::Gb,
+        ),
+        (
+            zeff_audio_discovery::gb_quickthunder::synthetic_rom(),
+            SongId::GbQuickThunder(0),
+            System::Gb,
+        ),
+        (
+            zeff_audio_discovery::nes_tose::synthetic_rom(),
+            SongId::NesTose(0),
+            System::Nes,
+        ),
+        (
+            zeff_audio_discovery::gb_musyx::synthetic_rom(),
+            SongId::GbMusyx(1),
+            System::Gb,
+        ),
+        (
             zeff_audio_discovery::gbass::fixture_rom_started(),
             SongId::Gbass(0),
             System::Gba,
@@ -50,6 +70,11 @@ fn engine_preview_transport_and_wav_share_the_selected_song() -> anyhow::Result<
         (
             zeff_audio_discovery::nes_native::fixture_rom(),
             SongId::NesNative(0),
+            System::Nes,
+        ),
+        (
+            zeff_audio_discovery::nes_music::native::fixture_rom(),
+            SongId::Nes(8),
             System::Nes,
         ),
         (

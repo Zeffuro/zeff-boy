@@ -8,6 +8,11 @@ use super::{
 use crate::{Budget, MediaIdentity, ScanStop};
 
 mod bootstrap;
+pub(super) mod detection;
+#[cfg(test)]
+mod detection_tests;
+mod recipe;
+use recipe::{DriverVariant, RECIPE};
 #[cfg(any(test, feature = "test-support"))]
 pub(super) mod fixture;
 mod profiles;
@@ -22,24 +27,8 @@ pub(super) struct Cue {
     banks: &'static [u8],
 }
 
-pub(super) struct Profile {
-    id: &'static str,
-    source: &'static str,
-    cartridge_type: u8,
-    init: u16,
-    init_len: u16,
-    selector: u16,
-    tick: u16,
-    driver: u16,
-    driver_end: u16,
-    table: u16,
-    table_rows: u16,
-    hook: u16,
-    cues: &'static [Cue],
-}
-
 pub(super) fn candidate(bytes: &[u8]) -> bool {
-    bytes.len() == 0x20_0000
+    bytes.len() == RECIPE.rom_len
         && bytes.get(0x143) == Some(&0xc0)
         && matches!(bytes.get(0x147..0x14a), Some([0x19, 6, 0] | [0x1b, 6, 2]))
 }
@@ -47,7 +36,7 @@ pub(super) fn candidate(bytes: &[u8]) -> bool {
 fn recognized(
     bytes: &[u8],
     budget: &mut Budget<'_>,
-) -> std::result::Result<Option<&'static Profile>, ScanStop> {
+) -> std::result::Result<Option<&'static DriverVariant>, ScanStop> {
     budget.charge()?;
     if !candidate(bytes) {
         return Ok(None);
@@ -56,7 +45,7 @@ fn recognized(
         budget.charge()?;
     }
     let source = zeff_firmware::sha256_hex(bytes);
-    Ok(profiles::all().find(|profile| profile.source == source))
+    Ok(profiles::all().find(|profile| profile.qualification.sources.contains(&source.as_str())))
 }
 
 pub(super) fn scan(
@@ -68,7 +57,7 @@ pub(super) fn scan(
     let Some(profile) = recognized(bytes, budget)? else {
         return Ok(());
     };
-    for index in 0..profile.cues.len() {
+    for index in 0..profile.qualification.cues.len() {
         budget.charge()?;
         if songs.len() >= max_candidates {
             return Err(ScanStop::CandidateLimit);
@@ -102,16 +91,17 @@ pub(super) fn prepare_rom(
         !cancel.load(Ordering::Relaxed),
         "GB native preparation cancelled"
     );
-    bootstrap::build(bytes, song, profile.selector)
+    bootstrap::build(bytes, song, profile.parameters.selector)
 }
 
-fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<GbNativeSong> {
-    let cue = profile.cues.get(index)?;
-    let row = u16::from(cue.raw).checked_sub(0x30)?;
-    if row >= profile.table_rows || cue.frames == 0 || cue.clocks == 0 {
+fn inspect(bytes: &[u8], profile: &DriverVariant, index: usize) -> Option<GbNativeSong> {
+    let cue = profile.qualification.cues.get(index)?;
+    let layout = &profile.parameters;
+    let row = u16::from(cue.raw).checked_sub(u16::from(RECIPE.selector_base))?;
+    if row >= layout.table_rows || cue.frames == 0 || cue.clocks == 0 {
         return None;
     }
-    let table_entry = rom_span(bytes, 0, profile.table.checked_add(row * 3)?, 3)?;
+    let table_entry = rom_span(bytes, 0, layout.table.checked_add(row * 3)?, 3)?;
     let offset = table_entry.effective_offset as usize;
     let bank = *bytes.get(offset)?;
     let address = u16::from_le_bytes([*bytes.get(offset + 1)?, *bytes.get(offset + 2)?]);
@@ -141,19 +131,19 @@ fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<GbNativeSong
         });
     }
     let native = GbNativeProfile {
-        cartridge_type: profile.cartridge_type,
-        timing: GbNativeTiming::CgbDouble,
-        init: rom_span(bytes, 0, profile.init, usize::from(profile.init_len))?,
-        tick: rom_span(bytes, 0, profile.tick, 0x2a)?,
+        cartridge_type: layout.cartridge_type,
+        timing: RECIPE.timing,
+        init: rom_span(bytes, 0, layout.init, usize::from(layout.init_len))?,
+        tick: rom_span(bytes, 0, layout.tick, RECIPE.tick_len)?,
         driver: rom_span(
             bytes,
             0,
-            profile.driver,
-            usize::from(profile.driver_end - profile.driver),
+            layout.driver,
+            usize::from(layout.driver_end - layout.driver),
         )?,
-        tables: rom_span(bytes, 0, profile.table, usize::from(profile.table_rows) * 3)?,
-        bootstrap: rom_span(bytes, 0, 0x3f00, 0x40)?,
-        startup_hook: rom_span(bytes, 0, profile.hook, 3)?,
+        tables: rom_span(bytes, 0, layout.table, usize::from(layout.table_rows) * 3)?,
+        bootstrap: rom_span(bytes, 0, RECIPE.bootstrap_address, RECIPE.bootstrap_len)?,
+        startup_hook: rom_span(bytes, 0, layout.hook, 3)?,
     };
     let irq = u16::from_le_bytes([*bytes.get(0x41)?, *bytes.get(0x42)?]);
     let mut mapped_spans = vec![
@@ -163,8 +153,8 @@ fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<GbNativeSong
         rom_span(
             bytes,
             0,
-            profile.driver,
-            usize::from(0x3f00 - profile.driver),
+            layout.driver,
+            usize::from(RECIPE.bootstrap_address - layout.driver),
         )?,
     ];
     for &bank in cue.banks {
@@ -193,9 +183,8 @@ fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<GbNativeSong
 
 pub(super) fn source_matches(media: &MediaIdentity) -> bool {
     matches!(media.system, "gb" | "gbc")
-        && media.byte_len == 0x20_0000
-        && media
-            .sha256
-            .as_deref()
-            .is_some_and(|hash| profiles::all().any(|profile| profile.source == hash))
+        && media.byte_len == RECIPE.rom_len as u64
+        && media.sha256.as_deref().is_some_and(|hash| {
+            profiles::all().any(|profile| profile.qualification.sources.contains(&hash))
+        })
 }

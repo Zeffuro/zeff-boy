@@ -20,6 +20,15 @@ pub enum SongId {
     Nes(usize),
     NesNative(usize),
     GbNative(usize),
+    GbMusyx(usize),
+    GbTose(usize),
+    #[serde(rename = "gb_quickthunder")]
+    GbQuickThunder(usize),
+    GbGhx(usize),
+    GbSoundSystem(usize),
+    GbCarillon(usize),
+    WsTose(usize),
+    NesTose(usize),
     SegaPsg(usize),
     Natsume(usize),
     Vgm(usize),
@@ -48,6 +57,14 @@ pub enum SongRef<'a> {
     Nes(&'a super::nes_music::NesSong),
     NesNative(&'a super::nes_native::NesNativeSong),
     GbNative(&'a super::gb_native::GbNativeSong),
+    GbMusyx(&'a super::gb_musyx::GbMusyxSong),
+    GbTose(&'a super::gb_tose::GbToseSong),
+    GbQuickThunder(&'a super::gb_quickthunder::GbQuickThunderSong),
+    GbGhx(&'a super::gb_ghx::GbGhxSong),
+    GbSoundSystem(&'a super::gb_sound_system::GbSoundSystemSong),
+    GbCarillon(&'a super::gb_carillon::GbCarillonSong),
+    WsTose(&'a super::ws_tose::WsToseSong),
+    NesTose(&'a super::nes_tose::NesToseSong),
     SegaPsg(&'a super::sega_psg::SegaPsgSong),
     Natsume(&'a super::natsume::NatsumeSong),
     Vgm(&'a super::vgm::VgmLog),
@@ -79,6 +96,14 @@ impl ScanReport {
             .chain((0..self.aas_pcm_songs.len()).map(SongId::AasPcm))
             .chain((0..self.gb_songs.len()).map(SongId::Gb))
             .chain((0..self.gb_native_songs.len()).map(SongId::GbNative))
+            .chain((0..self.gb_musyx_songs.len()).map(SongId::GbMusyx))
+            .chain((0..self.gb_tose_songs.len()).map(SongId::GbTose))
+            .chain((0..self.gb_quickthunder_songs.len()).map(SongId::GbQuickThunder))
+            .chain((0..self.gb_ghx_songs.len()).map(SongId::GbGhx))
+            .chain((0..self.gb_sound_system_songs.len()).map(SongId::GbSoundSystem))
+            .chain((0..self.gb_carillon_songs.len()).map(SongId::GbCarillon))
+            .chain((0..self.ws_tose_songs.len()).map(SongId::WsTose))
+            .chain((0..self.nes_tose_songs.len()).map(SongId::NesTose))
             .chain((0..self.nes_songs.len()).map(SongId::Nes))
             .chain((0..self.nes_native_songs.len()).map(SongId::NesNative))
             .chain((0..self.sega_psg_songs.len()).map(SongId::SegaPsg))
@@ -116,6 +141,20 @@ impl ScanReport {
             SongId::Nes(index) => self.nes_songs.get(index).map(SongRef::Nes),
             SongId::NesNative(index) => self.nes_native_songs.get(index).map(SongRef::NesNative),
             SongId::GbNative(index) => self.gb_native_songs.get(index).map(SongRef::GbNative),
+            SongId::GbMusyx(index) => self.gb_musyx_songs.get(index).map(SongRef::GbMusyx),
+            SongId::GbTose(index) => self.gb_tose_songs.get(index).map(SongRef::GbTose),
+            SongId::GbQuickThunder(index) => self
+                .gb_quickthunder_songs
+                .get(index)
+                .map(SongRef::GbQuickThunder),
+            SongId::GbGhx(index) => self.gb_ghx_songs.get(index).map(SongRef::GbGhx),
+            SongId::GbSoundSystem(index) => self
+                .gb_sound_system_songs
+                .get(index)
+                .map(SongRef::GbSoundSystem),
+            SongId::GbCarillon(index) => self.gb_carillon_songs.get(index).map(SongRef::GbCarillon),
+            SongId::WsTose(index) => self.ws_tose_songs.get(index).map(SongRef::WsTose),
+            SongId::NesTose(index) => self.nes_tose_songs.get(index).map(SongRef::NesTose),
             SongId::SegaPsg(index) => self.sega_psg_songs.get(index).map(SongRef::SegaPsg),
             SongId::Natsume(index) => self.natsume_songs.get(index).map(SongRef::Natsume),
             SongId::Vgm(index) => self.vgm_logs.get(index).map(SongRef::Vgm),
@@ -164,6 +203,14 @@ impl SongRef<'_> {
             Self::Nes(_) => "nes-queue-driver",
             Self::NesNative(_) => "nes-native-driver",
             Self::GbNative(_) => "gb-native-driver",
+            Self::GbMusyx(_) => "gb-musyx-driver",
+            Self::GbTose(_) => "gb-tose-driver",
+            Self::GbQuickThunder(_) => "gb-quickthunder-driver",
+            Self::GbGhx(_) => "gb-ghx-driver",
+            Self::GbSoundSystem(_) => "gb-sound-system-driver",
+            Self::GbCarillon(_) => "gb-carillon-driver",
+            Self::WsTose(_) => "ws-tose-driver",
+            Self::NesTose(_) => "nes-tose-driver",
             Self::SegaPsg(_) => "sega-psg-driver",
             Self::Natsume(_) => "gba-natsume-driver",
             Self::Vgm(_) => "vgm-register-log",
@@ -193,6 +240,46 @@ impl SongRef<'_> {
             Self::Nes(song) => Some(song.table_entry.into()),
             Self::NesNative(song) => Some(song.table_entry.into()),
             Self::GbNative(song) => Some(song.table_entry.into()),
+            Self::GbTose(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbQuickThunder(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbGhx(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbSoundSystem(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbCarillon(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::WsTose(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::NesTose(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbMusyx(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
             Self::SegaPsg(song) => Some(song.table_entry.into()),
             Self::Natsume(song) => Some(song.header.into()),
             Self::Vgm(log) => Some(log.source.into()),
@@ -235,6 +322,14 @@ impl SongRef<'_> {
             Self::Nes(song) => format!("Song {} · {}", song.index, song.title),
             Self::NesNative(song) => song.title.clone(),
             Self::GbNative(song) => song.title.clone(),
+            Self::GbMusyx(song) => song.title.clone(),
+            Self::GbTose(song) => song.title.clone(),
+            Self::GbQuickThunder(song) => song.title.clone(),
+            Self::GbGhx(song) => song.title.clone(),
+            Self::GbSoundSystem(song) => song.title.clone(),
+            Self::GbCarillon(song) => song.title.clone(),
+            Self::WsTose(song) => song.title.clone(),
+            Self::NesTose(song) => song.title.clone(),
             Self::SegaPsg(song) => song.title.clone(),
             Self::Natsume(song) => match song.kind {
                 super::natsume::NatsumeSongKind::Music => format!("Song {}", song.index),
@@ -290,6 +385,14 @@ impl SongRef<'_> {
             Self::Nes(_) => "NES queue driver",
             Self::NesNative(_) => "NES native driver",
             Self::GbNative(_) => "Game Boy native driver",
+            Self::GbMusyx(_) => "Game Boy MusyX",
+            Self::GbTose(_) => "Game Boy TOSE",
+            Self::GbQuickThunder(_) => "Game Boy QuickThunder",
+            Self::GbGhx(_) => "Game Boy GHX",
+            Self::GbSoundSystem(_) => "Game Boy Sound System",
+            Self::GbCarillon(_) => "Game Boy Carillon",
+            Self::WsTose(_) => "WonderSwan TOSE-style",
+            Self::NesTose(_) => "NES TOSE",
             Self::SegaPsg(_) => "Sega PSG driver",
             Self::Natsume(_) => "GBA Natsume driver",
             Self::Vgm(_) => "VGM register log",
@@ -368,7 +471,15 @@ impl SongRef<'_> {
             | Self::AasPcm(_)
             | Self::SegaPsg(_)
             | Self::NesNative(_)
-            | Self::GbNative(_) => {
+            | Self::GbNative(_)
+            | Self::GbMusyx(_)
+            | Self::GbTose(_)
+            | Self::GbQuickThunder(_)
+            | Self::GbGhx(_)
+            | Self::GbSoundSystem(_)
+            | Self::GbCarillon(_)
+            | Self::WsTose(_)
+            | Self::NesTose(_) => {
                 matches!(format, SongFormat::MappedAssets | SongFormat::Audio(_))
             }
             Self::DescriptorMidi(_) => matches!(
@@ -394,6 +505,8 @@ impl SongRef<'_> {
             Self::Nes(song) => {
                 format == SongFormat::MappedAssets
                     || (format == SongFormat::Midi && song.midi_exportable)
+                    || (matches!(format, SongFormat::Audio(_))
+                        && super::nes_music::native::supports_native(song))
             }
             Self::Natsume(song) => {
                 format == SongFormat::MappedAssets

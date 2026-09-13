@@ -28,6 +28,7 @@ fn vgm_and_vgz_direct_and_selected_zip_inputs_keep_source_identity() -> anyhow::
                 archive_member: zipped.then(|| member.clone()),
                 max_work: None,
                 max_candidates: None,
+                driver_evidence: None,
                 relations: None,
                 export: Some(OfflineExport {
                     format: SongFormat::Vgm,

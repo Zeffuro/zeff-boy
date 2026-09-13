@@ -52,6 +52,8 @@ impl PceMachine {
 
     #[inline]
     pub fn mapped_work_ram_mut(&mut self) -> &mut [u8] {
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         self.bus.mapped_work_ram_mut()
     }
 
@@ -81,6 +83,8 @@ impl PceMachine {
     }
 
     pub(crate) fn cheat_write_physical_ram(&mut self, address: u32, value: u8) {
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         match address {
             super::super::constants::PCE_PHYSICAL_WORK_RAM_START
                 ..=super::super::constants::PCE_PHYSICAL_WORK_RAM_END => {

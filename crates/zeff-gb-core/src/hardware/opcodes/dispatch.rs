@@ -255,6 +255,9 @@ pub fn execute_opcode(cpu: &mut Cpu, bus: &mut impl GbCpuBus, opcode: u8) {
         0xFB => crate::hardware::opcodes::flow::ei(cpu, bus),
         0xFF => crate::hardware::opcodes::flow::rst_38(cpu, bus),
         0xFE => crate::hardware::opcodes::alu::cp_d8(cpu, bus),
-        _ => unimplemented_handler(cpu, opcode),
+        _ => {
+            bus.audio_trace_execution_fault();
+            unimplemented_handler(cpu, opcode);
+        }
     }
 }

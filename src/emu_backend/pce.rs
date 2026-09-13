@@ -171,6 +171,13 @@ pub(crate) struct PceCdBackendConfig {
     pub(crate) arcade_card_mode: PceArcadeCardMode,
 }
 
+#[derive(Default)]
+struct PceHuCardOverrides {
+    console_wiring: Option<PceConsoleWiring>,
+    hucard_board: Option<PceHuCardBoard>,
+    cartridge_hardware: Option<zeff_pce_core::hardware::PceCartridgeHardware>,
+}
+
 impl PceBackend {
     pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
         let mut components = Vec::with_capacity(2);
@@ -187,221 +194,6 @@ impl PceBackend {
                 .to_vec(),
         ));
         components
-    }
-
-    pub(crate) fn new_cdrom2(
-        system_card_rom: Vec<u8>,
-        disc: CdDisc,
-        config: PceCdBackendConfig,
-    ) -> anyhow::Result<Self> {
-        Self::new_cdrom2_with_host_persistence(system_card_rom, disc, config, true)
-    }
-
-    pub(crate) fn new_cdrom2_without_host_persistence(
-        system_card_rom: Vec<u8>,
-        disc: CdDisc,
-        config: PceCdBackendConfig,
-    ) -> anyhow::Result<Self> {
-        Self::new_cdrom2_with_host_persistence(system_card_rom, disc, config, false)
-    }
-
-    fn new_cdrom2_with_host_persistence(
-        system_card_rom: Vec<u8>,
-        disc: CdDisc,
-        config: PceCdBackendConfig,
-        host_persistence_enabled: bool,
-    ) -> anyhow::Result<Self> {
-        let recovery_identity = disc.content_hash();
-        let arcade_card_enabled = match config.arcade_card_mode {
-            PceArcadeCardMode::Automatic => {
-                automatic_arcade_card_enabled(Some(config.source_disc_hash))
-            }
-            PceArcadeCardMode::Enabled => true,
-            PceArcadeCardMode::Disabled => false,
-        };
-        anyhow::ensure!(
-            !arcade_card_enabled || config.system_card_board == PceHuCardBoard::SystemCardV3,
-            "Arcade Card requires a System Card v3 CD environment"
-        );
-        let machine = PceMachine::with_cdrom2_system_card_controller_and_arcade_card(
-            system_card_rom,
-            config.system_card_board,
-            disc,
-            config.console_wiring,
-            ControllerPort::two_button(),
-            arcade_card_enabled,
-        )?;
-        let paths = BackendPaths::with_source_path(config.cue_path, config.source_path);
-        let mut sram_recovery = if host_persistence_enabled {
-            crate::save_paths::battery_sram_session(paths.rom_path(), "pce", recovery_identity)
-        } else {
-            Default::default()
-        };
-        if host_persistence_enabled {
-            sram_recovery.begin(
-                &memory_base128_path(),
-                "pce",
-                recovery_identity,
-                "memory-base-128",
-            );
-        }
-        let mut backend = Self {
-            machine,
-            paths,
-            rom_hash: config.content_hash,
-            source_crc32: Some(config.content_crc32),
-            source_disc_hash: Some(config.source_disc_hash),
-            frame_output: Default::default(),
-            frame_count: 0,
-            pending_runtime_fault: None,
-            overscan_mode: PceOverscanMode::default(),
-            palette_mode: PcePaletteMode::default(),
-            pce_controller_mode: PceControllerMode::Automatic,
-            pce_memory_base_mode: PceMemoryBaseMode::Automatic,
-            pce_arcade_card_mode: if arcade_card_enabled {
-                PceArcadeCardMode::Enabled
-            } else {
-                PceArcadeCardMode::Disabled
-            },
-            mouse_host_buttons: PadButtons::empty(),
-            sram_recovery,
-            memory_base_force_flush: false,
-            host_persistence_enabled,
-            tas_load_provenance: None,
-        };
-        backend.invalidate_frame_output();
-        backend.update_controller_mode(PceControllerMode::Automatic);
-        backend.update_memory_base_mode(PceMemoryBaseMode::Automatic);
-        Ok(backend)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new(hucard_rom: Vec<u8>, rom_path: PathBuf) -> anyhow::Result<Self> {
-        Self::with_paths(hucard_rom, BackendPaths::new(rom_path), None, None, None)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_with_console_wiring(
-        hucard_rom: Vec<u8>,
-        rom_path: PathBuf,
-        console_wiring: PceConsoleWiring,
-    ) -> anyhow::Result<Self> {
-        Self::with_paths(
-            hucard_rom,
-            BackendPaths::new(rom_path),
-            Some(console_wiring),
-            None,
-            None,
-        )
-    }
-
-    pub(crate) fn new_with_overrides(
-        hucard_rom: Vec<u8>,
-        rom_path: PathBuf,
-        console_wiring: Option<PceConsoleWiring>,
-        hucard_board: Option<PceHuCardBoard>,
-        cartridge_hardware: Option<zeff_pce_core::hardware::PceCartridgeHardware>,
-    ) -> anyhow::Result<Self> {
-        Self::with_paths(
-            hucard_rom,
-            BackendPaths::new(rom_path),
-            console_wiring,
-            hucard_board,
-            cartridge_hardware,
-        )
-    }
-
-    pub(crate) fn with_source_path_and_overrides(
-        hucard_rom: Vec<u8>,
-        rom_path: PathBuf,
-        source_path: PathBuf,
-        console_wiring: Option<PceConsoleWiring>,
-        hucard_board: Option<PceHuCardBoard>,
-        cartridge_hardware: Option<zeff_pce_core::hardware::PceCartridgeHardware>,
-    ) -> anyhow::Result<Self> {
-        Self::with_paths(
-            hucard_rom,
-            BackendPaths::with_source_path(rom_path, source_path),
-            console_wiring,
-            hucard_board,
-            cartridge_hardware,
-        )
-    }
-
-    fn with_paths(
-        hucard_rom: Vec<u8>,
-        paths: BackendPaths,
-        console_wiring: Option<PceConsoleWiring>,
-        hucard_board: Option<PceHuCardBoard>,
-        cartridge_hardware: Option<zeff_pce_core::hardware::PceCartridgeHardware>,
-    ) -> anyhow::Result<Self> {
-        let hucard_rom = normalize_hucard_image(hucard_rom)?;
-        anyhow::ensure!(!hucard_rom.is_empty(), "PC Engine HuCard image is empty");
-        anyhow::ensure!(
-            hucard_rom.len().is_multiple_of(HUCARD_BANK_LEN),
-            "PC Engine HuCard image length must be a multiple of {HUCARD_BANK_LEN} bytes"
-        );
-        let rom_hash = zeff_firmware::sha256_bytes(&hucard_rom);
-        Self::with_validated_paths_and_hash(
-            hucard_rom,
-            paths,
-            console_wiring,
-            hucard_board,
-            cartridge_hardware,
-            rom_hash,
-        )
-    }
-
-    fn with_validated_paths_and_hash(
-        hucard_rom: Vec<u8>,
-        paths: BackendPaths,
-        console_wiring: Option<PceConsoleWiring>,
-        hucard_board: Option<PceHuCardBoard>,
-        cartridge_hardware: Option<zeff_pce_core::hardware::PceCartridgeHardware>,
-        rom_hash: [u8; 32],
-    ) -> anyhow::Result<Self> {
-        let mut cartridge = PceCartridgeDescriptor::from_sha256(rom_hash);
-        if let Some(console_wiring) = console_wiring {
-            cartridge = cartridge.with_console_wiring(console_wiring);
-        }
-        if let Some(hucard_board) = hucard_board {
-            cartridge = cartridge.with_hucard_board(hucard_board);
-        }
-        if let Some(cartridge_hardware) = cartridge_hardware {
-            cartridge = cartridge.with_required_hardware(cartridge_hardware);
-        }
-        let machine = PceMachine::with_cartridge_and_controller(
-            hucard_rom,
-            cartridge,
-            ControllerPort::two_button(),
-        )?;
-        let mut sram_recovery =
-            crate::save_paths::battery_sram_session(paths.rom_path(), "pce", rom_hash);
-        sram_recovery.begin(&memory_base128_path(), "pce", rom_hash, "memory-base-128");
-        let mut backend = Self {
-            machine,
-            paths,
-            rom_hash,
-            source_crc32: None,
-            source_disc_hash: None,
-            frame_output: Default::default(),
-            frame_count: 0,
-            pending_runtime_fault: None,
-            overscan_mode: PceOverscanMode::default(),
-            palette_mode: PcePaletteMode::default(),
-            pce_controller_mode: PceControllerMode::Automatic,
-            pce_memory_base_mode: PceMemoryBaseMode::Automatic,
-            pce_arcade_card_mode: PceArcadeCardMode::Disabled,
-            mouse_host_buttons: PadButtons::empty(),
-            sram_recovery,
-            memory_base_force_flush: false,
-            host_persistence_enabled: true,
-            tas_load_provenance: None,
-        };
-        backend.invalidate_frame_output();
-        backend.update_controller_mode(PceControllerMode::Automatic);
-        backend.update_memory_base_mode(PceMemoryBaseMode::Automatic);
-        Ok(backend)
     }
 
     pub(crate) fn source_path(&self) -> &Path {
@@ -733,124 +525,6 @@ impl PceBackend {
         self.invalidate_frame_output();
     }
 
-    fn set_pad_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
-        if let Some(mouse) = self.machine.devices_mut().controller_mut().mouse_mut() {
-            let pad = map_pad_buttons(buttons_pressed, dpad_pressed);
-            mouse.set_buttons(self.mouse_host_buttons | pad);
-            let horizontal = i16::from(pad.contains(PadButtons::LEFT))
-                - i16::from(pad.contains(PadButtons::RIGHT));
-            let vertical =
-                i16::from(pad.contains(PadButtons::UP)) - i16::from(pad.contains(PadButtons::DOWN));
-            mouse.accumulate_motion(horizontal * 4, vertical * 4);
-            return;
-        }
-        if self.set_multitap_pad_input(
-            zeff_pce_core::hardware::MultitapPort::One,
-            buttons_pressed,
-            dpad_pressed,
-        ) {
-            return;
-        }
-        let controller = self.machine.devices_mut().controller_mut();
-        if let Some(pad) = controller.six_button_pad_mut() {
-            pad.standard_pad_mut()
-                .set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
-            pad.set_extra_buttons(map_six_button_extra_buttons(buttons_pressed));
-        } else if let Some(pad) = controller.two_button_pad_mut() {
-            pad.set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
-        }
-    }
-
-    fn set_multitap_pad_input(
-        &mut self,
-        port: zeff_pce_core::hardware::MultitapPort,
-        buttons_pressed: u8,
-        dpad_pressed: u8,
-    ) -> bool {
-        let Some(multitap) = self.machine.devices_mut().controller_mut().multitap_mut() else {
-            return false;
-        };
-        match multitap.port_mut(port) {
-            zeff_pce_core::hardware::MultitapDevice::TwoButton(pad) => {
-                pad.set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
-            }
-            zeff_pce_core::hardware::MultitapDevice::SixButton(pad) => {
-                pad.standard_pad_mut()
-                    .set_buttons(map_pad_buttons(buttons_pressed, dpad_pressed));
-                pad.set_extra_buttons(map_six_button_extra_buttons(buttons_pressed));
-            }
-            zeff_pce_core::hardware::MultitapDevice::Disconnected => {}
-        }
-        true
-    }
-
-    fn effective_controller_mode(&self, requested: PceControllerMode) -> PceControllerMode {
-        match requested {
-            PceControllerMode::Automatic => {
-                automatic_controller_mode(self.controller_profile_hash())
-            }
-            explicit => explicit,
-        }
-    }
-
-    pub(crate) fn update_controller_mode(&mut self, requested: PceControllerMode) {
-        let effective = self.effective_controller_mode(requested);
-        if self.pce_controller_mode == effective {
-            return;
-        }
-        let device = match effective {
-            PceControllerMode::Mouse => zeff_pce_core::hardware::ControllerDevice::Mouse(
-                zeff_pce_core::hardware::PceMouse::new(),
-            ),
-            PceControllerMode::SixButton => zeff_pce_core::hardware::ControllerDevice::SixButton(
-                zeff_pce_core::hardware::SixButtonPad::new(),
-            ),
-            PceControllerMode::Multitap => {
-                zeff_pce_core::hardware::ControllerDevice::Multitap(FivePortMultitap::new([
-                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
-                        zeff_pce_core::hardware::TwoButtonPad::new(),
-                    ),
-                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
-                        zeff_pce_core::hardware::TwoButtonPad::new(),
-                    ),
-                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
-                        zeff_pce_core::hardware::TwoButtonPad::new(),
-                    ),
-                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
-                        zeff_pce_core::hardware::TwoButtonPad::new(),
-                    ),
-                    zeff_pce_core::hardware::MultitapDevice::TwoButton(
-                        zeff_pce_core::hardware::TwoButtonPad::new(),
-                    ),
-                ]))
-            }
-            PceControllerMode::Automatic | PceControllerMode::TwoButton => {
-                zeff_pce_core::hardware::ControllerDevice::TwoButton(
-                    zeff_pce_core::hardware::TwoButtonPad::new(),
-                )
-            }
-        };
-        self.machine.devices_mut().set_controller_device(device);
-        self.pce_controller_mode = effective;
-    }
-
-    pub(crate) fn update_memory_base_mode(&mut self, requested: PceMemoryBaseMode) {
-        let enabled = match requested {
-            PceMemoryBaseMode::Automatic => automatic_memory_base_enabled(self.source_disc_hash()),
-            PceMemoryBaseMode::Enabled => true,
-            PceMemoryBaseMode::Disabled => false,
-        };
-        self.machine
-            .devices_mut()
-            .controller_mut()
-            .set_memory_base128_connected(enabled);
-        self.pce_memory_base_mode = if enabled {
-            PceMemoryBaseMode::Enabled
-        } else {
-            PceMemoryBaseMode::Disabled
-        };
-    }
-
     fn try_load_memory_base128_from_path(&mut self, path: &Path) -> anyhow::Result<Option<String>> {
         #[cfg(not(target_arch = "wasm32"))]
         let bytes = crate::platform::read_save_data(path);
@@ -1151,6 +825,9 @@ fn map_six_button_extra_buttons(buttons: u8) -> SixButtonExtraButtons {
     mapped
 }
 
+mod audio_trace;
+mod construction;
+mod controller;
 mod emulator_core;
 mod frame_output;
 #[cfg(feature = "profile-cores")]

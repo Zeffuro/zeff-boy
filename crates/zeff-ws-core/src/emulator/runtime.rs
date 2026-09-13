@@ -155,7 +155,19 @@ impl Emulator {
             None
         };
 
+        self.bus.begin_audio_trace_instruction(pc_before);
         let fetched = self.cpu.step(&mut self.bus);
+        self.bus.end_audio_trace_instruction();
+        if self.cpu.last_trap.is_some() {
+            self.bus
+                .audio_trace
+                .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExecutionFault);
+        }
+        if self.cpu.cycles < cycles_before {
+            self.bus
+                .audio_trace
+                .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ClockOverflow);
+        }
         if self.cpu.last_step_was_interrupt
             && self
                 .debug

@@ -121,6 +121,9 @@ impl Emulator {
     }
 
     pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        self.bus
+            .audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         let old = self.bus.cpu_peek(addr);
         self.bus.cpu_write(addr, value);
         self.debug
@@ -128,6 +131,9 @@ impl Emulator {
     }
 
     pub fn debug_write(&mut self, addr: Address, val: u8) {
+        self.bus
+            .audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         let addr16 = addr as u16;
         let old_value = self.bus.cpu_peek(addr16);
         self.bus.cpu_write(addr16, val);
@@ -169,6 +175,9 @@ impl Emulator {
         if target == self.cpu.regs().pc || instruction_budget == 0 {
             return Err("invalid call target or budget".to_owned());
         }
+        self.bus
+            .audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         let (return_pc, return_sp, iff1, iff2, delay) =
             self.cpu.begin_guest_call(&mut self.bus, target);
         self.debug.clear_hits();

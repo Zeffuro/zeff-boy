@@ -25,6 +25,7 @@ impl Emulator {
     pub fn load_complete_rtc_persistence(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         let mut candidate = self.clone();
         candidate.bus.load_complete_rtc_persistence(bytes)?;
+        candidate.invalidate_audio_trace();
         *self = candidate;
         Ok(())
     }
@@ -32,6 +33,7 @@ impl Emulator {
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         let mut candidate = self.clone();
         candidate.bus.load_battery_persistence(bytes)?;
+        candidate.invalidate_audio_trace();
         *self = candidate;
         Ok(())
     }

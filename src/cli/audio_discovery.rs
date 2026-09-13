@@ -22,6 +22,7 @@ struct AudioDiscoveryRequest {
     max_candidates: Option<u32>,
     export: Option<OfflineExport>,
     relations: Option<RelationsExport>,
+    driver_evidence: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -84,6 +85,7 @@ fn parse_audio_discovery_args(
                 || arg == "--audio-scan-candidates"
                 || arg == "--audio-export"
                 || arg == "--audio-relations"
+                || arg == "--audio-driver-evidence"
                 || arg == "--audio-song-offset"
                 || arg == "--audio-song"
                 || arg == "--audio-song-id"
@@ -108,6 +110,7 @@ fn parse_audio_discovery_args(
     let mut max_candidates = None;
     let mut export = None;
     let mut relations_path = None;
+    let mut driver_evidence = None;
     let mut selection = None;
     let mut options = RenderOptions::default();
     let mut loops_set = false;
@@ -123,6 +126,18 @@ fn parse_audio_discovery_args(
             .to_str()
             .context("audio-discovery arguments must be valid Unicode")?;
         match argument {
+            "--audio-driver-evidence" => {
+                ensure!(
+                    driver_evidence.is_none(),
+                    "--audio-driver-evidence may only be specified once"
+                );
+                driver_evidence = Some(PathBuf::from(required_path_value(
+                    &args,
+                    index + 1,
+                    "--audio-driver-evidence requires a JSON output path",
+                )?));
+                index += 2;
+            }
             "--audio-relations" => {
                 ensure!(
                     relations_path.is_none(),
@@ -371,7 +386,7 @@ fn parse_audio_discovery_args(
                 index += 2;
             }
             _ => anyhow::bail!(
-                "unexpected audio-discovery argument {argument:?}; use --audio-discover, --archive-member, --audio-scan-work, --audio-scan-candidates, --audio-export, --audio-relations, --audio-all-songs, --audio-song-offset, --audio-song-id, --audio-track, --audio-loops, --audio-max-seconds, --audio-fade-seconds, --audio-midi-channel10, --audio-bank-select, --audio-gain, or --audio-sample-rate"
+                "unexpected audio-discovery argument {argument:?}; use --audio-discover, --archive-member, --audio-scan-work, --audio-scan-candidates, --audio-export, --audio-relations, --audio-driver-evidence, --audio-all-songs, --audio-song-offset, --audio-song-id, --audio-track, --audio-loops, --audio-max-seconds, --audio-fade-seconds, --audio-midi-channel10, --audio-bank-select, --audio-gain, or --audio-sample-rate"
             ),
         }
     }
@@ -433,6 +448,7 @@ fn parse_audio_discovery_args(
         archive_member,
         max_work,
         max_candidates,
+        driver_evidence,
         export,
         relations: relations_path.map(|output_path| RelationsExport {
             output_path,
@@ -474,3 +490,6 @@ mod relations_tests;
 #[cfg(test)]
 #[path = "audio_discovery_batch_tests.rs"]
 mod batch_tests;
+
+#[path = "audio_discovery_drivers.rs"]
+mod driver_evidence;

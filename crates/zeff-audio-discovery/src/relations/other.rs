@@ -6,6 +6,14 @@ mod native;
 pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
     match song {
         SongRef::GbNative(_)
+        | SongRef::GbMusyx(_)
+        | SongRef::GbTose(_)
+        | SongRef::GbGhx(_)
+        | SongRef::GbSoundSystem(_)
+        | SongRef::GbCarillon(_)
+        | SongRef::WsTose(_)
+        | SongRef::GbQuickThunder(_)
+        | SongRef::NesTose(_)
         | SongRef::NesNative(_)
         | SongRef::SegaPsg(_)
         | SongRef::AasStream(_)

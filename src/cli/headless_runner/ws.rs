@@ -10,11 +10,19 @@ pub(super) fn run_ws_headless(
     path: &Path,
     rom_data: &[u8],
     opts: &HeadlessOptions,
+    mut capture: Option<super::audio_trace::Capture>,
 ) -> anyhow::Result<()> {
     ensure_system_headless_options("ws", opts)?;
     ensure_no_reset_events("ws", opts)?;
     if opts.ws_link_peer_path.is_some() {
+        anyhow::ensure!(
+            capture.is_none(),
+            "--audio-trace does not support linked WonderSwan capture"
+        );
         return run_ws_link_pair_headless(path, rom_data, opts);
+    }
+    if let Some(capture) = &mut capture {
+        capture.configure_wonderswan();
     }
     if opts.trace_watch_interrupts {
         anyhow::bail!("WonderSwan --trace-watch-interrupts is not implemented yet");
@@ -26,9 +34,14 @@ pub(super) fn run_ws_headless(
     }
 
     let mut emulator = WsEmulator::new(rom_data, zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE)?;
-    let mut sram_recovery =
-        crate::save_paths::battery_sram_session(path, "ws", emulator.rom_hash());
+    if capture.is_some() {
+        emulator
+            .reset_and_begin_audio_trace(zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS)?;
+    }
+    let mut sram_recovery = (!opts.no_sram && capture.is_none())
+        .then(|| crate::save_paths::battery_sram_session(path, "ws", emulator.rom_hash()));
     if !opts.no_sram
+        && capture.is_none()
         && let Some(sram_path) = crate::emu_backend::ws::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {
                 log::warn!("Failed to load battery save: {e}");
@@ -78,9 +91,9 @@ pub(super) fn run_ws_headless(
         &mut screenshot_written,
     )?;
     write_screenshot_sequence_if_requested(opts, 0, emulator.framebuffer(), dimensions)?;
-    emulator.set_opcode_log_enabled(
-        opts.trace_opcodes || opts.print_debug_state || opts.debug_state_path.is_some(),
-    );
+    let opcode_logging =
+        opts.trace_opcodes || opts.print_debug_state || opts.debug_state_path.is_some();
+    emulator.set_opcode_log_enabled(opcode_logging);
 
     for frame in 0..opts.max_frames {
         let frame_number = frame + 1;
@@ -268,9 +281,9 @@ pub(super) fn run_ws_headless(
             audio_stats,
         }),
     )?;
-    if !opts.no_sram {
+    if let Some(recovery) = &mut sram_recovery {
         flush_battery(
-            &mut sram_recovery,
+            recovery,
             path,
             ActiveSystem::Ws,
             emulator.rom_hash(),
@@ -338,6 +351,37 @@ pub(super) fn run_ws_headless(
             "[headless] ws-test result=pass pass_tiles={} frame={frames_run}",
             pass_fail_tile_stats.pass_tiles
         );
+    }
+    if let Some(capture) = capture {
+        let footer = emulator.footer();
+        let settings = serde_json::json!({
+            "profile": "reset_to_end_cartridge",
+            "minimum_system": format!("{:?}", footer.minimum_system),
+            "sample_rate": emulator.sample_rate(),
+            "system_start": "cartridge_reset_without_bios",
+            "headless_step_count": frames_run,
+            "published_video_frames": emulator.frame_count(),
+            "execution": {
+                "stepping": if opts.trace_opcodes || bus_trace_active { "instruction_loop" } else { "frame_loop" },
+                "opcode_logging": opcode_logging,
+            },
+            "footer": {
+                "developer_id": footer.developer_id,
+                "cartridge_id": footer.cartridge_id,
+                "revision": footer.revision,
+                "rom_size": format!("{:?}", footer.rom_size),
+                "save_kind": format!("{:?}", footer.save_kind),
+                "rtc_present": footer.rtc_present,
+                "orientation": format!("{:?}", footer.orientation()),
+            },
+        });
+        capture.finish(
+            emulator.finish_audio_trace(),
+            frames_run,
+            "ws",
+            settings,
+            None,
+        )?;
     }
 
     Ok(())

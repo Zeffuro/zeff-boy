@@ -14,9 +14,12 @@ pub(super) fn run_request(request: &AudioDiscoveryRequest) -> anyhow::Result<boo
         .cdda
         .as_ref()
         .map_or(input.bytes.len(), |disc| disc.effective_disc_len);
-    let manifest = input.analyze(limits, &cancel);
+    let mut manifest = input.analyze(limits, &cancel);
+    manifest.load_roles()?;
     let status = manifest.scan.status;
     let candidate_count = manifest.scan.song_count();
+    let driver_candidate_count = manifest.scan.driver_candidates.len();
+    let driver_evidence = driver_evidence::prepare(request, &input, &manifest, limits, &cancel)?;
     let export_request = request
         .export
         .as_ref()
@@ -60,6 +63,7 @@ pub(super) fn run_request(request: &AudioDiscoveryRequest) -> anyhow::Result<boo
             );
             let value = serde_json::json!({
                 "schema": "zeff-audio-relations-export/1",
+                "classification": manifest.classification(manifest.scan.song(id).expect("selected catalog entry")),
                 "analysis_profile": manifest.analysis_profile,
                 "source": manifest.source,
                 "transforms": manifest.transforms,
@@ -70,7 +74,7 @@ pub(super) fn run_request(request: &AudioDiscoveryRequest) -> anyhow::Result<boo
         .transpose()?;
     manifest.write_new(&request.output_path)?;
     println!(
-        "[audio-discovery] status={status:?} candidates={candidate_count} wrote={} source_bytes={}",
+        "[audio-discovery] status={status:?} candidates={candidate_count} possible_drivers={driver_candidate_count} wrote={} source_bytes={}",
         request.output_path.display(),
         source_bytes
     );
@@ -121,6 +125,9 @@ pub(super) fn run_request(request: &AudioDiscoveryRequest) -> anyhow::Result<boo
             "[audio-relations] wrote={}",
             relations.output_path.display()
         );
+    }
+    if let (Some(bytes), Some(path)) = (driver_evidence, &request.driver_evidence) {
+        driver_evidence::write_new(path, &bytes)?;
     }
     Ok(true)
 }

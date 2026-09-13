@@ -15,6 +15,8 @@ pub use fixture::{fixture_rom, fixture_song};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GbBankedTiming {
     Cgb,
+    CgbDouble,
+    Dmg,
 }
 
 pub struct PreparedGbBanked {

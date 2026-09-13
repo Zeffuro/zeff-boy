@@ -72,6 +72,8 @@ impl PceMachine {
         }
 
         let return_pc = registers.pc;
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         let return_sp = registers.sp;
         let saved_interrupt_disable = registers.status.contains(StatusFlags::INTERRUPT);
         let saved_sampled_interrupt = self.cpu.replace_sampled_interrupt(None);
@@ -228,6 +230,8 @@ impl PceMachine {
     }
 
     pub fn debug_write_cpu8(&mut self, logical_addr: u16, value: u8) {
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         let old_value = self.debug_peek_cpu8(logical_addr);
         self.cpu
             .debug_write_logical(&mut self.bus, logical_addr, value);

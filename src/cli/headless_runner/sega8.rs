@@ -25,6 +25,7 @@ pub(super) fn run_sega8_headless(
     rom_data: &[u8],
     system: ActiveSystem,
     opts: &HeadlessOptions,
+    capture: Option<super::audio_trace::Capture>,
 ) -> anyhow::Result<()> {
     ensure_system_headless_options(system.code(), opts)?;
     ensure_no_reset_events(system.code(), opts)?;
@@ -46,12 +47,19 @@ pub(super) fn run_sega8_headless(
         .with_console_region(opts.sega8_console_region)
         .with_console_region_fallback(console_region_fallback);
     let mut emulator = Sega8Emulator::new_with_config(rom_data, load_config)?;
-    let mut sram_recovery = crate::save_paths::battery_sram_session(
-        rom_path,
-        system.storage_subdir(),
-        emulator.rom_hash(),
-    );
+    if capture.is_some() {
+        emulator
+            .reset_and_begin_audio_trace(zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS)?;
+    }
+    let mut sram_recovery = (!opts.no_sram && capture.is_none()).then(|| {
+        crate::save_paths::battery_sram_session(
+            rom_path,
+            system.storage_subdir(),
+            emulator.rom_hash(),
+        )
+    });
     if !opts.no_sram
+        && capture.is_none()
         && let Some(sram_path) =
             crate::emu_backend::sega8::try_load_battery_sram(&mut emulator, rom_path)
                 .unwrap_or_else(|e| {
@@ -253,9 +261,9 @@ pub(super) fn run_sega8_headless(
             audio_stats,
         }),
     )?;
-    if !opts.no_sram {
+    if let Some(recovery) = &mut sram_recovery {
         flush_battery(
-            &mut sram_recovery,
+            recovery,
             rom_path,
             system,
             emulator.rom_hash(),
@@ -274,6 +282,20 @@ pub(super) fn run_sega8_headless(
         );
     }
     fail_on_stuck_if_needed(system.code(), stuck.as_ref(), opts)?;
+    if let Some(capture) = capture {
+        let settings = serde_json::json!({
+            "video_standard": emulator.video_standard().label(),
+            "console_region": emulator.console_region().label(),
+            "system": format!("{:?}", emulator.system()),
+        });
+        capture.finish(
+            emulator.finish_audio_trace(),
+            frames_run,
+            system.code(),
+            settings,
+            None,
+        )?;
+    }
     Ok(())
 }
 

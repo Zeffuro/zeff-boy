@@ -43,6 +43,8 @@ pub trait GbCpuBus {
     fn pending_interrupts_for_cpu(&self) -> u8;
     fn pending_interrupts_for_halt(&self) -> u8;
     fn clear_interrupt_bit(&mut self, bit: usize);
+    fn begin_audio_trace_interrupt(&mut self) {}
+    fn audio_trace_execution_fault(&mut self) {}
     fn maybe_trigger_oam_write_corruption(&mut self, addr: u16);
     fn try_cgb_speed_switch(&mut self) -> Option<GbCpuTiming>;
 }
@@ -141,6 +143,15 @@ impl GbCpuBus for Bus {
     #[inline]
     fn clear_interrupt_bit(&mut self, bit: usize) {
         Bus::clear_interrupt_bit(self, bit);
+    }
+
+    fn begin_audio_trace_interrupt(&mut self) {
+        Bus::begin_audio_trace_interrupt(self);
+    }
+
+    fn audio_trace_execution_fault(&mut self) {
+        self.audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExecutionFault);
     }
 
     #[inline]
@@ -263,6 +274,7 @@ impl Cpu {
 
         const INT_VECTORS: [u16; 5] = [INT_VBLANK, INT_STAT, INT_TIMER, INT_SERIAL, INT_JOYPAD];
 
+        bus.begin_audio_trace_interrupt();
         self.ime = ImeState::Disabled;
 
         self.tick_internal_timed(bus, 8);

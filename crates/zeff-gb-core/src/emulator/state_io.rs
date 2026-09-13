@@ -91,6 +91,7 @@ impl Emulator {
         bytes: &[u8],
         unix_seconds: Option<u64>,
     ) -> AnyResult<()> {
+        self.invalidate_audio_trace();
         let expected_len = self.bus.cartridge.sram_len();
         let has_mbc3_rtc = self.header.cartridge_type.is_mbc3_with_rtc();
         if expected_len == 0 && !has_mbc3_rtc {
@@ -180,6 +181,11 @@ impl Emulator {
                         ppu_debug_flags.sprites,
                     );
 
+                    restored_bus.audio_trace = std::mem::take(&mut self.bus.audio_trace);
+                    restored_bus.audio_trace.invalidate(
+                        zeff_emu_common::audio_trace::AudioTraceInvalidation::StateRestore,
+                    );
+                    restored_bus.audio_trace_cycle = self.bus.audio_trace_cycle;
                     self.cpu = state.cpu;
                     *self.bus = restored_bus;
                     self.hardware_mode_preference = state.hardware_mode_preference;
@@ -217,6 +223,11 @@ impl Emulator {
                 ppu_debug_flags.sprites,
             );
 
+            restored_bus.audio_trace = std::mem::take(&mut self.bus.audio_trace);
+            restored_bus
+                .audio_trace
+                .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::StateRestore);
+            restored_bus.audio_trace_cycle = self.bus.audio_trace_cycle;
             self.cpu = import.cpu;
             *self.bus = restored_bus;
             self.hardware_mode = import.hardware_mode;

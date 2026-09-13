@@ -16,6 +16,7 @@ use crate::hardware::cpu::{Cpu, SEGA8_RESET_STATE};
 use crate::hardware::region::Sega8Region;
 use crate::hardware::timing::Sega8VideoStandard;
 
+mod audio_trace;
 mod public_api;
 mod runtime;
 mod state_io;

@@ -79,6 +79,16 @@ pub struct PreparedGbNative {
     pub playback_clocks: u64,
 }
 
+pub(crate) fn detect_drivers(
+    bytes: &[u8],
+    source_sha256: Option<&str>,
+    findings: &mut Vec<crate::drivers::DriverFinding>,
+    budget: &mut Budget<'_>,
+    max_candidates: usize,
+) -> Result<(), ScanStop> {
+    cgb_banked::detection::scan(bytes, source_sha256, findings, budget, max_candidates)
+}
+
 pub(crate) fn scan(
     bytes: &[u8],
     songs: &mut Vec<GbNativeSong>,

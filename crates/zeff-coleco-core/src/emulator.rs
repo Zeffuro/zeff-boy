@@ -28,6 +28,7 @@ pub struct Emulator {
     pub(crate) debug_hooks_active: bool,
 }
 
+mod audio_trace;
 mod debug;
 mod runtime;
 
@@ -124,6 +125,9 @@ impl Emulator {
     }
 
     pub fn bus_mut(&mut self) -> &mut Bus {
+        self.bus
+            .audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         &mut self.bus
     }
 

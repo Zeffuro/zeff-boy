@@ -7,6 +7,7 @@ use crate::hardware::types::hardware_mode::{HardwareMode, HardwareModePreference
 use crate::hardware::{bus::Bus, cpu::Cpu};
 use std::fmt;
 
+mod audio_trace;
 mod boot_init;
 mod debug_view;
 mod public_api;

@@ -247,6 +247,7 @@ fn selected_zip_member_is_reported_without_scanning_siblings() -> anyhow::Result
         archive_member: Some("selected.gba".to_owned()),
         max_work: None,
         max_candidates: None,
+        driver_evidence: None,
         relations: None,
         export: None,
     };
@@ -280,6 +281,7 @@ fn report_writer_never_overwrites_an_existing_file() -> anyhow::Result<()> {
             archive_member: None,
             max_work: Some(1),
             max_candidates: None,
+            driver_evidence: None,
             relations: None,
             export: None,
         })
@@ -302,6 +304,7 @@ fn request_runs_end_to_end_without_mutating_the_input() -> anyhow::Result<()> {
         archive_member: None,
         max_work: Some(1),
         max_candidates: Some(1),
+        driver_evidence: None,
         relations: None,
         export: None,
     };

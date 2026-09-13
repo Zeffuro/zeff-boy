@@ -168,6 +168,9 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
         SERIAL_SC => bus.io.serial.write_sc(value),
 
         TIMER_DIV => {
+            bus.trace_audio_divider_reset(
+                zeff_emu_common::audio_trace::GameBoyDividerResetCause::RegisterWrite,
+            );
             if bus.io.timer.reset_div_after_cpu_write_cycle() {
                 bus.if_reg |= 0x04;
             }
@@ -246,6 +249,7 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
         }
         CGB_UNDOC_FF72 | CGB_UNDOC_FF73 | CGB_UNDOC_FF75 if bus.is_cgb_hardware() => {}
         NR52 => {
+            bus.trace_audio_register(addr, value);
             let powering_on = value & 0x80 != 0 && !bus.io.apu.powered();
             let skip_first_div_apu_event = powering_on && bus.io.timer.div_apu_bit();
             bus.io.apu.write(addr, value);
@@ -253,7 +257,14 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
                 .apu
                 .skip_next_div_apu_event_if(skip_first_div_apu_event);
         }
-        NR10..=NR51 | WAVE_RAM_START..=WAVE_RAM_END => bus.io.apu.write(addr, value),
+        NR10..=NR51 => {
+            bus.trace_audio_register(addr, value);
+            bus.io.apu.write(addr, value);
+        }
+        WAVE_RAM_START..=WAVE_RAM_END => {
+            bus.trace_audio_wave_ram(addr, value);
+            bus.io.apu.write(addr, value);
+        }
 
         _ => {}
     }

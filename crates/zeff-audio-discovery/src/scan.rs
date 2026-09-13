@@ -6,11 +6,14 @@ use super::{
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeff_emu_common::system::System;
 
+mod game_boy;
+mod nes;
+
 pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBool) -> ScanReport {
     let cancelled = cancel.load(Ordering::Relaxed);
     let mut report = ScanReport::new(
         "multi-engine-structural",
-        26,
+        33,
         detectors::cartridge(system),
         &[
             "Structural candidates alone do not prove engine identity; recognized selectors and table references are separate evidence.",
@@ -36,7 +39,11 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
             "GBASS discovery requires an exact supported original driver, bounded song selectors and isolated native playback; mapped spans are a partial inventory.",
             "AAS stream discovery requires an exact original driver and bounded compressed music selectors; mapped data includes native decoder lookahead.",
             "AAS PCM discovery requires an exact original driver and bounded sound-cue selectors; effects and speech are included, and playback uses the source channel at full volume.",
-            "NES native playback requires an exact supported ROM and bounded audio selectors; qualified cues do not establish full soundtrack coverage.",
+            "NES native playback requires a qualified original driver and bounded audio selectors; isolated queues start from cleared sound state and do not reproduce gameplay transitions.",
+            "Game Boy MusyX playback requires an exact original driver layout and bounded song, macro and sample references under CGB timing; selectors do not establish soundtrack completeness.",
+            "Game Boy TOSE playback requires a recognized relocated classic driver, compatible DMG cartridge mapping and bounded four-channel music sequences; no automatic duration or complete soundtrack is established.",
+            "Game Boy driver fingerprints identify possible families from text, instruction bytes, instrument data or header identifiers. They have no playback selection, do not count as songs, and do not establish an active driver or complete soundtrack.",
+            "QuickThunder and NES TOSE playback require recognized original routines, bounded sequence data and the reported cartridge/hardware contract; duration and complete soundtrack coverage remain unqualified.",
             "Applicable detectors describe the selected source's supported analysis scope, not a claim of a match or completion. A complete empty result means those detectors found no supported songs.",
         ],
         MediaIdentity {
@@ -121,6 +128,16 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
             let work_used = start - budget.remaining;
             (Some((result, report.sega_psg_songs.len(), work_used)), None)
         }
+        System::Ws => {
+            let start = budget.remaining;
+            let capacity = limits.max_candidates as usize - report.song_count();
+            let result =
+                super::ws_tose::scan(bytes, &mut report.ws_tose_songs, &mut budget, capacity);
+            (
+                Some((result, report.ws_tose_songs.len(), start - budget.remaining)),
+                None,
+            )
+        }
         System::Gba => (None, Some(())),
         _ => (None, None),
     };
@@ -146,43 +163,21 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
             }
         }
     }
-    if system == System::Gb {
-        let start = budget.remaining;
-        let capacity = limits.max_candidates as usize - report.song_count();
-        let result =
-            super::gb_native::scan(bytes, &mut report.gb_native_songs, &mut budget, capacity);
-        let state = match result {
-            Ok(()) => DetectorState::Complete,
-            Err(reason) => {
-                report.status = ScanStatus::Incomplete(reason);
-                DetectorState::Incomplete(reason)
-            }
-        };
-        report.record_detector(
-            report.applicable_detectors[2],
-            state,
-            report.gb_native_songs.len(),
-            start - budget.remaining,
-        );
+    if system == System::Gb
+        && let Err(reason) = game_boy::inspect(bytes, &mut report, &mut budget)
+    {
+        report.status = ScanStatus::Incomplete(reason);
+        report.work_used = limits.max_work - budget.remaining;
+        report.finish_not_run(reason);
+        return report;
     }
-    if system == System::Nes {
-        let start = budget.remaining;
-        let capacity = limits.max_candidates as usize - report.song_count();
-        let result =
-            super::nes_native::scan(bytes, &mut report.nes_native_songs, &mut budget, capacity);
-        let state = match result {
-            Ok(()) => DetectorState::Complete,
-            Err(reason) => {
-                report.status = ScanStatus::Incomplete(reason);
-                DetectorState::Incomplete(reason)
-            }
-        };
-        report.record_detector(
-            report.applicable_detectors[2],
-            state,
-            report.nes_native_songs.len(),
-            start - budget.remaining,
-        );
+    if system == System::Nes
+        && let Err(reason) = nes::inspect(bytes, &mut report, &mut budget)
+    {
+        report.status = ScanStatus::Incomplete(reason);
+        report.work_used = limits.max_work - budget.remaining;
+        report.finish_not_run(reason);
+        return report;
     }
     if native_result.1.is_none() {
         report.work_used = limits.max_work - budget.remaining;

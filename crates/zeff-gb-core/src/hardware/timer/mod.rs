@@ -65,6 +65,10 @@ impl Timer {
         self.div
     }
 
+    pub(super) fn divider_counter(&self) -> u16 {
+        self.sys_counter
+    }
+
     pub(super) fn tima(&self) -> u8 {
         self.tima
     }

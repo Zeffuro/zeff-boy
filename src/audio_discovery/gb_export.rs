@@ -64,6 +64,7 @@ impl GbExportRequest {
             format,
             options,
             metadata: json!({
+                "classification": manifest.classification(super::catalog::SongRef::Gb(song)),
                 "schema": "zeff-gb-music-export/1",
                 "analysis_profile": manifest.analysis_profile,
                 "source": manifest.source,

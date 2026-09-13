@@ -127,6 +127,9 @@ impl Emulator {
     }
 
     pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        self.bus
+            .audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         let old_value = self.bus.cpu_peek(addr);
         self.bus.cpu_write(addr, value);
         let new_value = self.bus.cpu_peek(addr);
@@ -186,6 +189,9 @@ impl Emulator {
         if target == self.cpu.regs().pc || instruction_budget == 0 {
             return Err("invalid call target or budget".to_owned());
         }
+        self.bus
+            .audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         let (return_pc, return_sp, iff1, iff2, delay) =
             self.cpu.begin_guest_call(&mut self.bus, target);
         self.debug.clear_hits();
@@ -223,6 +229,9 @@ impl CheatByteTarget<u16> for Emulator {
     }
 
     fn cheat_write8(&mut self, address: u16, value: u8) {
+        self.bus
+            .audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         self.bus.cpu_write(address, value);
     }
 }

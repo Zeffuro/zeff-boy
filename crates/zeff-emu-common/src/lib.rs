@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod address;
+pub mod audio_trace;
 pub mod cheats;
 pub mod cpu;
 pub mod debug;

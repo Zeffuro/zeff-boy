@@ -3,6 +3,234 @@ use crate::catalog::SongRef;
 
 pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
     match song {
+        SongRef::GbTose(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbQuickThunder(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbGhx(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbSoundSystem(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbCarillon(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::WsTose(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::NesTose(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbMusyx(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(Kind::Song, &song.title, Some(file_location(song.header)))?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            for track in &song.tracks {
+                b.child(
+                    root,
+                    Kind::Channel,
+                    &format!("Track {}", track.number),
+                    None,
+                    Relation::Contains,
+                )?;
+            }
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Native playback uses the validated embedded selector; full soundtrack coverage and MIDI conversion are not established")?;
+        }
         SongRef::GbNative(song) => {
             b.graph.profile = Some(label(song.profile));
             let root = b.root(Kind::Song, &song.title, Some(song.header.into()))?;
@@ -212,4 +440,12 @@ pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
         _ => unreachable!("Native graph adapter requires a native song"),
     }
     Ok(())
+}
+
+fn file_location(span: crate::RomSpan) -> crate::relations::AssetLocation {
+    crate::tracker::FileSpan {
+        offset: span.effective_offset,
+        byte_len: span.byte_len,
+    }
+    .into()
 }

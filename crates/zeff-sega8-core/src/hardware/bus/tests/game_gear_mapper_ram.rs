@@ -16,7 +16,7 @@ fn known_absent_reads_open_bus_and_ignores_writes() {
     bus.cpu_write(0x8000, 0x5A);
 
     assert_eq!(bus.cpu_read(0x8000), IO_OPEN_BUS_VALUE);
-    assert_eq!(bus.cartridge_ram_visible(), []);
+    assert!(bus.cartridge_ram_visible().is_empty());
 }
 
 #[test]

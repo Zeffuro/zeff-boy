@@ -25,7 +25,16 @@ fn song_rows_dispatch_double_click_and_context_actions_without_audio() {
                 time: Some(time),
                 ..Default::default()
             },
-            |ui| super::super::workspace::draw(ui, workspace, &report, &bytes, |_| true),
+            |ui| {
+                super::super::workspace::draw(
+                    ui,
+                    workspace,
+                    &report,
+                    &bytes,
+                    &crate::audio_discovery::roles::classify(&report),
+                    |_| true,
+                )
+            },
         )
     };
     let _ = render(&mut workspace, Vec::new(), 1.0);

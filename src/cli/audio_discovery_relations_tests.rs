@@ -81,6 +81,7 @@ fn relationship_json_preserves_zip_identity_and_existing_outputs() -> anyhow::Re
         max_work: None,
         max_candidates: None,
         export: None,
+        driver_evidence: None,
         relations: Some(RelationsExport {
             output_path: graph_path.clone(),
             selection: SongSelection::Offset(0x100),
@@ -128,6 +129,7 @@ fn relationship_selection_and_path_conflicts_fail_before_publication() -> anyhow
             max_work: None,
             max_candidates: None,
             export: None,
+            driver_evidence: None,
             relations: Some(RelationsExport {
                 output_path: output.clone(),
                 selection: SongSelection::Offset(if alias { 0x100 } else { 0x999 }),
@@ -169,6 +171,7 @@ fn new_relative_and_absolute_output_aliases_fail_before_writing() -> anyhow::Res
         max_work: None,
         max_candidates: None,
         export: None,
+        driver_evidence: None,
         relations: Some(RelationsExport {
             output_path: absolute.clone(),
             selection: SongSelection::Offset(0x100),

@@ -25,6 +25,7 @@ impl Emulator {
     }
 
     pub fn cpu_write8(&mut self, addr: u32, value: u8) {
+        self.invalidate_audio_trace();
         let old = self.bus.peek8(addr);
         self.bus.write8(addr, value);
         self.debug
@@ -161,6 +162,7 @@ impl Emulator {
         else {
             return Err("target is outside the current code segment".to_owned());
         };
+        self.invalidate_audio_trace();
         self.debug.clear_hits();
         self.debug.break_on_next = false;
 

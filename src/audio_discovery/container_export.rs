@@ -55,6 +55,7 @@ impl ContainerExportRequest {
             rip: rip.clone(),
             format,
             metadata: json!({
+                "classification": manifest.classification(super::catalog::SongRef::Rip(rip)),
                 "schema": "zeff-music-rip-export/1",
                 "analysis_profile": manifest.analysis_profile,
                 "display_name": manifest.display_name,

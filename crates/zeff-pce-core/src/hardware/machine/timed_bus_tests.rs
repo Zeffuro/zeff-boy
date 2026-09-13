@@ -24,6 +24,7 @@ fn deferred_faults_credit_only_the_completed_device_chunks() {
                 &mut vce_frame_length,
                 1,
                 None,
+                None,
                 &mut debug,
                 coalesce,
                 #[cfg(feature = "profiling")]
@@ -82,6 +83,7 @@ fn deferred_fault_horizon_stops_an_ordinary_write_before_it_executes() {
                     &mut vce_frame_length,
                     master_ticks_per_cycle,
                     None,
+                    None,
                     &mut debug,
                     coalesce,
                     #[cfg(feature = "profiling")]
@@ -119,6 +121,7 @@ fn ordinary_accesses_and_idle_coalesce_until_an_action_boundary() {
             &mut vce_line_index,
             &mut vce_frame_length,
             1,
+            None,
             None,
             &mut debug,
             coalesce,
@@ -163,6 +166,7 @@ fn ordinary_access_at_the_vce_line_horizon_materializes_before_the_write() {
         &mut vce_line_index,
         &mut vce_frame_length,
         1,
+        None,
         None,
         &mut debug,
         true,

@@ -73,6 +73,8 @@ impl Bus {
             5 + u32::from(remaining)
         };
 
+        let trace_origin = self.audio_trace_origin;
+        self.audio_trace_origin = WonderSwanTraceOrigin::GeneralDma;
         while remaining > 0 {
             let lo = self.peek8(source);
             let hi = self.peek8(source.wrapping_add(1));
@@ -87,6 +89,7 @@ impl Bus {
                 destination = destination.wrapping_add(2);
             }
         }
+        self.audio_trace_origin = trace_origin;
 
         self.set_dma_source_offset(source as u16);
         self.set_dma_source_segment((source >> 16) as u16);
@@ -230,8 +233,10 @@ impl Bus {
     fn write_sound_dma_target(&mut self, control: u8, value: u8) {
         if control & SOUND_DMA_TARGET_HYPERVOICE != 0 {
             self.apu.write_hyper_voice_dma_sample(value);
+            self.trace_sound_dma(0x69, value);
         } else {
             self.apu.write8(SOUND_VOLUME_CHANNEL2_PORT, value);
+            self.trace_sound_dma(SOUND_VOLUME_CHANNEL2_PORT, value);
         }
     }
 

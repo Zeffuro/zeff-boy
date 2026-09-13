@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 
+mod audio_trace;
 mod public_api;
 mod runtime;
 mod state_io;

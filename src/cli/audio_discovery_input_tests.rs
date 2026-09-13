@@ -31,6 +31,7 @@ fn embedded_modules_export_from_non_gba_cartridges_without_fake_addresses() -> a
             archive_member: None,
             max_work: None,
             max_candidates: None,
+            driver_evidence: None,
             relations: None,
             export: Some(OfflineExport {
                 format,
@@ -78,6 +79,7 @@ fn standalone_modules_require_the_selected_type_at_offset_zero_and_preserve_full
         archive_member: None,
         max_work: None,
         max_candidates: None,
+        driver_evidence: None,
         relations: None,
         export: Some(OfflineExport {
             format: SongFormat::Xm,
@@ -149,6 +151,7 @@ fn standalone_zip_requires_an_explicit_matching_member_and_rejects_malformed_or_
         archive_member: Some("music/fixture.mod".to_owned()),
         max_work: Some(40_000_000),
         max_candidates: Some(1),
+        driver_evidence: None,
         relations: None,
         export: None,
     };
@@ -183,6 +186,7 @@ fn standalone_zip_requires_an_explicit_matching_member_and_rejects_malformed_or_
         archive_member: None,
         max_work: None,
         max_candidates: None,
+        driver_evidence: None,
         relations: None,
         export: None,
     })?;
@@ -201,6 +205,7 @@ fn standalone_zip_requires_an_explicit_matching_member_and_rejects_malformed_or_
         archive_member: None,
         max_work: None,
         max_candidates: None,
+        driver_evidence: None,
         relations: None,
         export: None,
     })?;
@@ -260,6 +265,7 @@ fn s3m_and_it_direct_and_selected_zip_exports_preserve_complete_sources() -> any
                 archive_member: zipped.then(|| member.clone()),
                 max_work: None,
                 max_candidates: None,
+                driver_evidence: None,
                 relations: None,
                 export: Some(OfflineExport {
                     format: native,
@@ -303,6 +309,7 @@ fn s3m_and_it_direct_and_selected_zip_exports_preserve_complete_sources() -> any
             archive_member: None,
             max_work: None,
             max_candidates: None,
+            driver_evidence: None,
             relations: None,
             export: None,
         };
@@ -341,6 +348,7 @@ fn direct_cue_exports_selected_audio_track_without_loading_a_core() -> anyhow::R
         archive_member: None,
         max_work: None,
         max_candidates: None,
+        driver_evidence: None,
         relations: None,
         export: Some(OfflineExport {
             format: SongFormat::Audio(crate::audio_discovery::formats::AudioFormat::Wav),
@@ -390,6 +398,7 @@ fn zip_cue_requires_explicit_member_and_records_archive_identity() -> anyhow::Re
         archive_member: None,
         max_work: None,
         max_candidates: None,
+        driver_evidence: None,
         relations: None,
         export: None,
     };

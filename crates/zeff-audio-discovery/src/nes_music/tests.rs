@@ -46,12 +46,23 @@ fn nrom_layout_requires_header_mapping_and_all_driver_witnesses() {
     let witnesses = layout_witnesses(&bytes);
     assert!(matches_layout(&bytes, &witnesses));
 
-    for (offset, mask) in [(4, 1), (5, 1), (6, 4), (6, 0x10), (7, 8), (9, 1)] {
+    for (offset, mask) in [
+        (4, 1),
+        (5, 1),
+        (6, 4),
+        (6, 0x10),
+        (7, 1),
+        (7, 2),
+        (7, 8),
+        (9, 1),
+    ] {
         let mut changed = bytes.clone();
         changed[offset] ^= mask;
         assert!(!matches_layout(&changed, &witnesses));
     }
-    for offset in [0x790d, 0x791d, 0x7f00, 0x7f66, 0x7210, 0x7510, 0x800a] {
+    for offset in [
+        0x790d, 0x791d, 0x7f00, 0x7f66, 0x72e0, 0x7510, 0x7fda, 0x800a,
+    ] {
         let mut changed = bytes.clone();
         changed[offset] ^= 1;
         assert!(
@@ -60,6 +71,10 @@ fn nrom_layout_requires_header_mapping_and_all_driver_witnesses() {
         );
     }
     assert!(!matches_layout(&bytes[..bytes.len() - 1], &witnesses));
+    let mut outside = bytes.clone();
+    outside[0x72da] ^= 1;
+    outside[0x7fdb] ^= 1;
+    assert!(matches_layout(&outside, &witnesses));
 }
 
 #[test]

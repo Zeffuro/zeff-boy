@@ -184,6 +184,7 @@ impl PceMachine {
             instruction_trace: InstructionTraceStore::default(),
             trace_scratch: TimedInstructionTrace::default(),
             trace_frame: 0,
+            audio_trace: Huc6280AudioTraceRecorder::default(),
             debug: AddressDebugController::new(),
             #[cfg(test)]
             plain_memory_lane_enabled: true,
@@ -220,6 +221,7 @@ impl PceMachine {
     }
 
     pub fn reset(&mut self) {
+        self.audio_trace.invalidate(AudioTraceInvalidation::Reset);
         self.bus.reset_hucard();
         self.bus.devices_mut().reset();
         self.cpu.set_irq1_line(LineLevel::High);

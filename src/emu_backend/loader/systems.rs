@@ -244,7 +244,16 @@ pub(super) fn load_pce_backend(
     if rom_data.is_empty() {
         anyhow::bail!("PC Engine HuCard ROM is empty");
     }
-    let mut backend = if source_path == rom_path {
+    let mut backend = if !config.pce_load_battery_bram {
+        super::super::PceBackend::hucard_without_host_persistence(
+            rom_data.to_vec(),
+            rom_path.to_path_buf(),
+            source_path.to_path_buf(),
+            config.pce_console_wiring,
+            config.pce_hucard_board,
+            config.pce_cartridge_hardware,
+        )?
+    } else if source_path == rom_path {
         super::super::PceBackend::new_with_overrides(
             rom_data.to_vec(),
             rom_path.to_path_buf(),

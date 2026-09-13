@@ -405,6 +405,7 @@ impl Cpu {
     }
 
     pub(super) fn enter_interrupt(&mut self, vector: u8, cycles: u32, bus: &mut Bus) {
+        bus.audio_trace_interrupt();
         self.state = CpuState::Running;
         self.push16(self.flags | FLAG_FIXED, bus);
         self.push16(self.segments[SegmentRegister::Cs.index()], bus);

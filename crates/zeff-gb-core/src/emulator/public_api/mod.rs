@@ -11,14 +11,17 @@ impl Emulator {
     }
 
     pub fn set_game_boy_serial_device(&mut self, device: crate::hardware::GameBoySerialDevice) {
+        self.invalidate_audio_trace();
         self.bus.set_game_boy_serial_device(device);
     }
 
     pub fn queue_bardigun_barcode_scan(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.invalidate_audio_trace();
         self.bus.queue_bardigun_barcode_scan(bytes)
     }
 
     pub fn trigger_barcode_boy_scan(&mut self, digits: &str) -> anyhow::Result<()> {
+        self.invalidate_audio_trace();
         self.bus.trigger_barcode_boy_scan(digits)
     }
 
@@ -30,6 +33,8 @@ impl Emulator {
     }
 
     pub fn sync_game_boy_link_peer(&mut self, peer: &mut Self) {
+        self.invalidate_audio_trace();
+        peer.invalidate_audio_trace();
         self.bus.sync_game_boy_link_peer(&mut peer.bus);
     }
 
@@ -40,6 +45,8 @@ impl Emulator {
         crate::hardware::bus::GameBoyLinkExchangeOutcome,
         crate::hardware::bus::GameBoyLinkExchangeError,
     > {
+        self.invalidate_audio_trace();
+        peer.invalidate_audio_trace();
         self.bus.try_sync_game_boy_link_peer(&mut peer.bus)
     }
 
@@ -50,6 +57,8 @@ impl Emulator {
         crate::hardware::bus::GameBoyLinkPreparedExchange,
         crate::hardware::bus::GameBoyLinkExchangeError,
     > {
+        self.invalidate_audio_trace();
+        peer.invalidate_audio_trace();
         self.bus.try_prepare_game_boy_link_peer(&mut peer.bus)
     }
 
@@ -60,14 +69,17 @@ impl Emulator {
         crate::hardware::bus::GameBoyLinkTransferExchange,
         crate::hardware::bus::GameBoyLinkExchangeError,
     > {
+        self.invalidate_audio_trace();
         self.bus.try_apply_prepared_game_boy_link_reply(transfer)
     }
 
     pub fn set_game_boy_link_peer_present(&mut self, present: bool) {
+        self.invalidate_audio_trace();
         self.bus.set_game_boy_link_peer_present(present);
     }
 
     pub fn restore_game_boy_link_peer_present_without_action(&mut self, present: bool) {
+        self.invalidate_audio_trace();
         self.bus
             .restore_game_boy_link_peer_present_without_action(present);
     }
@@ -96,6 +108,7 @@ impl Emulator {
         &mut self,
         state: zeff_emu_common::replay::ReplayGameBoyLinkState,
     ) -> bool {
+        self.invalidate_audio_trace();
         self.bus.restore_game_boy_link_replay_state(state)
     }
 
@@ -107,15 +120,18 @@ impl Emulator {
         &mut self,
         reply: crate::hardware::bus::GameBoyLinkReply,
     ) -> bool {
+        self.invalidate_audio_trace();
         self.bus.apply_game_boy_link_reply(reply)
     }
 
     pub fn schedule_game_boy_external_link_transfer(&mut self, peer_byte: u8, period: u64) -> bool {
+        self.invalidate_audio_trace();
         self.bus
             .schedule_game_boy_external_link_transfer(peer_byte, period)
     }
 
     pub fn complete_game_boy_external_link_transfer(&mut self, peer_byte: u8) -> bool {
+        self.invalidate_audio_trace();
         self.bus.complete_game_boy_external_link_transfer(peer_byte)
     }
 
@@ -123,6 +139,7 @@ impl Emulator {
         &mut self,
         peer_state: crate::hardware::bus::GameBoyLinkState,
     ) -> bool {
+        self.invalidate_audio_trace();
         self.bus.sync_game_boy_remote_link_peer(peer_state)
     }
 
@@ -131,6 +148,7 @@ impl Emulator {
         peer_state: crate::hardware::bus::GameBoyLinkState,
         idle_master_response: Option<u8>,
     ) -> bool {
+        self.invalidate_audio_trace();
         self.bus
             .sync_game_boy_remote_link_peer_with_idle_response(peer_state, idle_master_response)
     }
@@ -139,12 +157,14 @@ impl Emulator {
         if self.bus.apply_joypad_pressed_masks(buttons, dpad) {
             self.bus.if_reg |= 0x10;
             if matches!(self.cpu.running, CpuState::Stopped) {
+                self.bus.trace_audio_stop(false);
                 self.cpu.running = CpuState::Running;
             }
         }
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
+        self.invalidate_audio_trace();
         self.bus.write_byte(addr, value);
     }
 
@@ -177,10 +197,12 @@ impl Emulator {
     }
 
     pub fn clear_rom_patches(&mut self) {
+        self.invalidate_audio_trace();
         self.bus.game_genie_patches.clear();
     }
 
     pub fn add_rom_patch(&mut self, patch: crate::cheats::CheatPatch) {
+        self.invalidate_audio_trace();
         self.bus.game_genie_patches.push(patch);
     }
 

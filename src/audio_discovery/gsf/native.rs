@@ -85,6 +85,7 @@ impl NativeGsfRequest {
             song: owned,
             options,
             metadata: json!({
+                "classification": manifest.classification(song),
                 "schema": "zeff-native-gsf-export/1", "source": manifest.source,
                 "transforms": manifest.transforms, "media": manifest.scan.media,
                 "analysis_profile": manifest.analysis_profile, "selection": id,

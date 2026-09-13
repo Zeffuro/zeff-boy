@@ -8,6 +8,7 @@ use crate::audio_discovery::media::ScanInput;
 use crate::audio_discovery::{RomSpan, ScanLimits, SourceSpan};
 use zeff_emu_common::system::System;
 
+mod fingerprints;
 mod interactions;
 mod transport;
 
@@ -56,7 +57,14 @@ fn workspace_uses_columns_only_when_the_dock_is_wide() {
                 ..Default::default()
             },
             |ui| {
-                super::workspace::draw(ui, &mut workspace, &report, &bytes, |_| true);
+                super::workspace::draw(
+                    ui,
+                    &mut workspace,
+                    &report,
+                    &bytes,
+                    &crate::audio_discovery::roles::classify(&report),
+                    |_| true,
+                );
             },
         );
         assert!(!output.shapes.is_empty());
@@ -180,7 +188,16 @@ fn natsume_summary_uses_a_prominent_details_action_and_keeps_metrics_advanced() 
                 events,
                 ..Default::default()
             },
-            |ui| super::workspace::draw(ui, workspace, &report, &bytes, |_| true),
+            |ui| {
+                super::workspace::draw(
+                    ui,
+                    workspace,
+                    &report,
+                    &bytes,
+                    &crate::audio_discovery::roles::classify(&report),
+                    |_| true,
+                )
+            },
         )
     };
     let _ = render(&mut workspace, Vec::new());
@@ -398,7 +415,16 @@ fn large_song_lists_are_virtualized_and_clicks_move_the_hex_selection() {
                     events,
                     ..Default::default()
                 },
-                |ui| super::workspace::draw(ui, workspace, &report, &bytes, |_| true),
+                |ui| {
+                    super::workspace::draw(
+                        ui,
+                        workspace,
+                        &report,
+                        &bytes,
+                        &crate::audio_discovery::roles::classify(&report),
+                        |_| true,
+                    )
+                },
             )
         };
         let _ = render(&mut workspace, Vec::new());

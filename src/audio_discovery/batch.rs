@@ -55,6 +55,7 @@ impl BatchSummary {
 #[derive(Serialize)]
 struct SongResult {
     song: SongId,
+    classification: zeff_audio_discovery::classification::AudioClassification,
     title: String,
     status: &'static str,
     options: Option<RenderOptions>,
@@ -144,6 +145,12 @@ impl BatchExportRequest {
                     check_cancel(cancel)?;
                     let mut result = SongResult {
                         song: entry.id,
+                        classification: self.manifest.classification(
+                            self.manifest
+                                .scan
+                                .song(entry.id)
+                                .expect("planned catalog entry"),
+                        ),
                         title: entry.title.clone(),
                         status: "skipped",
                         options: entry.options,

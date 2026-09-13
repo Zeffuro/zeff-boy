@@ -60,6 +60,7 @@ impl VgmExportRequest {
             log: log.clone(),
             format,
             metadata: json!({
+                "classification": manifest.classification(super::catalog::SongRef::Vgm(log)),
                 "schema": "zeff-vgm-export/1",
                 "analysis_profile": manifest.analysis_profile,
                 "source": manifest.source,

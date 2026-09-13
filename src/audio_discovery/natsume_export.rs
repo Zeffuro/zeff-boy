@@ -63,6 +63,7 @@ impl NatsumeExportRequest {
             song: song.clone(),
             audio,
             metadata: json!({
+                "classification": manifest.classification(super::catalog::SongRef::Natsume(song)),
                 "schema": "zeff-natsume-sequence-export/1",
                 "analysis_profile": manifest.analysis_profile,
                 "source": manifest.source,

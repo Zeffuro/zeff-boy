@@ -94,6 +94,7 @@ impl GsfExportRequest {
             song: song.clone(),
             options,
             metadata: json!({
+                "classification": manifest.classification(super::catalog::SongRef::Mp2k(song)),
                 "schema": "zeff-gsf-export/1",
                 "analysis_profile": manifest.analysis_profile,
                 "display_name": manifest.display_name,

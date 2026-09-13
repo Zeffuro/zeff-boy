@@ -28,6 +28,7 @@ impl Emulator {
     }
 
     pub fn debug_continue(&mut self) {
+        self.invalidate_audio_trace();
         self.debug.clear_hits();
         self.hit_rom_breakpoint = None;
         self.debug.break_on_next = false;
@@ -35,6 +36,7 @@ impl Emulator {
     }
 
     pub fn debug_step(&mut self) {
+        self.invalidate_audio_trace();
         self.debug.clear_hits();
         self.hit_rom_breakpoint = None;
         self.debug.break_on_next = true;
@@ -42,6 +44,7 @@ impl Emulator {
     }
 
     pub fn debug_suspend(&mut self) {
+        self.invalidate_audio_trace();
         self.cpu.running = CpuState::Suspended;
     }
 
@@ -165,6 +168,7 @@ impl Emulator {
     }
 
     pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        self.invalidate_audio_trace();
         let old = self.bus.read_byte_raw(addr);
         self.bus.write_byte(addr, value);
         self.debug.check_watch_write(addr, old, value);
@@ -182,6 +186,7 @@ impl Emulator {
         if target == return_pc || instruction_budget == 0 {
             return Err("invalid call target or budget".to_owned());
         }
+        self.invalidate_audio_trace();
         let return_sp = self.cpu.sp;
         let saved_ime = self.cpu.ime;
         let [lo, hi] = return_pc.to_le_bytes();

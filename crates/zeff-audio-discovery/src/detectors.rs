@@ -122,6 +122,41 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
                 semantic_version: 2,
                 scope: "Exact banked Game Boy drivers with qualified music selectors, closed driver state and DMG or CGB double-speed playback",
             },
+            DetectorDescriptor {
+                id: "gb-musyx-driver",
+                semantic_version: 1,
+                scope: "Exact original MusyX driver layouts with bounded songs, macro control flow and sample references; native CGB playback for the requested duration",
+            },
+            DetectorDescriptor {
+                id: "gb-tose-driver",
+                semantic_version: 1,
+                scope: "Relocated classic TOSE driver with bounded four-channel music sequences and original DMG MBC1 playback",
+            },
+            DetectorDescriptor {
+                id: "gb-quickthunder-driver",
+                semantic_version: 1,
+                scope: "Recognized QuickThunder drivers with bounded music structures and original Game Boy playback under the reported hardware profile",
+            },
+            DetectorDescriptor {
+                id: "gb-driver-fingerprints",
+                semantic_version: 1,
+                scope: "Public sound-driver fingerprints with exact source offsets; possible families only, without song selection or playback qualification",
+            },
+            DetectorDescriptor {
+                id: "gb-ghx-driver",
+                semantic_version: 1,
+                scope: "Qualified GHX routines, module/subsong selectors and bounded data closure with CGB double-speed playback",
+            },
+            DetectorDescriptor {
+                id: "gb-sound-system-driver",
+                semantic_version: 1,
+                scope: "Recognized GB Sound System routines with bounded order/instrument data and qualified native hardware",
+            },
+            DetectorDescriptor {
+                id: "gb-carillon-driver",
+                semantic_version: 1,
+                scope: "Qualified Carillon CGB interpreter, bounded orders/patterns/instruments, explicit alias collapse and original-driver playback",
+            },
         ],
         System::Nes => &[
             MODULES,
@@ -135,6 +170,11 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
                 semantic_version: 2,
                 scope: "Exact NES driver profiles with qualified cartridge mapping, bounded native audio selectors and NTSC playback",
             },
+            DetectorDescriptor {
+                id: "nes-tose-driver",
+                semantic_version: 1,
+                scope: "Recognized NES TOSE routines with bounded selectors, qualified cartridge mapping and original NTSC playback",
+            },
         ],
         System::Sms | System::Gg => &[
             MODULES,
@@ -142,6 +182,14 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
                 id: "sega-psg-driver",
                 semantic_version: 1,
                 scope: "Exact SMS/GG PSG driver profiles, bounded music selectors and original-driver playback with explicit NTSC timing",
+            },
+        ],
+        System::Ws => &[
+            MODULES,
+            DetectorDescriptor {
+                id: "ws-tose-driver",
+                semantic_version: 2,
+                scope: "Qualified TOSE-style eight-slot routines, bounded selectors and original WonderSwan playback",
             },
         ],
         _ => TRACKER,

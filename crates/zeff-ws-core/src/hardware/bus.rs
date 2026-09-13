@@ -6,6 +6,10 @@ use super::constants::{
 };
 use super::keypad::Keypad;
 use super::ppu::{Ppu, PpuDebugSnapshot};
+mod audio_trace;
+use zeff_emu_common::audio_trace::{
+    AudioTraceInvalidation, AudioTraceSource, WonderSwanAudioTraceRecorder, WonderSwanTraceOrigin,
+};
 mod dma;
 use dma::SoundDma;
 mod eeprom;
@@ -76,6 +80,9 @@ pub struct Bus {
     rtc: Rtc,
     uart: Uart,
     sound_dma: SoundDma,
+    pub(crate) audio_trace: WonderSwanAudioTraceRecorder,
+    audio_trace_context: (u32, AudioTraceSource),
+    audio_trace_origin: WonderSwanTraceOrigin,
     internal_eeprom_write_enabled: bool,
     internal_eeprom_protected: bool,
     internal_eeprom_done_delay_reads: u8,
@@ -112,6 +119,9 @@ impl Bus {
             rtc: Rtc::new(),
             uart: Uart::default(),
             sound_dma: SoundDma::default(),
+            audio_trace: WonderSwanAudioTraceRecorder::default(),
+            audio_trace_context: (0, AudioTraceSource::Unknown),
+            audio_trace_origin: WonderSwanTraceOrigin::Cpu,
             internal_eeprom_write_enabled: true,
             internal_eeprom_protected: false,
             internal_eeprom_done_delay_reads: 0,
@@ -129,6 +139,9 @@ impl Bus {
     }
 
     pub fn reset(&mut self) {
+        self.audio_trace.invalidate(AudioTraceInvalidation::Reset);
+        self.audio_trace_context = (0, AudioTraceSource::Unknown);
+        self.audio_trace_origin = WonderSwanTraceOrigin::Cpu;
         self.ram.fill(0);
         self.io.fill(0);
         self.internal_eeprom = internal_eeprom_for_cartridge(&self.cartridge);
@@ -190,7 +203,12 @@ impl Bus {
         let addr = addr & ADDRESS_MASK;
         let old_value = self.peek8(addr);
         match addr {
-            0x00000..=0x0FFFF => internal_ram_write(&mut self.ram, addr, value),
+            0x00000..=0x0FFFF => {
+                internal_ram_write(&mut self.ram, addr, value);
+                if addr < 0x4000 {
+                    self.trace_wave_ram(addr as u16, value);
+                }
+            }
             0x10000..=0xFFFFF => self.cartridge.rom_write8(addr, value),
             _ => {}
         }
@@ -214,6 +232,10 @@ impl Bus {
     }
 
     pub fn step_cycles(&mut self, cycles: u32) {
+        if self.cycles.checked_add(u64::from(cycles)).is_none() {
+            self.audio_trace
+                .invalidate(AudioTraceInvalidation::ClockOverflow);
+        }
         #[cfg(feature = "profiling")]
         {
             self.profiling.bus_step_calls = self.profiling.bus_step_calls.wrapping_add(1);

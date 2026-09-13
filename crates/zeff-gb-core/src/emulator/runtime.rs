@@ -387,11 +387,14 @@ impl Emulator {
     }
 
     fn step_cpu(&mut self) {
+        self.bus
+            .begin_audio_trace_instruction(self.cpu.pc, self.cycle_count);
         let _ = zeff_emu_common::cpu::CpuCore::step_cpu(&mut self.cpu, self.bus.as_mut());
         self.cycle_count = self
             .cycle_count
             .wrapping_add(self.cpu.last_step_master_ticks);
         self.hardware_mode = self.bus.hardware_mode;
+        self.bus.end_audio_trace_instruction(self.cycle_count);
     }
 
     pub fn step_frame(&mut self) {
@@ -465,10 +468,12 @@ impl Emulator {
     }
 
     pub fn set_mbc7_host_tilt(&mut self, x: f32, y: f32) {
+        self.invalidate_audio_trace();
         self.bus.cartridge.set_mbc7_tilt(x, y);
     }
 
     pub fn set_camera_host_frame(&mut self, frame: &[u8]) {
+        self.invalidate_audio_trace();
         self.bus.cartridge.set_camera_frame(frame);
     }
 }

@@ -296,6 +296,10 @@ impl PceMachine {
         restored.instruction_trace.set_capacity(trace_capacity);
         restored.instruction_trace.set_enabled(trace_enabled);
         restored.instruction_trace.clear();
+        restored.audio_trace = std::mem::take(&mut self.audio_trace);
+        restored
+            .audio_trace
+            .invalidate(AudioTraceInvalidation::StateRestore);
         *self = restored;
         Ok(())
     }

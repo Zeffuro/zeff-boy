@@ -81,12 +81,7 @@ impl PceHuCardHost {
     }
 
     pub fn set_input(&mut self, buttons: u8, dpad: u8) {
-        let Some(pad) = self
-            .machine
-            .devices_mut()
-            .controller_mut()
-            .two_button_pad_mut()
-        else {
+        let Some(pad) = self.machine.controller_input_mut().two_button_pad_mut() else {
             return;
         };
         pad.set_buttons(map_pad_buttons(buttons, dpad));

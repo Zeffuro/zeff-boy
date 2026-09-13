@@ -44,6 +44,7 @@ use trace::*;
 use ws::run_ws_headless;
 
 mod audio;
+mod audio_trace;
 mod coleco;
 mod debug_state;
 mod gb;
@@ -66,6 +67,8 @@ mod ws;
 
 use tas::{check_tas_assertions, ensure_tas_completed, validate_tas_system};
 
+pub(crate) use audio_trace::validate_options as validate_audio_trace_options;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use replay::run_loaded_replay_for_verification;
 
@@ -75,10 +78,16 @@ pub(crate) fn run_headless(
     firmware_search_dirs: Vec<std::path::PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
+    validate_audio_trace_options(opts)?;
     if opts.tas_project_path.is_some() {
         return tas_project::run_tas_project_headless(path, firmware_search_dirs, opts);
     }
     if crate::app::is_native_archive_path(path) {
+        anyhow::ensure!(
+            opts.audio_trace_path.is_none(),
+            "--audio-trace requires raw or ZIP HuCard media; CD and native archives are unsupported"
+        );
+        audio_trace::validate_system("pce", opts)?;
         validate_tas_system(opts, "pce")?;
         if opts.replay_path.is_some() {
             anyhow::bail!("replay playback from archives is not supported in headless mode");
@@ -87,6 +96,7 @@ pub(crate) fn run_headless(
     }
 
     let (rom_path, preloaded_data, system) = crate::app::detect_and_extract_rom(path)?;
+    audio_trace::validate_system(system.code(), opts)?;
     validate_tas_system(opts, system.code())?;
     if system == ActiveSystem::Pce {
         if opts.replay_path.is_some() {
@@ -105,6 +115,7 @@ pub(crate) fn run_headless(
         Some(data) => data,
         None => std::fs::read(path)?,
     };
+    let capture = audio_trace::Capture::prepare(path, &rom_path, &rom_data, opts)?;
 
     if opts.replay_path.is_some() {
         return run_replay_headless(
@@ -118,16 +129,18 @@ pub(crate) fn run_headless(
     }
 
     match system {
-        ActiveSystem::GameBoy => run_gb_headless(&rom_path, &rom_data, mode_preference, opts),
+        ActiveSystem::GameBoy => {
+            run_gb_headless(&rom_path, &rom_data, mode_preference, opts, capture)
+        }
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
         ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts),
         ActiveSystem::Coleco => {
-            run_coleco_headless(&rom_path, &rom_data, &firmware_search_dirs, opts)
+            run_coleco_headless(&rom_path, &rom_data, &firmware_search_dirs, opts, capture)
         }
         ActiveSystem::Pce => unreachable!("PC Engine runs dispatch before raw ROM loading"),
-        ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts),
+        ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts, capture),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
-            run_sega8_headless(&rom_path, &rom_data, system, opts)
+            run_sega8_headless(&rom_path, &rom_data, system, opts, capture)
         }
     }
 }

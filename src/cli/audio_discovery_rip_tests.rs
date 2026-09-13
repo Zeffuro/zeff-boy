@@ -46,6 +46,7 @@ fn direct_and_selected_zip_rips_preserve_identity_and_do_not_overwrite_exports()
                 archive_member: zipped.then(|| member.clone()),
                 max_work: None,
                 max_candidates: None,
+                driver_evidence: None,
                 relations: None,
                 export: Some(OfflineExport {
                     format: native_format(format),
@@ -111,6 +112,7 @@ fn rip_assets_export_retains_the_complete_original_source() -> anyhow::Result<()
         archive_member: None,
         max_work: None,
         max_candidates: None,
+        driver_evidence: None,
         relations: None,
         export: Some(OfflineExport {
             format: SongFormat::MappedAssets,
@@ -143,6 +145,7 @@ fn rips_reject_wrong_native_format_and_render_settings() -> anyhow::Result<()> {
             archive_member: None,
             max_work: None,
             max_candidates: None,
+            driver_evidence: None,
             relations: None,
             export: Some(OfflineExport {
                 format,
@@ -191,6 +194,7 @@ fn cartridge_extensions_do_not_import_embedded_rip_headers() -> anyhow::Result<(
             archive_member: None,
             max_work: None,
             max_candidates: None,
+            driver_evidence: None,
             relations: None,
             export: None,
         };

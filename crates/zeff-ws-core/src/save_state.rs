@@ -170,6 +170,9 @@ pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
         bail!("WonderSwan save state belongs to a different ROM");
     }
 
+    emu.bus
+        .audio_trace
+        .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::StateRestore);
     emu.frame_count = r.u64()?;
     let _saved_sample_rate = r.u32()?;
     let _saved_sample_generation_enabled = r.u8()?;

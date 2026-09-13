@@ -125,6 +125,21 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
+        match self.make_reset_emulator() {
+            Ok(mut emulator) => {
+                let mut recorder = std::mem::take(&mut self.bus.audio_trace);
+                recorder.invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::Reset);
+                emulator.bus.audio_trace = recorder;
+                emulator.bus.audio_trace_cycle = self.bus.audio_trace_cycle;
+                *self = emulator;
+            }
+            Err(err) => {
+                log::warn!("failed to reset GB emulator from loaded ROM bytes: {err}");
+            }
+        }
+    }
+
+    pub(super) fn make_reset_emulator(&self) -> anyhow::Result<Self> {
         let rom = self.bus.cartridge.rom_bytes().to_vec();
         let sample_rate = self.bus.apu_sample_rate();
         let boot_rom = self.bus.boot_rom_bytes().map(<[u8]>::to_vec);
@@ -138,23 +153,18 @@ impl Emulator {
             Some(boot_rom) => Self::from_rom_data_with_boot_rom(&rom, mode_preference, boot_rom),
             None => Self::from_rom_data(&rom, mode_preference),
         };
-        match reset {
-            Ok(mut emulator) => {
-                emulator.set_sample_rate(sample_rate);
-                emulator.set_game_boy_serial_device(serial_device);
-                emulator.set_ppu_debug_flags(
-                    ppu_debug_flags.bg,
-                    ppu_debug_flags.window,
-                    ppu_debug_flags.sprites,
-                );
-                emulator.instruction_trace.set_capacity(trace_capacity);
-                emulator.instruction_trace.set_enabled(trace_enabled);
-                *self = emulator;
-            }
-            Err(err) => {
-                log::warn!("failed to reset GB emulator from loaded ROM bytes: {err}");
-            }
-        }
+        reset.map(|mut emulator| {
+            emulator.set_sample_rate(sample_rate);
+            emulator.set_game_boy_serial_device(serial_device);
+            emulator.set_ppu_debug_flags(
+                ppu_debug_flags.bg,
+                ppu_debug_flags.window,
+                ppu_debug_flags.sprites,
+            );
+            emulator.instruction_trace.set_capacity(trace_capacity);
+            emulator.instruction_trace.set_enabled(trace_enabled);
+            emulator
+        })
     }
 
     fn compute_rom_hash(rom: &[u8]) -> [u8; 32] {

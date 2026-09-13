@@ -1,4 +1,5 @@
-use super::{Cue, Profile};
+use super::Cue;
+use super::recipe::{DriverVariant, KnownRomQualification, VariantParameters};
 
 const CUES: &[Cue] = &[
     Cue {
@@ -24,27 +25,38 @@ const CUES: &[Cue] = &[
     },
 ];
 
-pub(super) const PROFILE: Profile = Profile {
+pub(super) const VARIANT: DriverVariant = DriverVariant {
     id: "gb-native-cgb-banked-synthetic",
-    source: "89f0b398a6ef580fe6a5c24a787ec7e7447d8efb06fc96d42aa17d6418db0fed",
-    cartridge_type: 0x19,
-    init: 0x200,
-    init_len: 26,
-    selector: 0x300,
-    tick: 0x400,
-    driver: 0x200,
-    driver_end: 0x500,
-    table: 0x600,
-    table_rows: 4,
-    hook: 0x180,
-    cues: CUES,
+    parameters: VariantParameters {
+        cartridge_type: 0x19,
+        init: 0x200,
+        init_len: 26,
+        selector: 0x300,
+        tick: 0x400,
+        driver: 0x200,
+        driver_end: 0x500,
+        table: 0x600,
+        table_rows: 4,
+        hook: 0x180,
+    },
+    qualification: KnownRomQualification {
+        sources: &["89f0b398a6ef580fe6a5c24a787ec7e7447d8efb06fc96d42aa17d6418db0fed"],
+        cues: CUES,
+    },
+    driver_sha256: None,
 };
 
-pub(super) const RAM_PROFILE: Profile = Profile {
+pub(super) const RAM_VARIANT: DriverVariant = DriverVariant {
     id: "gb-native-cgb-banked-ram-synthetic",
-    source: "f175be722ab29d5b643a03385033ec6881c1ee09bac569f18b988c146bbc7c13",
-    cartridge_type: 0x1b,
-    ..PROFILE
+    parameters: VariantParameters {
+        cartridge_type: 0x1b,
+        ..VARIANT.parameters
+    },
+    qualification: KnownRomQualification {
+        sources: &["f175be722ab29d5b643a03385033ec6881c1ee09bac569f18b988c146bbc7c13"],
+        cues: CUES,
+    },
+    driver_sha256: None,
 };
 
 pub fn fixture_rom() -> Vec<u8> {

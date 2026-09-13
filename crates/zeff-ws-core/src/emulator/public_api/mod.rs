@@ -5,6 +5,8 @@ mod queries;
 
 impl Emulator {
     pub fn sync_wonder_swan_link_peer(&mut self, peer: &mut Emulator) {
+        self.invalidate_audio_trace();
+        peer.invalidate_audio_trace();
         self.bus.sync_wonder_swan_link_peer(&mut peer.bus);
     }
 
@@ -15,6 +17,7 @@ impl Emulator {
     }
 
     pub fn receive_wonder_swan_link_byte(&mut self, value: u8) {
+        self.invalidate_audio_trace();
         self.bus.receive_wonder_swan_link_byte(value);
     }
 

@@ -94,10 +94,13 @@ impl Emulator {
         } else {
             None
         };
+        self.bus
+            .begin_audio_trace_instruction(pc_before, cycles_before);
         let fetched = <crate::hardware::cpu::Cpu as CpuCore<crate::hardware::bus::Bus>>::step_cpu(
             &mut self.cpu,
             &mut self.bus,
         );
+        self.bus.end_audio_trace_instruction();
         if let Some(instruction) = fetched {
             self.bus.step_cycles(instruction.cycles);
             self.opcode_log

@@ -28,6 +28,7 @@ pub(super) fn run_coleco_headless(
     rom_data: &[u8],
     firmware_search_dirs: &[PathBuf],
     opts: &HeadlessOptions,
+    capture: Option<super::audio_trace::Capture>,
 ) -> anyhow::Result<()> {
     ensure_system_headless_options("coleco", opts)?;
     ensure_no_reset_events("ColecoVision", opts)?;
@@ -35,6 +36,10 @@ pub(super) fn run_coleco_headless(
 
     let bios = resolve_coleco_bios_with_manifest(None, firmware_search_dirs, Some(rom_path))?;
     let mut emulator = Emulator::new(rom_data, &bios.bytes, DEFAULT_SAMPLE_RATE)?;
+    if capture.is_some() {
+        emulator
+            .reset_and_begin_audio_trace(zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS)?;
+    }
     if let Some(bytes) = read_headless_state_if_requested(opts)? {
         emulator.load_state(&bytes)?;
         log::info!(
@@ -186,6 +191,19 @@ pub(super) fn run_coleco_headless(
             state.len(),
             zeff_firmware::sha256_hex(&state),
         );
+    }
+    if let Some(capture) = capture {
+        capture.finish(
+            emulator.finish_audio_trace(),
+            frames_run,
+            "coleco",
+            serde_json::json!({"video_standard": "ntsc", "expansion_audio": "not_emulated"}),
+            Some(serde_json::json!({
+                "sha256": const_hex::encode(bios.sha256),
+                "byte_len": bios.bytes.len(),
+                "firmware_id": "coleco.vision.bios",
+            })),
+        )?;
     }
     Ok(())
 }

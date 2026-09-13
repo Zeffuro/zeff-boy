@@ -119,7 +119,12 @@ impl Bus {
         match port {
             CURRENT_LINE_PORT => {}
             port if !self.is_color_model() && color_only_port(port) => {}
-            port if Apu::handles_port(port) => self.apu.write8(port, value),
+            port if Apu::handles_port(port) => {
+                self.apu.write8(port, value);
+                if matches!(port, 0x64..=0x67 | 0x69..=0x6b | 0x80..=0x95) {
+                    self.trace_audio_register(port, value);
+                }
+            }
             LINE_COMPARE_PORT => self.io[usize::from(LINE_COMPARE_PORT)] = value,
             TIMER_CONTROL_PORT => self.io[usize::from(TIMER_CONTROL_PORT)] = value & 0x0F,
             HBLANK_TIMER_RELOAD_LO_PORT | HBLANK_TIMER_RELOAD_HI_PORT => {

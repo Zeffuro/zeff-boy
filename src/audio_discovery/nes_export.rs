@@ -67,6 +67,7 @@ impl NesExportRequest {
             format,
             options,
             metadata: json!({
+                "classification": manifest.classification(super::catalog::SongRef::Nes(song)),
                 "schema": "zeff-nes-music-export/1",
                 "analysis_profile": manifest.analysis_profile,
                 "source": manifest.source,

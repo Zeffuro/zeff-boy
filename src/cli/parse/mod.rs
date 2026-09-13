@@ -16,6 +16,7 @@ use self::values::{
 };
 use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
 
+mod audio_trace;
 mod bus;
 mod input;
 mod numbers;
@@ -580,6 +581,18 @@ pub(crate) fn parse_args_from(
                 headless.audio_dump_path = Some(PathBuf::from(value));
                 i += 2;
             }
+            "--audio-trace" => {
+                anyhow::ensure!(
+                    headless.audio_trace_path.is_none(),
+                    "--audio-trace may only be specified once"
+                );
+                let value = args
+                    .get(i + 1)
+                    .filter(|value| !value.starts_with("--") && !value.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("--audio-trace requires an output ZIP path"))?;
+                headless.audio_trace_path = Some(PathBuf::from(value));
+                i += 2;
+            }
             "--break-on-gba-bad-state" => {
                 headless.break_on_gba_bad_state = true;
                 i += 1;
@@ -641,6 +654,8 @@ pub(crate) fn parse_args_from(
     {
         anyhow::bail!("--tas-branch and --tas-export require --tas-verify");
     }
+
+    audio_trace::validate(headless_enabled, rom_path.as_deref(), &headless)?;
 
     Ok(CliArgs {
         rom_path,

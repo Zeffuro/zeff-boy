@@ -60,7 +60,12 @@ fn high_pulse_tones_preserve_the_fundamental_without_folded_harmonics() {
         for frequency in [2025, 2037] {
             let mut apu = pulse(rate, frequency);
             let output = run(&mut apu, 1_048_576, &[4], false);
-            let mono: Vec<_> = output.chunks_exact(2).map(|pair| pair[0]).collect();
+            let mono: Vec<_> = output
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| pair[0])
+                .collect();
             let settled = &mono[rate as usize / 20..];
             let fundamental = 131_072.0 / f64::from(2048 - frequency);
             let measured = amplitude(settled, rate, fundamental);
@@ -91,7 +96,12 @@ fn low_pulse_tone_gain_matches_its_analytic_fundamental() {
     for rate in [44_100, 48_000, 96_000] {
         let mut apu = pulse(rate, 1792);
         let output = run(&mut apu, 1_048_576, &[4], false);
-        let mono: Vec<_> = output.chunks_exact(2).map(|pair| pair[0]).collect();
+        let mono: Vec<_> = output
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| pair[0])
+            .collect();
         let measured = amplitude(&mono[rate as usize / 20..], rate, 512.0);
         let expected = (8.0 / 15.0) * (PI / 8.0).sin() / PI;
         assert!((measured / expected - 1.0).abs() < 0.025);
@@ -265,8 +275,8 @@ fn output_sample_count_and_stereo_routing_survive_short_drains() {
         apu.write(NR51, 0x10);
         let samples = run(&mut apu, 4_194_304, &[4093, 1, 17], true);
         assert_eq!(samples.len(), rate as usize * 2);
-        assert!(samples.chunks_exact(2).all(|pair| pair[1] == 0.0));
-        assert!(samples.chunks_exact(2).any(|pair| pair[0] != 0.0));
+        assert!(samples.as_chunks::<2>().0.iter().all(|pair| pair[1] == 0.0));
+        assert!(samples.as_chunks::<2>().0.iter().any(|pair| pair[0] != 0.0));
     }
 }
 
@@ -298,7 +308,9 @@ fn resampler_impulse_latency_does_not_extend_requested_duration() {
     renderer.flush(&mut output);
     assert_eq!(output.len(), 46 * 2);
     let peak = output
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .enumerate()
         .max_by(|(_, left), (_, right)| left[0].abs().total_cmp(&right[0].abs()))
         .unwrap()

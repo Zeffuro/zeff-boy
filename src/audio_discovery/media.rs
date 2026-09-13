@@ -68,6 +68,9 @@ pub(crate) struct ScanManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) display_name: Option<String>,
     pub(crate) scan: ScanReport,
+    pub(crate) classifications: super::roles::Classifications,
+    #[serde(skip)]
+    pub(crate) classifications_loaded: bool,
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) disc: Option<DiscIdentity>,
@@ -96,6 +99,8 @@ impl ScanInput {
     }
 
     pub(crate) fn analyze(&self, limits: ScanLimits, cancel: &AtomicBool) -> ScanManifest {
+        let scan = self.scan(limits, cancel);
+        let classifications = super::roles::classify(&scan);
         ScanManifest {
             schema: "zeff-audio-discovery/1",
             analysis_profile: self.analysis_profile,
@@ -105,7 +110,9 @@ impl ScanInput {
                 .as_ref()
                 .map(|value| value.transforms.clone()),
             display_name: self.display_name.clone(),
-            scan: self.scan(limits, cancel),
+            scan,
+            classifications,
+            classifications_loaded: false,
             #[cfg(not(target_arch = "wasm32"))]
             disc: self.cdda.as_ref().map(|input| DiscIdentity {
                 original_disc_sha256: input.original_disc_sha256.clone(),

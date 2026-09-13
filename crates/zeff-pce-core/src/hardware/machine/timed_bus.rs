@@ -28,6 +28,7 @@ pub(super) struct TimedMachineBus<'a> {
     pub(super) fault: Option<PceMachineError>,
     pending_debug_write: Option<(u32, u8)>,
     trace: Option<&'a mut TimedInstructionTrace>,
+    audio_trace: Option<TimedAudioTrace<'a>>,
     trace_enabled: bool,
     capture_old_writes: bool,
     pub(super) dma_completed: bool,
@@ -83,6 +84,7 @@ impl<'a> TimedMachineBus<'a> {
         vce_frame_length: &'a mut VceFrameLength,
         master_ticks_per_cycle: u64,
         trace: Option<&'a mut TimedInstructionTrace>,
+        audio_trace: Option<TimedAudioTrace<'a>>,
         debug: &'a mut AddressDebugController,
         #[cfg(test)] coalesce_device_advancement: bool,
         #[cfg(feature = "profiling")] profiling: &'a mut PceProfiling,
@@ -115,6 +117,7 @@ impl<'a> TimedMachineBus<'a> {
             fault: None,
             pending_debug_write: None,
             trace,
+            audio_trace,
             trace_enabled,
             capture_old_writes,
             dma_completed: false,
@@ -625,6 +628,9 @@ impl CpuBus for TimedMachineBus<'_> {
         }
         if self.advance_access(physical_addr, true) {
             self.inner.write(physical_addr, value);
+            if let Some(trace) = &mut self.audio_trace {
+                trace.record_write(physical_addr, value, self.elapsed_master_ticks);
+            }
             self.observe_dma_completion();
         }
     }
@@ -660,6 +666,9 @@ impl CpuBus for TimedMachineBus<'_> {
         }
         if self.advance_access(physical_addr, true) {
             self.inner.dummy_write(physical_addr, value);
+            if let Some(trace) = &mut self.audio_trace {
+                trace.record_write(physical_addr, value, self.elapsed_master_ticks);
+            }
             self.observe_dma_completion();
         }
     }

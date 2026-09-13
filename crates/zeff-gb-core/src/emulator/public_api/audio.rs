@@ -58,6 +58,9 @@ impl Emulator {
     }
 
     pub fn set_apu_enabled(&mut self, enabled: bool) {
+        if !enabled {
+            self.invalidate_audio_trace();
+        }
         self.bus.set_apu_enabled(enabled);
     }
 }

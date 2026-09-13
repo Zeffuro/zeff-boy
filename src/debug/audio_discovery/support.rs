@@ -41,7 +41,7 @@ fn system_row(system: System) -> (&'static str, &'static str, &'static str) {
     match system {
         System::Gb => (
             "GB / GBC / SGB",
-            "Banked GB drivers and selected CGB / DMG native profiles",
+            "Banked GB drivers, GHX, GB Sound System, Carillon and selected native profiles",
             "Eligible songs: original-driver preview / audio / MIDI; mapped data otherwise",
         ),
         System::Gba => (
@@ -66,8 +66,8 @@ fn system_row(system: System) -> (&'static str, &'static str, &'static str) {
         ),
         System::Ws => (
             "WonderSwan / Color",
-            "No native driver yet",
-            "Embedded modules only",
+            "Qualified TOSE-style eight-slot driver profiles",
+            "Original-driver preview / WAV / FLAC / Ogg and mapped data; no WSR or MIDI export",
         ),
         System::Sms => (
             "Master System",
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn system_rows_describe_available_native_profiles_without_fixed_counts() {
-        for system in [System::Gb, System::Nes, System::Sms, System::Gg] {
+        for system in [System::Gb, System::Nes, System::Sms, System::Gg, System::Ws] {
             let (_, discovery, playback) = system_row(system);
             assert!(discovery.contains("profile"));
             assert!(playback.contains("preview"));

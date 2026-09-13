@@ -13,6 +13,7 @@ use super::{
     ScanReport, ScanStatus, ScanStop, tracker::FileSpan,
 };
 
+pub mod capture;
 mod structure;
 use structure::{command, gd3};
 

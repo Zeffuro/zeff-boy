@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 
 use anyhow::bail;
+use zeff_emu_common::audio_trace::{AudioTraceInvalidation, AudioTraceRecorder};
 use zeff_emu_common::debug::{BusAccessEvent, TraceWriteKind, TraceWriteWidth};
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 use zeff_z80::{IoWriteCycle, Z80Bus};
@@ -43,6 +44,7 @@ pub struct Bus {
     pending_psg_write_cycle: Option<IoWriteCycle>,
     debug_trace_mode: CpuAccessTraceMode,
     debug_trace_events: RefCell<Vec<BusAccessEvent>>,
+    pub(crate) audio_trace: AudioTraceRecorder,
 }
 
 pub(crate) struct TracingBus<'a>(&'a mut Bus);
@@ -71,10 +73,12 @@ impl Bus {
             pending_psg_write_cycle: None,
             debug_trace_mode: CpuAccessTraceMode::None,
             debug_trace_events: RefCell::new(Vec::new()),
+            audio_trace: AudioTraceRecorder::default(),
         })
     }
 
     pub fn reset(&mut self) {
+        self.audio_trace.invalidate(AudioTraceInvalidation::Reset);
         self.work_ram.fill(0);
         self.input = ControllerPorts::new();
         self.vdp.reset();
@@ -310,6 +314,8 @@ impl Bus {
         self.pending_psg_write_cycle = None;
         self.debug_trace_mode = CpuAccessTraceMode::None;
         self.debug_trace_events.borrow_mut().clear();
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::StateRestore);
         Ok(())
     }
 
@@ -333,6 +339,8 @@ impl Bus {
         }
         self.debug_trace_mode = CpuAccessTraceMode::None;
         self.debug_trace_events.borrow_mut().clear();
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::StateRestore);
         Ok(())
     }
 

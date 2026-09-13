@@ -84,3 +84,182 @@ fn native_cgb_cartridge_and_handoff_contracts_are_required() {
         GbBankedSession::new(prepared, options(), Vec::new(), &AtomicBool::new(false)).is_err()
     );
 }
+
+#[test]
+fn musyx_selectors_use_mbc5_handoff_and_stable_requested_duration() -> Result<()> {
+    let bytes = zeff_audio_discovery::gb_musyx::synthetic_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    assert_eq!(report.gb_musyx_songs.len(), 2);
+    for song in &report.gb_musyx_songs {
+        let make = || zeff_audio_discovery::gb_musyx::prepare_rom(&bytes, song, &cancel);
+        let mut session = GbBankedSession::new_musyx(make()?, options(), Vec::new(), &cancel)?;
+        let expected = render(&mut session, 2048)?;
+        assert_eq!(expected.len(), 88_200);
+        assert!(expected.iter().any(|&value| value != 0));
+        assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBNormal);
+        assert_eq!(session.emulator.cpu_peek8(0xdf21), song.index as u8);
+        assert!((58..=61).contains(&session.emulator.cpu_peek8(0xdf20)));
+        session.reset()?;
+        assert_eq!(render(&mut session, 258)?, expected);
+        session.set_track_mask(0)?;
+        session.reset()?;
+        assert!(render(&mut session, 512)?.iter().all(|&value| value == 0));
+        let mut invalid = make()?;
+        invalid.bytes[0x147] = 0x10;
+        assert!(GbBankedSession::new_musyx(invalid, options(), Vec::new(), &cancel).is_err());
+        let mut invalid = make()?;
+        invalid.wait_start = 0x1e0;
+        invalid.wait_end = 0x1e4;
+        let mut session = GbBankedSession::new_musyx(invalid, options(), Vec::new(), &cancel)?;
+        assert!(session.read(&mut [0; 64], &cancel).is_err());
+        assert_eq!(session.emulator.cpu_peek8(0xfffb), 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn tose_uses_dmg_bank_selection_and_a_reserved_handoff() -> Result<()> {
+    let bytes = zeff_audio_discovery::gb_tose::synthetic_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let song = &report.gb_tose_songs[0];
+    let make = || zeff_audio_discovery::gb_tose::prepare_rom(&bytes, song, &cancel);
+    let mut session = GbBankedSession::new_tose(make()?, options(), Vec::new(), &cancel)?;
+    let expected = render(&mut session, 2048)?;
+    assert_eq!(expected.len(), 88_200);
+    assert!(expected.iter().any(|&value| value != 0));
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::DMG);
+    assert_eq!(session.emulator.cpu_peek8(0xdd9e), song.index as u8);
+    assert!((58..=61).contains(&session.emulator.cpu_peek8(0xdd9c)));
+    session.reset()?;
+    assert_eq!(render(&mut session, 258)?, expected);
+    session.set_track_mask(0)?;
+    session.reset()?;
+    assert!(render(&mut session, 512)?.iter().all(|&value| value == 0));
+    assert!(session.set_track_mask(2).is_err());
+    for (at, value) in [(0x143, 0x80), (0x147, 0x19), (0x148, 0)] {
+        let mut invalid = make()?;
+        invalid.bytes[at] = value;
+        assert!(GbBankedSession::new_tose(invalid, options(), Vec::new(), &cancel).is_err());
+    }
+    let mut sgb = make()?;
+    sgb.bytes[0x146] = 3;
+    sgb.bytes[0x14b] = 0x33;
+    let mut session = GbBankedSession::new_tose(sgb, options(), Vec::new(), &cancel)?;
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::DMG);
+    assert_eq!(render(&mut session, 2048)?, expected);
+    let mut invalid = make()?;
+    invalid.wait_start = 0x1e0;
+    invalid.wait_end = 0x1e4;
+    let mut session = GbBankedSession::new_tose(invalid, options(), Vec::new(), &cancel)?;
+    assert!(session.read(&mut [0; 64], &cancel).is_err());
+    assert_eq!(session.emulator.cpu_peek8(0xff80), 0);
+    Ok(())
+}
+
+#[test]
+fn quickthunder_switches_to_qualified_speed_before_audio_and_after_reset() -> Result<()> {
+    let bytes = zeff_audio_discovery::gb_quickthunder::synthetic_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let song = &report.gb_quickthunder_songs[0];
+    let make = || zeff_audio_discovery::gb_quickthunder::prepare_rom(&bytes, song, &cancel);
+    let mut session = GbBankedSession::new_quickthunder(make()?, options(), Vec::new(), &cancel)?;
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBNormal);
+    let expected = render(&mut session, 2048)?;
+    assert!(expected.iter().any(|&value| value != 0));
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBDouble);
+    session.reset()?;
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBNormal);
+    assert_eq!(render(&mut session, 258)?, expected);
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBDouble);
+
+    let mut invalid = make()?;
+    let stop = invalid.bytes[0x150..0x200]
+        .windows(2)
+        .position(|pair| pair == [0x10, 0])
+        .expect("bootstrap contains the CGB speed switch");
+    invalid.bytes[0x150 + stop] = 0;
+    let ack = invalid.ack_address;
+    let mut session = GbBankedSession::new_quickthunder(invalid, options(), Vec::new(), &cancel)?;
+    assert!(session.read(&mut [0; 64], &cancel).is_err());
+    assert_eq!(session.position_frames(), 0);
+    assert_eq!(session.emulator.cpu_peek8(ack), 0);
+    Ok(())
+}
+#[test]
+fn ghx_switches_to_qualified_speed_before_audio_and_after_reset() -> Result<()> {
+    let bytes = zeff_audio_discovery::gb_ghx::synthetic_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let song = &report.gb_ghx_songs[0];
+    let make = || zeff_audio_discovery::gb_ghx::prepare_rom(&bytes, song, &cancel);
+    let mut session = GbBankedSession::new_ghx(make()?, options(), Vec::new(), &cancel)?;
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBNormal);
+    let expected = render(&mut session, 2048)?;
+    assert!(expected.iter().any(|&value| value != 0));
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBDouble);
+    session.reset()?;
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBNormal);
+    assert_eq!(render(&mut session, 258)?, expected);
+    assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBDouble);
+
+    let mut invalid = make()?;
+    let stop = invalid.bytes[0x150..0x200]
+        .windows(2)
+        .position(|pair| pair == [0x10, 0])
+        .expect("bootstrap contains the CGB speed switch");
+    invalid.bytes[0x150 + stop] = 0;
+    let ack = invalid.ack_address;
+    let mut session = GbBankedSession::new_ghx(invalid, options(), Vec::new(), &cancel)?;
+    assert!(session.read(&mut [0; 64], &cancel).is_err());
+    assert_eq!(session.position_frames(), 0);
+    assert_eq!(session.emulator.cpu_peek8(ack), 0);
+    Ok(())
+}
+
+#[test]
+fn sound_system_rejects_a_hardware_contract_that_disagrees_with_startup() -> Result<()> {
+    use zeff_audio_discovery::gb_sound_system::{GbSoundSystemHardware, prepare_rom};
+
+    let bytes = zeff_audio_discovery::gb_sound_system::synthetic_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let mut prepared = prepare_rom(&bytes, &report.gb_sound_system_songs[0], &cancel)?;
+    prepared.hardware = match prepared.hardware {
+        GbSoundSystemHardware::CgbNormal => GbSoundSystemHardware::CgbDouble,
+        GbSoundSystemHardware::CgbDouble => GbSoundSystemHardware::CgbNormal,
+    };
+    let ack = prepared.ack_address;
+    let mut session = GbBankedSession::new_sound_system(prepared, options(), Vec::new(), &cancel)?;
+    assert!(session.read(&mut [0; 64], &cancel).is_err());
+    assert_eq!(session.position_frames(), 0);
+    assert_eq!(session.emulator.cpu_peek8(ack), 0);
+    Ok(())
+}

@@ -38,6 +38,24 @@ pub(super) fn run_pce_headless(
     firmware_search_dirs: Vec<PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
+    let (preloaded_data, capture) = if opts.audio_trace_path.is_some() {
+        anyhow::ensure!(
+            !crate::emu_backend::loader::is_direct_pce_cd_path(rom_path),
+            "--audio-trace supports HuCard media; PC Engine CD capture is not implemented"
+        );
+        let bytes = match preloaded_data {
+            Some(bytes) => bytes,
+            None => std::fs::read(rom_path)?,
+        };
+        let mut capture =
+            super::audio_trace::Capture::prepare(source_path, rom_path, &bytes, opts)?;
+        if let Some(capture) = &mut capture {
+            capture.configure_hucard(&bytes, opts)?;
+        }
+        (Some(bytes), capture)
+    } else {
+        (preloaded_data, None)
+    };
     let loaded = crate::emu_backend::load_backend_from_rom_source(
         ActiveSystem::Pce,
         source_path,
@@ -46,13 +64,13 @@ pub(super) fn run_pce_headless(
         pce_load_config(
             mode_preference,
             firmware_search_dirs,
-            !opts.no_sram,
+            !opts.no_sram && capture.is_none(),
             opts.apply_mods,
             opts.pce_arcade_card_mode
                 .unwrap_or(zeff_pce_core::hardware::PceArcadeCardMode::Automatic),
         ),
     )?;
-    run_loaded_pce_headless(loaded.backend, opts)
+    run_loaded_pce_headless(loaded.backend, opts, capture)
 }
 
 pub(super) fn run_pce_archive_headless(
@@ -83,7 +101,7 @@ pub(super) fn run_pce_archive_headless(
             system: ActiveSystem::Pce,
             loaded,
             ..
-        } => run_loaded_pce_headless(loaded.backend, opts),
+        } => run_loaded_pce_headless(loaded.backend, opts, None),
         PreparedNativeArchiveBackend::Ready { system, .. } => anyhow::bail!(
             "headless archive loading currently supports PC Engine content; archive contains {}",
             system.code()
@@ -113,7 +131,11 @@ fn pce_load_config(
     }
 }
 
-fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyhow::Result<()> {
+fn run_loaded_pce_headless(
+    backend: EmuBackend,
+    opts: &HeadlessOptions,
+    capture: Option<super::audio_trace::Capture>,
+) -> anyhow::Result<()> {
     ensure_system_headless_options("pce", opts)?;
     ensure_no_reset_events("pce", opts)?;
     ensure_pce_headless_options(opts)?;
@@ -132,6 +154,9 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
         opts.pce_memory_base_mode
             .unwrap_or(zeff_pce_core::hardware::PceMemoryBaseMode::Automatic),
     );
+    if capture.is_some() {
+        backend.reset_and_begin_audio_trace()?;
+    }
     if opts.no_apu {
         backend.set_apu_sample_generation_enabled(false);
         log::info!("APU sample generation disabled for profiling");
@@ -377,12 +402,28 @@ fn run_loaded_pce_headless(backend: EmuBackend, opts: &HeadlessOptions) -> anyho
             zeff_firmware::sha256_hex(&state),
         );
     }
-    if !opts.no_sram {
+    if !opts.no_sram && capture.is_none() {
         match backend.flush_battery_sram() {
             Ok(Some(path)) => log::info!("Saved battery RAM to {path}"),
             Ok(None) => {}
             Err(err) => log::error!("Failed to save battery RAM: {err}"),
         }
+    }
+    if let Some(capture) = capture {
+        let settings = serde_json::json!({
+            "controller": format!("{:?}", backend.controller_mode()),
+            "memory_base": format!("{:?}", backend.memory_base_mode()),
+            "arcade_card": format!("{:?}", backend.arcade_card_mode()),
+            "sample_rate": PCE_HEADLESS_SAMPLE_RATE,
+            "published_video_frames": backend.frame_count(),
+        });
+        capture.finish(
+            backend.finish_audio_trace(),
+            frames_run,
+            "pce",
+            settings,
+            None,
+        )?;
     }
     Ok(())
 }

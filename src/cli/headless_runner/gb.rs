@@ -5,8 +5,11 @@ use self::test_status::{
 };
 use super::*;
 
+mod audio_dump;
 mod memory_dump;
 mod test_status;
+
+use audio_dump::StreamingAudioDump;
 
 const GB_MEMORY_TEST_TEXT_FAST_SCAN: u16 = 512;
 const GB_MEMORY_TEST_TEXT_FULL_SCAN: u16 = 0x1FFC;
@@ -16,14 +19,26 @@ pub(super) fn run_gb_headless(
     rom_data: &[u8],
     mode_preference: HardwareModePreference,
     opts: &HeadlessOptions,
+    mut capture: Option<super::audio_trace::Capture>,
 ) -> anyhow::Result<()> {
     let mut emulator = GbEmulator::from_rom_data(rom_data, mode_preference)?;
-    let mut sram_recovery = crate::save_paths::battery_sram_session(
-        path,
-        ActiveSystem::Gb.storage_subdir(),
-        emulator.rom_hash(),
-    );
+    if let Some(capture) = &mut capture {
+        emulator
+            .reset_and_begin_audio_trace(zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS)?;
+        capture.configure_game_boy();
+    }
+    let capture_initial_hardware = capture
+        .as_ref()
+        .map(|_| format!("{:?}", emulator.hardware_mode()));
+    let mut sram_recovery = (!opts.no_sram && capture.is_none()).then(|| {
+        crate::save_paths::battery_sram_session(
+            path,
+            ActiveSystem::Gb.storage_subdir(),
+            emulator.rom_hash(),
+        )
+    });
     if !opts.no_sram
+        && capture.is_none()
         && let Some(sram_path) = crate::emu_backend::gb::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {
                 log::warn!("Failed to load battery save: {e}");
@@ -50,11 +65,11 @@ pub(super) fn run_gb_headless(
     }
     ensure_no_reset_events("gb", opts)?;
     let mut flush_battery = |emulator: &GbEmulator| {
-        if opts.no_sram {
+        let Some(recovery) = &mut sram_recovery else {
             return;
-        }
+        };
         match crate::save_paths::flush_battery_sram(
-            &mut sram_recovery,
+            recovery,
             path,
             ActiveSystem::Gb.storage_subdir(),
             emulator.rom_hash(),
@@ -91,6 +106,12 @@ pub(super) fn run_gb_headless(
     let mut screenshot_written = false;
     let mut current_input = InputMasks::default();
     let mut test_pass_seen = false;
+    let mut audio_scratch = Vec::new();
+    let mut audio_dump = opts
+        .audio_dump_path
+        .as_deref()
+        .map(|path| StreamingAudioDump::new(path, emulator.sample_rate()))
+        .transpose()?;
     let start = Instant::now();
     let mut frames_run = 0u64;
     write_screenshot_if_requested(
@@ -322,6 +343,11 @@ pub(super) fn run_gb_headless(
                 return result;
             }
         }
+        if let Some(audio_dump) = &mut audio_dump {
+            emulator.drain_audio_samples_into(&mut audio_scratch);
+            audio_dump.write_samples(&audio_scratch)?;
+            audio_scratch.clear();
+        }
 
         frames_run = frame_number;
         check_tas_assertions(
@@ -449,6 +475,30 @@ pub(super) fn run_gb_headless(
     flush_battery(&emulator);
     print_gb_memory_dumps(&emulator, opts);
     fail_on_stuck_if_needed("gb", stuck.as_ref(), opts)?;
+
+    if let Some(mut audio_dump) = audio_dump {
+        emulator.drain_audio_samples_into(&mut audio_scratch);
+        audio_dump.write_samples(&audio_scratch)?;
+        audio_dump.finish()?;
+    }
+    if let Some(capture) = capture {
+        capture.finish_game_boy(
+            emulator.finish_audio_trace(),
+            frames_run,
+            serde_json::json!({
+                "mode_preference": format!("{mode_preference:?}"),
+                "hardware_mode_initial": capture_initial_hardware,
+                "hardware_mode_final": format!("{:?}", emulator.hardware_mode()),
+                "sample_rate_hz": emulator.sample_rate(),
+                "reset_seed": "hle_post_boot_without_firmware",
+                "headless_step_count": frames_run,
+                "execution": {
+                    "stepping": if opts.trace_opcodes { "instruction_loop" } else { "frame_loop" },
+                    "opcode_trace_output": opts.trace_opcodes,
+                },
+            }),
+        )?;
+    }
 
     Ok(())
 }

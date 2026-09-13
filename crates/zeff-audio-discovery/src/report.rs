@@ -34,6 +34,8 @@ pub struct ScanReport {
     pub work_used: u64,
     pub status: ScanStatus,
     pub detector_outcomes: Vec<DetectorOutcome>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub driver_candidates: Vec<super::drivers::gb_fingerprints::DriverCandidate>,
     pub candidates: Vec<SongCandidate>,
     pub song_tables: Vec<tables::SongTableInventory>,
     pub gax_songs: Vec<gax::GaxSong>,
@@ -63,6 +65,18 @@ pub struct ScanReport {
     pub gb_songs: Vec<gb_music::GbSong>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub gb_native_songs: Vec<super::gb_native::GbNativeSong>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gb_musyx_songs: Vec<super::gb_musyx::GbMusyxSong>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gb_tose_songs: Vec<super::gb_tose::GbToseSong>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gb_quickthunder_songs: Vec<super::gb_quickthunder::GbQuickThunderSong>,
+    pub gb_ghx_songs: Vec<super::gb_ghx::GbGhxSong>,
+    pub gb_sound_system_songs: Vec<super::gb_sound_system::GbSoundSystemSong>,
+    pub gb_carillon_songs: Vec<super::gb_carillon::GbCarillonSong>,
+    pub ws_tose_songs: Vec<super::ws_tose::WsToseSong>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nes_tose_songs: Vec<super::nes_tose::NesToseSong>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub nes_songs: Vec<nes_music::NesSong>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -157,6 +171,7 @@ impl ScanReport {
             work_used: 0,
             status: ScanStatus::Complete,
             detector_outcomes: Vec::new(),
+            driver_candidates: Vec::new(),
             candidates: Vec::new(),
             song_tables: Vec::new(),
             gax_songs: Vec::new(),
@@ -173,6 +188,14 @@ impl ScanReport {
             aas_pcm_songs: Vec::new(),
             gb_songs: Vec::new(),
             gb_native_songs: Vec::new(),
+            gb_musyx_songs: Vec::new(),
+            gb_tose_songs: Vec::new(),
+            gb_quickthunder_songs: Vec::new(),
+            gb_ghx_songs: Vec::new(),
+            gb_sound_system_songs: Vec::new(),
+            gb_carillon_songs: Vec::new(),
+            ws_tose_songs: Vec::new(),
+            nes_tose_songs: Vec::new(),
             nes_songs: Vec::new(),
             nes_native_songs: Vec::new(),
             sega_psg_songs: Vec::new(),

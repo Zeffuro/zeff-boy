@@ -83,7 +83,8 @@ impl SongExportRequest {
             .map(Self::NativeRip);
         }
         if (matches!(format, SongFormat::Audio(_)) && super::pcm::song::PcmSong::can_play(song))
-            || (super::pcm::song::PcmSong::is_native(song) && !matches!(song, SongRef::Gb(_)))
+            || (super::pcm::song::PcmSong::is_native(song)
+                && !matches!(song, SongRef::Gb(_) | SongRef::Nes(_)))
         {
             return super::pcm::song::PcmExportRequest::prepare(
                 input, manifest, song, format, options,
@@ -155,6 +156,7 @@ impl SongExportRequest {
             .clone()
             .context("scan has no media identity")?;
         let mut metadata = json!({
+            "classification": manifest.classification(song),
             "schema": "zeff-tracker-export/1",
             "analysis_profile": manifest.analysis_profile,
             "source": manifest.source,
@@ -235,6 +237,14 @@ impl SongExportRequest {
             | SongRef::AasPcm(_)
             | SongRef::NesNative(_)
             | SongRef::GbNative(_)
+            | SongRef::GbMusyx(_)
+            | SongRef::GbTose(_)
+            | SongRef::GbGhx(_)
+            | SongRef::GbSoundSystem(_)
+            | SongRef::GbCarillon(_)
+            | SongRef::WsTose(_)
+            | SongRef::GbQuickThunder(_)
+            | SongRef::NesTose(_)
             | SongRef::SegaPsg(_) => {
                 unreachable!("handled above")
             }

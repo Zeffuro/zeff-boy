@@ -11,14 +11,22 @@ pub mod camelot;
 pub mod catalog;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cdda;
+pub mod classification;
 pub mod descriptor_midi;
 pub mod detectors;
+pub mod drivers;
 pub mod engine_software;
 pub mod formats;
 pub mod gax;
 pub mod gax_native;
+pub mod gb_carillon;
+pub mod gb_ghx;
 pub mod gb_music;
+pub mod gb_musyx;
 pub mod gb_native;
+pub mod gb_quickthunder;
+pub mod gb_sound_system;
+pub mod gb_tose;
 pub mod gba_bootstrap;
 pub mod gbass;
 pub mod krawall;
@@ -28,6 +36,7 @@ pub mod native_rips;
 pub mod natsume;
 pub mod nes_music;
 pub mod nes_native;
+pub mod nes_tose;
 pub mod nsq;
 pub mod radriver;
 pub mod relations;
@@ -39,6 +48,7 @@ mod standalone;
 pub mod tables;
 pub mod tracker;
 pub mod vgm;
+pub mod ws_tose;
 
 pub use report::{
     DetectorOutcome, DetectorState, MalformedInput, MediaIdentity, ScanLimits, ScanReport,

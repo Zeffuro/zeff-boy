@@ -150,3 +150,52 @@ fn mmc1_original_startup_selectors_reset_and_recording_match() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn queue_preview_uses_selected_queue_once_and_resets_exactly() -> Result<()> {
+    use crate::audio_discovery::{catalog::SongRef, pcm::song::PcmSong};
+    let bytes = zeff_audio_discovery::nes_music::native::fixture_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Nes,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let mut recordings = Vec::new();
+    for index in [1, 8] {
+        let song = &report.nes_songs[index];
+        let selection = SongRef::Nes(song);
+        assert!(PcmSong::can_play(selection) && PcmSong::is_native(selection));
+        assert!(
+            selection.supports(crate::audio_discovery::formats::SongFormat::Audio(
+                AudioFormat::Wav
+            ))
+        );
+        let make = || {
+            NesSession::new(
+                zeff_audio_discovery::nes_music::native::prepare_rom(&bytes, song, &cancel)?,
+                options(),
+                Vec::new(),
+                &cancel,
+            )
+        };
+        let mut session = make()?;
+        let pcm = render(&mut session, 258)?;
+        assert_eq!(pcm.len(), 88_200);
+        assert!(pcm.iter().any(|&value| value != 0));
+        assert_eq!(session.emulator.cpu_peek8(0xf0), song.selector);
+        assert_eq!(session.emulator.cpu_peek8(0xf2), 1);
+        assert!((58..=61).contains(&session.emulator.cpu_peek8(0xf1)));
+        assert_eq!(session.emulator.cpu_peek8(0xfb), 0);
+        assert_eq!(session.emulator.cpu_peek8(0xfc), 0);
+        session.reset()?;
+        assert_eq!(render(&mut session, 4096)?, pcm);
+        recordings.push(pcm);
+    }
+    assert_ne!(recordings[0], recordings[1]);
+    for index in [7, 15] {
+        assert!(!PcmSong::can_play(SongRef::Nes(&report.nes_songs[index])));
+    }
+    Ok(())
+}

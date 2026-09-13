@@ -31,6 +31,8 @@ pub(crate) struct AudioDiscoveryState {
     show_export: bool,
     #[cfg(not(target_arch = "wasm32"))]
     show_provenance: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    role_error: Option<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,6 +51,7 @@ impl AudioDiscoveryState {
             self.workspace = Default::default();
             self.export.clear_status();
             self.preview.clear();
+            self.role_error = None;
         }
         self.session.poll();
         self.export.poll(self.session.source.as_ref());
@@ -172,9 +175,18 @@ fn draw_native(ui: &mut egui::Ui, state: &mut AudioDiscoveryState) {
             }
         }
     }
-    let Some(manifest) = &state.session.manifest else {
+    let Some(manifest) = &mut state.session.manifest else {
         return;
     };
+    if !manifest.classifications_loaded {
+        state.role_error = manifest
+            .load_roles()
+            .err()
+            .map(|error| format!("Audio roles: {error:#}"));
+    }
+    if let Some(error) = &state.role_error {
+        ui.colored_label(egui::Color32::LIGHT_RED, error);
+    }
     let source = state.session.source.as_ref().expect("loaded source");
     state.workspace.ensure_selection(&manifest.scan);
 
@@ -189,6 +201,8 @@ fn draw_native(ui: &mut egui::Ui, state: &mut AudioDiscoveryState) {
     if manifest.scan.song_count() == 0 {
         ui.label(if !manifest.scan.song_tables.is_empty() {
             "Recognized an MP2k song table. No sequence candidates were retained; inspect its entries below."
+        } else if !manifest.scan.driver_candidates.is_empty() {
+            "Found possible sound drivers. No playable songs were identified; inspect the matches below."
         } else if manifest.scan.status == ScanStatus::Complete {
             "No supported audio format found. The game may use another sound engine."
         } else if manifest.scan.status == ScanStatus::Unsupported {
@@ -199,16 +213,26 @@ fn draw_native(ui: &mut egui::Ui, state: &mut AudioDiscoveryState) {
             "No candidates retained in this partial scan."
         });
     }
-    if manifest.scan.song_count() != 0 || !manifest.scan.song_tables.is_empty() {
+    if manifest.scan.song_count() != 0
+        || !manifest.scan.song_tables.is_empty()
+        || !manifest.scan.driver_candidates.is_empty()
+    {
         workspace::draw(
             ui,
             &mut state.workspace,
             &manifest.scan,
             &source.bytes,
+            &manifest.classifications,
             |selection| {
                 crate::audio_discovery::preview::PreviewRequest::can_preview(manifest, selection)
             },
         );
+    }
+    if let Some((selection, role)) = state.workspace.take_role_request() {
+        state.role_error = manifest
+            .save_role(selection, role)
+            .err()
+            .map(|error| format!("Could not save audio role: {error:#}"));
     }
     if let Some(selection) = state.workspace.take_preview_request() {
         preview::start_requested(&mut state.preview, source, manifest, selection);

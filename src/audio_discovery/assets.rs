@@ -66,6 +66,7 @@ impl AudioExportRequest {
             .context("scan has no ROM identity")?;
         let (mixer_rate, mixer_evidence) = infer_mixer_rate(&input.bytes, manifest, song);
         let metadata = json!({
+            "classification": manifest.classification(super::catalog::SongRef::Mp2k(song)),
             "schema": "zeff-audio-export/1",
             "analysis_profile": manifest.analysis_profile,
             "display_name": manifest.display_name,

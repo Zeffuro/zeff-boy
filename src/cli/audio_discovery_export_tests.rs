@@ -115,6 +115,7 @@ fn standalone_exports_share_the_loaded_media_pipeline_and_never_replace_files() 
             archive_member: None,
             max_work: None,
             max_candidates: None,
+            driver_evidence: None,
             relations: None,
             export: Some(OfflineExport {
                 format,
@@ -373,6 +374,11 @@ fn explicit_catalog_ids_select_engine_songs_and_reject_ambiguous_cli_arguments()
         ("gbass:4", SongId::Gbass(4)),
         ("nes_native:2", SongId::NesNative(2)),
         ("gb_native:2", SongId::GbNative(2)),
+        ("gb_musyx:2", SongId::GbMusyx(2)),
+        ("gb_tose:2", SongId::GbTose(2)),
+        ("gb_quickthunder:2", SongId::GbQuickThunder(2)),
+        ("nes_tose:2", SongId::NesTose(2)),
+        ("nes:8", SongId::Nes(8)),
         ("gb:1", SongId::Gb(1)),
         ("aas_stream:1", SongId::AasStream(1)),
         ("aas_pcm:1", SongId::AasPcm(1)),
@@ -421,47 +427,93 @@ fn explicit_catalog_ids_select_engine_songs_and_reject_ambiguous_cli_arguments()
 }
 
 #[test]
-fn banked_gb_cli_records_native_audio_with_explicit_duration_and_rate() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let input = directory.path().join("fixture.gbc");
-    std::fs::write(
-        &input,
-        zeff_audio_discovery::gb_music::native::fixture_rom(),
-    )?;
-    let mut request = parse_audio_discovery_args(
-        [
-            "--audio-discover",
-            "scan.json",
+fn gb_families_and_queue_nes_cli_record_native_audio_with_duration_and_rate() -> anyhow::Result<()>
+{
+    for (bytes, name, text_id, id) in [
+        (
+            zeff_audio_discovery::gb_music::native::fixture_rom(),
             "fixture.gbc",
-            "--audio-export",
-            "wav",
-            "song.wav",
-            "--audio-song-id",
             "gb:1",
-            "--audio-max-seconds",
-            "1",
-            "--audio-sample-rate",
-            "44100",
-        ]
-        .into_iter()
-        .map(OsString::from),
-    )?
-    .unwrap();
-    request.input_path = input;
-    request.output_path = directory.path().join("scan.json");
-    let output = directory.path().join("song.wav");
-    request.export.as_mut().unwrap().output_path = output.clone();
-    assert!(run_request(&request)?);
-    let mut wave = hound::WavReader::open(output)?;
-    assert_eq!(wave.spec().sample_rate, 44_100);
-    assert_eq!(wave.duration(), 44_100);
-    assert!(wave.samples::<i16>().any(|sample| sample.unwrap() != 0));
-    let export = request.export.as_mut().unwrap();
-    export.explicit.loops = true;
-    assert!(export.options_for(SongId::Gb(1)).is_err());
-    export.format = SongFormat::Midi;
-    export.explicit.sample_rate = false;
-    assert!(export.options_for(SongId::Gb(1)).is_ok());
+            SongId::Gb(1),
+        ),
+        (
+            zeff_audio_discovery::nes_music::native::fixture_rom(),
+            "fixture.nes",
+            "nes:8",
+            SongId::Nes(8),
+        ),
+        (
+            zeff_audio_discovery::gb_musyx::synthetic_rom(),
+            "musyx.gbc",
+            "gb_musyx:1",
+            SongId::GbMusyx(1),
+        ),
+        (
+            zeff_audio_discovery::gb_tose::synthetic_rom(),
+            "tose.gb",
+            "gb_tose:0",
+            SongId::GbTose(0),
+        ),
+        (
+            zeff_audio_discovery::gb_quickthunder::synthetic_rom(),
+            "quickthunder.gbc",
+            "gb_quickthunder:0",
+            SongId::GbQuickThunder(0),
+        ),
+        (
+            zeff_audio_discovery::nes_tose::synthetic_rom(),
+            "tose.nes",
+            "nes_tose:0",
+            SongId::NesTose(0),
+        ),
+    ] {
+        let directory = tempfile::tempdir()?;
+        let input = directory.path().join(name);
+        std::fs::write(&input, bytes)?;
+        let mut request = parse_audio_discovery_args(
+            [
+                "--audio-discover",
+                "scan.json",
+                name,
+                "--audio-export",
+                "wav",
+                "song.wav",
+                "--audio-song-id",
+                text_id,
+                "--audio-max-seconds",
+                "1",
+                "--audio-sample-rate",
+                "44100",
+            ]
+            .into_iter()
+            .map(OsString::from),
+        )?
+        .unwrap();
+        request.input_path = input;
+        request.output_path = directory.path().join("scan.json");
+        let output = directory.path().join("song.wav");
+        request.export.as_mut().unwrap().output_path = output.clone();
+        assert!(run_request(&request)?);
+        let mut wave = hound::WavReader::open(output)?;
+        assert_eq!(wave.spec().sample_rate, 44_100);
+        assert_eq!(wave.duration(), 44_100);
+        assert!(wave.samples::<i16>().any(|sample| sample.unwrap() != 0));
+        let export = request.export.as_mut().unwrap();
+        export.explicit.loops = true;
+        assert!(export.options_for(id).is_err());
+        export.format = SongFormat::Midi;
+        export.explicit.sample_rate = false;
+        assert_eq!(
+            export.options_for(id).is_ok(),
+            !matches!(
+                id,
+                SongId::GbMusyx(_)
+                    | SongId::GbTose(_)
+                    | SongId::GbQuickThunder(_)
+                    | SongId::NesTose(_)
+            )
+        );
+    }
     Ok(())
 }
 #[test]

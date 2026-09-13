@@ -48,6 +48,7 @@ pub(crate) mod preview;
 mod projection;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod render;
+pub(crate) mod roles;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod session;
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,6 +59,8 @@ mod sfz;
 pub(crate) mod test_support;
 #[cfg(not(target_arch = "wasm32"))]
 mod timeline;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod trace_capture;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod vgm_export;
 

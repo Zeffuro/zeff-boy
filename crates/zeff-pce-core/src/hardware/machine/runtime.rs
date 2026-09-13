@@ -94,6 +94,8 @@ impl PceMachine {
 
     #[inline]
     pub fn cpu_mut(&mut self) -> &mut HuC6280 {
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         &mut self.cpu
     }
 
@@ -104,7 +106,14 @@ impl PceMachine {
 
     #[inline]
     pub fn devices_mut(&mut self) -> &mut PceDevices {
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         self.bus.devices_mut()
+    }
+
+    /// Input peripheral updates do not alter the captured PSG state or clock.
+    pub fn controller_input_mut(&mut self) -> &mut ControllerPort {
+        self.bus.devices_mut().controller_mut()
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
@@ -217,7 +226,11 @@ impl PceMachine {
             return Err(PceMachineError::FaultedUntilReset);
         }
         let result = self.step_boundary_inner_with(execute);
-        if result.is_err() {
+        if let Err(error) = result {
+            self.audio_trace.invalidate(match error {
+                PceMachineError::ClockOverflow { .. } => AudioTraceInvalidation::ClockOverflow,
+                _ => AudioTraceInvalidation::ExecutionFault,
+            });
             self.faulted = true;
         }
         result
@@ -228,6 +241,10 @@ impl PceMachine {
         execute: impl FnOnce(&mut HuC6280, &mut TimedMachineBus<'_>) -> Result<PceCpuAction, CpuTrap>,
     ) -> Result<PceMachineStep, PceMachineError> {
         let logical_pc = self.cpu.cpu().registers().pc;
+        let audio_source = self
+            .audio_trace
+            .is_enabled()
+            .then(|| self.audio_trace_source(logical_pc));
         let trace_enabled = self.instruction_trace.is_enabled();
         let trace_physical_pc =
             trace_enabled.then(|| self.cpu.cpu().logical_to_physical(logical_pc));
@@ -262,6 +279,12 @@ impl PceMachine {
                 &mut self.vce_frame_length,
                 master_ticks_per_cycle,
                 trace_enabled.then_some(&mut self.trace_scratch),
+                audio_source.map(|instruction_source| TimedAudioTrace {
+                    recorder: &mut self.audio_trace,
+                    pc: logical_pc,
+                    instruction_source,
+                    start_cycle: self.master_ticks,
+                }),
                 &mut self.debug,
                 #[cfg(test)]
                 self.coalesce_device_advancement,
@@ -439,6 +462,7 @@ impl PceMachine {
                 &mut self.vce_line_index,
                 &mut self.vce_frame_length,
                 1,
+                None,
                 None,
                 &mut self.debug,
                 #[cfg(test)]

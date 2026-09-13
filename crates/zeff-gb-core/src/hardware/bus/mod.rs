@@ -4,6 +4,7 @@ use crate::hardware::types::constants::*;
 use crate::hardware::types::hardware_mode::HardwareMode;
 use std::fmt;
 
+mod audio_trace;
 mod dma;
 mod io_bus;
 mod lifecycle;
@@ -58,6 +59,11 @@ pub struct Bus {
     cpu_access_trace_origin: zeff_emu_common::time::MasterTicks,
     cpu_access_trace: Vec<CpuAccessTraceEvent>,
     pub game_genie_patches: Vec<crate::cheats::CheatPatch>,
+    pub(crate) audio_trace: zeff_emu_common::audio_trace::GameBoyAudioTraceRecorder,
+    pub(crate) audio_trace_cycle: u64,
+    audio_trace_context: (u32, zeff_emu_common::audio_trace::AudioTraceSource),
+    audio_trace_origin: zeff_emu_common::audio_trace::GameBoyTraceOrigin,
+    audio_trace_stopped: bool,
 }
 
 impl fmt::Debug for Bus {
@@ -565,11 +571,12 @@ impl Bus {
 
     pub(super) fn clock_apu_div_events(&mut self) {
         let secondary_events = self.io.timer.drain_div_apu_secondary_events();
+        let events = self.io.timer.drain_div_apu_events();
+        self.trace_audio_sequencer(events, secondary_events);
         for _ in 0..secondary_events {
             self.io.apu.clock_div_apu_secondary_event();
         }
 
-        let events = self.io.timer.drain_div_apu_events();
         for _ in 0..events {
             self.io.apu.clock_div_apu();
         }

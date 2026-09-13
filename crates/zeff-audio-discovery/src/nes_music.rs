@@ -5,6 +5,7 @@ use serde::Serialize;
 use super::{Budget, ScanStop, tracker::FileSpan};
 
 pub mod midi;
+pub mod native;
 mod sequence;
 
 pub use midi::midi;
@@ -43,7 +44,7 @@ struct Witness {
     sha256: &'static str,
 }
 
-const WITNESSES: [Witness; 19] = [
+const WITNESSES: [Witness; 20] = [
     Witness {
         offset: 0x791d,
         len: 8,
@@ -130,14 +131,19 @@ const WITNESSES: [Witness; 19] = [
         sha256: "11de1686e7344c951617581e8fa4130786d261d858d68b5f5e3859a49fa99a24",
     },
     Witness {
-        offset: 0x7210,
-        len: 1805,
-        sha256: "3bbf947cc0ad86df692742af10ddd4cc5eec451285187240bc8bfcd00317aebc",
+        offset: 0x72e0,
+        len: 1597,
+        sha256: "e24964c006ee1f54a5ef55a1dfc6a539f3206bc684168e0dfa843c34d9f94833",
     },
     Witness {
         offset: 0x800a,
         len: 6,
         sha256: "5926d92c3ae25ef215dd1b4697173f97e7e7064b4289958d45fb1740a4dd2085",
+    },
+    Witness {
+        offset: 0x72e0,
+        len: 0xcfb,
+        sha256: "dac12a5931ff526b9188e1295a5d23da12ca7ca0b4f79050c747b09da2c25b54",
     },
 ];
 
@@ -236,6 +242,13 @@ pub(crate) fn synthetic_song_for_test_support(bytes: &[u8], index: u8) -> NesSon
 }
 
 fn recognized(bytes: &[u8], budget: &mut Budget<'_>) -> Result<bool, ScanStop> {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        budget.charge()?;
+        if native::fixture_matches(bytes) {
+            return Ok(true);
+        }
+    }
     recognized_with_witnesses(bytes, budget, &WITNESSES)
 }
 
@@ -254,7 +267,7 @@ fn recognized_with_witnesses(
     }
     let flags6 = bytes[6];
     let flags7 = bytes[7];
-    if flags6 & 0xfc != 0 || flags7 & 0xfc != 0 || bytes[9] & 1 != 0 {
+    if flags6 & 0xfc != 0 || flags7 != 0 || bytes[9] & 1 != 0 {
         return Ok(false);
     }
     for witness in witnesses {

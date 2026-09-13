@@ -88,6 +88,11 @@ impl Bus {
             cpu_access_trace_origin: zeff_emu_common::time::MasterTicks::ZERO,
             cpu_access_trace: Vec::with_capacity(12),
             game_genie_patches: Vec::new(),
+            audio_trace: Default::default(),
+            audio_trace_cycle: 0,
+            audio_trace_context: (0, zeff_emu_common::audio_trace::AudioTraceSource::Unknown),
+            audio_trace_origin: zeff_emu_common::audio_trace::GameBoyTraceOrigin::Cpu,
+            audio_trace_stopped: false,
         };
 
         reader.read_exact(&mut bus.vram)?;

@@ -49,6 +49,11 @@ impl Bus {
             cpu_access_trace_origin: zeff_emu_common::time::MasterTicks::ZERO,
             cpu_access_trace: Vec::with_capacity(12),
             game_genie_patches: Vec::new(),
+            audio_trace: Default::default(),
+            audio_trace_cycle: 0,
+            audio_trace_context: (0, zeff_emu_common::audio_trace::AudioTraceSource::Unknown),
+            audio_trace_origin: zeff_emu_common::audio_trace::GameBoyTraceOrigin::Cpu,
+            audio_trace_stopped: false,
         };
 
         bus.sync_timer_serial_mode();
@@ -108,6 +113,7 @@ impl Bus {
             HardwareMode::CGBDouble => 0xFE,
             _ => 0x7E,
         };
+        self.trace_audio_speed_switch();
         true
     }
 
@@ -130,7 +136,7 @@ impl Bus {
 
         self.step_oam_dma(cpu_t_cycles);
         self.cartridge.step(system_t_cycles);
-
+        self.advance_audio_trace_clock(system_t_cycles);
         system_t_cycles
     }
 
@@ -143,6 +149,10 @@ impl Bus {
     }
 
     pub(in crate::hardware) fn enter_stop_mode(&mut self) {
+        self.trace_audio_stop(true);
+        self.trace_audio_divider_reset(
+            zeff_emu_common::audio_trace::GameBoyDividerResetCause::Stop,
+        );
         if self.io.timer.reset_div() {
             self.if_reg |= 0x04;
         }
@@ -164,19 +174,21 @@ impl Bus {
             self.maybe_step_hblank_hdma(previous_ppu_mode, current_ppu_mode);
         }
         self.cartridge.step(system_t_cycles);
-
+        self.advance_audio_trace_clock(system_t_cycles);
         system_t_cycles
     }
 
     pub(in crate::hardware) fn advance_cgb_speed_switch_delay(&mut self) -> (u64, u64) {
         let double_speed = self.hardware_mode == HardwareMode::CGBDouble;
         let system_t_cycles = if double_speed { 65_544 } else { 65_538 };
-
+        self.trace_audio_divider_reset(
+            zeff_emu_common::audio_trace::GameBoyDividerResetCause::SpeedSwitch,
+        );
         if self.io.timer.reset_div() {
             self.if_reg |= 0x04;
         }
         self.clock_apu_div_events();
-
+        self.trace_audio_speed_switch_delay(system_t_cycles);
         self.step_apu(system_t_cycles);
 
         let previous_ppu_mode = self.ppu_mode();
@@ -189,6 +201,7 @@ impl Bus {
         } else {
             system_t_cycles
         };
+        self.advance_audio_trace_clock(system_t_cycles);
         (cpu_t_cycles, system_t_cycles)
     }
 }

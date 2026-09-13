@@ -4,7 +4,13 @@ use crate::audio_discovery::catalog::{SongId, SongRef};
 use crate::audio_discovery::{SampleInventory, ScanReport, SongCandidate, SourceSpan};
 
 mod engines;
+mod fingerprints;
+mod song_list;
+use song_list::draw_song_list;
+#[cfg(test)]
+use song_list::select_song;
 mod mp2k;
+mod native;
 mod natsume;
 mod relations;
 mod rips;
@@ -45,6 +51,11 @@ pub(super) struct AudioWorkspace {
     pub(super) selected_span: Option<SelectedSpan>,
     pub(super) selected_candidate: Option<SongId>,
     filter: String,
+    role_filter: Option<zeff_audio_discovery::classification::AudioRole>,
+    role_request: Option<(
+        SongId,
+        Option<zeff_audio_discovery::classification::AudioRole>,
+    )>,
     preview_request: Option<SongId>,
     export_request: Option<SongId>,
     detail_tab: DetailTab,
@@ -102,6 +113,15 @@ impl AudioWorkspace {
     pub(super) fn take_export_request(&mut self) -> Option<SongId> {
         self.export_request.take()
     }
+
+    pub(super) fn take_role_request(
+        &mut self,
+    ) -> Option<(
+        SongId,
+        Option<zeff_audio_discovery::classification::AudioRole>,
+    )> {
+        self.role_request.take()
+    }
 }
 
 pub(super) fn draw(
@@ -109,9 +129,11 @@ pub(super) fn draw(
     workspace: &mut AudioWorkspace,
     report: &ScanReport,
     bytes: &[u8],
+    classifications: &crate::audio_discovery::roles::Classifications,
     can_preview: impl Fn(SongId) -> bool,
 ) {
     workspace.ensure_selection(report);
+    fingerprints::draw(ui, workspace, report);
     let height = workspace_height(ui.available_height());
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), height),
@@ -119,7 +141,13 @@ pub(super) fn draw(
         |ui| {
             if use_wide_layout(ui.available_width()) {
                 ui.columns(2, |columns| {
-                    draw_song_list(&mut columns[0], workspace, report, &can_preview);
+                    draw_song_list(
+                        &mut columns[0],
+                        workspace,
+                        report,
+                        classifications,
+                        &can_preview,
+                    );
                     draw_selected_song(&mut columns[1], workspace, report, bytes);
                 });
             } else {
@@ -134,157 +162,15 @@ pub(super) fn draw(
                 });
                 ui.separator();
                 match workspace.compact_tab {
-                    CompactTab::Songs => draw_song_list(ui, workspace, report, &can_preview),
+                    CompactTab::Songs => {
+                        draw_song_list(ui, workspace, report, classifications, &can_preview)
+                    }
                     CompactTab::Details => draw_details_region(ui, workspace, report),
                     CompactTab::SourceData => draw_hex(ui, workspace, bytes),
                 }
             }
         },
     );
-}
-
-fn draw_song_list(
-    ui: &mut egui::Ui,
-    workspace: &mut AudioWorkspace,
-    report: &ScanReport,
-    can_preview: &impl Fn(SongId) -> bool,
-) {
-    ui.horizontal_wrapped(|ui| {
-        ui.heading("Songs");
-        ui.menu_button("Tables", |ui| {
-            draw_tables(ui, workspace, report);
-        });
-    });
-    ui.add(
-        egui::TextEdit::singleline(&mut workspace.filter)
-            .hint_text("Filter songs or offsets")
-            .desired_width(f32::INFINITY),
-    );
-    let filtered = filtered_song_ids(report, &workspace.filter);
-    ui.small(format!(
-        "{} shown · {} song tables",
-        filtered.len(),
-        report.song_tables.len()
-    ));
-    let row_height = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
-    egui::ScrollArea::vertical()
-        .id_salt("audio-discovery-songs")
-        .max_height(ui.available_height())
-        .show_rows(ui, row_height, filtered.len(), |ui, rows| {
-            for visible_index in rows {
-                let id = filtered[visible_index];
-                let song = report
-                    .song(id)
-                    .expect("filtered songs come from this report");
-                let selected = workspace.selected_candidate == Some(id);
-                let label = song_label(song);
-                let previewable = can_preview(id);
-                let response = ui
-                    .add(egui::Button::selectable(selected, &label).truncate())
-                    .on_hover_text(if previewable {
-                        format!("{label}\nDouble-click to preview.")
-                    } else {
-                        format!("{label}\nPreview is unavailable for this entry.")
-                    });
-                if response.clicked() {
-                    select_song(workspace, id, song);
-                }
-                if previewable
-                    && (response.double_clicked()
-                        || (selected
-                            && response.has_focus()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter))))
-                {
-                    workspace.preview_request = Some(id);
-                }
-                response.context_menu(|ui| {
-                    if ui
-                        .add_enabled(previewable, egui::Button::new("Preview"))
-                        .clicked()
-                    {
-                        select_song(workspace, id, song);
-                        workspace.preview_request = Some(id);
-                        ui.close();
-                    }
-                    if ui.button("View song details").clicked() {
-                        select_song(workspace, id, song);
-                        workspace.show_details = true;
-                        workspace.compact_tab = CompactTab::Details;
-                        ui.close();
-                    }
-                    if ui.button("Open export controls").clicked() {
-                        select_song(workspace, id, song);
-                        workspace.preview_request = None;
-                        workspace.export_request = Some(id);
-                        ui.close();
-                    }
-                });
-            }
-        });
-}
-
-fn select_song(workspace: &mut AudioWorkspace, id: SongId, song: SongRef<'_>) {
-    workspace.selected_candidate = Some(id);
-    workspace.show_details = false;
-    workspace.relationships = None;
-    if let Some(span) = song.span() {
-        select_span(workspace, span, format!("{} header", song.title()));
-    } else {
-        workspace.selected_span = None;
-        workspace.hex_reset = true;
-    }
-}
-
-fn draw_tables(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, report: &ScanReport) {
-    use crate::audio_discovery::SongTableEntryKind;
-    for table in &report.song_tables {
-        let placeholders = table
-            .entries
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry.kind,
-                    SongTableEntryKind::Null | SongTableEntryKind::Placeholder
-                )
-            })
-            .count();
-        egui::CollapsingHeader::new(format!(
-            "Table +{:06X} · {} slots",
-            table.table.effective_offset,
-            table.entries.len()
-        ))
-        .show(ui, |ui| {
-            ui.small(format!("{placeholders} empty / placeholder slots"));
-            span_button(ui, workspace, table.selector, "MP2k song selector");
-            span_button(ui, workspace, table.settings, "Engine settings");
-            span_button(ui, workspace, table.table, "Song table");
-            ui.small(format!("Observed boundary: {:?}", table.boundary));
-            let row_height = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
-            egui::ScrollArea::vertical()
-                .id_salt(("audio-table-entries", table.table.effective_offset))
-                .max_height(160.0)
-                .show_rows(ui, row_height, table.entries.len(), |ui, rows| {
-                    for index in rows {
-                        let entry = &table.entries[index];
-                        let label = format!(
-                            "Song {} · {:?} · player {}",
-                            entry.index, entry.kind, entry.player
-                        );
-                        if ui
-                            .add(egui::Button::new(&label).truncate())
-                            .on_hover_text(&label)
-                            .clicked()
-                        {
-                            select_span(
-                                workspace,
-                                entry.entry,
-                                format!("Song {} table entry", entry.index),
-                            );
-                        }
-                    }
-                });
-        });
-    }
 }
 
 fn draw_selected_song(
@@ -296,6 +182,9 @@ fn draw_selected_song(
     ui.heading("Selected song");
     let Some(id) = workspace.selected_candidate else {
         ui.small("Choose a song to inspect it.");
+        if workspace.selected_span.is_some() {
+            draw_hex(ui, workspace, bytes);
+        }
         return;
     };
     let Some(song) = report.song(id) else {
@@ -364,6 +253,14 @@ fn draw_details(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, report: &Scan
         SongRef::AasPcm(song) => engines::draw_aas_pcm_details(ui, song),
         SongRef::NesNative(song) => engines::draw_nes_native_details(ui, song),
         SongRef::GbNative(song) => engines::draw_gb_native_details(ui, song),
+        SongRef::GbTose(_)
+        | SongRef::GbQuickThunder(_)
+        | SongRef::GbGhx(_)
+        | SongRef::GbSoundSystem(_)
+        | SongRef::GbCarillon(_)
+        | SongRef::WsTose(_)
+        | SongRef::NesTose(_)
+        | SongRef::GbMusyx(_) => native::draw(ui, song),
         SongRef::SegaPsg(song) => engines::draw_sega_psg_details(ui, workspace, song),
         SongRef::Musyx(song) => engines::draw_musyx_details(ui, song),
         SongRef::Krawall(song) => engines::draw_krawall_details(ui, song),
@@ -403,6 +300,21 @@ fn song_label(song: SongRef<'_>) -> String {
         ),
         SongRef::NesNative(song) => format!("{} channels", song.channels.len()),
         SongRef::GbNative(song) => format!("{} channels", song.channels.len()),
+        SongRef::GbMusyx(song) => format!("{} tracks", song.tracks.len()),
+        SongRef::GbTose(song) => format!("{} tracks · bank {:02X}", song.tracks.len(), song.bank),
+        SongRef::GbQuickThunder(song) => {
+            format!("{} tracks · bank {:02X}", song.tracks.len(), song.bank)
+        }
+        SongRef::GbGhx(song) => format!(
+            "{} tracks · module {} / subsong {}",
+            song.tracks.len(),
+            song.module,
+            song.subsong
+        ),
+        SongRef::GbSoundSystem(song) => format!("{} tracks", song.tracks.len()),
+        SongRef::GbCarillon(song) => format!("{} tracks", song.tracks.len()),
+        SongRef::WsTose(song) => format!("{} tracks · native WS", song.tracks.len()),
+        SongRef::NesTose(song) => format!("{} tracks · NTSC", song.tracks.len()),
         SongRef::SegaPsg(song) => format!("{} channels · NTSC", song.channels.len()),
         SongRef::Gb(song) if song.index == 0 => "silence entry · not music".to_owned(),
         SongRef::Gb(song) => format!("{} channels", song.channels.len()),

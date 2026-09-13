@@ -4,7 +4,7 @@ use zeff_pce_core::hardware::{PceArcadeCardMode, PceControllerMode, PceMemoryBas
 use zeff_sega8_core::hardware::region::Sega8Region;
 use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct HeadlessInputEvent {
     pub(crate) start_frame: u64,
     pub(crate) end_frame: u64,
@@ -122,6 +122,7 @@ pub(crate) struct HeadlessOptions {
     pub(crate) print_debug_state: bool,
     pub(crate) debug_state_path: Option<std::path::PathBuf>,
     pub(crate) audio_dump_path: Option<std::path::PathBuf>,
+    pub(crate) audio_trace_path: Option<std::path::PathBuf>,
     pub(crate) break_on_gba_bad_state: bool,
     pub(crate) gba_audio_mutes: [bool; 6],
     pub(crate) gba_hidden_bg_layers: [bool; 4],
@@ -192,6 +193,7 @@ impl Default for HeadlessOptions {
             print_debug_state: false,
             debug_state_path: None,
             audio_dump_path: None,
+            audio_trace_path: None,
             break_on_gba_bad_state: false,
             gba_audio_mutes: [false; 6],
             gba_hidden_bg_layers: [false; 4],

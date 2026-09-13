@@ -185,6 +185,10 @@ impl Psg {
         self.sample_rate
     }
 
+    pub fn clock_hz(&self) -> u32 {
+        self.clock_hz
+    }
+
     pub fn set_sample_generation_enabled(&mut self, enabled: bool) {
         self.sample_generation_enabled = enabled;
         if !enabled {

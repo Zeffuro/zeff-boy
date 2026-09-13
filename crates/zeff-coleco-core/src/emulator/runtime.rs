@@ -169,6 +169,7 @@ impl Emulator {
         self.advance_machine(cycle.t_states);
         self.advance_machine(u32::from(self.bus.psg().ready_clocks_remaining()));
         self.bus.psg_mut().complete_write(cycle.value);
+        self.record_audio_write(instruction.pc, cycle.port, cycle.value);
         self.advance_machine(after);
     }
 

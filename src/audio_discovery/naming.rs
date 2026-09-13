@@ -67,6 +67,23 @@ pub(crate) fn song(
         Some(SongRef::AasPcm(song)) => format!("{:03}", song.index),
         Some(SongRef::NesNative(song)) => format!("{:02X}", song.raw_index),
         Some(SongRef::GbNative(song)) => format!("{:02X}", song.raw_index),
+        Some(SongRef::GbTose(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
+        Some(SongRef::GbQuickThunder(song)) => {
+            format!("Bank {:02X} - {:03}", song.bank, song.index)
+        }
+        Some(SongRef::GbGhx(song)) => {
+            format!("Module {:02} - Subsong {:02}", song.module, song.subsong)
+        }
+        Some(SongRef::GbSoundSystem(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
+        Some(SongRef::GbCarillon(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
+        Some(SongRef::WsTose(song)) => format!("Selector {:03}", song.index),
+        Some(SongRef::NesTose(song)) => format!("Selector {:03}", song.index),
+        Some(SongRef::GbMusyx(song)) => {
+            format!(
+                "{:03} @{:08X}",
+                song.index, song.table_entry.effective_offset
+            )
+        }
         Some(SongRef::DescriptorMidi(song)) => format!("{:03}", song.index),
         Some(SongRef::Nsq(song)) => format!("{:03}", song.index),
         Some(SongRef::Radriver(song)) => format!(

@@ -141,8 +141,13 @@ fn check(report: &ScanReport, bytes: &[u8]) {
             .iter()
             .map(|outcome| outcome.retained_matches as usize)
             .sum::<usize>(),
-        report.song_count()
+        report.song_count() + report.driver_candidates.len()
     );
+    for candidate in &report.driver_candidates {
+        for evidence in &candidate.evidence {
+            source_span(evidence.span.into(), bytes.len());
+        }
+    }
     for candidate in &report.candidates {
         rom_span(candidate.header, bytes);
         for entry in &candidate.table_entries {
@@ -223,6 +228,29 @@ fn check(report: &ScanReport, bytes: &[u8]) {
                 .map(|song| &song.mapped_spans),
         )
         .chain(report.musyx_songs.iter().map(|song| &song.mapped_spans))
+        .chain(report.gb_musyx_songs.iter().map(|song| &song.mapped_spans))
+        .chain(report.gb_tose_songs.iter().map(|song| &song.mapped_spans))
+        .chain(
+            report
+                .gb_quickthunder_songs
+                .iter()
+                .map(|song| &song.mapped_spans),
+        )
+        .chain(report.gb_ghx_songs.iter().map(|song| &song.mapped_spans))
+        .chain(
+            report
+                .gb_carillon_songs
+                .iter()
+                .map(|song| &song.mapped_spans),
+        )
+        .chain(
+            report
+                .gb_sound_system_songs
+                .iter()
+                .map(|song| &song.mapped_spans),
+        )
+        .chain(report.ws_tose_songs.iter().map(|song| &song.mapped_spans))
+        .chain(report.nes_tose_songs.iter().map(|song| &song.mapped_spans))
         .chain(report.aas_songs.iter().map(|song| &song.mapped_spans))
         .chain(
             report

@@ -19,6 +19,8 @@ impl Bus {
                 expected_len
             );
         }
+        self.audio_trace
+            .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
         self.cartridge_ram.fill(0);
         self.cartridge_ram[..expected_len].copy_from_slice(bytes);
         Ok(())
