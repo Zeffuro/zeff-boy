@@ -7,6 +7,7 @@ use std::thread::JoinHandle;
 
 use anyhow::Result;
 
+#[path = "preview/output_native.rs"]
 mod output;
 mod request;
 #[cfg(test)]

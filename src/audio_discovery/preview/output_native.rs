@@ -296,4 +296,5 @@ fn build<T: SizedSample + FromSample<f32>>(
 }
 
 #[cfg(test)]
+#[path = "output/tests.rs"]
 mod tests;

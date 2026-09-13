@@ -8,9 +8,11 @@ const LEGACY_PRIMARY_KEY: &str = "zeff-boy-settings";
 const LEGACY_BACKUP_KEY: &str = "zeff-boy-settings-backup";
 const MAX_SETTINGS_BYTES: usize = 4 * 1024 * 1024;
 
+type CachedSettings = RefCell<Option<Result<Option<String>, String>>>;
+
 thread_local! {
-    static PRIMARY: RefCell<Option<Result<Option<String>, String>>> = const { RefCell::new(None) };
-    static BACKUP: RefCell<Option<Result<Option<String>, String>>> = const { RefCell::new(None) };
+    static PRIMARY: CachedSettings = const { RefCell::new(None) };
+    static BACKUP: CachedSettings = const { RefCell::new(None) };
     static TRACKER: RefCell<SettingsStorageTracker> = RefCell::new(SettingsStorageTracker::default());
     static INITIALIZED: RefCell<bool> = const { RefCell::new(false) };
     static WRITE_PROTECTED: RefCell<bool> = const { RefCell::new(false) };
@@ -488,7 +490,7 @@ pub(crate) fn accept_latest_after_conflict() -> anyhow::Result<Option<String>> {
 }
 
 fn cached_read(
-    cache: &'static std::thread::LocalKey<RefCell<Option<Result<Option<String>, String>>>>,
+    cache: &'static std::thread::LocalKey<CachedSettings>,
     uninitialized: &str,
 ) -> anyhow::Result<Option<String>> {
     cache.with(|cached| match cached.borrow().as_ref() {

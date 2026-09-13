@@ -483,27 +483,23 @@ impl EmuBackend {
             Self::Gba(backend) => Some(std::sync::Arc::new(backend.audio_discovery_input())),
             Self::Nes(backend) => backend.audio_discovery_input(),
             Self::Coleco(backend) => backend.audio_discovery_input(),
+            #[cfg(target_arch = "wasm32")]
+            Self::Pce(backend) => backend.audio_discovery_input(),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::Pce(backend) => backend.audio_discovery_input().or_else(|| {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    backend.cdda_input().map(|input| {
-                        let mut scan = crate::audio_discovery::media::ScanInput::from_disc(
-                            input,
-                            "loaded-effective-cd-v1",
-                        );
-                        scan.display_name = backend
-                            .source_path()
-                            .file_stem()
-                            .and_then(|value| value.to_str())
-                            .filter(|value| !value.is_empty())
-                            .map(str::to_owned);
-                        std::sync::Arc::new(scan)
-                    })
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    None
-                }
+                backend.cdda_input().map(|input| {
+                    let mut scan = crate::audio_discovery::media::ScanInput::from_disc(
+                        input,
+                        "loaded-effective-cd-v1",
+                    );
+                    scan.display_name = backend
+                        .source_path()
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned);
+                    std::sync::Arc::new(scan)
+                })
             }),
             Self::Sega8(backend) => backend.audio_discovery_input(),
             Self::Ws(backend) => backend.audio_discovery_input(),

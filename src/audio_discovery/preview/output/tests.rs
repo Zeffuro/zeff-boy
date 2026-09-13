@@ -111,4 +111,5 @@ fn callback_converts_mono_multichannel_unsigned_and_volume() {
     assert_eq!(unsigned, [32768; 2]);
 }
 
+#[path = "tests/buffering.rs"]
 mod buffering;

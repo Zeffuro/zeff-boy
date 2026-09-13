@@ -7,6 +7,7 @@ mod firmware;
 mod general;
 mod layout;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "render_fixtures_native.rs"]
 mod render_fixtures;
 mod search;
 mod storage;

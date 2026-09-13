@@ -24,7 +24,6 @@ version = 1
 "crates/zeff-pce-core/src/hardware/vdc_scanline_tests.rs" = 1167
 "crates/zeff-sega8-core/examples/probe_romset.rs" = 1209
 "crates/zeff-sega8-core/src/emulator/tests.rs" = 1008
-"crates/zeff-sega8-core/src/hardware/bus.rs" = 963
 "crates/zeff-sega8-core/src/hardware/vdp.rs" = 1139
 "crates/zeff-sega8-core/src/hardware/vdp/tests.rs" = 1489
 "crates/zeff-ws-core/src/hardware/apu.rs" = 1039
@@ -39,10 +38,8 @@ version = 1
 "src/cli/headless_runner/replay/paired_plan.rs" = 955
 "src/emu_backend.rs" = 1355
 "src/emu_backend/firmware.rs" = 1007
-"src/emu_backend/pce.rs" = 1472
 "src/emu_backend/pce_cd_chd.rs" = 1483
 "src/emu_backend/pce_cd_overlay.rs" = 1025
-"src/emu_backend/pce_tests.rs" = 1539
 "src/emu_backend/tests/runahead_conformance.rs" = 977
 "src/emu_thread/wasm/tests.rs" = 968
 "src/link/gb/tests.rs" = 1427
@@ -50,3 +47,91 @@ version = 1
 "src/settings/structs.rs" = 915
 "src/settings/tests.rs" = 913
 "src/ui/pce_snapshot.rs" = 1519
+
+[exceptions."src/app.rs"]
+max_lines = 962
+reason = "Application state and startup wiring remain together; cap the existing module until lifecycle extraction."
+
+[exceptions."src/app/remote.rs"]
+max_lines = 905
+reason = "Remote command dispatch and its protocol checks remain together; cap the existing dispatcher."
+
+[exceptions."src/app/tas_editor.rs"]
+max_lines = 1002
+reason = "TAS editor application integration remains together; cap the existing event and session wiring."
+
+[exceptions."src/app/window_events.rs"]
+max_lines = 1169
+reason = "Window event dispatch shares application input state; cap the existing handler pending an event-family split."
+
+[exceptions."src/audio/native.rs"]
+max_lines = 941
+reason = "Native audio device setup and callback lifecycle share stream state; cap the existing implementation."
+
+[exceptions."src/audio_discovery/sf2.rs"]
+max_lines = 914
+reason = "SoundFont writer and format regression tests remain together; cap the existing exporter."
+
+[exceptions."src/debug/settings_window/controls/binding_editor.rs"]
+max_lines = 948
+reason = "Binding capture and editing share UI state; cap the existing editor."
+
+[exceptions."src/debug/settings_window/controls/controller_diagram.rs"]
+max_lines = 1161
+reason = "Controller drawing routines share painter geometry and interaction logic; cap the existing renderer."
+
+[exceptions."src/debug/settings_window/mod.rs"]
+max_lines = 1016
+reason = "Settings navigation and reset behavior share window state; cap the existing module including native fixture declaration."
+
+[exceptions."src/debug/tas_editor/branch_diff_editor.rs"]
+max_lines = 972
+reason = "Branch diff worker lifecycle and presentation share request state; cap the existing editor."
+
+[exceptions."src/debug/tas_editor/branch_diff_layout_tests.rs"]
+max_lines = 969
+reason = "Branch diff interaction tests share layout witnesses and fixtures; cap the existing regression suite."
+
+[exceptions."src/emu_backend/loader.rs"]
+max_lines = 950
+reason = "Backend loading dispatch shares source preparation and validation; cap the existing loader."
+
+[exceptions."src/emu_backend/loader/tas/direct_pce_cd.rs"]
+max_lines = 925
+reason = "Direct PCE CD identity and runtime validation share a media contract; cap the existing validator."
+
+[exceptions."src/emu_backend/loader/tas/direct_pce_cd/identity_tests.rs"]
+max_lines = 1102
+reason = "Direct PCE CD identity regressions share synthetic media fixtures; cap the existing test suite."
+
+[exceptions."src/emu_backend/loader/tas/direct_pce_cd/media_profile.rs"]
+max_lines = 953
+reason = "PCE CD media profile validation shares layout and digest rules; cap the existing profile implementation."
+
+[exceptions."src/emu_thread/wasm/tests.rs"]
+max_lines = 996
+reason = "WASM thread transaction regressions share backend fixtures; cap the existing test suite."
+
+[exceptions."src/input/routing/tests.rs"]
+max_lines = 920
+reason = "Input routing regressions share synthetic device configuration; cap the existing test suite."
+
+[exceptions."src/platform/atomic_file.rs"]
+max_lines = 964
+reason = "Atomic replacement implementation and failure recovery tests remain together; cap the existing storage module."
+
+[exceptions."src/settings/document.rs"]
+max_lines = 1231
+reason = "Settings document migration and preservation checks remain together; cap the existing persistence format module."
+
+[exceptions."src/settings/input_scopes.rs"]
+max_lines = 1084
+reason = "Input scope resolution and inheritance regressions remain together; cap the existing implementation."
+
+[exceptions."src/settings/structs.rs"]
+max_lines = 935
+reason = "Serialized settings types and defaults define one compatibility schema; cap the existing schema module."
+
+[exceptions."src/settings/tests.rs"]
+max_lines = 934
+reason = "Settings compatibility regressions share serialized fixtures; cap the existing test suite."

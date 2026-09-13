@@ -51,10 +51,12 @@ pub(crate) struct BrowserAudioDiagnostic {
 #[cfg(feature = "wasm-browser-tests")]
 mod browser_tests;
 
+type ActivationListener = (&'static str, Closure<dyn FnMut()>);
+
 pub(crate) struct AudioOutput {
     ctx: AudioContext,
     activation_target: Option<web_sys::Window>,
-    activation_listeners: Vec<(&'static str, Closure<dyn FnMut()>)>,
+    activation_listeners: Vec<ActivationListener>,
     resume_requested: bool,
     #[cfg(feature = "wasm-browser-tests")]
     activation_resume_attempts: Rc<Cell<u64>>,
