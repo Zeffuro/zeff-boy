@@ -225,6 +225,8 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_symbol_load();
         #[cfg(not(target_arch = "wasm32"))]
+        self.refresh_audio_discovery();
+        #[cfg(not(target_arch = "wasm32"))]
         self.poll_replay_save_worker();
 
         if gameplay_commands_allowed
@@ -604,6 +606,7 @@ impl App {
                         self.show_settings_window
                             || self.show_mods_window
                             || self.show_cheats_window
+                            || self.show_audio_explorer
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -750,6 +753,19 @@ impl App {
         {
             self.render_cheats_frame();
             self.last_cheats_render = now;
+        }
+
+        let audio_explorer_visible = self.show_audio_explorer
+            && self
+                .gfx
+                .as_ref()
+                .and_then(crate::graphics::Graphics::audio_explorer_window)
+                .is_some_and(|window| window.is_minimized() != Some(true));
+        if audio_explorer_visible
+            && now.duration_since(self.last_audio_explorer_render) >= VIEWER_UPDATE_INTERVAL
+        {
+            self.render_audio_explorer_frame();
+            self.last_audio_explorer_render = now;
         }
 
         let printer_visible = self.show_printer_window

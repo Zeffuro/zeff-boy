@@ -8,6 +8,7 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 mod app;
 mod audio;
+mod audio_discovery;
 mod audio_recorder;
 mod audio_tooling;
 mod camera;
@@ -54,6 +55,10 @@ use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
     platform::init_logging();
+
+    if cli::run_audio_discovery_if_requested()? {
+        return Ok(());
+    }
 
     if pgo_training::run_if_requested()? {
         return Ok(());

@@ -2,6 +2,8 @@ use super::App;
 use crate::debug::{DebugDataRefs, MenuAction};
 use crate::graphics;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod audio_discovery_tests;
 mod debug_actions;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,7 +32,21 @@ fn estimate_load_eta(
 }
 
 impl App {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn refresh_audio_discovery(&mut self) {
+        if !self.show_audio_explorer {
+            self.debug_windows.audio_discovery.stop_preview();
+        }
+        self.debug_windows.audio_discovery.bind_source(
+            self.emu_thread
+                .as_ref()
+                .and_then(crate::emu_thread::EmuThread::audio_discovery_input),
+        );
+    }
+
     pub(super) fn render_frame(&mut self, ui_frame_data: Option<&crate::ui::UiFrameData>) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.refresh_audio_discovery();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(result) = self.update_checker.poll() {
             match result {
@@ -381,6 +397,11 @@ impl App {
                             &mut self.show_cheats_window,
                             &mut self.focus_cheats_window_pending,
                         ),
+                        #[cfg(not(target_arch = "wasm32"))]
+                        MenuAction::OpenAudioExplorer => request_native_tool_window(
+                            &mut self.show_audio_explorer,
+                            &mut self.focus_audio_explorer_pending,
+                        ),
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -496,6 +517,7 @@ impl App {
         &mut self,
         ui_frame_data: Option<&crate::ui::UiFrameData>,
     ) -> bool {
+        self.refresh_audio_discovery();
         let supports_rewind = self.core_supports_rewind();
         let supports_debugger = self.core_supports_debugger();
         let supports_execution_controls = self.core_supports_execution_controls();
@@ -593,6 +615,29 @@ impl App {
             Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
                 if let Some(size) = gfx.cheats_window().map(winit::window::Window::inner_size) {
                     gfx.resize_cheats_window(size.width, size.height);
+                }
+                false
+            }
+            Err(graphics::FrameError::Timeout) => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn render_audio_explorer_frame(&mut self) -> bool {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return false;
+        };
+        match gfx.render_audio_explorer_window(graphics::AudioExplorerRenderContext {
+            settings: &self.settings,
+            state: &mut self.debug_windows.audio_discovery,
+        }) {
+            Ok(()) => true,
+            Err(graphics::FrameError::Outdated | graphics::FrameError::Lost) => {
+                if let Some(size) = gfx
+                    .audio_explorer_window()
+                    .map(winit::window::Window::inner_size)
+                {
+                    gfx.resize_audio_explorer_window(size.width, size.height);
                 }
                 false
             }

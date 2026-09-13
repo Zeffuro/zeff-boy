@@ -129,6 +129,14 @@ fn retained_index_zero_payloads_are_addressable_with_exact_offsets() {
     assert_eq!(disc.read_user_sector(2).unwrap()[0], 0x21);
     assert_eq!(disc.read_audio_sample(3, 0).unwrap(), (0x3030, -0x3030));
     assert_eq!(disc.read_audio_sample(4, 0).unwrap(), (0x4040, -0x4040));
+    assert_eq!(
+        &disc.read_audio_sector(3).unwrap()[..4],
+        &[0x30, 0x30, 0xD0, 0xCF]
+    );
+    assert_eq!(
+        &disc.read_audio_sector(4).unwrap()[..4],
+        &[0x40, 0x40, 0xC0, 0xBF]
+    );
     assert_eq!(disc.leadout_lba(), 5);
 }
 

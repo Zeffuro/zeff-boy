@@ -181,10 +181,6 @@ impl Bus {
             && (read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x3FFF) != 0
     }
 
-    pub(crate) fn enabled_interrupt_flags(&self) -> u16 {
-        read_io16(&self.io, IE) & read_io16(&self.io, IF) & 0x3FFF
-    }
-
     pub(crate) fn enable_master_interrupts(&mut self) {
         self.materialize_frame_service();
         self.write_io16_raw(IME, 1);

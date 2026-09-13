@@ -154,6 +154,13 @@ pub(super) fn draw(
         open_external_debugger(actions, state.external_debugger);
         ui.close();
     }
+    if ui.button("Open Audio Explorer").clicked() {
+        #[cfg(not(target_arch = "wasm32"))]
+        actions.push(MenuAction::OpenAudioExplorer);
+        #[cfg(target_arch = "wasm32")]
+        toggle_dock_tab(dock_state, DebugTab::AudioDiscovery);
+        ui.close();
+    }
     if ui.button("Input").clicked() {
         toggle_dock_tab(dock_state, DebugTab::InputViewer);
         open_external_debugger(actions, state.external_debugger);

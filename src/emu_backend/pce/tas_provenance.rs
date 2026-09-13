@@ -23,6 +23,8 @@ pub(crate) struct PceTasLoadProvenance {
     pub(crate) tas_source_media_sha256: [u8; 32],
     pub(crate) tas_source_media_len: usize,
     pub(crate) tas_sync_config_sha256: [u8; 32],
+    pub(crate) cdda_source: Option<PceTasCdSource>,
+    pub(crate) cdda_selected_member_path_sha256: Option<[u8; 32]>,
     pub(crate) direct_pce_file: bool,
     pub(crate) direct_pce_cd: bool,
     pub(crate) direct_pce_cd_chd: bool,
@@ -65,6 +67,8 @@ pub(crate) struct PceTasLoadProvenance {
 pub(crate) struct PceTasLoadProvenanceSeed {
     raw_source_media_sha256: [u8; 32],
     raw_source_media_len: usize,
+    cdda_source: Option<PceTasCdSource>,
+    cdda_selected_member_path_sha256: Option<[u8; 32]>,
     direct_pce_file: bool,
     direct_pce_cd: bool,
     direct_pce_cd_chd: bool,
@@ -93,21 +97,113 @@ pub(crate) struct PceTasCdLoadMedia {
     pub(crate) raw_source_media_len: usize,
     pub(crate) source_disc_sha256: [u8; 32],
     pub(crate) effective_disc_sha256: [u8; 32],
-    pub(crate) direct: bool,
-    pub(crate) chd: bool,
-    pub(crate) iso: bool,
-    pub(crate) ppf: bool,
-    pub(crate) archive: bool,
-    pub(crate) archive_ppf: bool,
-    pub(crate) rar: bool,
-    pub(crate) zip: bool,
-    pub(crate) archive_cue_member_path_sha256: Option<[u8; 32]>,
-    pub(crate) rar_cue_member_path_sha256: Option<[u8; 32]>,
-    pub(crate) zip_cue_member_path_sha256: Option<[u8; 32]>,
-    pub(crate) archive_cue_explicitly_selected: bool,
-    pub(crate) rar_cue_explicitly_selected: bool,
-    pub(crate) zip_cue_explicitly_selected: bool,
+    pub(crate) cdda_source: Option<PceTasCdSource>,
+    pub(crate) cdda_selected_member_path_sha256: Option<[u8; 32]>,
+    pub(crate) cdda_selected_member_explicitly_selected: bool,
     pub(crate) archive_ppf_patches: Vec<PceTasArchivePpfPatchIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PceTasCdSource {
+    DirectCue,
+    DirectCuePpf,
+    DirectChd,
+    DirectIsoCue,
+    ArchiveCue(PceTasCdArchiveCarrier),
+    ArchiveCuePpf(PceTasCdArchiveCarrier),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PceTasCdArchiveCarrier {
+    SevenZip,
+    Rar,
+    Zip,
+}
+
+impl PceTasCdSource {
+    pub(crate) const fn cdda_label(self) -> &'static str {
+        match self {
+            Self::DirectCue => "cue",
+            Self::DirectCuePpf => "cue_ppf",
+            Self::DirectChd => "chd",
+            Self::DirectIsoCue => "iso_cue",
+            Self::ArchiveCue(PceTasCdArchiveCarrier::SevenZip) => "archive_cue",
+            Self::ArchiveCue(PceTasCdArchiveCarrier::Rar) => "rar_cue",
+            Self::ArchiveCue(PceTasCdArchiveCarrier::Zip) => "zip_cue",
+            Self::ArchiveCuePpf(_) => "archive_cue_ppf",
+        }
+    }
+
+    const fn tas_witnesses(self) -> PceTasCdWitnesses {
+        match self {
+            Self::DirectCue => PceTasCdWitnesses {
+                direct: true,
+                ..PceTasCdWitnesses::EMPTY
+            },
+            Self::DirectCuePpf => PceTasCdWitnesses {
+                direct: true,
+                ppf: true,
+                ..PceTasCdWitnesses::EMPTY
+            },
+            Self::DirectChd => PceTasCdWitnesses {
+                direct: true,
+                chd: true,
+                ..PceTasCdWitnesses::EMPTY
+            },
+            Self::DirectIsoCue => PceTasCdWitnesses {
+                direct: true,
+                iso: true,
+                ..PceTasCdWitnesses::EMPTY
+            },
+            Self::ArchiveCue(carrier) => PceTasCdWitnesses {
+                direct: true,
+                archive: matches!(carrier, PceTasCdArchiveCarrier::SevenZip),
+                rar: matches!(carrier, PceTasCdArchiveCarrier::Rar),
+                zip: matches!(carrier, PceTasCdArchiveCarrier::Zip),
+                ..PceTasCdWitnesses::EMPTY
+            },
+            Self::ArchiveCuePpf(carrier) => PceTasCdWitnesses {
+                direct: true,
+                archive: matches!(carrier, PceTasCdArchiveCarrier::SevenZip),
+                archive_ppf: true,
+                rar: matches!(carrier, PceTasCdArchiveCarrier::Rar),
+                zip: matches!(carrier, PceTasCdArchiveCarrier::Zip),
+                ..PceTasCdWitnesses::EMPTY
+            },
+        }
+    }
+
+    const fn archive_carrier(self) -> Option<PceTasCdArchiveCarrier> {
+        match self {
+            Self::ArchiveCue(carrier) | Self::ArchiveCuePpf(carrier) => Some(carrier),
+            Self::DirectCue | Self::DirectCuePpf | Self::DirectChd | Self::DirectIsoCue => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PceTasCdWitnesses {
+    direct: bool,
+    chd: bool,
+    iso: bool,
+    ppf: bool,
+    archive: bool,
+    archive_ppf: bool,
+    rar: bool,
+    zip: bool,
+}
+
+impl PceTasCdWitnesses {
+    const EMPTY: Self = Self {
+        direct: false,
+        chd: false,
+        iso: false,
+        ppf: false,
+        archive: false,
+        archive_ppf: false,
+        rar: false,
+        zip: false,
+    };
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +251,8 @@ impl PceTasLoadProvenanceSeed {
         Self {
             raw_source_media_sha256,
             raw_source_media_len,
+            cdda_source: None,
+            cdda_selected_member_path_sha256: None,
             direct_pce_file: (setup.loaded_from_source_path
                 && source_path == rom_path
                 && rom_path
@@ -190,24 +288,40 @@ impl PceTasLoadProvenanceSeed {
             media.raw_source_media_len,
             [0; 32],
         ));
+        let witnesses = media
+            .cdda_source
+            .map(PceTasCdSource::tas_witnesses)
+            .unwrap_or(PceTasCdWitnesses::EMPTY);
+        let carrier = media.cdda_source.and_then(PceTasCdSource::archive_carrier);
+        let member = carrier.and(media.cdda_selected_member_path_sha256);
+        let explicit = media.cdda_selected_member_explicitly_selected;
         Self {
             raw_source_media_sha256: media.raw_source_media_sha256,
             raw_source_media_len: media.raw_source_media_len,
+            cdda_source: media.cdda_source,
+            cdda_selected_member_path_sha256: member,
             direct_pce_file: false,
-            direct_pce_cd: media.direct,
-            direct_pce_cd_chd: media.chd,
-            direct_pce_cd_iso: media.iso,
-            direct_pce_cd_ppf: media.ppf,
-            direct_pce_cd_archive: media.archive,
-            direct_pce_cd_archive_ppf: media.archive_ppf,
-            direct_pce_cd_rar: media.rar,
-            direct_pce_cd_zip: media.zip,
-            archive_cue_member_path_sha256: media.archive_cue_member_path_sha256,
-            rar_cue_member_path_sha256: media.rar_cue_member_path_sha256,
-            zip_cue_member_path_sha256: media.zip_cue_member_path_sha256,
-            archive_cue_explicitly_selected: media.archive_cue_explicitly_selected,
-            rar_cue_explicitly_selected: media.rar_cue_explicitly_selected,
-            zip_cue_explicitly_selected: media.zip_cue_explicitly_selected,
+            direct_pce_cd: witnesses.direct,
+            direct_pce_cd_chd: witnesses.chd,
+            direct_pce_cd_iso: witnesses.iso,
+            direct_pce_cd_ppf: witnesses.ppf,
+            direct_pce_cd_archive: witnesses.archive,
+            direct_pce_cd_archive_ppf: witnesses.archive_ppf,
+            direct_pce_cd_rar: witnesses.rar,
+            direct_pce_cd_zip: witnesses.zip,
+            archive_cue_member_path_sha256: (carrier == Some(PceTasCdArchiveCarrier::SevenZip))
+                .then_some(member)
+                .flatten(),
+            rar_cue_member_path_sha256: (carrier == Some(PceTasCdArchiveCarrier::Rar))
+                .then_some(member)
+                .flatten(),
+            zip_cue_member_path_sha256: (carrier == Some(PceTasCdArchiveCarrier::Zip))
+                .then_some(member)
+                .flatten(),
+            archive_cue_explicitly_selected: carrier == Some(PceTasCdArchiveCarrier::SevenZip)
+                && explicit,
+            rar_cue_explicitly_selected: carrier == Some(PceTasCdArchiveCarrier::Rar) && explicit,
+            zip_cue_explicitly_selected: carrier == Some(PceTasCdArchiveCarrier::Zip) && explicit,
             archive_ppf_patches: media.archive_ppf_patches,
             source_disc_sha256: Some(media.source_disc_sha256),
             effective_disc_sha256: Some(media.effective_disc_sha256),
@@ -227,6 +341,8 @@ impl PceTasLoadProvenanceSeed {
             tas_source_media_sha256: self.tas_source_media.0,
             tas_source_media_len: self.tas_source_media.1,
             tas_sync_config_sha256: self.tas_source_media.2,
+            cdda_source: self.cdda_source,
+            cdda_selected_member_path_sha256: self.cdda_selected_member_path_sha256,
             direct_pce_file: self.direct_pce_file,
             direct_pce_cd: self.direct_pce_cd,
             direct_pce_cd_chd: self.direct_pce_cd_chd,
@@ -308,130 +424,5 @@ pub(crate) fn pce_persistent_load_outcome(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use super::*;
-    use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_source};
-
-    fn setup() -> PceTasLoadSetup {
-        PceTasLoadSetup {
-            loaded_from_source_path: true,
-            any_mod_enabled: false,
-            any_mod_applied: false,
-            initial_input: None,
-            configured_sample_rate: None,
-            selected_wiring: None,
-            selected_board: None,
-            selected_hardware: None,
-            selected_controller_mode: PceControllerMode::Automatic,
-            selected_memory_base_mode: PceMemoryBaseMode::Automatic,
-            selected_arcade_card_mode: PceArcadeCardMode::Automatic,
-            tas_source_media: None,
-        }
-    }
-
-    #[test]
-    fn seed_accepts_only_a_direct_pce_file() {
-        let path = Path::new("game.pce");
-        let backend = PceBackend::new(vec![0; 0x2000], path.to_path_buf()).unwrap();
-        let direct = PceTasLoadProvenanceSeed::new([3; 32], 0x2000, path, path, setup())
-            .finish(&backend, PceTasPersistentLoadOutcome::Absent);
-        assert!(direct.direct_pce_file);
-
-        let archive = Path::new("game.zip");
-        let nested = Path::new("game.pce");
-        let rejected = PceTasLoadProvenanceSeed::new([3; 32], 0x2000, archive, nested, setup())
-            .finish(&backend, PceTasPersistentLoadOutcome::Unknown);
-        assert!(!rejected.direct_pce_file);
-    }
-
-    #[test]
-    fn shared_loader_retains_raw_and_effective_hucard_facts() {
-        let dir = crate::test_support::test_directory("pce-tas-provenance").unwrap();
-        let path = dir.path().join("synthetic.pce");
-        let mut raw = vec![0; 512];
-        raw[0] = 1;
-        raw.extend(vec![0xEA; 0x2000]);
-        fs::write(&path, &raw).unwrap();
-
-        let loaded = load_backend_from_rom_source(
-            ActiveSystem::Pce,
-            &path,
-            &path,
-            None,
-            BackendLoadConfig {
-                sample_rate: Some(48_000),
-                initial_input: Some((0x01, 0x01)),
-                pce_console_wiring: Some(PceConsoleWiring::PcEngine),
-                pce_hucard_board: Some(PceHuCardBoard::Plain),
-                pce_cartridge_hardware: Some(zeff_pce_core::hardware::PceCartridgeHardware::Base),
-                pce_arcade_card_mode: PceArcadeCardMode::Disabled,
-                pce_load_battery_bram: false,
-                ..BackendLoadConfig::default()
-            },
-        )
-        .unwrap();
-        let crate::emu_backend::EmuBackend::Pce(backend) = loaded.backend else {
-            panic!("PC Engine loader returned a different backend");
-        };
-        let view = backend.tas_load_provenance().unwrap();
-        let provenance = view.load;
-
-        assert!(provenance.direct_pce_file);
-        assert_eq!(
-            provenance.raw_source_media_sha256,
-            zeff_firmware::sha256_bytes(&raw)
-        );
-        assert_eq!(provenance.raw_source_media_len, raw.len());
-        assert_eq!(
-            provenance.persistent_load,
-            PceTasPersistentLoadOutcome::Skipped
-        );
-        assert_eq!(provenance.initial_input, Some((0x01, 0x01)));
-        assert_eq!(provenance.configured_sample_rate, Some(48_000));
-        assert_eq!(provenance.initial_sample_rate, 48_000);
-        assert_eq!(view.current_sample_rate, 48_000);
-        assert_eq!(backend.pce_sample_rate(), 48_000);
-        assert_eq!(provenance.selected_wiring, Some(PceConsoleWiring::PcEngine));
-        assert_eq!(provenance.effective_wiring, PceConsoleWiring::PcEngine);
-        assert_eq!(provenance.selected_board, Some(PceHuCardBoard::Plain));
-        assert_eq!(provenance.effective_board, PceHuCardBoard::Plain);
-        assert_eq!(provenance.effective_topology, PceHardwareTopology::Base);
-        assert_eq!(
-            provenance.effective_controller_mode,
-            PceControllerMode::TwoButton
-        );
-        assert_eq!(
-            provenance.effective_memory_base_mode,
-            PceMemoryBaseMode::Disabled
-        );
-        assert_eq!(
-            provenance.effective_arcade_card_mode,
-            PceArcadeCardMode::Disabled
-        );
-        assert_eq!(
-            backend.tas_source_media_identity(),
-            Some(TasSourceMediaIdentity::new(
-                zeff_firmware::sha256_bytes(&raw),
-                raw.len(),
-            ))
-        );
-    }
-
-    #[test]
-    fn persistence_outcomes_fail_closed() {
-        assert_eq!(
-            pce_persistent_load_outcome(&Ok(Some("memory-base.bin".to_owned()))),
-            PceTasPersistentLoadOutcome::Loaded
-        );
-        assert_eq!(
-            pce_persistent_load_outcome(&Ok(None)),
-            PceTasPersistentLoadOutcome::Absent
-        );
-        assert_eq!(
-            pce_persistent_load_outcome(&Err(anyhow::anyhow!("load failed"))),
-            PceTasPersistentLoadOutcome::Unknown
-        );
-    }
-}
+#[path = "tas_provenance/tests.rs"]
+mod tests;

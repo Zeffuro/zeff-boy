@@ -135,6 +135,15 @@ impl TabViewer for DebugTabViewer<'_> {
                     self.actions.apu_channel_mutes = Some(mutes);
                 }
             }
+            DebugTab::AudioDiscovery => {
+                ui.heading("Audio Explorer");
+                ui.label(
+                    "Audio discovery and export now open in the dedicated Audio Explorer window.",
+                );
+                if ui.button("Open Audio Explorer").clicked() {
+                    self.actions.open_audio_explorer = true;
+                }
+            }
             DebugTab::RomInfo => {
                 if let Some(info) = self.data.rom_debug {
                     draw_rom_info_content(ui, info);

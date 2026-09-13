@@ -14,6 +14,8 @@ pub(crate) const PRINTER_MIN_SIZE: [u32; 2] = [300, 320];
 pub(crate) const PRINTER_DEFAULT_SIZE: [u32; 2] = [520, 720];
 pub(crate) const TAS_EDITOR_MIN_SIZE: [u32; 2] = [620, 360];
 pub(crate) const TAS_EDITOR_DEFAULT_SIZE: [u32; 2] = [980, 640];
+pub(crate) const AUDIO_EXPLORER_MIN_SIZE: [u32; 2] = [760, 540];
+pub(crate) const AUDIO_EXPLORER_DEFAULT_SIZE: [u32; 2] = [1180, 760];
 
 pub(crate) fn restored_size(
     saved: [u32; 2],

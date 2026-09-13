@@ -249,8 +249,7 @@ impl Apu {
             apu.div_apu_phase_high = false;
         }
 
-        apu.sample_buffer.clear();
-        apu.sample_cycle_accum = 0.0;
+        apu.reset_output();
         apu.debug_capture_enabled = false;
         apu.sample_generation_enabled = true;
         apu.debug_capture_cycle_accum = 0;
@@ -321,7 +320,7 @@ mod tests {
     #[test]
     fn complete_runtime_state_roundtrip_continues_all_channel_pipelines() {
         let mut original = active_pipeline();
-        original.sample_cycle_accum = 0.0;
+        original.reset_output();
         assert_ne!(original.pulse_noise_cycle_accum, 0);
         assert_ne!(original.wave_cycle_accum, 0);
         assert_ne!(original.noise_cycle_accum, 0);

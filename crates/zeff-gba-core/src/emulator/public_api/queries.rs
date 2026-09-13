@@ -81,6 +81,10 @@ impl Emulator {
         self.bus.cartridge.rom()
     }
 
+    pub fn cartridge_rom_snapshot(&self) -> std::sync::Arc<[u8]> {
+        self.bus.cartridge.rom_snapshot()
+    }
+
     pub fn backup_kind(&self) -> BackupKind {
         self.bus.cartridge.backup_kind()
     }

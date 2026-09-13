@@ -127,6 +127,7 @@ impl Default for FirmwareInventoryState {
 }
 
 pub(crate) struct DebugWindowState {
+    pub(crate) audio_discovery: super::audio_discovery::AudioDiscoveryState,
     pub(crate) cpu_view: CpuDebugViewState,
     pub(crate) hardware_view: CpuDebugViewState,
     pub(crate) memory: MemoryViewerState,
@@ -178,6 +179,7 @@ pub(crate) struct DebugWindowState {
 impl DebugWindowState {
     pub(crate) fn new() -> Self {
         Self {
+            audio_discovery: super::audio_discovery::AudioDiscoveryState::default(),
             cpu_view: CpuDebugViewState::default(),
             hardware_view: CpuDebugViewState::default(),
             memory: MemoryViewerState::new(),

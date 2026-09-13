@@ -214,6 +214,8 @@ pub(crate) fn run(
         show_mods_window: false,
         #[cfg(not(target_arch = "wasm32"))]
         show_cheats_window: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        show_audio_explorer: false,
         show_printer_window: false,
         debug_requests: DebugRequests::default(),
         active_save_slot: 0,
@@ -331,6 +333,8 @@ pub(crate) fn run(
         #[cfg(not(target_arch = "wasm32"))]
         cheats_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
+        audio_explorer_window_focused: false,
+        #[cfg(not(target_arch = "wasm32"))]
         printer_window_focused: false,
         #[cfg(not(target_arch = "wasm32"))]
         focus_settings_window_pending: false,
@@ -338,6 +342,8 @@ pub(crate) fn run(
         focus_mods_window_pending: false,
         #[cfg(not(target_arch = "wasm32"))]
         focus_cheats_window_pending: false,
+        #[cfg(not(target_arch = "wasm32"))]
+        focus_audio_explorer_pending: false,
         #[cfg(not(target_arch = "wasm32"))]
         focus_printer_window_pending: false,
         focus_state_dirty: false,
@@ -349,6 +355,8 @@ pub(crate) fn run(
         last_mods_render: Instant::now(),
         #[cfg(not(target_arch = "wasm32"))]
         last_cheats_render: Instant::now(),
+        #[cfg(not(target_arch = "wasm32"))]
+        last_audio_explorer_render: Instant::now(),
         #[cfg(not(target_arch = "wasm32"))]
         last_printer_render: Instant::now(),
         egui_wants_keyboard: false,
@@ -461,6 +469,8 @@ struct App {
     show_mods_window: bool,
     #[cfg(not(target_arch = "wasm32"))]
     show_cheats_window: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    show_audio_explorer: bool,
     show_printer_window: bool,
     debug_requests: DebugRequests,
     active_save_slot: u8,
@@ -535,6 +545,8 @@ struct App {
     #[cfg(not(target_arch = "wasm32"))]
     cheats_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
+    audio_explorer_window_focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
     printer_window_focused: bool,
     #[cfg(not(target_arch = "wasm32"))]
     focus_settings_window_pending: bool,
@@ -542,6 +554,8 @@ struct App {
     focus_mods_window_pending: bool,
     #[cfg(not(target_arch = "wasm32"))]
     focus_cheats_window_pending: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    focus_audio_explorer_pending: bool,
     #[cfg(not(target_arch = "wasm32"))]
     focus_printer_window_pending: bool,
     focus_state_dirty: bool,
@@ -553,6 +567,8 @@ struct App {
     last_mods_render: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_cheats_render: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_audio_explorer_render: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_printer_render: Instant,
     egui_wants_keyboard: bool,
@@ -855,6 +871,7 @@ impl ApplicationHandler for App {
             self.sync_settings_window(event_loop);
             self.sync_mods_window(event_loop);
             self.sync_cheats_window(event_loop);
+            self.sync_audio_explorer_window(event_loop);
             self.sync_printer_window(event_loop);
             self.sync_tas_editor(event_loop);
         }

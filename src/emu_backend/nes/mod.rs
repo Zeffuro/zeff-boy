@@ -202,6 +202,19 @@ impl NesBackend {
         self.paths.source_path()
     }
 
+    pub(crate) fn audio_discovery_input(
+        &self,
+    ) -> Option<std::sync::Arc<crate::audio_discovery::media::ScanInput>> {
+        self.paths.audio_discovery_input()
+    }
+
+    pub(crate) fn set_audio_discovery_input(
+        &mut self,
+        input: std::sync::Arc<crate::audio_discovery::media::ScanInput>,
+    ) {
+        self.paths.set_audio_discovery_input(input);
+    }
+
     pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {
         self.emu.nominal_frame_duration_ns()
     }

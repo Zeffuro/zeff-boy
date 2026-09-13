@@ -229,6 +229,19 @@ impl Sega8Backend {
         self.paths.source_path()
     }
 
+    pub(crate) fn audio_discovery_input(
+        &self,
+    ) -> Option<std::sync::Arc<crate::audio_discovery::media::ScanInput>> {
+        self.paths.audio_discovery_input()
+    }
+
+    pub(crate) fn set_audio_discovery_input(
+        &mut self,
+        input: std::sync::Arc<crate::audio_discovery::media::ScanInput>,
+    ) {
+        self.paths.set_audio_discovery_input(input);
+    }
+
     pub(crate) fn firmware_manifests(&self) -> &[zeff_emu_common::replay::ReplayFirmwareManifest] {
         self.paths.firmware_manifests()
     }

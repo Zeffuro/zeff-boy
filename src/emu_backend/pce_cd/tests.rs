@@ -442,8 +442,9 @@ fn chd_audio_xdelta_targets_the_normalized_track_payload() {
 #[test]
 fn direct_loader_mounts_cd_with_test_system_card() {
     let bin = vec![0; 2_048];
-    let cue = "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\n";
-    let cue_path = temp_set("loader", &[("disc.bin", &bin)], cue);
+    let audio = vec![0x5a; 2_352];
+    let cue = "FILE \"disc.bin\" BINARY\nTRACK 01 MODE1/2048\nINDEX 01 00:00:00\nFILE \"audio.bin\" BINARY\nTRACK 02 AUDIO\nINDEX 01 00:00:00\n";
+    let cue_path = temp_set("loader", &[("disc.bin", &bin), ("audio.bin", &audio)], cue);
     let system_card: &'static [u8] = Box::leak(vec![0; 262_144].into_boxed_slice());
     let config = BackendLoadConfig {
         pce_cd_system_card_override: Some(system_card),
@@ -454,6 +455,25 @@ fn direct_loader_mounts_cd_with_test_system_card() {
     let loaded =
         load_backend_from_rom_source(ActiveSystem::Pce, &cue_path, &cue_path, None, config)
             .unwrap();
+    let input = loaded.backend.audio_discovery_input().unwrap();
+    assert!(input.bytes.is_empty());
+    assert_eq!(input.system, Some(zeff_emu_common::system::System::Pce));
+    let disc = input.cdda.as_ref().unwrap();
+    assert_eq!(disc.effective_disc_len, bin.len() + audio.len());
+    let manifest = input.analyze(
+        Default::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+    );
+    assert_eq!(
+        manifest.scan.status,
+        crate::audio_discovery::ScanStatus::Complete
+    );
+    assert_eq!(manifest.scan.song_count(), 1);
+    assert_eq!(manifest.scan.cdda_tracks[0].number, 2);
+    assert_eq!(
+        manifest.scan.media.sha256.as_deref(),
+        Some(disc.effective_disc_sha256.as_str())
+    );
     let EmuBackend::Pce(backend) = loaded.backend else {
         panic!("CUE loader returned a non-PCE backend");
     };

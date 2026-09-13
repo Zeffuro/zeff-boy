@@ -11,6 +11,7 @@ pub(super) struct ModLoadOutcome {
     pub(super) original_crc32: u32,
     pub(super) any_enabled: bool,
     pub(super) any_applied: bool,
+    pub(super) steps: Vec<crate::mods::ModApplicationStep>,
 }
 
 pub(super) fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) -> ModLoadOutcome {
@@ -19,7 +20,9 @@ pub(super) fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) ->
     let mods = crate::mods::load_mod_config(&dir);
     let enabled = mods.iter().filter(|m| m.enabled).count();
     if enabled > 0 {
-        let warnings = crate::mods::apply_enabled_mods(rom_data, &dir, &mods);
+        let report = crate::mods::apply_enabled_mods_with_report(rom_data, &dir, &mods);
+        let warnings = report.warnings;
+        let steps = report.steps;
         let any_applied = warnings.len() < enabled;
         for warning in &warnings {
             log::warn!("Mod warning: {warning}");
@@ -32,12 +35,14 @@ pub(super) fn apply_mods_if_any(system: ActiveSystem, rom_data: &mut Vec<u8>) ->
             original_crc32: crc,
             any_enabled: true,
             any_applied,
+            steps,
         };
     }
     ModLoadOutcome {
         original_crc32: crc,
         any_enabled: false,
         any_applied: false,
+        steps: Vec::new(),
     }
 }
 

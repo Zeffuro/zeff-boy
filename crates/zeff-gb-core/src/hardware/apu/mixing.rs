@@ -3,14 +3,43 @@ use crate::hardware::types::constants::*;
 
 impl Apu {
     pub(super) fn generate_samples(&mut self, t_cycles: u64) {
-        let cycles_per_sample = GB_T_CYCLES_PER_SECOND as f64 / self.sample_rate as f64;
-        self.sample_cycle_accum += t_cycles as f64;
-        while self.sample_cycle_accum >= cycles_per_sample {
-            self.sample_cycle_accum -= cycles_per_sample;
-            let (left, right) = self.mix_sample();
-            self.sample_buffer.push(left);
-            self.sample_buffer.push(right);
+        self.output.finish_step(t_cycles, &mut self.sample_buffer);
+    }
+
+    pub(super) fn reset_output(&mut self) {
+        self.output.reset(self.sample_rate);
+        self.output_active = false;
+        self.output_dirty = true;
+        self.sample_buffer.clear();
+    }
+
+    pub(super) fn prepare_output(&mut self) {
+        if !self.output_active {
+            self.output.reset(self.sample_rate);
+            self.output_active = true;
+            self.output_dirty = true;
         }
+        if self.output_dirty {
+            self.output.set_mixer(
+                self.regs[(NR50 - NR10) as usize],
+                self.regs[(NR51 - NR10) as usize],
+                self.channel_muted,
+            );
+            for channel in 0..4 {
+                self.capture_output_channel(channel, 0);
+            }
+            self.output_dirty = false;
+        }
+    }
+
+    pub(super) fn capture_output_channel(&mut self, channel: usize, clock: u64) {
+        let sample = match channel {
+            0 => self.ch1_sample(),
+            1 => self.ch2_sample(),
+            2 => self.ch3_sample(),
+            _ => self.ch4_sample(),
+        };
+        self.output.record_channel(channel, clock, sample);
     }
 
     pub(super) fn mix_sample(&self) -> (f32, f32) {

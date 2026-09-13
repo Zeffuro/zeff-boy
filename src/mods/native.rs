@@ -2,8 +2,32 @@ use std::io::Read;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use super::ModEntry;
+use super::{ModApplicationOutcome, ModApplicationReport, ModApplicationStep, ModEntry};
 use crate::emu_backend::ActiveSystem;
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_MODS_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_mods_root<T>(root: &Path, body: impl FnOnce() -> T) -> T {
+    struct RestoreModsRoot(Option<PathBuf>);
+
+    impl Drop for RestoreModsRoot {
+        fn drop(&mut self) {
+            TEST_MODS_ROOT.with(|current| {
+                current.replace(self.0.take());
+            });
+        }
+    }
+
+    let previous = TEST_MODS_ROOT.with(|current| current.replace(Some(root.to_path_buf())));
+    let restore = RestoreModsRoot(previous);
+    let result = body();
+    drop(restore);
+    result
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PceCdPatchTarget {
@@ -140,46 +164,96 @@ pub(crate) fn mod_advisories(dir: &Path, mods: &[ModEntry]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn apply_enabled_mods(rom: &mut Vec<u8>, dir: &Path, mods: &[ModEntry]) -> Vec<String> {
+    apply_enabled_mods_inner(rom, dir, mods, None)
+}
+
+pub(crate) fn apply_enabled_mods_with_report(
+    rom: &mut Vec<u8>,
+    dir: &Path,
+    mods: &[ModEntry],
+) -> ModApplicationReport {
+    let mut report = ModApplicationReport::default();
+    apply_enabled_mods_inner(rom, dir, mods, Some(&mut report));
+    report
+}
+
+fn apply_enabled_mods_inner(
+    rom: &mut Vec<u8>,
+    dir: &Path,
+    mods: &[ModEntry],
+    mut report: Option<&mut ModApplicationReport>,
+) -> Vec<String> {
     let mut warnings = Vec::new();
     for entry in mods.iter().filter(|m| m.enabled) {
+        let input_sha256 = report.is_some().then(|| zeff_firmware::sha256_hex(rom));
+        let input_len = rom.len();
+        let format = patch_format(&entry.filename);
         let patch_path = dir.join(&entry.filename);
-        match std::fs::read(&patch_path) {
+        let mut patch_sha256 = None;
+        let result = match std::fs::read(&patch_path) {
             Ok(patch_data) => {
-                let ext = Path::new(&entry.filename)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|s| s.to_ascii_lowercase());
-                let result = match ext.as_deref() {
-                    Some("bps") => crate::patching::apply_bps_patch(rom, &patch_data).map(|new| {
+                patch_sha256 = report
+                    .is_some()
+                    .then(|| zeff_firmware::sha256_hex(&patch_data));
+                let result = match format.as_str() {
+                    "bps" => crate::patching::apply_bps_patch(rom, &patch_data).map(|new| {
                         *rom = new;
                     }),
-                    Some("ups") => crate::patching::apply_ups_patch(rom, &patch_data).map(|new| {
+                    "ups" => crate::patching::apply_ups_patch(rom, &patch_data).map(|new| {
                         *rom = new;
                     }),
-                    Some("ppf") => crate::patching::apply_ppf_patch(rom, &patch_data),
-                    Some("xdelta" | "xdelta3" | "vcdiff") => {
+                    "ppf" => crate::patching::apply_ppf_patch(rom, &patch_data),
+                    "xdelta" | "xdelta3" | "vcdiff" => {
                         crate::patching::apply_xdelta_patch(rom, &patch_data).map(|new| *rom = new)
                     }
                     _ => crate::patching::apply_ips_patch(rom, &patch_data),
                 };
-                match result {
-                    Ok(()) => log::info!("Applied mod: {}", entry.filename),
-                    Err(e) => {
-                        let msg = format!("{}: {e}", entry.filename);
-                        log::warn!("Mod apply failed: {msg}");
-                        warnings.push(msg);
-                    }
-                }
+                result.map_err(|error| error.to_string())
             }
-            Err(e) => {
-                let msg = format!("{}: failed to read: {e}", entry.filename);
-                log::warn!("Mod apply failed: {msg}");
-                warnings.push(msg);
+            Err(error) => Err(format!("failed to read: {error}")),
+        };
+        let outcome = match result {
+            Ok(()) => {
+                log::info!("Applied mod: {}", entry.filename);
+                ModApplicationOutcome::Applied
             }
+            Err(error) => {
+                let message = format!("{}: {error}", entry.filename);
+                log::warn!("Mod apply failed: {message}");
+                warnings.push(message);
+                ModApplicationOutcome::Failed { error }
+            }
+        };
+        if let Some(report) = report.as_deref_mut() {
+            report.steps.push(ModApplicationStep {
+                filename: entry.filename.clone(),
+                format,
+                patch_sha256,
+                input_sha256: input_sha256.expect("reporting requested an input digest"),
+                input_len,
+                output_sha256: zeff_firmware::sha256_hex(rom),
+                output_len: rom.len(),
+                outcome,
+            });
         }
     }
+    if let Some(report) = report {
+        report.warnings.clone_from(&warnings);
+    }
     warnings
+}
+
+fn patch_format(filename: &str) -> String {
+    let extension = Path::new(filename)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some("bps" | "ups" | "ppf" | "xdelta" | "xdelta3" | "vcdiff") => extension.unwrap(),
+        _ => "ips".to_owned(),
+    }
 }
 
 pub(crate) fn apply_enabled_pce_cd_mods(
@@ -336,6 +410,10 @@ fn normalize_target(value: &str) -> String {
 }
 
 fn mods_root() -> PathBuf {
+    #[cfg(test)]
+    if let Some(root) = TEST_MODS_ROOT.with(|root| root.borrow().clone()) {
+        return root;
+    }
     if let Some(config_dir) = dirs::config_dir() {
         return config_dir.join("zeff-boy").join("mods");
     }

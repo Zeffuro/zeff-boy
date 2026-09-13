@@ -33,6 +33,7 @@ pub(crate) struct EmuThread {
     capabilities: CoreCapabilities,
     frame_duration_ns: Arc<AtomicU64>,
     audio_recording_context: Option<crate::audio_tooling::AudioRecordingContext>,
+    audio_discovery_input: Option<Arc<crate::audio_discovery::media::ScanInput>>,
 }
 
 pub(crate) struct SuspendedEmuThread {
@@ -102,6 +103,7 @@ impl EmuThread {
         #[cfg(test)] recovery: Option<super::RecoveryTestConfig>,
     ) -> std::io::Result<Self> {
         let capabilities = backend.capabilities();
+        let audio_discovery_input = backend.audio_discovery_input();
         let frame_duration_ns = backend.nominal_frame_duration_ns();
         let shared_frame_duration_ns = Arc::new(AtomicU64::new(frame_duration_ns));
         let audio_recording_context =
@@ -155,6 +157,7 @@ impl EmuThread {
             capabilities,
             frame_duration_ns: shared_frame_duration_ns,
             audio_recording_context,
+            audio_discovery_input,
         })
     }
 
@@ -166,6 +169,12 @@ impl EmuThread {
 
     pub(crate) fn capabilities(&self) -> &CoreCapabilities {
         &self.capabilities
+    }
+
+    pub(crate) fn audio_discovery_input(
+        &self,
+    ) -> Option<Arc<crate::audio_discovery::media::ScanInput>> {
+        self.audio_discovery_input.clone()
     }
 
     pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {

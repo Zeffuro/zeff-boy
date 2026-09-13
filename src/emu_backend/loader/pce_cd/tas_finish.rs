@@ -25,7 +25,7 @@ pub(crate) fn finish_preloaded_archive_ppf_backend(
     if loaded.source_disc_sha256 != unpatched_disc_sha256 {
         return Err(super::super::super::pce_cd::PceCdLoadError::ArchiveChanged.into());
     }
-    let (archive, rar, zip) = exact_archive_identity(source_path, archive_identity, config)?;
+    let carrier = exact_archive_identity(source_path, archive_identity, config)?;
     let console_wiring = pce_cd_console_wiring(config, loaded.content_sha256);
     let system_card = resolve_pce_cd_system_card(
         config,
@@ -43,21 +43,11 @@ pub(crate) fn finish_preloaded_archive_ppf_backend(
             raw_source_media_len: archive_identity.source_len,
             source_disc_sha256: unpatched_disc_sha256,
             effective_disc_sha256,
-            direct: true,
-            chd: false,
-            iso: false,
-            ppf: false,
-            archive,
-            archive_ppf: true,
-            rar,
-            zip,
-            archive_cue_member_path_sha256: archive
-                .then_some(archive_identity.cue_member_path_sha256),
-            rar_cue_member_path_sha256: rar.then_some(archive_identity.cue_member_path_sha256),
-            zip_cue_member_path_sha256: zip.then_some(archive_identity.cue_member_path_sha256),
-            archive_cue_explicitly_selected: archive && explicit(archive_identity),
-            rar_cue_explicitly_selected: rar && explicit(archive_identity),
-            zip_cue_explicitly_selected: zip && explicit(archive_identity),
+            cdda_source: Some(super::super::super::pce::PceTasCdSource::ArchiveCuePpf(
+                carrier,
+            )),
+            cdda_selected_member_path_sha256: Some(archive_identity.cue_member_path_sha256),
+            cdda_selected_member_explicitly_selected: explicit(archive_identity),
             archive_ppf_patches: patch_identities.into_iter().map(provenance_patch).collect(),
         },
         super::super::super::pce::PceTasLoadSetup {
@@ -113,7 +103,7 @@ fn exact_archive_identity(
     source_path: &Path,
     actual: PceCdArchiveCueIdentity,
     config: &BackendLoadConfig,
-) -> anyhow::Result<(bool, bool, bool)> {
+) -> anyhow::Result<super::super::super::pce::PceTasCdArchiveCarrier> {
     let formats = (
         path_extension_is(source_path, "7z"),
         path_extension_is(source_path, "rar"),
@@ -132,7 +122,12 @@ fn exact_archive_identity(
     {
         return Err(super::super::super::pce_cd::PceCdLoadError::ArchiveChanged.into());
     }
-    Ok(formats)
+    match formats {
+        (true, false, false) => Ok(super::super::super::pce::PceTasCdArchiveCarrier::SevenZip),
+        (false, true, false) => Ok(super::super::super::pce::PceTasCdArchiveCarrier::Rar),
+        (false, false, true) => Ok(super::super::super::pce::PceTasCdArchiveCarrier::Zip),
+        _ => Err(super::super::super::pce_cd::PceCdLoadError::ArchiveChanged.into()),
+    }
 }
 
 fn explicit(identity: PceCdArchiveCueIdentity) -> bool {

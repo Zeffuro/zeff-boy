@@ -137,6 +137,167 @@ fn apply_enabled_mods_applies_ips_patches() {
 }
 
 #[test]
+fn mod_application_report_records_ordered_actual_bytes_after_failed_ips() {
+    let temp = test_directory("mods-application-report").unwrap();
+    let dir = temp.path();
+
+    let first_patch = b"PATCH\0\0\0\0\x01\xAAEOF";
+    let failed_patch = b"PATCH\0\0\x01\0\x01\xBB\0\0\x02";
+    std::fs::write(dir.join("first.ips"), first_patch).unwrap();
+    std::fs::write(dir.join("failed.ips"), failed_patch).unwrap();
+    let entries = vec![
+        ModEntry {
+            filename: "first.ips".to_owned(),
+            enabled: true,
+            target: None,
+        },
+        ModEntry {
+            filename: "disabled.ips".to_owned(),
+            enabled: false,
+            target: None,
+        },
+        ModEntry {
+            filename: "failed.ips".to_owned(),
+            enabled: true,
+            target: None,
+        },
+    ];
+    let original = vec![0; 4];
+    let after_first = vec![0xAA, 0, 0, 0];
+    let after_failed = vec![0xAA, 0xBB, 0, 0];
+    let mut rom = original.clone();
+
+    let report = apply_enabled_mods_with_report(&mut rom, dir, &entries);
+
+    assert_eq!(rom, after_failed);
+    assert_eq!(report.steps.len(), 2);
+    assert_eq!(report.steps[0].filename, "first.ips");
+    assert_eq!(report.steps[0].format, "ips");
+    assert_eq!(
+        report.steps[0].patch_sha256.as_deref(),
+        Some(zeff_firmware::sha256_hex(first_patch).as_str())
+    );
+    assert_eq!(
+        report.steps[0].input_sha256,
+        zeff_firmware::sha256_hex(&original)
+    );
+    assert_eq!(
+        report.steps[0].output_sha256,
+        zeff_firmware::sha256_hex(&after_first)
+    );
+    assert_eq!(report.steps[0].input_len, original.len());
+    assert_eq!(report.steps[0].output_len, after_first.len());
+    assert_eq!(report.steps[0].outcome, ModApplicationOutcome::Applied);
+
+    assert_eq!(report.steps[1].filename, "failed.ips");
+    assert_eq!(report.steps[1].format, "ips");
+    assert_eq!(
+        report.steps[1].patch_sha256.as_deref(),
+        Some(zeff_firmware::sha256_hex(failed_patch).as_str())
+    );
+    assert_eq!(
+        report.steps[1].input_sha256,
+        zeff_firmware::sha256_hex(&after_first)
+    );
+    assert_eq!(
+        report.steps[1].output_sha256,
+        zeff_firmware::sha256_hex(&after_failed)
+    );
+    assert_eq!(report.steps[1].input_len, after_first.len());
+    assert_eq!(report.steps[1].output_len, after_failed.len());
+    assert_eq!(
+        report.steps[1].outcome,
+        ModApplicationOutcome::Failed {
+            error: "IPS patch truncated: missing size at offset 14".into(),
+        }
+    );
+    assert_eq!(
+        report.warnings,
+        ["failed.ips: IPS patch truncated: missing size at offset 14"]
+    );
+
+    let mut warning_only_rom = original;
+    assert_eq!(
+        apply_enabled_mods(&mut warning_only_rom, dir, &entries),
+        report.warnings
+    );
+    assert_eq!(warning_only_rom, rom);
+
+    let json = serde_json::to_value(report).unwrap();
+    assert_eq!(json["steps"][0]["outcome"]["status"], "applied");
+    assert_eq!(json["steps"][1]["outcome"]["status"], "failed");
+    assert_eq!(
+        json["steps"][1]["outcome"]["error"],
+        "IPS patch truncated: missing size at offset 14"
+    );
+}
+
+#[test]
+fn mod_application_report_canonicalizes_ips_fallback_and_missing_files() {
+    let temp = test_directory("mods-application-report-fallback").unwrap();
+    let dir = temp.path();
+
+    let patch = b"PATCH\0\0\0\0\x01\xAAEOF";
+    std::fs::write(dir.join("fallback.patch"), patch).unwrap();
+    let entries = vec![
+        ModEntry {
+            filename: "fallback.patch".to_owned(),
+            enabled: true,
+            target: None,
+        },
+        ModEntry {
+            filename: "disabled.ips".to_owned(),
+            enabled: false,
+            target: None,
+        },
+        ModEntry {
+            filename: "missing.ips".to_owned(),
+            enabled: true,
+            target: None,
+        },
+    ];
+    let original = vec![0; 4];
+    let patched = vec![0xAA, 0, 0, 0];
+    let mut rom = original.clone();
+
+    let report = apply_enabled_mods_with_report(&mut rom, dir, &entries);
+
+    assert_eq!(rom, patched);
+    assert_eq!(
+        report
+            .steps
+            .iter()
+            .map(|step| step.filename.as_str())
+            .collect::<Vec<_>>(),
+        ["fallback.patch", "missing.ips"]
+    );
+    assert_eq!(report.steps[0].format, "ips");
+    assert_eq!(
+        report.steps[0].patch_sha256.as_deref(),
+        Some(zeff_firmware::sha256_hex(patch).as_str())
+    );
+    assert_eq!(report.steps[0].outcome, ModApplicationOutcome::Applied);
+    assert_eq!(report.steps[1].format, "ips");
+    assert_eq!(report.steps[1].patch_sha256, None);
+    assert_eq!(
+        report.steps[1].input_sha256,
+        zeff_firmware::sha256_hex(&patched)
+    );
+    assert_eq!(
+        report.steps[1].output_sha256,
+        zeff_firmware::sha256_hex(&patched)
+    );
+    assert_eq!(report.steps[1].input_len, patched.len());
+    assert_eq!(report.steps[1].output_len, patched.len());
+    assert!(matches!(
+        &report.steps[1].outcome,
+        ModApplicationOutcome::Failed { error } if error.starts_with("failed to read:")
+    ));
+    assert_eq!(report.warnings.len(), 1);
+    assert!(report.warnings[0].starts_with("missing.ips: failed to read:"));
+}
+
+#[test]
 fn apply_enabled_pce_cd_mods_targets_track_from_xdelta_filename() {
     let temp = test_directory("mods-apply-pce-cd-xdelta").unwrap();
     let dir = temp.path();

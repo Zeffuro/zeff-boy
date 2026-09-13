@@ -40,7 +40,7 @@ fn swi_soft_reset_jumps_to_wram_when_return_flag_is_set() {
 }
 
 #[test]
-fn swi_vblank_intr_wait_returns_if_vblank_already_pending() {
+fn swi_vblank_intr_wait_waits_for_pending_vblank_to_be_serviced() {
     let mut bus = bus_with_rom(&0xDF05_u16.to_le_bytes()); // swi 5
     bus.write16(0x0400_0200, 1);
     bus.io[0x202] = 1;
@@ -50,8 +50,10 @@ fn swi_vblank_intr_wait_returns_if_vblank_already_pending() {
 
     cpu.step(&mut bus);
 
-    assert_eq!(cpu.state, CpuState::Running);
+    assert_eq!(cpu.state, CpuState::Halted);
     assert_eq!(cpu.pc(), RESET_VECTOR + 2);
+    assert_eq!(cpu.swi_wait_return_pc, Some(RESET_VECTOR + 2));
+    assert_eq!(cpu.swi_wait_mask, 1);
 }
 
 #[test]

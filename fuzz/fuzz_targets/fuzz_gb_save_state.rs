@@ -16,7 +16,9 @@ fuzz_target!(|data: &[u8]| {
     rom[0x148] = 0x00;
     rom[0x149] = 0x00;
 
-    if let Ok(mut emu) = zeff_gb_core::emulator::Emulator::from_rom_data(&rom, HardwareModePreference::Auto) {
+    if let Ok(mut emu) =
+        zeff_gb_core::emulator::Emulator::from_rom_data(&rom, HardwareModePreference::Auto)
+    {
         let _ = emu.load_state_from_bytes(data.to_vec());
     }
 });

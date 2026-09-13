@@ -9,6 +9,8 @@ impl App {
 
     fn retire_emu_thread(&mut self, notify_stop: bool) {
         #[cfg(not(target_arch = "wasm32"))]
+        self.debug_windows.audio_discovery.bind_source(None);
+        #[cfg(not(target_arch = "wasm32"))]
         let _ = notify_stop;
         #[cfg(not(target_arch = "wasm32"))]
         if self.recording.audio_recorder.is_some()
@@ -114,6 +116,8 @@ impl App {
             return;
         }
         self.shutdown_performed = true;
+        #[cfg(not(target_arch = "wasm32"))]
+        self.debug_windows.audio_discovery.stop_preview();
 
         #[cfg(not(target_arch = "wasm32"))]
         self.release_pce_mouse(false);
@@ -135,6 +139,7 @@ impl App {
             self.persist_settings_window_geometry();
             self.persist_mods_window_geometry();
             self.persist_cheats_window_geometry();
+            self.persist_audio_explorer_window_geometry();
             self.persist_printer_window_geometry();
         }
         self.persist_current_dock_layout();

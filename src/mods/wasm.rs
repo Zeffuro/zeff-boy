@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::ModEntry;
+use super::{ModApplicationReport, ModEntry};
 use crate::emu_backend::ActiveSystem;
 
 pub(crate) fn mods_dir_for_rom(_system: ActiveSystem, _rom_crc32: u32) -> PathBuf {
@@ -27,4 +27,12 @@ pub(crate) fn apply_enabled_mods(
     _mods: &[ModEntry],
 ) -> Vec<String> {
     Vec::new()
+}
+
+pub(crate) fn apply_enabled_mods_with_report(
+    _rom_data: &mut Vec<u8>,
+    _dir: &Path,
+    _mods: &[ModEntry],
+) -> ModApplicationReport {
+    ModApplicationReport::default()
 }

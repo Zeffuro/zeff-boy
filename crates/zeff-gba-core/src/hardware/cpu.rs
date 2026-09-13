@@ -19,6 +19,7 @@ mod frame_profile;
 mod frame_run;
 mod frame_thumb_metadata;
 mod instruction_timing;
+mod intr_wait;
 mod memory;
 mod ops;
 mod swi;
@@ -591,8 +592,8 @@ impl Cpu {
         if self.state != CpuState::Running {
             return Some(None);
         }
-        if self.swi_wait_return_pc == Some(self.pc()) {
-            self.complete_swi_wait(bus);
+        if self.swi_wait_return_pc == Some(self.pc()) && !self.complete_swi_wait(bus) {
+            return Some(None);
         }
         self.execution_state.phase = CpuExecutionPhase::SequentialFetch;
         None

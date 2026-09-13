@@ -4,6 +4,8 @@ use anyhow::Context;
 use zeff_pce_core::hardware::PceControllerMode;
 
 use super::{ActiveSystem, EmuBackend};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod audio_discovery_tests;
 mod config;
 mod pce_cd;
 mod systems;
@@ -408,6 +410,7 @@ fn load_backend_from_rom_source_inner(
             original_crc32: crc32fast::hash(&rom_data),
             any_enabled: false,
             any_applied: false,
+            steps: Vec::new(),
         }
     };
     let coleco_provenance = (system == ActiveSystem::Coleco).then(|| {
@@ -831,6 +834,102 @@ fn load_backend_from_rom_source_inner(
             )?
         }
     };
+
+    let audio_discovery_input = (system != ActiveSystem::GameBoyAdvance).then(|| {
+        use crate::audio_discovery::media::{ScanInput, ScanProvenance, SourceIdentity};
+        use zeff_emu_common::system::System;
+
+        let system = match system {
+            ActiveSystem::GameBoy => System::Gb,
+            ActiveSystem::GameBoyAdvance => unreachable!("GBA owns its cartridge snapshot"),
+            ActiveSystem::Nes => System::Nes,
+            ActiveSystem::Coleco => System::Coleco,
+            ActiveSystem::Pce => System::Pce,
+            ActiveSystem::WonderSwan => System::Ws,
+            ActiveSystem::MasterSystem => System::Sms,
+            ActiveSystem::GameGear => System::Gg,
+            ActiveSystem::Sg1000 => System::Sg,
+        };
+        let source = SourceIdentity {
+            kind: if loaded_from_source_path && source_path == rom_path {
+                "direct_cartridge_file"
+            } else {
+                "preloaded_cartridge_bytes"
+            },
+            sha256: const_hex::encode(
+                raw_source_media_sha256.expect("cartridge source hash must exist"),
+            ),
+            len: raw_source_media_len,
+            container: None,
+            selected_member: None,
+        };
+        std::sync::Arc::new(ScanInput {
+            #[cfg(not(target_arch = "wasm32"))]
+            cdda: None,
+            system: Some(system),
+            standalone_audio: None,
+            bytes: std::sync::Arc::from(rom_data.clone()),
+            provenance: Some(std::sync::Arc::new(ScanProvenance {
+                source,
+                transforms: mod_load.steps.clone(),
+            })),
+            analysis_profile: "loaded-effective-cartridge-v1",
+            display_name: source_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+        })
+    });
+
+    if let EmuBackend::Gba(gba) = &mut backend {
+        use crate::audio_discovery::media::{ScanProvenance, SourceIdentity};
+
+        let source = SourceIdentity {
+            kind: if loaded_from_source_path && source_path == rom_path {
+                "direct_gba_file"
+            } else {
+                "preloaded_gba_bytes"
+            },
+            sha256: const_hex::encode(raw_source_media_sha256.expect("GBA source hash exists")),
+            len: raw_source_media_len,
+            container: None,
+            selected_member: None,
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let source = if authenticated_gba_zip {
+            use crate::audio_discovery::media::{ContainerIdentity, SelectedMemberIdentity};
+
+            let witness = config
+                .authenticated_zip_member
+                .as_ref()
+                .expect("authenticated ZIP");
+            let (hash, len, member) = witness.archive_identity();
+            SourceIdentity {
+                kind: "zip_member",
+                container: Some(ContainerIdentity {
+                    format: "zip",
+                    sha256: const_hex::encode(hash),
+                    len,
+                }),
+                selected_member: Some(SelectedMemberIdentity {
+                    name: member.to_owned(),
+                    sha256: source.sha256.clone(),
+                    len: source.len,
+                }),
+                ..source
+            }
+        } else {
+            source
+        };
+        gba.set_audio_discovery_provenance(ScanProvenance {
+            source,
+            transforms: mod_load.steps,
+        });
+    }
+    if let Some(input) = audio_discovery_input {
+        backend.set_audio_discovery_input(input);
+    }
 
     if !default_firmware_manifests.is_empty()
         && !(system == ActiveSystem::GameBoy && config.gb_use_external_boot_rom)

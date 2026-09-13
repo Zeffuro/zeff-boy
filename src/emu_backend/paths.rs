@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use zeff_emu_common::replay::ReplayFirmwareManifest;
 
@@ -6,6 +9,7 @@ pub(crate) struct BackendPaths {
     rom_path: PathBuf,
     source_path: PathBuf,
     firmware_manifests: Vec<ReplayFirmwareManifest>,
+    audio_discovery_input: Option<Arc<crate::audio_discovery::media::ScanInput>>,
 }
 
 impl BackendPaths {
@@ -18,6 +22,7 @@ impl BackendPaths {
             rom_path,
             source_path,
             firmware_manifests: Vec::new(),
+            audio_discovery_input: None,
         }
     }
 
@@ -38,5 +43,18 @@ impl BackendPaths {
         firmware_manifests: Vec<ReplayFirmwareManifest>,
     ) {
         self.firmware_manifests = firmware_manifests;
+    }
+
+    pub(crate) fn audio_discovery_input(
+        &self,
+    ) -> Option<Arc<crate::audio_discovery::media::ScanInput>> {
+        self.audio_discovery_input.clone()
+    }
+
+    pub(crate) fn set_audio_discovery_input(
+        &mut self,
+        input: Arc<crate::audio_discovery::media::ScanInput>,
+    ) {
+        self.audio_discovery_input = Some(input);
     }
 }

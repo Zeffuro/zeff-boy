@@ -8,6 +8,8 @@ use winit::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
+mod audio_explorer_window;
+#[cfg(not(target_arch = "wasm32"))]
 mod cheats_window;
 #[cfg(not(target_arch = "wasm32"))]
 mod debugger_window;
@@ -37,6 +39,8 @@ use framebuffer::FramebufferRenderer;
 use gpu::GpuContext;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use audio_explorer_window::AudioExplorerRenderContext;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use cheats_window::CheatsRenderContext;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use debugger_window::{DebuggerRenderContext, DebuggerRenderResult};
@@ -65,6 +69,8 @@ pub(crate) struct Graphics {
     game_egui_texture_id: Option<egui::TextureId>,
     game_view_pixel_size: Option<(u32, u32)>,
     last_direct_game_viewport: Option<(f32, f32, f32, f32, u32, u32)>,
+    #[cfg(not(target_arch = "wasm32"))]
+    audio_explorer_window: Option<audio_explorer_window::AudioExplorerWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     debugger: Option<debugger_window::DebuggerWindow>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -164,6 +170,8 @@ impl Graphics {
             game_view_pixel_size: None,
             last_direct_game_viewport: None,
             #[cfg(not(target_arch = "wasm32"))]
+            audio_explorer_window: None,
+            #[cfg(not(target_arch = "wasm32"))]
             debugger: None,
             #[cfg(not(target_arch = "wasm32"))]
             settings_window: None,
@@ -200,6 +208,67 @@ impl Graphics {
 
     pub(crate) fn handle_event(&mut self, event: &WindowEvent) -> bool {
         self.egui.handle_event(&self.window, event)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_audio_explorer_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        settings: &crate::settings::Settings,
+    ) -> Result<WindowId> {
+        if let Some(window) = self.audio_explorer_window.as_ref() {
+            window.window().focus_window();
+            return Ok(window.id());
+        }
+        let window =
+            audio_explorer_window::AudioExplorerWindow::new(event_loop, &self.gpu, settings)?;
+        let id = window.id();
+        self.audio_explorer_window = Some(window);
+        Ok(id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_audio_explorer_window(&mut self) {
+        self.audio_explorer_window = None;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn audio_explorer_window_id(&self) -> Option<WindowId> {
+        self.audio_explorer_window
+            .as_ref()
+            .map(audio_explorer_window::AudioExplorerWindow::id)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn audio_explorer_window(&self) -> Option<&Window> {
+        self.audio_explorer_window
+            .as_ref()
+            .map(audio_explorer_window::AudioExplorerWindow::window)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn audio_explorer_handles_event(&mut self, event: &WindowEvent) -> bool {
+        self.audio_explorer_window
+            .as_mut()
+            .is_some_and(|window| window.handle_event(event))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resize_audio_explorer_window(&mut self, width: u32, height: u32) {
+        if let Some(window) = self.audio_explorer_window.as_mut() {
+            window.resize(width, height);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn render_audio_explorer_window(
+        &mut self,
+        ctx: AudioExplorerRenderContext<'_>,
+    ) -> Result<(), FrameError> {
+        self.audio_explorer_window
+            .as_mut()
+            .ok_or(FrameError::Lost)?
+            .render(ctx)
     }
 
     #[cfg(not(target_arch = "wasm32"))]

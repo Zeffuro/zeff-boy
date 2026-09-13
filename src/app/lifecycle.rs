@@ -551,6 +551,35 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn sync_audio_explorer_window(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if self.show_audio_explorer {
+            if gfx.audio_explorer_window_id().is_none()
+                && let Err(err) = gfx.open_audio_explorer_window(event_loop, &self.settings)
+            {
+                log::error!("Failed to open Audio Explorer window: {err}");
+                self.show_audio_explorer = false;
+                self.focus_audio_explorer_pending = false;
+                self.toast_manager
+                    .error("Failed to open Audio Explorer window");
+            }
+            if self.focus_audio_explorer_pending
+                && let Some(window) = gfx.audio_explorer_window()
+            {
+                restore_focus_and_redraw(window);
+                self.focus_audio_explorer_pending = false;
+            }
+        } else if gfx.audio_explorer_window_id().is_some() {
+            gfx.close_audio_explorer_window();
+            self.audio_explorer_window_focused = false;
+            self.focus_audio_explorer_pending = false;
+            self.focus_state_dirty = true;
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn sync_printer_window(&mut self, event_loop: &ActiveEventLoop) {
         let Some(gfx) = self.gfx.as_mut() else {
             return;

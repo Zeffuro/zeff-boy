@@ -168,11 +168,11 @@ impl Bus {
     }
 
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
-        self.io.apu.sample_generation_enabled = enabled;
+        self.io.apu.set_sample_generation_enabled(enabled);
     }
 
     pub fn set_apu_enabled(&mut self, enabled: bool) {
-        self.io.apu.apu_enabled = enabled;
+        self.io.apu.set_enabled(enabled);
     }
 
     pub fn apu_drain_samples_into(&mut self, target: &mut Vec<f32>) {

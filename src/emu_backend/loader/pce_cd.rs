@@ -9,6 +9,8 @@ use super::{BackendLoadConfig, EmuBackend, LoadedBackend};
 use crate::emu_core_trait::EmulatorCore;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod audio_discovery;
+#[cfg(not(target_arch = "wasm32"))]
 mod native_archive;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas_finish;
@@ -18,6 +20,12 @@ pub(crate) use native_archive::prepare_native_archive_backend;
 pub(crate) use native_archive::prepare_seven_zip_backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use tas_finish::finish_preloaded_archive_ppf_backend;
+
+#[cfg(not(target_arch = "wasm32"))]
+enum PceCdLoadedSource {
+    Direct(super::super::pce::PceTasCdSource),
+    Archive(super::super::pce::PceTasCdArchiveCarrier),
+}
 
 pub(super) fn is_pce_cd_path(path: &Path) -> bool {
     path.extension()
@@ -68,7 +76,7 @@ pub(super) fn load_pce_cd_backend(
         )
         .into());
     }
-    let (cue_path, loaded_disc, archive_cue, rar_cue, zip_cue) = if source_path == cue_path
+    let (cue_path, loaded_disc, loaded_source, verified_archive_cue) = if source_path == cue_path
         && path_extension_is(cue_path, "cue")
     {
         (
@@ -78,23 +86,30 @@ pub(super) fn load_pce_cd_backend(
             } else {
                 super::super::pce_cd::load_direct_cue_with_mods(cue_path, config.apply_mods)?
             },
-            None,
-            None,
+            PceCdLoadedSource::Direct(if direct_ppf.is_some() {
+                super::super::pce::PceTasCdSource::DirectCuePpf
+            } else {
+                super::super::pce::PceTasCdSource::DirectCue
+            }),
             None,
         )
     } else if source_path == cue_path && path_extension_is(cue_path, "chd") {
         (
             cue_path.to_path_buf(),
             super::super::pce_cd::load_direct_chd_with_mods(cue_path, config.apply_mods)?,
-            None,
-            None,
+            PceCdLoadedSource::Direct(super::super::pce::PceTasCdSource::DirectChd),
             None,
         )
     } else if source_path == cue_path && path_extension_is(cue_path, "iso") {
         let actual_cue = super::super::pce_cd::cue_path_for_iso(cue_path)?;
         let loaded =
             super::super::pce_cd::load_direct_cue_with_mods(&actual_cue, config.apply_mods)?;
-        (actual_cue, loaded, None, None, None)
+        (
+            actual_cue,
+            loaded,
+            PceCdLoadedSource::Direct(super::super::pce::PceTasCdSource::DirectIsoCue),
+            None,
+        )
     } else if path_extension_is(source_path, "7z") {
         let cancel = AtomicBool::new(false);
         let progress = super::super::pce_cd_archive::PceCdPackageProgress::default();
@@ -138,7 +153,12 @@ pub(super) fn load_pce_cd_backend(
         {
             return Err(super::super::pce_cd::PceCdLoadError::ArchiveChanged.into());
         }
-        (actual, loaded, archive_cue, None, None)
+        (
+            actual,
+            loaded,
+            PceCdLoadedSource::Archive(super::super::pce::PceTasCdArchiveCarrier::SevenZip),
+            archive_cue,
+        )
     } else if path_extension_is(source_path, "rar") {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(super::super::pce_cd_archive::PceCdPackageProgress::default());
@@ -179,7 +199,12 @@ pub(super) fn load_pce_cd_backend(
         {
             return Err(super::super::pce_cd::PceCdLoadError::ArchiveChanged.into());
         }
-        (actual, loaded, None, rar_cue, None)
+        (
+            actual,
+            loaded,
+            PceCdLoadedSource::Archive(super::super::pce::PceTasCdArchiveCarrier::Rar),
+            rar_cue,
+        )
     } else if path_extension_is(source_path, "zip") {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(super::super::pce_cd_archive::PceCdPackageProgress::default());
@@ -220,7 +245,12 @@ pub(super) fn load_pce_cd_backend(
         {
             return Err(super::super::pce_cd::PceCdLoadError::ArchiveChanged.into());
         }
-        (actual, loaded, None, None, zip_cue)
+        (
+            actual,
+            loaded,
+            PceCdLoadedSource::Archive(super::super::pce::PceTasCdArchiveCarrier::Zip),
+            zip_cue,
+        )
     } else {
         return Err(super::super::pce_cd::PceCdLoadError::PackagedCdSetUnsupported.into());
     };
@@ -236,19 +266,24 @@ pub(super) fn load_pce_cd_backend(
     let system_card_board = pce_system_card_board(system_card_profile);
     let source_disc_sha256 = loaded_disc.source_disc_sha256;
     let effective_disc_sha256 = loaded_disc.disc.content_hash();
-    let tas_archive_cue = expected_archive_cue.and(archive_cue);
-    let tas_rar_cue = expected_rar_cue.and(rar_cue);
-    let tas_zip_cue = expected_zip_cue.and(zip_cue);
+    let (cdda_source, cdda_archive_cue) = match loaded_source {
+        PceCdLoadedSource::Direct(source) => (Some(source), None),
+        PceCdLoadedSource::Archive(carrier) => (
+            verified_archive_cue.map(|_| super::super::pce::PceTasCdSource::ArchiveCue(carrier)),
+            verified_archive_cue,
+        ),
+    };
+    let cdda_selected_member_path_sha256 =
+        cdda_archive_cue.map(|identity| identity.cue_member_path_sha256);
+    let cdda_selected_member_explicitly_selected = cdda_archive_cue.is_some_and(|identity| {
+        identity.selection == super::super::pce_cd_archive::PceCdArchiveCueSelection::Explicit
+    });
     let (raw_source_media_sha256, raw_source_media_len) = if let Some(stack) = direct_ppf {
         stack.source_media_identity()
     } else if direct_iso {
         super::super::pce_cd_file::direct_file_sha256(source_path)?
-    } else if let Some(archive_cue) = tas_archive_cue {
+    } else if let Some(archive_cue) = cdda_archive_cue {
         (archive_cue.source_sha256, archive_cue.source_len)
-    } else if let Some(rar_cue) = tas_rar_cue {
-        (rar_cue.source_sha256, rar_cue.source_len)
-    } else if let Some(zip_cue) = tas_zip_cue {
-        (zip_cue.source_sha256, zip_cue.source_len)
     } else {
         (
             loaded_disc.raw_source_media_sha256,
@@ -261,36 +296,9 @@ pub(super) fn load_pce_cd_backend(
             raw_source_media_len,
             source_disc_sha256,
             effective_disc_sha256,
-            direct: source_path == cue_path
-                && (path_extension_is(&cue_path, "cue") || path_extension_is(&cue_path, "chd"))
-                || direct_iso
-                || direct_ppf.is_some()
-                || tas_archive_cue.is_some()
-                || tas_rar_cue.is_some()
-                || tas_zip_cue.is_some(),
-            chd: source_path == cue_path && path_extension_is(&cue_path, "chd"),
-            iso: direct_iso,
-            ppf: direct_ppf.is_some(),
-            archive: tas_archive_cue.is_some(),
-            archive_ppf: false,
-            rar: tas_rar_cue.is_some(),
-            zip: tas_zip_cue.is_some(),
-            archive_cue_member_path_sha256: tas_archive_cue
-                .map(|identity| identity.cue_member_path_sha256),
-            rar_cue_member_path_sha256: tas_rar_cue.map(|identity| identity.cue_member_path_sha256),
-            zip_cue_member_path_sha256: tas_zip_cue.map(|identity| identity.cue_member_path_sha256),
-            archive_cue_explicitly_selected: tas_archive_cue.is_some_and(|identity| {
-                identity.selection
-                    == super::super::pce_cd_archive::PceCdArchiveCueSelection::Explicit
-            }),
-            rar_cue_explicitly_selected: tas_rar_cue.is_some_and(|identity| {
-                identity.selection
-                    == super::super::pce_cd_archive::PceCdArchiveCueSelection::Explicit
-            }),
-            zip_cue_explicitly_selected: tas_zip_cue.is_some_and(|identity| {
-                identity.selection
-                    == super::super::pce_cd_archive::PceCdArchiveCueSelection::Explicit
-            }),
+            cdda_source,
+            cdda_selected_member_path_sha256,
+            cdda_selected_member_explicitly_selected,
             archive_ppf_patches: Vec::new(),
         },
         super::super::pce::PceTasLoadSetup {
@@ -405,6 +413,7 @@ fn finish_prepared_pce_cd_backend(
     progress: &super::super::pce_cd_archive::PceCdPackageProgress,
 ) -> anyhow::Result<LoadedBackend> {
     check_package_cancel(cancel)?;
+    let audio_input = audio_discovery::snapshot(&loaded_disc, source_path)?;
     progress.set_phase(super::super::pce_cd_archive::PceCdPackageLoadPhase::Firmware);
     let console_wiring = pce_cd_console_wiring(config, loaded_disc.content_sha256);
     let system_card = resolve_pce_cd_system_card(
@@ -445,6 +454,7 @@ fn finish_prepared_pce_cd_backend(
         super::systems::log_sram_result(backend.try_load_memory_base128());
     }
     backend.set_firmware_manifests(vec![system_card.manifest]);
+    backend.set_audio_discovery_input(audio_input);
     if let Some((buttons, dpad)) = config.initial_input {
         backend.set_input(buttons, dpad);
     }

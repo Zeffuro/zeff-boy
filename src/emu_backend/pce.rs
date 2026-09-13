@@ -408,6 +408,19 @@ impl PceBackend {
         self.paths.source_path()
     }
 
+    pub(crate) fn audio_discovery_input(
+        &self,
+    ) -> Option<std::sync::Arc<crate::audio_discovery::media::ScanInput>> {
+        self.paths.audio_discovery_input()
+    }
+
+    pub(crate) fn set_audio_discovery_input(
+        &mut self,
+        input: std::sync::Arc<crate::audio_discovery::media::ScanInput>,
+    ) {
+        self.paths.set_audio_discovery_input(input);
+    }
+
     pub(crate) fn debug_cpu_snapshot(&self) -> PceCpuDebugSnapshot {
         self.machine.debug_snapshot()
     }
@@ -581,6 +594,35 @@ impl PceBackend {
 
     pub(crate) fn normalized_disc_hash(&self) -> Option<[u8; 32]> {
         self.cdrom2().map(|cdrom| cdrom.disc().content_hash())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn cdda_input(&self) -> Option<crate::audio_discovery::cdda::CdAudioInput> {
+        let load = self.tas_load_provenance.as_ref()?;
+        let disc = std::sync::Arc::new(self.cdrom2()?.disc().clone());
+        let original_disc_sha256 = load.source_disc_sha256?;
+        let effective_disc_sha256 = load.effective_disc_sha256?;
+        (effective_disc_sha256 == disc.content_hash()).then_some(())?;
+        let effective_disc_len = disc.payload_len()?;
+        let original_disc_len =
+            (original_disc_sha256 == effective_disc_sha256).then_some(effective_disc_len);
+        let source = load.cdda_source?;
+        crate::audio_discovery::cdda::CdAudioInput::new(
+            disc,
+            const_hex::encode(original_disc_sha256),
+            original_disc_len,
+            const_hex::encode(effective_disc_sha256),
+            crate::audio_discovery::cdda::CdAudioProvenance {
+                source_kind: source.cdda_label(),
+                source_media_sha256: const_hex::encode(load.raw_source_media_sha256),
+                source_media_len: load.raw_source_media_len,
+                selected_member_path_sha256: load
+                    .cdda_selected_member_path_sha256
+                    .map(const_hex::encode),
+                transforms_applied: load.any_mod_applied,
+            },
+        )
+        .ok()
     }
 
     pub(crate) fn controller_profile_hash(&self) -> [u8; 32] {
@@ -1119,8 +1161,8 @@ mod tas_state;
 #[path = "pce_tests.rs"]
 mod tests;
 pub(crate) use tas_provenance::{
-    PceTasArchivePpfPatchIdentity, PceTasCdLoadMedia, PceTasLoadProvenance,
-    PceTasLoadProvenanceSeed, PceTasLoadSetup, PceTasPersistentLoadOutcome,
+    PceTasArchivePpfPatchIdentity, PceTasCdArchiveCarrier, PceTasCdLoadMedia, PceTasCdSource,
+    PceTasLoadProvenance, PceTasLoadProvenanceSeed, PceTasLoadSetup, PceTasPersistentLoadOutcome,
     pce_persistent_load_outcome,
 };
 pub(crate) use tas_state::{

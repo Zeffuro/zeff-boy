@@ -1,10 +1,6 @@
 use super::Cpu;
 use crate::hardware::bus::Bus;
 
-const INTR_WAIT_RETURN_INSTRUCTION_CYCLES: [u8; 19] =
-    [3, 1, 2, 3, 1, 1, 2, 2, 3, 1, 4, 3, 4, 1, 1, 3, 1, 5, 3];
-const INTR_WAIT_FLAG_CLEAR_INSTRUCTION: usize = 6;
-
 impl Cpu {
     pub(super) fn execute_software_interrupt(&mut self, bus: &mut Bus, function: u32) {
         let standalone_timing = !self.data_access_timing_active;
@@ -106,41 +102,6 @@ impl Cpu {
         self.swi_wait_mask = 0;
         self.next_fetch_sequential = false;
         self.flush_prefetch_queue();
-    }
-
-    fn swi_intr_wait(&mut self, bus: &mut Bus, discard_old_flags: bool, mask: u16) {
-        let mask = mask & 0x3FFF;
-        if mask == 0 {
-            return;
-        }
-
-        if discard_old_flags {
-            bus.clear_bios_irq_flags(mask);
-        }
-
-        let ready = (bus.bios_irq_flags() | bus.enabled_interrupt_flags()) & mask;
-        if ready != 0 {
-            bus.clear_bios_irq_flags(ready);
-            self.swi_wait_mask = 0;
-            return;
-        }
-
-        bus.enable_master_interrupts();
-        self.swi_wait_return_pc = Some(self.pc());
-        self.swi_wait_mask = mask;
-        self.state = super::CpuState::Halted;
-    }
-
-    pub(super) fn complete_swi_wait(&mut self, bus: &mut Bus) {
-        for (instruction, cycles) in INTR_WAIT_RETURN_INSTRUCTION_CYCLES.into_iter().enumerate() {
-            let cycles = u32::from(cycles);
-            self.cycles = self.cycles.wrapping_add(u64::from(cycles));
-            bus.step_cycles(cycles);
-            if instruction == INTR_WAIT_FLAG_CLEAR_INSTRUCTION {
-                bus.clear_bios_irq_flags(self.swi_wait_mask);
-                self.swi_wait_mask = 0;
-            }
-        }
     }
 
     fn swi_div(&mut self) {

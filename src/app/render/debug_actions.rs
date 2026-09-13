@@ -118,6 +118,13 @@ impl App {
     }
 
     fn apply_local_debug_actions(&mut self, actions: DebugUiActions) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if actions.open_audio_explorer {
+            super::request_native_tool_window(
+                &mut self.show_audio_explorer,
+                &mut self.focus_audio_explorer_pending,
+            );
+        }
         let mut symbol_changed = false;
         for name in &actions.remove_user_symbols {
             match self.symbols.remove_user_symbol(name) {

@@ -42,8 +42,8 @@ pub use cartridge::{
     SUPER_SYSTEM_CARD_RAM_LEN, SUPER_SYSTEM_CARD_RAM_START, SYSTEM_CARD_V1_V2_IMAGE_LEN,
 };
 pub use cd_media::{
-    CD_RAW_SECTOR_BYTES, CD_USER_SECTOR_BYTES, CdDisc, CdDiscError, CdReadError, CdSourceError,
-    CdTrack, CdTrackMode, CdTrackSource,
+    CD_AUDIO_FRAME_BYTES, CD_AUDIO_FRAMES_PER_SECTOR, CD_RAW_SECTOR_BYTES, CD_USER_SECTOR_BYTES,
+    CdDisc, CdDiscError, CdReadError, CdSourceError, CdTrack, CdTrackMode, CdTrackSource,
 };
 pub use cdrom2::{
     CDROM2_ADPCM_RAM_LEN, CDROM2_BRAM_END, CDROM2_BRAM_LEN, CDROM2_BRAM_START, CDROM2_REGISTER_END,

@@ -475,6 +475,56 @@ impl EmuBackend {
         dispatch!(self, rom_hash())
     }
 
+    pub(crate) fn audio_discovery_input(
+        &self,
+    ) -> Option<std::sync::Arc<crate::audio_discovery::media::ScanInput>> {
+        match self {
+            Self::Gb(backend) => backend.audio_discovery_input(),
+            Self::Gba(backend) => Some(std::sync::Arc::new(backend.audio_discovery_input())),
+            Self::Nes(backend) => backend.audio_discovery_input(),
+            Self::Coleco(backend) => backend.audio_discovery_input(),
+            Self::Pce(backend) => backend.audio_discovery_input().or_else(|| {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    backend.cdda_input().map(|input| {
+                        let mut scan = crate::audio_discovery::media::ScanInput::from_disc(
+                            input,
+                            "loaded-effective-cd-v1",
+                        );
+                        scan.display_name = backend
+                            .source_path()
+                            .file_stem()
+                            .and_then(|value| value.to_str())
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_owned);
+                        std::sync::Arc::new(scan)
+                    })
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    None
+                }
+            }),
+            Self::Sega8(backend) => backend.audio_discovery_input(),
+            Self::Ws(backend) => backend.audio_discovery_input(),
+        }
+    }
+
+    pub(crate) fn set_audio_discovery_input(
+        &mut self,
+        input: std::sync::Arc<crate::audio_discovery::media::ScanInput>,
+    ) {
+        match self {
+            Self::Gb(backend) => backend.set_audio_discovery_input(input),
+            Self::Gba(_) => {}
+            Self::Nes(backend) => backend.set_audio_discovery_input(input),
+            Self::Coleco(backend) => backend.set_audio_discovery_input(input),
+            Self::Pce(backend) => backend.set_audio_discovery_input(input),
+            Self::Sega8(backend) => backend.set_audio_discovery_input(input),
+            Self::Ws(backend) => backend.set_audio_discovery_input(input),
+        }
+    }
+
     pub(crate) fn recovery_discriminator(&self) -> String {
         format!(
             "zeff-{}-native-{}",

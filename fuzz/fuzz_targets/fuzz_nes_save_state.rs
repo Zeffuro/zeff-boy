@@ -7,12 +7,8 @@ fuzz_target!(|data: &[u8]| {
     minimal_rom[4] = 1;
     minimal_rom[5] = 0;
 
-    let emu = zeff_nes_core::emulator::Emulator::new(
-        &minimal_rom,
-        48000.0,
-    );
+    let emu = zeff_nes_core::emulator::Emulator::new(&minimal_rom, 48000.0);
     if let Ok(mut emu) = emu {
         let _ = emu.load_state(data);
     }
 });
-

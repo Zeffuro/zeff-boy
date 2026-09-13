@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 pub const CD_USER_SECTOR_BYTES: usize = 2_048;
 pub const CD_RAW_SECTOR_BYTES: usize = 2_352;
+pub const CD_AUDIO_FRAME_BYTES: usize = size_of::<[i16; 2]>();
+pub const CD_AUDIO_FRAMES_PER_SECTOR: usize = CD_RAW_SECTOR_BYTES / CD_AUDIO_FRAME_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CdTrackMode {
@@ -385,6 +387,12 @@ impl CdDisc {
         &self.tracks
     }
 
+    pub fn payload_len(&self) -> Option<usize> {
+        self.tracks
+            .iter()
+            .try_fold(0_usize, |total, track| total.checked_add(track.source_len))
+    }
+
     #[inline]
     pub fn first_track(&self) -> u8 {
         self.tracks[0].number
@@ -430,6 +438,29 @@ impl CdDisc {
         Self::read_audio_sample_from_track(track, lba, sample)
     }
 
+    pub fn read_audio_sector(&self, lba: u32) -> Result<[u8; CD_RAW_SECTOR_BYTES], CdReadError> {
+        let track = self
+            .stored_track_at_lba(lba)
+            .ok_or(CdReadError::LbaOutOfRange(lba))?;
+        if track.mode != CdTrackMode::Audio {
+            return Err(CdReadError::DataTrack {
+                lba,
+                track: track.number,
+            });
+        }
+        let offset = (lba - track.stored_start_lba) as usize * CD_RAW_SECTOR_BYTES;
+        let mut sector = [0; CD_RAW_SECTOR_BYTES];
+        track
+            .source
+            .read_exact_at(offset, &mut sector)
+            .map_err(|source| CdReadError::Source {
+                lba,
+                track: track.number,
+                source,
+            })?;
+        Ok(sector)
+    }
+
     pub(crate) fn read_audio_sector_from_track_index(
         &self,
         track_index: usize,
@@ -467,12 +498,12 @@ impl CdDisc {
                 track: track.number,
             });
         }
-        if sample >= 588 {
+        if sample >= CD_AUDIO_FRAMES_PER_SECTOR {
             return Err(CdReadError::AudioSampleOutOfRange(sample));
         }
         let sector = (lba - track.stored_start_lba) as usize;
-        let offset = sector * CD_RAW_SECTOR_BYTES + sample * 4;
-        let mut frame = [0; 4];
+        let offset = sector * CD_RAW_SECTOR_BYTES + sample * CD_AUDIO_FRAME_BYTES;
+        let mut frame = [0; CD_AUDIO_FRAME_BYTES];
         track
             .source
             .read_exact_at(offset, &mut frame)

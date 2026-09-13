@@ -1,5 +1,6 @@
 use anyhow::{Context, bail};
 use std::cell::RefCell;
+use std::sync::Arc;
 use zeff_emu_common::save_ram::SaveRamKind;
 
 use super::constants::{
@@ -99,7 +100,7 @@ impl RomHeader {
 
 #[derive(Clone, Debug)]
 pub struct Cartridge {
-    rom: Vec<u8>,
+    rom: Arc<[u8]>,
     header: RomHeader,
     backup_kind: BackupKind,
     backup: Vec<u8>,
@@ -116,7 +117,7 @@ impl Cartridge {
         let has_rtc = is_emerald_rtc(&header);
         let has_tilt = is_tilt_game(&header);
         Ok(Self {
-            rom: rom_data.to_vec(),
+            rom: Arc::from(rom_data),
             header,
             backup_kind,
             backup: vec![0xFF; backup_kind.size()],
@@ -133,6 +134,10 @@ impl Cartridge {
 
     pub fn rom(&self) -> &[u8] {
         &self.rom
+    }
+
+    pub fn rom_snapshot(&self) -> Arc<[u8]> {
+        Arc::clone(&self.rom)
     }
 
     pub fn backup_kind(&self) -> BackupKind {

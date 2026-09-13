@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+zeff-audio-discovery = { path = "../crates/zeff-audio-discovery", features = ["fuzzing"] }
 zeff-nes-core = { path = "../crates/zeff-nes-core" }
 zeff-gb-core = { path = "../crates/zeff-gb-core" }
 
@@ -38,5 +39,30 @@ doc = false
 [[bin]]
 name = "fuzz_gb_save_state"
 path = "fuzz_targets/fuzz_gb_save_state.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_audio_gba"
+path = "fuzz_targets/audio_gba.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_audio_tracker"
+path = "fuzz_targets/audio_tracker.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_audio_vgm"
+path = "fuzz_targets/audio_vgm.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_audio_rip"
+path = "fuzz_targets/audio_rip.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_audio_natsume"
+path = "fuzz_targets/audio_natsume.rs"
 doc = false
 

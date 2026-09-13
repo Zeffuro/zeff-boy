@@ -81,6 +81,11 @@ pub(super) fn draw(
         ui.close();
     }
     #[cfg(not(target_arch = "wasm32"))]
+    if ui.button("Audio Explorer").clicked() {
+        actions.push(MenuAction::OpenAudioExplorer);
+        ui.close();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     ui.menu_button("TAS Editor", |ui| {
         if ui.button("Open embedded").clicked() {
             debug_windows.tas_editor.open_embedded();

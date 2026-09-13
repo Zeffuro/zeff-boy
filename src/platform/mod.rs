@@ -21,8 +21,8 @@ mod web_storage;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use atomic_file::{
-    write_file_atomically, write_file_atomically_validated, write_new_file_atomically_validated,
-    write_new_file_atomically_validated_cancellable,
+    write_file_atomically, write_file_atomically_validated, write_new_file_atomically_streamed,
+    write_new_file_atomically_validated, write_new_file_atomically_validated_cancellable,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use managed_firmware::{

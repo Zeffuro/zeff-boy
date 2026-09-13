@@ -56,7 +56,13 @@ pub(crate) fn write_new_file_atomically_validated_cancellable(
             (check_cancelled.borrow_mut())()
         },
         publish_new_file,
-        |_| (check_cancelled.borrow_mut())(),
+        |phase| {
+            if phase == AtomicWritePhase::AfterReplace {
+                Ok(())
+            } else {
+                (check_cancelled.borrow_mut())()
+            }
+        },
     )
 }
 
@@ -64,6 +70,84 @@ fn write_file_atomically_with(
     path: &Path,
     bytes: &[u8],
     validate: impl FnOnce(&mut File) -> Result<()>,
+    replace: impl FnOnce(&File, &Path, &Path) -> std::io::Result<()>,
+    checkpoint: impl FnMut(AtomicWritePhase) -> Result<()>,
+) -> Result<()> {
+    write_file_atomically_produced_with(
+        path,
+        |file, checkpoint| {
+            let midpoint = bytes.len() / 2;
+            file.write_all(&bytes[..midpoint])?;
+            checkpoint(AtomicWritePhase::AfterPartialWrite)?;
+            file.write_all(&bytes[midpoint..])?;
+            Ok(())
+        },
+        validate,
+        |file| validate_file_bytes(file, bytes),
+        replace,
+        checkpoint,
+    )
+}
+
+pub(crate) fn write_new_file_atomically_streamed(
+    path: &Path,
+    produce: impl FnOnce(&mut File) -> Result<()>,
+    mut check_cancelled: impl FnMut() -> Result<()>,
+) -> Result<()> {
+    let expected = RefCell::new(None);
+    let cancellation = RefCell::new(&mut check_cancelled);
+    write_file_atomically_produced_with(
+        path,
+        |file, _| {
+            produce(file)?;
+            *expected.borrow_mut() = Some(file_digest(file, || (cancellation.borrow_mut())())?);
+            Ok(())
+        },
+        |_| Ok(()),
+        |file| {
+            let actual = file_digest(file, || (cancellation.borrow_mut())())?;
+            if expected.borrow().as_ref() != Some(&actual) {
+                bail!("streamed temporary file changed before publication");
+            }
+            Ok(())
+        },
+        publish_new_file,
+        |phase| {
+            if phase == AtomicWritePhase::AfterReplace {
+                Ok(())
+            } else {
+                (cancellation.borrow_mut())()
+            }
+        },
+    )
+}
+
+fn file_digest(
+    file: &mut File,
+    mut check_cancelled: impl FnMut() -> Result<()>,
+) -> Result<(u64, [u8; 32])> {
+    use sha2::{Digest, Sha256};
+    file.rewind()?;
+    let mut digest = Sha256::new();
+    let mut length = 0u64;
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        check_cancelled()?;
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+        length += count as u64;
+    }
+    Ok((length, digest.finalize().into()))
+}
+
+fn write_file_atomically_produced_with(
+    path: &Path,
+    produce: impl FnOnce(&mut File, &mut dyn FnMut(AtomicWritePhase) -> Result<()>) -> Result<()>,
+    validate: impl FnOnce(&mut File) -> Result<()>,
+    verify_unchanged: impl FnOnce(&mut File) -> Result<()>,
     replace: impl FnOnce(&File, &Path, &Path) -> std::io::Result<()>,
     mut checkpoint: impl FnMut(AtomicWritePhase) -> Result<()>,
 ) -> Result<()> {
@@ -79,16 +163,11 @@ fn write_file_atomically_with(
     let mut file = Some(file);
     let result = (|| -> Result<()> {
         checkpoint(AtomicWritePhase::AfterTemp)?;
-        let midpoint = bytes.len() / 2;
-        file.as_mut()
-            .expect("temporary file should remain open")
-            .write_all(&bytes[..midpoint])
-            .with_context(|| format!("failed to write temp file: {}", temp_path.display()))?;
-        checkpoint(AtomicWritePhase::AfterPartialWrite)?;
-        file.as_mut()
-            .expect("temporary file should remain open")
-            .write_all(&bytes[midpoint..])
-            .with_context(|| format!("failed to write temp file: {}", temp_path.display()))?;
+        produce(
+            file.as_mut().expect("temporary file should remain open"),
+            &mut checkpoint,
+        )
+        .with_context(|| format!("failed to write temp file: {}", temp_path.display()))?;
         checkpoint(AtomicWritePhase::AfterWrite)?;
         file.as_ref()
             .expect("temporary file should remain open")
@@ -97,10 +176,7 @@ fn write_file_atomically_with(
         checkpoint(AtomicWritePhase::AfterSync)?;
         validate(file.as_mut().expect("temporary file should remain open"))?;
         checkpoint(AtomicWritePhase::BeforeReplace)?;
-        validate_file_bytes(
-            file.as_mut().expect("temporary file should remain open"),
-            bytes,
-        )?;
+        verify_unchanged(file.as_mut().expect("temporary file should remain open"))?;
         replace(
             file.as_ref().expect("temporary file should remain open"),
             &temp_path,
@@ -769,6 +845,100 @@ mod tests {
             result.unwrap();
             assert_eq!(std::fs::read(&path).unwrap(), b"verified replay");
         }
+    }
+
+    #[test]
+    fn cancellation_after_publication_does_not_report_a_completed_file_as_failed() {
+        let directory = tempfile::tempdir().unwrap();
+        for streamed in [false, true] {
+            let path = directory.path().join(format!("output-{streamed}"));
+            let cancel_after_publication = || {
+                if path.exists() {
+                    bail!("late cancellation");
+                }
+                Ok(())
+            };
+            let result = if streamed {
+                write_new_file_atomically_streamed(
+                    &path,
+                    |file| {
+                        file.write_all(b"published")?;
+                        Ok(())
+                    },
+                    cancel_after_publication,
+                )
+            } else {
+                write_new_file_atomically_validated_cancellable(
+                    &path,
+                    b"published",
+                    |_| Ok(()),
+                    cancel_after_publication,
+                )
+            };
+            result.unwrap();
+            assert_eq!(std::fs::read(path).unwrap(), b"published");
+        }
+        assert_no_staging_files(directory.path());
+    }
+
+    #[test]
+    fn streamed_publication_preserves_existing_files_and_cleans_failed_producers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audio.wav");
+        let failure = write_new_file_atomically_streamed(
+            &path,
+            |file| {
+                file.write_all(b"partial")?;
+                bail!("synthetic encoder failure")
+            },
+            || Ok(()),
+        );
+        assert!(failure.is_err());
+        assert!(!path.exists());
+        assert_no_staging_files(directory.path());
+        write_new_file_atomically_streamed(
+            &path,
+            |file| {
+                file.write_all(b"complete")?;
+                Ok(())
+            },
+            || Ok(()),
+        )
+        .unwrap();
+        assert!(
+            write_new_file_atomically_streamed(
+                &path,
+                |file| {
+                    file.write_all(b"replacement")?;
+                    Ok(())
+                },
+                || Ok(())
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"complete");
+        assert_no_staging_files(directory.path());
+        let cancelled = directory.path().join("cancelled.wav");
+        let cancellation = std::cell::Cell::new(false);
+        assert!(
+            write_new_file_atomically_streamed(
+                &cancelled,
+                |file| {
+                    file.write_all(b"cancelled")?;
+                    cancellation.set(true);
+                    Ok(())
+                },
+                || {
+                    if cancellation.get() {
+                        bail!("cancelled");
+                    }
+                    Ok(())
+                }
+            )
+            .is_err()
+        );
+        assert!(!cancelled.exists());
+        assert_no_staging_files(directory.path());
     }
 
     fn only_temp_path(root: &Path) -> PathBuf {

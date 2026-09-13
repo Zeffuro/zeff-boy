@@ -37,6 +37,8 @@ mod frame_stream;
 mod frame_thumb;
 #[path = "tests/frame_thumb_sp.rs"]
 mod frame_thumb_sp;
+#[path = "tests/intr_wait.rs"]
+mod intr_wait;
 #[path = "tests/irq.rs"]
 mod irq;
 #[path = "tests/phases.rs"]

@@ -40,6 +40,7 @@ pub(crate) struct DebugUiActions {
     pub(crate) trace_capacity: Option<usize>,
     pub(crate) guest_call: Option<crate::emu_thread::GuestCallRequest>,
     pub(crate) undo_guest_call: Option<Vec<u8>>,
+    pub(crate) open_audio_explorer: bool,
 }
 
 impl DebugUiActions {
@@ -77,6 +78,7 @@ impl DebugUiActions {
             trace_capacity: None,
             guest_call: None,
             undo_guest_call: None,
+            open_audio_explorer: false,
         }
     }
 

@@ -1,4 +1,5 @@
 mod apu_viewer;
+mod audio_discovery;
 mod barcode_boy;
 mod breakpoints_window;
 mod call_stack;
@@ -49,6 +50,7 @@ pub(crate) mod types;
 mod ui;
 pub(crate) mod ui_helpers;
 
+pub(crate) use audio_discovery::{AudioDiscoveryState, draw_audio_explorer};
 pub(crate) use barcode_boy::draw_scan_window as draw_barcode_boy_scan_window;
 pub(crate) use cheats_window::draw_cheats_content;
 pub(crate) use console::{ConsoleReadSpace, DebugConsoleState};

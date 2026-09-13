@@ -74,6 +74,15 @@ fn shared_backend_loader_initializes_fds_with_resolved_bios() {
 
     assert_eq!(loaded.backend.system(), ActiveSystem::Nes);
     assert_eq!(loaded.backend.rom_path(), rom_path);
+    let input = loaded
+        .backend
+        .audio_discovery_input()
+        .expect("loaded FDS media should be available to Audio Explorer");
+    assert_eq!(input.system, Some(zeff_emu_common::system::System::Nes));
+    assert_eq!(&*input.bytes, fds_image);
+    let source = &input.provenance.as_ref().unwrap().source;
+    assert_eq!(source.kind, "preloaded_cartridge_bytes");
+    assert_eq!(source.sha256, zeff_firmware::sha256_hex(&input.bytes));
     assert_eq!(loaded.original_crc32, crc32fast::hash(&fds_image));
     assert_eq!(
         loaded.backend.save_ram_kind(),

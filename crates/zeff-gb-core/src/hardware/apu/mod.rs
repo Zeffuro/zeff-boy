@@ -1,6 +1,9 @@
 mod frame_seq;
 mod mixing;
 mod noise;
+mod output;
+#[cfg(test)]
+mod output_tests;
 mod runtime;
 mod square;
 mod state;
@@ -130,7 +133,9 @@ pub struct Apu {
     ch4_countdown_reloaded: bool,
     pub sample_rate: u32,
     sample_buffer: Vec<f32>,
-    sample_cycle_accum: f64,
+    output: output::StereoOutput,
+    output_active: bool,
+    output_dirty: bool,
     cgb_hardware: bool,
     cgb_double_speed: bool,
     pub debug_capture_enabled: bool,
@@ -193,7 +198,11 @@ impl Apu {
             ch4_countdown_reloaded: false,
             sample_rate: crate::hardware::types::constants::GB_DEFAULT_HOST_SAMPLE_RATE_HZ,
             sample_buffer: Vec::with_capacity(APU_INITIAL_SAMPLE_CAPACITY),
-            sample_cycle_accum: 0.0,
+            output: output::StereoOutput::new(
+                crate::hardware::types::constants::GB_DEFAULT_HOST_SAMPLE_RATE_HZ,
+            ),
+            output_active: false,
+            output_dirty: true,
             cgb_hardware: false,
             cgb_double_speed: false,
             debug_capture_enabled: false,

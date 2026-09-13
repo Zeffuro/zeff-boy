@@ -8,6 +8,7 @@ pub(crate) enum DebugTab {
     HardwareIo,
     InputViewer,
     ApuViewer,
+    AudioDiscovery,
     RomInfo,
     Disassembler,
     MemoryViewer,
@@ -28,7 +29,7 @@ pub(crate) enum DebugTab {
     Console,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct TabDataRequirements {
     pub(crate) needs_debug_info: bool,
     pub(crate) needs_perf_info: bool,
@@ -62,7 +63,7 @@ impl TabDataRequirements {
 impl DebugTab {
     pub(crate) fn requirements(self) -> TabDataRequirements {
         match self {
-            DebugTab::GameView => TabDataRequirements::default(),
+            DebugTab::GameView | DebugTab::AudioDiscovery => TabDataRequirements::default(),
             DebugTab::CpuDebug => TabDataRequirements {
                 needs_debug_info: true,
                 ..Default::default()
@@ -175,6 +176,11 @@ const TAB_META: &[(DebugTab, &str, &str)] = &[
     (DebugTab::HardwareIo, "Hardware / I/O", "HardwareIo"),
     (DebugTab::InputViewer, "Input", "InputViewer"),
     (DebugTab::ApuViewer, "APU / Sound", "ApuViewer"),
+    (
+        DebugTab::AudioDiscovery,
+        "Audio Discovery",
+        "AudioDiscovery",
+    ),
     (DebugTab::RomInfo, "ROM Info", "RomInfo"),
     (DebugTab::Disassembler, "Disassembler", "Disassembler"),
     (DebugTab::MemoryViewer, "Memory Viewer", "MemoryViewer"),
@@ -270,6 +276,14 @@ mod tests {
         assert!(reqs.needs_debug_info);
         assert!(!reqs.needs_apu);
         assert!(!reqs.needs_viewer_data);
+    }
+
+    #[test]
+    fn audio_explorer_legacy_tab_needs_no_live_debug_snapshot() {
+        assert_eq!(
+            DebugTab::AudioDiscovery.requirements(),
+            TabDataRequirements::default()
+        );
     }
 
     #[test]

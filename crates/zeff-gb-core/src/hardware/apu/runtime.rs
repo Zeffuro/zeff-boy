@@ -7,12 +7,19 @@ use crate::hardware::types::constants::*;
 impl Apu {
     #[inline]
     pub fn step(&mut self, t_cycles: u64) {
+        if (!self.apu_enabled || !self.sample_generation_enabled) && self.output_active {
+            self.reset_output();
+        }
         if !self.apu_enabled {
             return;
         }
 
         let powered = self.powered();
+        if powered && self.sample_generation_enabled {
+            self.prepare_output();
+        }
         self.advance_channel_timer_clocks(t_cycles, powered);
+        let sweep_was_enabled = self.channels[0].enabled;
         self.clock_delayed_sweep_disable(t_cycles);
         self.clock_sweep_trigger_visibility_delay(t_cycles);
         if !powered {
@@ -23,6 +30,9 @@ impl Apu {
             self.capture_debug_samples(t_cycles);
         }
         if self.sample_generation_enabled {
+            if sweep_was_enabled != self.channels[0].enabled {
+                self.capture_output_channel(0, t_cycles);
+            }
             self.generate_samples(t_cycles);
         }
 
@@ -30,6 +40,7 @@ impl Apu {
     }
 
     pub(in crate::hardware) fn clock_div_apu(&mut self) {
+        self.output_dirty = true;
         if !self.apu_enabled || !self.powered() {
             return;
         }
@@ -76,7 +87,25 @@ impl Apu {
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
-        self.sample_rate = sample_rate.max(8_000);
+        let sample_rate = sample_rate.max(8_000);
+        if sample_rate != self.sample_rate {
+            self.sample_rate = sample_rate;
+            self.reset_output();
+        }
+    }
+
+    pub fn set_sample_generation_enabled(&mut self, enabled: bool) {
+        if self.sample_generation_enabled != enabled {
+            self.sample_generation_enabled = enabled;
+            self.reset_output();
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        if self.apu_enabled != enabled {
+            self.apu_enabled = enabled;
+            self.reset_output();
+        }
     }
 
     pub fn set_cgb_hardware(&mut self, enabled: bool) {
@@ -88,12 +117,14 @@ impl Apu {
     }
 
     pub fn drain_samples(&mut self) -> Vec<f32> {
+        self.output.flush(&mut self.sample_buffer);
         let mut drained = Vec::with_capacity(self.sample_buffer.capacity());
         std::mem::swap(&mut drained, &mut self.sample_buffer);
         drained
     }
 
     pub fn drain_samples_into(&mut self, target: &mut Vec<f32>) {
+        self.output.flush(&mut self.sample_buffer);
         target.clear();
         target.extend_from_slice(&self.sample_buffer);
         self.sample_buffer.clear();
@@ -135,6 +166,7 @@ impl Apu {
     }
 
     pub fn write(&mut self, addr: u16, value: u8) {
+        self.output_dirty = true;
         if addr == NR52 {
             if value & 0x80 == 0 {
                 let length_counters = (!self.cgb_hardware)
@@ -168,8 +200,7 @@ impl Apu {
                 self.ch2_current_duty = 0;
                 self.ch3_wave_pos = 0;
                 self.ch4_lfsr = 0x7FFF;
-                self.sample_cycle_accum = 0.0;
-                self.sample_buffer.clear();
+                self.reset_output();
                 self.debug_capture_cycle_accum = 0;
 
                 for history in &mut self.channel_debug_history {
@@ -298,6 +329,7 @@ impl Apu {
     }
 
     pub fn set_channel_mutes(&mut self, mutes: [bool; 4]) {
+        self.output_dirty |= self.channel_muted != mutes;
         self.channel_muted = mutes;
     }
 
@@ -319,8 +351,19 @@ impl Apu {
         while self.pulse_noise_cycle_accum >= 4 {
             self.pulse_noise_cycle_accum -= 4;
             if powered {
+                let ch1_may_change = self.ch1_timer <= 4 || self.ch1_output_delay != 0;
+                let ch2_may_change = self.ch2_timer <= 4 || self.ch2_output_delay != 0;
                 self.advance_square_channel(0, 4);
                 self.advance_square_channel(1, 4);
+                if self.sample_generation_enabled {
+                    let clock = t_cycles - self.pulse_noise_cycle_accum;
+                    if ch1_may_change && self.channels[0].enabled {
+                        self.capture_output_channel(0, clock);
+                    }
+                    if ch2_may_change && self.channels[1].enabled {
+                        self.capture_output_channel(1, clock);
+                    }
+                }
             }
         }
 
@@ -332,7 +375,11 @@ impl Apu {
         while self.wave_cycle_accum >= 2 {
             self.wave_cycle_accum -= 2;
             if powered {
+                let may_change = self.ch3_timer <= 2 || self.ch3_output_delay != 0;
                 self.advance_wave_channel(2);
+                if may_change && self.sample_generation_enabled && self.channels[2].enabled {
+                    self.capture_output_channel(2, t_cycles - self.wave_cycle_accum);
+                }
             }
         }
     }

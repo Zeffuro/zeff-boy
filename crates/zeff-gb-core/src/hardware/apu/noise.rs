@@ -137,7 +137,14 @@ impl Apu {
         while self.noise_cycle_accum >= 2 {
             self.noise_cycle_accum -= 2;
             self.ch4_alignment = self.ch4_alignment.wrapping_add(1);
+            let old_output = self.ch4_lfsr & 1;
             self.advance_noise_channel_2mhz(1);
+            if old_output != self.ch4_lfsr & 1
+                && self.sample_generation_enabled
+                && self.channels[3].enabled
+            {
+                self.capture_output_channel(3, t_cycles - self.noise_cycle_accum);
+            }
         }
     }
 

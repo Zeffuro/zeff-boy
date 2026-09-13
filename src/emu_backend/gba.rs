@@ -173,6 +173,8 @@ pub(crate) struct GbaBackend {
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
     tas_load_provenance: Option<GbaTasLoadProvenance>,
+    audio_discovery_provenance:
+        Option<std::sync::Arc<crate::audio_discovery::media::ScanProvenance>>,
 }
 
 impl GbaBackend {
@@ -293,6 +295,7 @@ impl GbaBackend {
             paths: BackendPaths::new(rom_path),
             sram_recovery,
             tas_load_provenance: None,
+            audio_discovery_provenance: None,
         }
     }
 
@@ -309,6 +312,7 @@ impl GbaBackend {
             paths: BackendPaths::with_source_path(rom_path, source_path),
             sram_recovery,
             tas_load_provenance: None,
+            audio_discovery_provenance: None,
         }
     }
 
@@ -325,6 +329,33 @@ impl GbaBackend {
             paths: BackendPaths::with_source_path(rom_path, source_path),
             sram_recovery,
             tas_load_provenance: Some(provenance),
+            audio_discovery_provenance: None,
+        }
+    }
+
+    pub(crate) fn set_audio_discovery_provenance(
+        &mut self,
+        provenance: crate::audio_discovery::media::ScanProvenance,
+    ) {
+        self.audio_discovery_provenance = Some(std::sync::Arc::new(provenance));
+    }
+
+    pub(crate) fn audio_discovery_input(&self) -> crate::audio_discovery::media::ScanInput {
+        crate::audio_discovery::media::ScanInput {
+            #[cfg(not(target_arch = "wasm32"))]
+            cdda: None,
+            system: Some(zeff_emu_common::system::System::Gba),
+            standalone_audio: None,
+            bytes: self.emu.cartridge_rom_snapshot(),
+            provenance: self.audio_discovery_provenance.clone(),
+            analysis_profile: "loaded-effective-rom-v1",
+            display_name: self
+                .paths
+                .source_path()
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
         }
     }
 
