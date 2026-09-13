@@ -19,13 +19,18 @@ fn sega_selector_graph_and_mapped_export_preserve_bank_addresses() -> Result<()>
     assert!(!selected.supports(SongFormat::Midi));
     for format in [AudioFormat::Wav, AudioFormat::Flac, AudioFormat::Ogg] {
         assert!(selected.supports(SongFormat::Audio(format)));
-        SongExportRequest::prepare(
+        let request = SongExportRequest::prepare(
             &input,
             &manifest,
             id,
             SongFormat::Audio(format),
             Default::default(),
-        )?;
+        );
+        if format == AudioFormat::Ogg && !cfg!(feature = "audio-recording") {
+            assert!(request.is_err());
+        } else {
+            request?;
+        }
     }
     assert_eq!(manifest.scan.song_at_offset(0x8100)?, id);
     assert_eq!(selected.span().unwrap().canonical_cpu_address, Some(0x4100));

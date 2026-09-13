@@ -292,7 +292,7 @@ impl EmuLoop {
             .ok_or(TasRepairSuspendRejectedReason::FramebufferUnavailable)?;
         Ok(TasRepairSuspensionProof {
             identity,
-            state_sha256: TasDigest::from_bytes(&state_bytes),
+            state_sha256: super::tas_control::tas_state_digest(identity.profile, &state_bytes),
             frame_count,
             framebuffer_sha256: TasDigest::from_bytes(framebuffer.as_slice()),
             framebuffer_len: framebuffer.len(),

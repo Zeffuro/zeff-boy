@@ -495,8 +495,10 @@ fn gb_rtc_restore_resumes_exact_timer_only_and_ram_plus_rtc_worker() {
         ("gb-rtc-restore-cgb-ram", CGB_RAM_DIRECT),
     ] {
         let case = rtc_case(label, spec);
-        let expected_state = case.backend.encode_state_bytes().unwrap();
+        let mut expected_state = case.backend.encode_state_bytes().unwrap();
+        zeff_gb_core::save_state::canonicalize_bess_rtc_timestamp(&mut expected_state);
         let before = std::fs::read(&case.save_path).ok();
+        wait_for_next_capture_second();
         let suspended =
             match EmuThread::spawn(case.backend, false).suspend_for_tas_repair(case.identity) {
                 Ok(suspended) => suspended,
@@ -506,11 +508,14 @@ fn gb_rtc_restore_resumes_exact_timer_only_and_ram_plus_rtc_worker() {
             suspended.proof().state_sha256,
             TasDigest::from_bytes(&expected_state)
         );
+        wait_for_next_capture_second();
         let worker = suspended.resume().unwrap();
+        wait_for_next_capture_second();
         assert!(worker.send_checked(EmuCommand::CaptureStateBytes));
-        let EmuResponse::StateCaptured(state) = worker.recv_checked().unwrap() else {
+        let EmuResponse::StateCaptured(mut state) = worker.recv_checked().unwrap() else {
             panic!("restored RTC worker should capture state");
         };
+        zeff_gb_core::save_state::canonicalize_bess_rtc_timestamp(&mut state);
         assert_eq!(state, expected_state);
         assert_eq!(std::fs::read(&case.save_path).ok(), before);
     }

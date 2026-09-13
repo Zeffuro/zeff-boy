@@ -51,7 +51,7 @@ pub(super) struct TasRestoredCheckpoint {
     pub(super) frame_count: u64,
 }
 
-fn tas_state_digest(profile: TasExecutionProfile, state: &[u8]) -> TasDigest {
+pub(super) fn tas_state_digest(profile: TasExecutionProfile, state: &[u8]) -> TasDigest {
     if !matches!(
         profile,
         TasExecutionProfile::DirectGbCartridgeDmg | TasExecutionProfile::DirectGbCartridgeCgb

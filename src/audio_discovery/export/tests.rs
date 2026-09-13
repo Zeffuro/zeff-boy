@@ -413,13 +413,18 @@ fn native_selections_preserve_raw_selectors_and_mapped_sources() -> Result<()> {
         assert_eq!(song.supports(SongFormat::Midi), engine == "descriptor_midi");
         for format in [AudioFormat::Wav, AudioFormat::Flac, AudioFormat::Ogg] {
             assert!(song.supports(SongFormat::Audio(format)));
-            SongExportRequest::prepare(
+            let request = SongExportRequest::prepare(
                 &input,
                 &manifest,
                 id,
                 SongFormat::Audio(format),
                 Default::default(),
-            )?;
+            );
+            if format == AudioFormat::Ogg && !cfg!(feature = "audio-recording") {
+                assert!(request.is_err());
+            } else {
+                request?;
+            }
         }
         PreviewRequest::prepare_song(&input, &manifest, id, Default::default())?;
         let graph = manifest
