@@ -30,6 +30,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.4.1" date="2026-09-22">
+      <description>
+        <p>Adds a Windows installer and application icon, NSFe import and export, and package publishing fixes.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-09-22">
       <description>
         <p>Adds more audio drivers, ROM music discovery, preview and export.</p>

@@ -61,10 +61,10 @@ pub fn rip(data: &[u8]) {
     let Some((control, source)) = input(data) else {
         return;
     };
-    let format = if control & 1 == 0 {
-        RipFormat::Gbs
-    } else {
-        RipFormat::Nsf
+    let format = match control % 3 {
+        0 => RipFormat::Gbs,
+        1 => RipFormat::Nsf,
+        _ => RipFormat::Nsfe,
     };
     check(
         &super::rips::scan(source, format, limits(control), &cancel(control)),
@@ -388,6 +388,24 @@ fn check(report: &ScanReport, bytes: &[u8]) {
         rip.opaque_metadata
             .into_iter()
             .for_each(|span| source_span(span.into(), bytes.len()));
+        if let super::rips::RipDetails::Nsfe {
+            chunks,
+            info_header,
+            data_header,
+            bank_payload,
+            ..
+        } = &rip.details
+        {
+            source_span((*info_header).into(), bytes.len());
+            source_span((*data_header).into(), bytes.len());
+            bank_payload
+                .iter()
+                .for_each(|span| source_span((*span).into(), bytes.len()));
+            for chunk in chunks {
+                source_span(chunk.header.into(), bytes.len());
+                source_span(chunk.payload.into(), bytes.len());
+            }
+        }
     }
 }
 

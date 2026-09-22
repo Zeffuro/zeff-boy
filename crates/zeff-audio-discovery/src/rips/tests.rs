@@ -395,6 +395,7 @@ fn scan_distinguishes_unsupported_malformed_and_incomplete_inputs() {
         let (header_len, version_at, songs_at, address_at) = match format {
             RipFormat::Gbs => (0x70, 3, 4, 6),
             RipFormat::Nsf => (0x80, 5, 6, 8),
+            RipFormat::Nsfe => unreachable!("fixed-header cases only"),
         };
         let mut wrong_signature = bytes.clone();
         wrong_signature[0] ^= 0xff;

@@ -92,6 +92,11 @@ pub enum CoverageStop {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoverageMalformed {
+    TruncatedChunk,
+    InvalidChunkSize,
+    InvalidChunkOrder,
+    MissingRequiredChunk,
+    DuplicateChunk,
     TruncatedHeader,
     EmptyProgram,
     InvalidSongCount,
@@ -370,6 +375,11 @@ impl From<ScanStop> for CoverageStop {
 impl From<MalformedInput> for CoverageMalformed {
     fn from(malformed: MalformedInput) -> Self {
         match malformed {
+            MalformedInput::TruncatedChunk => Self::TruncatedChunk,
+            MalformedInput::InvalidChunkSize => Self::InvalidChunkSize,
+            MalformedInput::InvalidChunkOrder => Self::InvalidChunkOrder,
+            MalformedInput::MissingRequiredChunk => Self::MissingRequiredChunk,
+            MalformedInput::DuplicateChunk => Self::DuplicateChunk,
             MalformedInput::TruncatedHeader => Self::TruncatedHeader,
             MalformedInput::EmptyProgram => Self::EmptyProgram,
             MalformedInput::InvalidSongCount => Self::InvalidSongCount,

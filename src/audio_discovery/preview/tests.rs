@@ -236,7 +236,10 @@ fn consumed_pcm(
         }
         assert!(
             Instant::now() < deadline,
-            "callback did not consume requested audio"
+            "callback consumed {} of {} samples: {:?}",
+            pcm.len(),
+            frames * 2,
+            player.snapshot()
         );
     }
     pcm

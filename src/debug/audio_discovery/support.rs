@@ -30,7 +30,7 @@ pub(super) fn draw(context: &egui::Context, open: &mut bool) {
                     });
                 ui.separator();
                 ui.label("All cartridge systems: embedded XM, MOD, S3M and IT detection and original-file export. This does not cover their native sound drivers.");
-                ui.label("Open audio file: XM, MOD, S3M, IT, VGM/VGZ, GBS v1 and NSF v1 inspection and preservation. Independent playback is not available for these files yet.");
+                ui.label("Open audio file: XM, MOD, S3M, IT, VGM/VGZ, GBS v1, NSF v1 and NSFe inspection and preservation. Independent playback is not available for these files yet.");
                 ui.small("MP2k preview is an approximate synth. Custom synthesis and runtime-dependent voices can differ from game playback. Available exports are checked for each selected song.");
                 ui.small("FDS native discovery, PC Engine PSG/ADPCM discovery, and unlisted driver variants remain unsupported.");
             });

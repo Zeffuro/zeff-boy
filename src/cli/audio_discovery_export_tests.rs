@@ -72,6 +72,7 @@ fn standalone_exports_share_the_loaded_media_pipeline_and_never_replace_files() 
                         | SongFormat::Vgz
                         | SongFormat::Gbs
                         | SongFormat::Nsf
+                        | SongFormat::Nsfe
                         | SongFormat::Sgc
                         | SongFormat::TrackerPack
                 )
@@ -97,6 +98,7 @@ fn standalone_exports_share_the_loaded_media_pipeline_and_never_replace_files() 
             | SongFormat::Vgz
             | SongFormat::Gbs
             | SongFormat::Nsf
+            | SongFormat::Nsfe
             | SongFormat::Sgc
             | SongFormat::TrackerPack
             | SongFormat::Gsf

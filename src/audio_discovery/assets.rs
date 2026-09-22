@@ -261,6 +261,7 @@ impl AudioExportRequest {
                     | SongFormat::Vgm
                     | SongFormat::Gbs
                     | SongFormat::Nsf
+                    | SongFormat::Nsfe
                     | SongFormat::Sgc
                     | SongFormat::Vgz
                     | SongFormat::Gsf

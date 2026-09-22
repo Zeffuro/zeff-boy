@@ -15,16 +15,19 @@ pub fn scan(
     let descriptors = match format {
         RipFormat::Gbs => detectors::GBS,
         RipFormat::Nsf => detectors::NSF,
+        RipFormat::Nsfe => detectors::NSFE,
     };
     let mut report = ScanReport::new(
         format.detector_id(),
-        2,
+        if format == RipFormat::Nsfe { 1 } else { 2 },
         descriptors,
         &[
-            "Imported GBS v1 and NSF v1 files are structurally inspected and preserved. No guest initialization or playback is performed.",
+            "Imported GBS v1, NSF v1 and NSFe files are structurally inspected and preserved. No guest initialization or playback is performed.",
             "One catalog entry represents the entire rip, with its declared song count and starting song. Header declarations do not identify a native ROM driver or establish individual song data spans.",
-            "Initial CPU mappings describe file-backed entry addresses only; bank changes, executable validity, synthesis and runtime behavior are unverified.",
-            "Raw timer, region, expansion and reserved fields are retained with explicit limitations. NSF2, NSFe and other rip formats are unsupported.",
+            "GBS and NSF initial CPU mappings describe file-backed entry addresses only; bank changes, executable validity, synthesis and runtime behavior are unverified.",
+            "NSFe preserves ordered chunk spans and raw INFO/RATE/BANK declarations. NSF2, VRC7 and unknown critical NSFe chunks are unsupported; optional chunks are not interpreted.",
+            "This NSFe subset requires nonempty DATA, at most one BANK and one RATE, RATE widths of 2, 4 or 6 bytes with nonzero periods, and an empty final NEND.",
+            "NSFe normalized starting-song numbering is one-based. Its init/play source mappings, region overrides, mapper changes and effective timing are not inferred from chunk declarations.",
             "Work units count header-validation steps; bounded source hashing is a separate pass.",
         ],
         MediaIdentity {

@@ -93,18 +93,31 @@ jobs:
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
           cp ../../../LICENSE-MIT .
           cp ../../../LICENSE-APACHE .
           cp ../../../THIRD_PARTY_NOTICES.md .
           7z a ../../../zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.zip ${{ matrix.artifact }} LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          choco upgrade innosetup --version=6.7.1 --allow-downgrade --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $releaseDir = (Get-Location).Path
+          $outputDir = (Resolve-Path ../../..).Path
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            "/DMyAppVersion=$version" `
+            "/DMySourceDir=$releaseDir" `
+            "/DMyOutputDir=$outputDir" `
+            ../../../packaging/windows/zeff-boy.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: zeff-boy-${{ matrix.target }}
-          path: zeff-boy-${{ github.ref_name }}-${{ matrix.target }}.*
+          path: zeff-boy-${{ github.ref_name }}-${{ matrix.target }}*
 
   libretro:
     name: Libretro Core (${{ matrix.target }})
@@ -525,6 +538,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Submit updated manifest
         shell: pwsh

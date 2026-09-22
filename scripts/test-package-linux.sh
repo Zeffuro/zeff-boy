@@ -60,9 +60,9 @@ check_packages() {
 }
 
 check_packages \
-  v0.4.0 \
-  zeff-boy_0.4.0_amd64.deb \
-  zeff-boy-0.4.0-1.x86_64.rpm
+  v0.4.1 \
+  zeff-boy_0.4.1_amd64.deb \
+  zeff-boy-0.4.1-1.x86_64.rpm
 check_packages \
   v0.0.0-test.1 \
   zeff-boy_0.0.0-test.1_amd64.deb \
@@ -71,6 +71,6 @@ check_packages \
 if [[ -n "$RPM_OUTPUT_DIR" ]]; then
   mkdir -p "$RPM_OUTPUT_DIR"
   install -m644 \
-    "$WORK_DIR/packages-0.4.0/zeff-boy-0.4.0-1.x86_64.rpm" \
-    "$RPM_OUTPUT_DIR/zeff-boy-0.4.0-1.x86_64.rpm"
+    "$WORK_DIR/packages-0.4.1/zeff-boy-0.4.1-1.x86_64.rpm" \
+    "$RPM_OUTPUT_DIR/zeff-boy-0.4.1-1.x86_64.rpm"
 fi

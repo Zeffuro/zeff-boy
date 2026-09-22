@@ -22,6 +22,14 @@ fn native_rip_cli_routes_original_drivers_and_never_replaces_outputs() -> anyhow
             "nsf",
         ),
         (
+            zeff_audio_discovery::nes_native::fixture_rom(),
+            System::Nes,
+            "nes",
+            "nes_native",
+            SongId::NesNative(0),
+            "nsfe",
+        ),
+        (
             zeff_audio_discovery::sega_psg::fixture_rom(),
             System::Sms,
             "sms",
@@ -56,8 +64,16 @@ fn native_rip_cli_routes_original_drivers_and_never_replaces_outputs() -> anyhow
         assert!(run_request(&request)?);
         let report =
             zeff_audio_discovery::scan(system, &bytes, Default::default(), &AtomicBool::new(false));
-        let expected =
-            native_rips::encode(&bytes, report.song(id).unwrap(), &AtomicBool::new(false))?;
+        let expected = if format == "nsfe" {
+            native_rips::encode_as(
+                &bytes,
+                report.song(id).unwrap(),
+                native_rips::NativeRipFormat::Nsfe,
+                &AtomicBool::new(false),
+            )?
+        } else {
+            native_rips::encode(&bytes, report.song(id).unwrap(), &AtomicBool::new(false))?
+        };
         assert_eq!(std::fs::read(&output)?, expected.bytes);
         assert!(run_request(&request).is_err());
         assert_eq!(std::fs::read(&output)?, expected.bytes);

@@ -461,6 +461,11 @@ fn stop_text(reason: ScanStop) -> &'static str {
 
 fn malformed_text(reason: MalformedInput) -> &'static str {
     match reason {
+        MalformedInput::TruncatedChunk => "chunk extends beyond the file",
+        MalformedInput::InvalidChunkSize => "invalid chunk size",
+        MalformedInput::InvalidChunkOrder => "invalid chunk order",
+        MalformedInput::MissingRequiredChunk => "required chunk is missing",
+        MalformedInput::DuplicateChunk => "duplicate required chunk",
         MalformedInput::TruncatedHeader => "truncated header",
         MalformedInput::EmptyProgram => "missing program data",
         MalformedInput::InvalidSongCount => "invalid song count",

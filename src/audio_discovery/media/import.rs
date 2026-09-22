@@ -28,6 +28,9 @@ pub(crate) fn audio_format(path: &Path) -> Option<StandaloneFormat> {
                 "nsf" => Some(StandaloneFormat::Rip(
                     crate::audio_discovery::rips::RipFormat::Nsf,
                 )),
+                "nsfe" => Some(StandaloneFormat::Rip(
+                    crate::audio_discovery::rips::RipFormat::Nsfe,
+                )),
                 _ => None,
             },
         )
@@ -35,7 +38,7 @@ pub(crate) fn audio_format(path: &Path) -> Option<StandaloneFormat> {
 
 pub(crate) fn load_audio(path: &Path) -> Result<ScanInput> {
     let format = audio_format(path)
-        .context("select an XM, MOD, S3M, IT, VGM, VGZ, GBS or NSF audio file")?;
+        .context("select an XM, MOD, S3M, IT, VGM, VGZ, GBS, NSF or NSFe audio file")?;
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("failed to inspect audio file {}", path.display()))?;
     ensure!(metadata.is_file(), "audio input must be a regular file");
@@ -66,6 +69,9 @@ pub(crate) fn load_audio(path: &Path) -> Result<ScanInput> {
             }
             StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Nsf) => {
                 "direct_nsf_file"
+            }
+            StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Nsfe) => {
+                "direct_nsfe_file"
             }
         },
         sha256: zeff_firmware::sha256_hex(&bytes),

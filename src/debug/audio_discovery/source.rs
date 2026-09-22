@@ -42,7 +42,7 @@ pub(super) fn draw(ui: &mut egui::Ui, state: &mut AudioDiscoveryState) {
                 .set_title("Open Audio File")
                 .add_filter("Tracker modules", &["xm", "mod", "s3m", "it"])
                 .add_filter("VGM register logs", &["vgm", "vgz"])
-                .add_filter("GBS and NSF music rips", &["gbs", "nsf"])
+                .add_filter("GBS, NSF and NSFe music rips", &["gbs", "nsf", "nsfe"])
                 .pick_file()
             && let Err(error) = state.open_audio_file(&path)
         {
@@ -219,7 +219,7 @@ mod tests {
             catalog::SongId, rips::RipFormat, test_support::rips::fixture,
         };
         let directory = tempfile::tempdir()?;
-        for format in [RipFormat::Gbs, RipFormat::Nsf] {
+        for format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
             let bytes = fixture(format);
             let path = directory
                 .path()

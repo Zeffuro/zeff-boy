@@ -18,6 +18,9 @@ use super::{
     media::{ScanInput, ScanManifest},
 };
 
+#[cfg(test)]
+mod tests;
+
 enum Selection {
     GbNative(Box<zeff_audio_discovery::gb_native::GbNativeSong>),
     Nes(Box<zeff_audio_discovery::nes_native::NesNativeSong>),
@@ -38,6 +41,7 @@ pub(crate) struct NativeRipRequest {
     bytes: Arc<[u8]>,
     sha256: String,
     selection: Selection,
+    format: native_rips::NativeRipFormat,
 }
 
 impl NativeRipRequest {
@@ -51,10 +55,15 @@ impl NativeRipRequest {
             .scan
             .song(id)
             .context("select a song before exporting")?;
-        let native =
-            native_rips::supported_format(song).context("selection has no native music rip")?;
+        let native = match format {
+            SongFormat::Gbs => native_rips::NativeRipFormat::Gbs,
+            SongFormat::Nsf => native_rips::NativeRipFormat::Nsf,
+            SongFormat::Nsfe => native_rips::NativeRipFormat::Nsfe,
+            SongFormat::Sgc => native_rips::NativeRipFormat::Sgc,
+            _ => anyhow::bail!("selection has no native music rip in this format"),
+        };
         ensure!(
-            native.extension() == format.info().extension,
+            native_rips::supports_format(song, native),
             "native music rip format does not match selection"
         );
         ExtractionRequest::prepare(
@@ -78,6 +87,7 @@ impl NativeRipRequest {
                 .clone()
                 .context("scan has no identity")?,
             selection,
+            format: native,
         })
     }
 
@@ -91,7 +101,8 @@ impl NativeRipRequest {
             zeff_firmware::sha256_hex(&self.bytes) == self.sha256,
             "native music rip source identity changed"
         );
-        let rip = native_rips::encode(&self.bytes, self.selection.as_ref(), cancel)?;
+        let rip =
+            native_rips::encode_as(&self.bytes, self.selection.as_ref(), self.format, cancel)?;
         super::assets::publish_bytes(path, &rip.bytes, cancel, progress)
     }
 }

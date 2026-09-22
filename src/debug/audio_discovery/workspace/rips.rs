@@ -1,8 +1,11 @@
 use super::{AudioWorkspace, span_button};
-use crate::audio_discovery::rips::{MusicRip, RipDetails};
+use crate::audio_discovery::rips::{MusicRip, RipDetails, RipFormat};
 
 pub(super) fn draw(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, rip: &MusicRip) {
-    ui.label(format!("{} · version {}", rip.format.label(), rip.version));
+    ui.label(match rip.version {
+        Some(version) => format!("{} · version {version}", rip.format.label()),
+        None => rip.format.label().to_owned(),
+    });
     ui.small(format!(
         "{} declared songs · first song {}",
         rip.song_count, rip.first_song
@@ -29,7 +32,12 @@ pub(super) fn draw(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, rip: &Musi
             "{label}: CPU {:04X} · {}",
             entry.cpu_address,
             entry.initial_source_offset.map_or_else(
-                || "no initial file mapping".to_owned(),
+                || if rip.format == RipFormat::Nsfe {
+                    "initial file mapping not resolved"
+                } else {
+                    "no initial file mapping"
+                }
+                .to_owned(),
                 |offset| format!("initial file +{offset:06X}")
             )
         ));
@@ -83,6 +91,22 @@ pub(super) fn draw(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, rip: &Musi
             if let Some(count) = bank_count {
                 ui.small(format!("{count} logical 4 KiB banks"));
             }
+        }
+        RipDetails::Nsfe { chunks, .. } => {
+            ui.small(format!("{} preserved chunks", chunks.len()));
+            egui::CollapsingHeader::new("Chunks").show(ui, |ui| {
+                for (index, chunk) in chunks.iter().enumerate() {
+                    span_button(
+                        ui,
+                        workspace,
+                        crate::audio_discovery::tracker::FileSpan {
+                            offset: chunk.header.offset,
+                            byte_len: chunk.header.byte_len + chunk.payload.byte_len,
+                        },
+                        &format!("{index}: {:?}", String::from_utf8_lossy(&chunk.id)),
+                    );
+                }
+            });
         }
     }
     for warning in &rip.warnings {

@@ -444,6 +444,7 @@ impl SongRef<'_> {
                 (native, format),
                 (super::native_rips::NativeRipFormat::Gbs, SongFormat::Gbs)
                     | (super::native_rips::NativeRipFormat::Nsf, SongFormat::Nsf)
+                    | (super::native_rips::NativeRipFormat::Nsf, SongFormat::Nsfe)
                     | (super::native_rips::NativeRipFormat::Sgc, SongFormat::Sgc)
             )
         {
@@ -541,6 +542,7 @@ impl SongRef<'_> {
                         (rip.format, format),
                         (super::rips::RipFormat::Gbs, SongFormat::Gbs)
                             | (super::rips::RipFormat::Nsf, SongFormat::Nsf)
+                            | (super::rips::RipFormat::Nsfe, SongFormat::Nsfe)
                     )
             }
             Self::Cdda(_) => matches!(format, SongFormat::Audio(_)),

@@ -158,6 +158,20 @@ fn engine_preview_transport_and_wav_share_the_selected_song() -> anyhow::Result<
         player.set_volume(100);
         let receiver = player.start_captured(request()?);
         let mut callback = receiver.recv_timeout(Duration::from_secs(10))?;
+        let initialization_deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            player.poll();
+            assert!(player.error.is_none(), "{id:?}: {:?}", player.error);
+            if player.snapshot().is_some_and(|state| state.duration > 0) {
+                break;
+            }
+            assert!(
+                Instant::now() < initialization_deadline,
+                "{id:?}: preview initialization timed out: {:?}",
+                player.snapshot()
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert_eq!(
             consumed_pcm(&mut player, &mut callback, 1024),
             expected[..2048]

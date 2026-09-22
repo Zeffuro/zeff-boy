@@ -10,13 +10,14 @@ from urllib.request import Request, urlopen
 
 PACKAGE_ID = "Zeffuro.ZeffBoy"
 MANIFEST_VERSION = "1.12.0"
+INNO_PRODUCT_CODE = "{C2417DE7-B9ED-4BE0-AB8B-74873C3B0C49}_is1"
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("version", help="Release version without the leading v")
     parser.add_argument("output_root", type=Path, help="winget-pkgs checkout or staging root")
-    parser.add_argument("--sha256", help="override the published Windows ZIP digest")
+    parser.add_argument("--sha256", help="override the published Windows installer digest")
     return parser.parse_args()
 
 
@@ -28,7 +29,7 @@ def validate(version, sha256):
 
 
 def published_sha256(version):
-    asset_name = f"zeff-boy-v{version}-x86_64-pc-windows-msvc.zip"
+    asset_name = f"zeff-boy-v{version}-x86_64-pc-windows-msvc-setup.exe"
     request = Request(
         f"https://api.github.com/repos/Zeffuro/zeff-boy/releases/tags/v{version}",
         headers={
@@ -66,7 +67,7 @@ def main():
     version = args.version
     url = (
         "https://github.com/Zeffuro/zeff-boy/releases/download/"
-        f"v{version}/zeff-boy-v{version}-x86_64-pc-windows-msvc.zip"
+        f"v{version}/zeff-boy-v{version}-x86_64-pc-windows-msvc-setup.exe"
     )
     release_url = f"https://github.com/Zeffuro/zeff-boy/releases/tag/v{version}"
     output = (
@@ -97,14 +98,12 @@ ManifestVersion: {MANIFEST_VERSION}
 
 PackageIdentifier: {PACKAGE_ID}
 PackageVersion: {version}
-InstallerType: zip
-NestedInstallerType: portable
-NestedInstallerFiles:
-- RelativeFilePath: zeff-boy.exe
-  PortableCommandAlias: zeff-boy
-Commands:
-- zeff-boy
-UpgradeBehavior: uninstallPrevious
+InstallerType: inno
+Scope: user
+UpgradeBehavior: install
+ProductCode: '{INNO_PRODUCT_CODE}'
+AppsAndFeaturesEntries:
+- ProductCode: '{INNO_PRODUCT_CODE}'
 Installers:
 - Architecture: x64
   InstallerUrl: {url}

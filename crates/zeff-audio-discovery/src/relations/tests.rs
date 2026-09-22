@@ -315,7 +315,11 @@ fn vgz_locations_retain_their_logical_source_identity() {
 
 #[test]
 fn container_song_counts_do_not_imply_discovered_sequences() {
-    for format in [crate::rips::RipFormat::Gbs, crate::rips::RipFormat::Nsf] {
+    for format in [
+        crate::rips::RipFormat::Gbs,
+        crate::rips::RipFormat::Nsf,
+        crate::rips::RipFormat::Nsfe,
+    ] {
         let bytes = test_support::rips::fixture(format);
         let report = crate::rips::scan(
             &bytes,

@@ -80,6 +80,7 @@ pub enum SongFormat {
     Vgz,
     Gbs,
     Nsf,
+    Nsfe,
     Sgc,
     TrackerPack,
     Gsf,
@@ -233,6 +234,14 @@ pub const SONG_FORMATS: &[FormatInfo] = &[
         extension: "nsf",
         filename: "song.nsf",
         description: "Export a qualified NES driver and selected song, or preserve a complete imported NSF file.",
+    },
+    FormatInfo {
+        format: SongFormat::Nsfe,
+        id: "nsfe",
+        label: "NSFe music rip",
+        extension: "nsfe",
+        filename: "song.nsfe",
+        description: "Preserve an imported NSFe, or export a qualified NES cue. Playback requires a player supporting the file's chunks and timing.",
     },
     FormatInfo {
         format: SongFormat::Sgc,

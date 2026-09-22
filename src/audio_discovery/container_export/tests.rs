@@ -30,7 +30,7 @@ fn input(format: RipFormat) -> ScanInput {
 #[test]
 fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    for rip_format in [RipFormat::Gbs, RipFormat::Nsf] {
+    for rip_format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
         let input = input(rip_format);
         let manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));
         assert_eq!(manifest.scan.song_count(), 1);
@@ -45,10 +45,10 @@ fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Res
                 .canonical_cpu_address,
             None
         );
-        let native = if rip_format == RipFormat::Gbs {
-            SongFormat::Gbs
-        } else {
-            SongFormat::Nsf
+        let native = match rip_format {
+            RipFormat::Gbs => SongFormat::Gbs,
+            RipFormat::Nsf => SongFormat::Nsf,
+            RipFormat::Nsfe => SongFormat::Nsfe,
         };
         for format in [native, SongFormat::MappedAssets] {
             let path = directory.path().join(format!(
@@ -78,6 +78,7 @@ fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Res
                 assert_eq!(source.as_slice(), input.bytes.as_ref());
                 let metadata: Value = serde_json::from_reader(zip.by_name("manifest.json")?)?;
                 assert_eq!(metadata["detector_outcomes"][0]["retained_matches"], 1);
+                let mut reconstructed = Vec::new();
                 for asset in metadata["assets"].as_array().unwrap() {
                     let mut data = Vec::new();
                     zip.by_name(asset["path"].as_str().unwrap())?
@@ -86,6 +87,13 @@ fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Res
                     let len = asset["span"]["byte_len"].as_u64().unwrap() as usize;
                     assert_eq!(data.as_slice(), &input.bytes[start..start + len]);
                     assert_eq!(asset["sha256"], zeff_firmware::sha256_hex(&data));
+                    if rip_format == RipFormat::Nsfe {
+                        assert_eq!(start, reconstructed.len());
+                        reconstructed.extend_from_slice(&data);
+                    }
+                }
+                if rip_format == RipFormat::Nsfe {
+                    assert_eq!(reconstructed.as_slice(), input.bytes.as_ref());
                 }
                 assert_eq!(
                     zip.by_name("metadata.bin").is_ok(),
@@ -106,7 +114,7 @@ fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Res
 #[test]
 fn export_fails_closed_for_stale_inventory_identity_source_and_cancellation() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    for format in [RipFormat::Gbs, RipFormat::Nsf] {
+    for format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
         let mut input = input(format);
         let mut manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));
         let path = directory.path().join(format.extension());
@@ -131,6 +139,15 @@ fn export_fails_closed_for_stale_inventory_identity_source_and_cancellation() ->
                 .is_err()
         );
         manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));
+        if let RipDetails::Nsfe { chunks, .. } = &mut manifest.scan.music_rips[0].details {
+            chunks[0].payload.byte_len = u32::MAX;
+            assert!(
+                prepare(&input, &manifest)?
+                    .write_new(&path, &AtomicBool::new(false), &AtomicU32::new(0))
+                    .is_err()
+            );
+            manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));
+        }
         manifest.scan.media.sha256 = Some("00".repeat(32));
         assert!(prepare(&input, &manifest).is_err());
         manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));

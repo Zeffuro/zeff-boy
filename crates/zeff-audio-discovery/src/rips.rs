@@ -7,9 +7,12 @@ use super::{
     Budget, MAX_CANDIDATES, MAX_ROM_BYTES, MAX_SCAN_WORK, MalformedInput, ScanLimits, ScanStop,
 };
 
+mod nsfe;
 mod scan;
 mod structure;
 pub use scan::scan;
+#[cfg(test)]
+mod nsfe_tests;
 #[cfg(test)]
 mod tests;
 
@@ -18,6 +21,7 @@ mod tests;
 pub enum RipFormat {
     Gbs,
     Nsf,
+    Nsfe,
 }
 
 impl RipFormat {
@@ -25,6 +29,7 @@ impl RipFormat {
         match self {
             Self::Gbs => "gbs",
             Self::Nsf => "nsf",
+            Self::Nsfe => "nsfe",
         }
     }
 
@@ -32,6 +37,7 @@ impl RipFormat {
         match self {
             Self::Gbs => "Game Boy GBS",
             Self::Nsf => "NES NSF",
+            Self::Nsfe => "NES NSFe",
         }
     }
 
@@ -39,6 +45,7 @@ impl RipFormat {
         match self {
             Self::Gbs => "standalone_gbs",
             Self::Nsf => "standalone_nsf",
+            Self::Nsfe => "standalone_nsfe",
         }
     }
 
@@ -46,6 +53,7 @@ impl RipFormat {
         match self {
             Self::Gbs => "gbs-container",
             Self::Nsf => "nsf-container",
+            Self::Nsfe => "nsfe-container",
         }
     }
 }
@@ -53,7 +61,7 @@ impl RipFormat {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct MusicRip {
     pub format: RipFormat,
-    pub version: u8,
+    pub version: Option<u8>,
     pub title: String,
     pub author: String,
     pub copyright: String,
@@ -105,6 +113,27 @@ pub enum RipDetails {
         nsf2_flags: u8,
         declared_program_bytes: u32,
     },
+    Nsfe {
+        chunks: Vec<NsfeChunk>,
+        info_header: FileSpan,
+        data_header: FileSpan,
+        raw_start_song: u8,
+        info_region_bits: u8,
+        info_expansion_bits: u8,
+        ntsc_period_us: Option<u16>,
+        pal_period_us: Option<u16>,
+        dendy_period_us: Option<u16>,
+        bank_payload: Option<FileSpan>,
+        initial_banks: [u8; 8],
+        banking_enabled: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct NsfeChunk {
+    pub id: [u8; 4],
+    pub header: FileSpan,
+    pub payload: FileSpan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -220,9 +249,13 @@ pub(crate) fn inspect_with_budget(
     budget: &mut Budget<'_>,
 ) -> Result<RipInspection, ScanStop> {
     budget.charge()?;
+    if format == RipFormat::Nsfe {
+        return nsfe::inspect(bytes, budget);
+    }
     let (header_len, version_at, songs_at, text_at) = match format {
         RipFormat::Gbs if bytes.starts_with(b"GBS") => (0x70, 3, 4, 0x10),
         RipFormat::Nsf if bytes.starts_with(b"NESM\x1a") => (0x80, 5, 6, 0x0e),
+        RipFormat::Nsfe => unreachable!("NSFe is parsed before fixed headers"),
         _ => return Ok(RipInspection::Unsupported),
     };
     if bytes.len() <= version_at {
@@ -262,7 +295,7 @@ pub(crate) fn inspect_with_budget(
     }
     Ok(RipInspection::Match(Box::new(MusicRip {
         format,
-        version: 1,
+        version: Some(1),
         title,
         author,
         copyright,

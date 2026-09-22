@@ -31,7 +31,7 @@ wasm-browser-tests = []
 
 [package]
 name = "zeff-boy"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
@@ -118,6 +118,9 @@ libc = "0.2"
 
 [dev-dependencies]
 zeff-audio-discovery = { path = "crates/zeff-audio-discovery", features = ["test-support"] }
+
+[build-dependencies]
+winres = "0.1.12"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 claxon = "0.4.3"

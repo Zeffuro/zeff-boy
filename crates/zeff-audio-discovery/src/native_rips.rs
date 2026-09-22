@@ -7,6 +7,9 @@ use crate::{RomSpan, catalog::SongRef};
 
 mod gb;
 mod nes;
+mod nsfe;
+#[cfg(test)]
+mod nsfe_tests;
 mod sega;
 #[cfg(test)]
 mod tests;
@@ -16,6 +19,7 @@ mod tests;
 pub enum NativeRipFormat {
     Gbs,
     Nsf,
+    Nsfe,
     Sgc,
 }
 
@@ -24,6 +28,7 @@ impl NativeRipFormat {
         match self {
             Self::Gbs => "gbs",
             Self::Nsf => "nsf",
+            Self::Nsfe => "nsfe",
             Self::Sgc => "sgc",
         }
     }
@@ -32,6 +37,7 @@ impl NativeRipFormat {
         match self {
             Self::Gbs => "Game Boy GBS",
             Self::Nsf => "NES NSF",
+            Self::Nsfe => "NES NSFe",
             Self::Sgc => "Sega SGC",
         }
     }
@@ -75,13 +81,41 @@ pub fn supported_format(song: SongRef<'_>) -> Option<NativeRipFormat> {
 }
 
 pub fn encode(bytes: &[u8], song: SongRef<'_>, cancel: &AtomicBool) -> Result<NativeRip> {
+    let format = supported_format(song).ok_or_else(|| {
+        anyhow::anyhow!("this selection has no qualified native music rip export")
+    })?;
+    encode_as(bytes, song, format, cancel)
+}
+
+pub fn supports_format(song: SongRef<'_>, format: NativeRipFormat) -> bool {
+    let supported = supported_format(song);
+    supported == Some(format)
+        || (format == NativeRipFormat::Nsfe && supported == Some(NativeRipFormat::Nsf))
+}
+
+pub fn encode_as(
+    bytes: &[u8],
+    song: SongRef<'_>,
+    format: NativeRipFormat,
+    cancel: &AtomicBool,
+) -> Result<NativeRip> {
     ensure!(
         !cancel.load(Ordering::Relaxed),
         "native music rip export cancelled"
     );
+    ensure!(
+        supports_format(song, format),
+        "selection does not support this native rip format"
+    );
     let mut rip = match song {
         SongRef::GbNative(song) if gb::supported(song) => gb::encode(bytes, song, cancel)?,
-        SongRef::NesNative(song) if nes::supported(song) => nes::encode(bytes, song, cancel)?,
+        SongRef::NesNative(song) if nes::supported(song) => {
+            if format == NativeRipFormat::Nsfe {
+                nsfe::encode(bytes, song, cancel)?
+            } else {
+                nes::encode(bytes, song, cancel)?
+            }
+        }
         SongRef::SegaPsg(song) if sega::supported(song) => sega::encode(bytes, song, cancel)?,
         _ => anyhow::bail!("this selection has no qualified native music rip export"),
     };

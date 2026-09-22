@@ -81,8 +81,10 @@ impl SongExportRequest {
             return super::huge_gbs_export::HugeGbsRequest::prepare(input, manifest, song)
                 .map(Self::HugeGbs);
         }
-        if matches!(format, SongFormat::Gbs | SongFormat::Nsf | SongFormat::Sgc)
-            && !matches!(song, SongRef::Rip(_))
+        if matches!(
+            format,
+            SongFormat::Gbs | SongFormat::Nsf | SongFormat::Nsfe | SongFormat::Sgc
+        ) && !matches!(song, SongRef::Rip(_))
         {
             return super::native_rip_export::NativeRipRequest::prepare(
                 input, manifest, id, format,

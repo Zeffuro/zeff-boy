@@ -134,9 +134,14 @@ pub enum ScanStatus {
 #[serde(rename_all = "snake_case")]
 pub enum MalformedInput {
     TruncatedHeader,
+    TruncatedChunk,
     EmptyProgram,
     InvalidSongCount,
     InvalidFirstSong,
+    InvalidChunkSize,
+    InvalidChunkOrder,
+    MissingRequiredChunk,
+    DuplicateChunk,
     InvalidAddress,
     ProgramLengthExceedsSource,
 }

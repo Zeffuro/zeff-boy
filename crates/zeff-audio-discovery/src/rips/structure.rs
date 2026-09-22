@@ -59,6 +59,7 @@ pub(crate) fn header(
     match format {
         RipFormat::Gbs => gbs(bytes, warnings),
         RipFormat::Nsf => nsf(bytes, warnings),
+        RipFormat::Nsfe => unreachable!("NSFe has chunked structure"),
     }
 }
 

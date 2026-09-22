@@ -9,6 +9,7 @@ fn native_format(format: RipFormat) -> SongFormat {
     match format {
         RipFormat::Gbs => SongFormat::Gbs,
         RipFormat::Nsf => SongFormat::Nsf,
+        RipFormat::Nsfe => SongFormat::Nsfe,
     }
 }
 
@@ -16,7 +17,7 @@ fn native_format(format: RipFormat) -> SongFormat {
 fn direct_and_selected_zip_rips_preserve_identity_and_do_not_overwrite_exports()
 -> anyhow::Result<()> {
     let directory = crate::test_support::test_directory("audio-cli-rips")?;
-    for format in [RipFormat::Gbs, RipFormat::Nsf] {
+    for format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
         let bytes = fixture(format);
         let extension = format.extension();
         let source = directory.path().join(format!("direct.{extension}"));
@@ -134,50 +135,59 @@ fn rip_assets_export_retains_the_complete_original_source() -> anyhow::Result<()
 #[test]
 fn rips_reject_wrong_native_format_and_render_settings() -> anyhow::Result<()> {
     let directory = crate::test_support::test_directory("audio-cli-rip-rejections")?;
-    let bytes = fixture(RipFormat::Gbs);
-    let source = directory.path().join("source.gbs");
-    std::fs::write(&source, &bytes)?;
+    for rip_format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
+        let bytes = fixture(rip_format);
+        let source = directory
+            .path()
+            .join(format!("source.{}", rip_format.extension()));
+        std::fs::write(&source, &bytes)?;
+        let native = native_format(rip_format);
+        let wrong = if rip_format == RipFormat::Gbs {
+            SongFormat::Nsf
+        } else {
+            SongFormat::Gbs
+        };
+        let request = |format, sample_rate_set, timing_set, mp2k_settings_set, label: &str| {
+            AudioDiscoveryRequest {
+                output_path: directory.path().join(format!("{label}.json")),
+                input_path: source.clone(),
+                archive_member: None,
+                max_work: None,
+                max_candidates: None,
+                driver_evidence: None,
+                relations: None,
+                export: Some(OfflineExport {
+                    format,
+                    output_path: directory.path().join(format!("{label}.out")),
+                    selection: SongSelection::Offset(0),
+                    options: RenderOptions::default(),
+                    explicit: ExplicitExportSettings {
+                        sample_rate: sample_rate_set,
+                        loops: timing_set,
+                        gain: mp2k_settings_set,
+                        ..Default::default()
+                    },
+                }),
+            }
+        };
 
-    let request = |format, sample_rate_set, timing_set, mp2k_settings_set, label: &str| {
-        AudioDiscoveryRequest {
-            output_path: directory.path().join(format!("{label}.json")),
-            input_path: source.clone(),
-            archive_member: None,
-            max_work: None,
-            max_candidates: None,
-            driver_evidence: None,
-            relations: None,
-            export: Some(OfflineExport {
+        for (label, format, sample_rate_set, timing_set, mp2k_settings_set) in [
+            ("wrong", wrong, false, false, false),
+            ("sample-rate", native, true, false, false),
+            ("timing", native, false, true, false),
+            ("mp2k", native, false, false, true),
+        ] {
+            let request = request(
                 format,
-                output_path: directory.path().join(format!("{label}.out")),
-                selection: SongSelection::Offset(0),
-                options: RenderOptions::default(),
-                explicit: ExplicitExportSettings {
-                    sample_rate: sample_rate_set,
-                    loops: timing_set,
-                    gain: mp2k_settings_set,
-                    ..Default::default()
-                },
-            }),
+                sample_rate_set,
+                timing_set,
+                mp2k_settings_set,
+                label,
+            );
+            assert!(run_request(&request).is_err());
+            assert!(!request.output_path.exists());
+            assert!(!request.export.as_ref().unwrap().output_path.exists());
         }
-    };
-
-    for (label, format, sample_rate_set, timing_set, mp2k_settings_set) in [
-        ("wrong", SongFormat::Nsf, false, false, false),
-        ("sample-rate", SongFormat::Gbs, true, false, false),
-        ("timing", SongFormat::Gbs, false, true, false),
-        ("mp2k", SongFormat::Gbs, false, false, true),
-    ] {
-        let request = request(
-            format,
-            sample_rate_set,
-            timing_set,
-            mp2k_settings_set,
-            label,
-        );
-        assert!(run_request(&request).is_err());
-        assert!(!request.output_path.exists());
-        assert!(!request.export.as_ref().unwrap().output_path.exists());
     }
     Ok(())
 }
@@ -185,7 +195,11 @@ fn rips_reject_wrong_native_format_and_render_settings() -> anyhow::Result<()> {
 #[test]
 fn cartridge_extensions_do_not_import_embedded_rip_headers() -> anyhow::Result<()> {
     let directory = crate::test_support::test_directory("audio-cli-rip-cartridges")?;
-    for (format, extension) in [(RipFormat::Gbs, "gb"), (RipFormat::Nsf, "nes")] {
+    for (format, extension) in [
+        (RipFormat::Gbs, "gb"),
+        (RipFormat::Nsf, "nes"),
+        (RipFormat::Nsfe, "nes"),
+    ] {
         let source = directory.path().join(format!("looks-like-rip.{extension}"));
         std::fs::write(&source, fixture(format))?;
         let request = AudioDiscoveryRequest {

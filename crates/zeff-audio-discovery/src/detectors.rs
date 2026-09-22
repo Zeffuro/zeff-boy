@@ -24,6 +24,11 @@ pub const NSF: &[DetectorDescriptor] = &[DetectorDescriptor {
     semantic_version: 2,
     scope: "Standalone NSF v1 header, program mapping and source preservation; no guest execution",
 }];
+pub const NSFE: &[DetectorDescriptor] = &[DetectorDescriptor {
+    id: "nsfe-container",
+    semantic_version: 1,
+    scope: "Standalone NSFe chunk structure and source preservation; no guest execution or playback qualification",
+}];
 pub const VGM: &[DetectorDescriptor] = &[DetectorDescriptor {
     id: "vgm-register-log",
     semantic_version: 1,
