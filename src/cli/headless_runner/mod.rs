@@ -79,6 +79,7 @@ pub(crate) fn run_headless(
     firmware_search_dirs: Vec<std::path::PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
+    // ZIP members stay in memory; only the source file has a filesystem identity.
     audio_dump::validate_paths(path, opts)?;
     validate_audio_trace_options(opts)?;
     if opts.tas_project_path.is_some() {
@@ -98,7 +99,6 @@ pub(crate) fn run_headless(
     }
 
     let (rom_path, preloaded_data, system) = crate::app::detect_and_extract_rom(path)?;
-    audio_dump::validate_paths(&rom_path, opts)?;
     audio_trace::validate_system(system.code(), opts)?;
     validate_tas_system(opts, system.code())?;
     if system == ActiveSystem::Pce {

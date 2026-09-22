@@ -49,6 +49,22 @@ fn gb_capture_retains_trace_and_authenticated_source_without_sram_side_effects()
     let zip_before = std::fs::read(&zip)?;
     let save_before = std::fs::read(&save)?;
 
+    for trace in [false, true] {
+        let alias = directory.path().join(".").join("trace.zip");
+        let mut options = HeadlessOptions {
+            max_frames: 2,
+            ..Default::default()
+        };
+        if trace {
+            options.audio_trace_path = Some(alias);
+        } else {
+            options.audio_dump_path = Some(alias);
+        }
+        let error = run(&zip, &options).unwrap_err();
+        assert!(error.to_string().contains("must be distinct"), "{error:#}");
+        assert_eq!(std::fs::read(&zip)?, zip_before);
+    }
+
     for (index, input) in [&plain, &zip].into_iter().enumerate() {
         let output = directory.path().join(format!("capture-{index}.zip"));
         let options = HeadlessOptions {
