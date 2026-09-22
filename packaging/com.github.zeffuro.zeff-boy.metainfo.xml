@@ -30,6 +30,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.4.0" date="2026-09-22">
+      <description>
+        <p>Adds more audio drivers, ROM music discovery, preview and export.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-09-07">
       <description>
         <p>Improves Game Boy Advance performance and adds optimized desktop and libretro builds.</p>

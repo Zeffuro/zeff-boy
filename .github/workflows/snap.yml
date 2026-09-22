@@ -21,7 +21,7 @@ on:
       release_tag:
         description: Published GitHub release tag to package
         required: true
-        default: v0.3.0
+        default: v0.4.0
         type: string
       existing_revision:
         description: Existing Store revision to release instead of rebuilding
