@@ -157,6 +157,9 @@ impl Emulator {
     }
 
     pub fn set_cpu_pc(&mut self, pc: u16) {
+        self.invalidate_audio_trace(
+            zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
+        );
         self.cpu.pc = pc;
     }
 
@@ -175,6 +178,9 @@ impl Emulator {
         if target == return_pc || instruction_budget == 0 {
             return Err("invalid call target or budget".to_owned());
         }
+        self.invalidate_audio_trace(
+            zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
+        );
         let return_sp = self.cpu.sp;
         let saved_interrupt = self
             .cpu

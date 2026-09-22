@@ -300,6 +300,17 @@ pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
                 )?;
             }
         }
+        SongRef::Huge(song) => {
+            let root = b.root(
+                Kind::Song,
+                "hUGE catalog selection",
+                Some(song.bound.song.descriptor.into()),
+            )?;
+            b.unresolved(
+                root,
+                "Runtime source rebinding and original/isolation playback validation are required before output",
+            )?;
+        }
         SongRef::Vgm(log) => vgm(b, log)?,
         SongRef::Rip(rip) => {
             let root = b.root(Kind::Container, rip.format.label(), Some(rip.source.into()))?;

@@ -4,7 +4,7 @@ use crate::audio_discovery::vgm::capture::VgmCaptureSource;
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use zeff_emu_common::audio_trace::{
-    AudioTraceChip, AudioTraceSource, ChipAudioTrace, GameBoyAudioTrace,
+    AudioTraceChip, AudioTraceSource, ChipAudioTrace, GameBoyAudioTrace, NesAudioTrace,
 };
 
 use super::HeadlessOptions;
@@ -45,8 +45,11 @@ pub(crate) fn validate_options(options: &HeadlessOptions) -> Result<()> {
 pub(super) fn validate_system(system: &str, options: &HeadlessOptions) -> Result<()> {
     ensure!(
         options.audio_trace_path.is_none()
-            || matches!(system, "gb" | "sms" | "gg" | "sg" | "coleco" | "pce" | "ws"),
-        "--audio-trace currently supports GB/GBC, Master System, Game Gear, SG-1000, ColecoVision, PC Engine HuCards and WonderSwan cartridges"
+            || matches!(
+                system,
+                "gb" | "nes" | "sms" | "gg" | "sg" | "coleco" | "pce" | "ws"
+            ),
+        "--audio-trace currently supports GB/GBC, base NES, Master System, Game Gear, SG-1000, ColecoVision, PC Engine HuCards and WonderSwan cartridges"
     );
     if system == "gb" && options.audio_trace_path.is_some() {
         ensure!(
@@ -56,6 +59,12 @@ pub(super) fn validate_system(system: &str, options: &HeadlessOptions) -> Result
         ensure!(
             !options.expect_test_pass && options.break_at.is_none(),
             "GB/GBC --audio-trace requires the requested reset-to-end interval; --expect-test-pass and --break-at can end it early"
+        );
+    }
+    if system == "nes" && options.audio_trace_path.is_some() {
+        ensure!(
+            !options.no_apu && !options.expect_test_pass && options.break_at.is_none(),
+            "NES --audio-trace requires active sample generation and a full fresh interval; --no-apu, --expect-test-pass and --break-at are unsupported"
         );
     }
     Ok(())
@@ -197,6 +206,32 @@ impl Capture {
         );
         Ok(())
     }
+
+    pub(super) fn finish_nes(
+        mut self,
+        trace: Option<NesAudioTrace>,
+        frames_run: u64,
+        settings: Value,
+    ) -> Result<()> {
+        let trace = trace.ok_or_else(|| anyhow::anyhow!("NES audio trace capture is missing"))?;
+        self.metadata["system"] = json!("nes");
+        self.metadata["frames_run"] = json!(frames_run);
+        self.metadata["settings"] = settings;
+        self.metadata["firmware"] = Value::Null;
+        crate::audio_discovery::trace_capture::write_nes_new(
+            &self.path,
+            &trace,
+            self.metadata,
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
+        println!(
+            "[headless] audio-trace={} events={} cycles={}",
+            self.path.display(),
+            trace.events.len(),
+            trace.end_cycle
+        );
+        Ok(())
+    }
 }
 
 fn source_metadata(requested_path: &Path, loaded_path: &Path, bytes: &[u8]) -> Result<Value> {
@@ -271,6 +306,9 @@ mod ws_tests;
 mod gb_tests;
 
 #[cfg(test)]
+mod nes_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::audio_discovery::trace_capture::tests::{member, sega_fixture};
@@ -282,10 +320,10 @@ mod tests {
             audio_trace_path: Some("capture.zip".into()),
             ..Default::default()
         };
-        for system in ["gb", "sms", "gg", "sg", "coleco", "pce", "ws"] {
+        for system in ["gb", "nes", "sms", "gg", "sg", "coleco", "pce", "ws"] {
             assert!(validate_system(system, &options).is_ok());
         }
-        for system in ["gba", "nes"] {
+        for system in ["gba", "unsupported"] {
             assert!(validate_system(system, &options).is_err());
         }
         options

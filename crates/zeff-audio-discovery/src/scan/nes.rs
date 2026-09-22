@@ -25,6 +25,37 @@ pub(super) fn inspect(
         result,
         report.nes_tose_songs.len(),
         start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize - report.song_count();
+    let result = crate::drivers::nes_tose_structure::scan(
+        bytes,
+        &mut report.driver_candidates,
+        budget,
+        capacity,
+    );
+    record(
+        report,
+        4,
+        result,
+        report.driver_candidates.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let previous = report.driver_candidates.len();
+    let capacity = report.limits.max_candidates as usize - report.song_count();
+    let result = crate::drivers::nes_sound_writes::scan(
+        bytes,
+        &mut report.driver_candidates,
+        budget,
+        capacity,
+    );
+    record(
+        report,
+        5,
+        result,
+        report.driver_candidates.len() - previous,
+        start - budget.remaining,
     )
 }
 

@@ -1,4 +1,46 @@
 use super::*;
+
+#[test]
+fn register_presets_consume_requests_and_replay_at_both_rates() -> Result<()> {
+    use zeff_audio_discovery::nes_native;
+    let cancel = AtomicBool::new(false);
+    for bytes in [
+        nes_native::fixture_rom_presets(),
+        nes_native::fixture_rom_presets_cnrom(),
+    ] {
+        let report = zeff_audio_discovery::scan(
+            zeff_emu_common::system::System::Nes,
+            &bytes,
+            Default::default(),
+            &cancel,
+        );
+        assert!(report.nes_native_songs.len() >= 2);
+        for sample_rate in [44_100, 48_000] {
+            let mut recordings = Vec::new();
+            for song in &report.nes_native_songs {
+                assert!(song.channels.is_empty());
+                let mut session = NesSession::new(
+                    nes_native::prepare_rom(&bytes, song, &cancel)?,
+                    RenderOptions {
+                        sample_rate,
+                        ..options()
+                    },
+                    song.warnings.clone(),
+                    &cancel,
+                )?;
+                let pcm = render(&mut session, 2048)?;
+                assert_eq!(pcm.len(), sample_rate as usize * 2);
+                assert!(pcm.iter().any(|&sample| sample != 0));
+                assert_eq!(session.emulator.cpu_peek8(0xad), 0xff);
+                session.reset()?;
+                assert_eq!(render(&mut session, 258)?, pcm);
+                recordings.push(pcm);
+            }
+            assert!(recordings.windows(2).any(|pair| pair[0] != pair[1]));
+        }
+    }
+    Ok(())
+}
 use crate::audio_discovery::{formats::AudioFormat, pcm::write_new};
 use std::sync::atomic::AtomicU32;
 
@@ -89,6 +131,127 @@ fn ready_marker_alone_does_not_release_the_song() -> Result<()> {
     assert!(session.read(&mut [0; 64], &AtomicBool::new(false)).is_err());
     assert_eq!(session.emulator.cpu_peek8(ack), 0);
     assert_eq!(session.position_frames(), 0);
+    Ok(())
+}
+
+#[test]
+fn pal_profile_preserves_cadence_reset_and_recording() -> Result<()> {
+    let cancel = AtomicBool::new(false);
+    let bytes = zeff_audio_discovery::nes_music::native::fixture_rom();
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Nes,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let prepare = || -> Result<PreparedNesNative> {
+        let mut prepared = zeff_audio_discovery::nes_music::native::prepare_rom(
+            &bytes,
+            &report.nes_songs[1],
+            &cancel,
+        )?;
+        prepared.timing = NesNativeTiming::Pal;
+        prepared.bytes[9] = 1;
+        Ok(prepared)
+    };
+    let make = || NesSession::new(prepare()?, options(), Vec::new(), &cancel);
+    let mut session = make()?;
+    assert_eq!(session.emulator.cartridge_header().timing, TimingMode::Pal);
+    let pcm = render(&mut session, 258)?;
+    assert_eq!(pcm.len(), 88_200);
+    assert!(pcm.iter().any(|&sample| sample != 0));
+    assert!((49..=52).contains(&session.emulator.cpu_peek8(0xf1)));
+    assert!(
+        session
+            .warnings()
+            .iter()
+            .any(|warning| warning.contains("PAL profile"))
+    );
+    session.reset()?;
+    assert_eq!(render(&mut session, 4096)?, pcm);
+    assert_eq!(session.emulator.cartridge_header().timing, TimingMode::Pal);
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("pal.wav");
+    write_new(
+        Box::new(make()?),
+        AudioFormat::Wav,
+        options(),
+        serde_json::json!({}),
+        &path,
+        &cancel,
+        &AtomicU32::new(0),
+    )?;
+    assert_eq!(
+        hound::WavReader::open(path)?
+            .samples::<i16>()
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        pcm
+    );
+    for mismatch in [false, true] {
+        let mut prepared = prepare()?;
+        if mismatch {
+            prepared.timing = NesNativeTiming::Ntsc;
+        } else {
+            prepared.bytes[9] = 0;
+        }
+        assert!(NesSession::new(prepared, options(), Vec::new(), &cancel).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn foreground_handoff_preserves_selection_reset_and_recorded_pcm() -> Result<()> {
+    let bytes = zeff_audio_discovery::nes_native::fixture_rom_foreground();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Nes,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    assert_eq!(report.nes_native_songs.len(), 2);
+    let mut previous = None;
+    for song in &report.nes_native_songs {
+        let make = || {
+            NesSession::new(
+                zeff_audio_discovery::nes_native::prepare_rom(&bytes, song, &cancel)?,
+                options(),
+                Vec::new(),
+                &cancel,
+            )
+        };
+        let mut session = make()?;
+        assert!(session.read(&mut [0; 64], &AtomicBool::new(true)).is_err());
+        assert_eq!(session.position_frames(), 0);
+        let expected = render(&mut session, 258)?;
+        assert_eq!(expected.len(), 88_200);
+        assert!(expected.iter().any(|&sample| sample != 0));
+        assert_eq!(session.emulator.cpu_peek8(0x600), song.raw_index);
+        assert_eq!(session.emulator.cpu_peek8(0xd0), 0);
+        assert!(session.emulator.bus().apu.five_step_mode);
+        if let Some(prior) = previous.replace(expected.clone()) {
+            assert_ne!(prior, expected);
+        }
+        session.reset()?;
+        assert_eq!(render(&mut session, 4096)?, expected);
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("foreground.wav");
+        write_new(
+            Box::new(make()?),
+            AudioFormat::Wav,
+            options(),
+            serde_json::json!({}),
+            &path,
+            &cancel,
+            &AtomicU32::new(0),
+        )?;
+        assert_eq!(
+            hound::WavReader::open(path)?
+                .samples::<i16>()
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            expected
+        );
+    }
     Ok(())
 }
 

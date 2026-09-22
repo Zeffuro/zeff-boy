@@ -7,8 +7,12 @@ use serde_json::{Value, json};
 use zeff_emu_common::audio_trace::{AudioTraceChip, AudioTraceSource, ChipAudioTrace};
 
 mod game_boy;
+mod native;
+mod nes;
 
 pub(crate) use game_boy::write_game_boy_new;
+pub(super) use nes::validate_sample_provenance as validate_nes_sample_provenance;
+pub(crate) use nes::write_nes_new;
 
 pub(crate) fn write_new<C: AudioTraceChip, W>(
     path: &Path,
@@ -36,7 +40,7 @@ where
                 "Instruction-origin CPU and General DMA writes retain writer provenance; interrupt entries and autonomous Sound DMA have no attributed instruction. Sequence and sample source spans are not identified. ROM offsets address the exact loaded core input; they are not compressed archive offsets.",
                 "VGM rounds absolute time down to 44,100 ticks per second. Trace JSON preserves original clocks, event order and timing precision.",
                 "The VGM preamble reconstructs ordinary sound registers and 16 KiB wave RAM, but cannot reproduce every oscillator phase or emulator-specific APU behavior. External playback is not hardware-bit-exact PCM qualification.",
-                "The existing Audio Explorer can inspect and preserve the captured VGM. Standalone VGM preview and arbitrary-state live capture are not implemented.",
+                "The existing Audio Explorer can inspect and preserve the captured VGM. Standalone WonderSwan VGM preview and arbitrary-state live capture are not implemented.",
             ][..],
         )
     } else {
@@ -47,7 +51,7 @@ where
                 "Instruction provenance identifies the code writing sound ports, not the origin of sequence or sample data. ROM offsets address the exact loaded core input; they are not compressed archive offsets.",
                 "VGM rounds absolute time down to 44,100 ticks per second. Trace JSON preserves original clocks, event order and timing precision.",
                 "VGM resets registers but cannot reproduce every oscillator phase or emulator-specific PSG behavior. External playback is not hardware-bit-exact PCM qualification.",
-                "The existing Audio Explorer can inspect and preserve the captured VGM. Standalone VGM preview and arbitrary-state live capture are not implemented.",
+                "The existing Audio Explorer can preview supported SN76489 logs and inspect and preserve other captured VGM. Arbitrary-state live capture is not implemented.",
             ][..],
         )
     };
@@ -71,7 +75,7 @@ where
     super::assets::publish_bytes(path, &bytes, cancel, &AtomicU32::new(0))
 }
 
-fn validate_provenance<C: AudioTraceChip, W>(
+pub(super) fn validate_provenance<C: AudioTraceChip, W>(
     trace: &ChipAudioTrace<C, W>,
     context: &Value,
 ) -> Result<()> {
@@ -86,10 +90,18 @@ fn validate_provenance<C: AudioTraceChip, W>(
                 offset < media_len,
                 "audio trace code is outside its loaded media"
             ),
-            AudioTraceSource::BootRom { offset } => ensure!(
-                firmware_len.is_some_and(|len| offset < len),
-                "audio trace code has no matching firmware identity"
-            ),
+            AudioTraceSource::BootRom { offset } => {
+                ensure!(
+                    firmware_len.is_some_and(|len| offset < len)
+                        && context["firmware"]["sha256"].as_str().is_some_and(|hash| {
+                            hash.len() == 64
+                                && hash.bytes().all(|byte| {
+                                    byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()
+                                })
+                        }),
+                    "audio trace code has no matching firmware identity"
+                )
+            }
             _ => {}
         }
     }

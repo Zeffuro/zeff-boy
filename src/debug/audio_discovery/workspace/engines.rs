@@ -319,7 +319,11 @@ pub(super) fn draw_vgm_details(
         log.command_count,
         log.samples as f64 / f64::from(crate::audio_discovery::vgm::TICKS_PER_SECOND)
     ));
-    ui.small("Imported chip-register log. Original source and decoded VGM exports are available; playback and native cartridge-driver discovery are separate.");
+    ui.small(if log.sn_playback.is_some() {
+        "PSG preview and audio export are available for one recorded pass. Original source and decoded VGM exports are also available."
+    } else {
+        "This log can be inspected and preserved. Its chip configuration or commands are not supported by the PSG player."
+    });
     span_button(ui, workspace, log.source, "Original source file");
     ui.small(format!(
         "Logical data: {:?} · {} bytes · SHA-256 {}",

@@ -194,3 +194,82 @@ fn gb_capture_rejects_master_apu_disable_without_publishing() -> Result<()> {
     assert!(!output.exists());
     Ok(())
 }
+
+#[test]
+fn gb_native_capture_drains_match_normal_pcm_and_replay_through_zip() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    for (cgb, preference) in [
+        (false, HardwareModePreference::Auto),
+        (true, HardwareModePreference::Auto),
+        (false, HardwareModePreference::ForceCgb),
+    ] {
+        let mut bytes = fixture(cgb, &[0xc3, 0x50, 0x01]);
+        let mut program = Vec::new();
+        for (register, value) in [
+            (0x26, 0x80),
+            (0x24, 0x77),
+            (0x25, 0xff),
+            (0x11, 0x80),
+            (0x12, 0xf0),
+            (0x13, 0x40),
+            (0x14, 0x87),
+        ] {
+            program.extend([0x3e, value, 0xe0, register]);
+        }
+        program.extend([0x01, 0x00, 0x08, 0x0b, 0x78, 0xb1, 0x20, 0xfb]);
+        program.extend([0xaf, 0xe0, 0x26, 0xc3, 0x50, 0x01]);
+        bytes[0x150..0x150 + program.len()].copy_from_slice(&program);
+        let name = format!("native-{cgb}-{preference:?}");
+        let rom = directory.path().join(format!("{name}.gb"));
+        let zip = directory.path().join(format!("{name}.zip"));
+        std::fs::write(&rom, &bytes)?;
+        crate::test_support::write_zip(&zip, &[("source.gb", &bytes)])?;
+        let native = directory.path().join(format!("{name}.f32"));
+        let mut options = HeadlessOptions {
+            max_frames: 4,
+            no_sram: true,
+            audio_dump_path: Some(native.clone()),
+            ..Default::default()
+        };
+        run_headless(&rom, preference, Vec::new(), &options)?;
+        let expected = std::fs::read(&native)?;
+        assert!(expected.iter().any(|&byte| byte != 0));
+        for (index, input) in [&rom, &zip].into_iter().enumerate() {
+            let output = directory.path().join(format!("{name}-{index}-capture.zip"));
+            options.audio_trace_path = Some(output.clone());
+            options.audio_dump_path = if index == 0 {
+                Some(directory.path().join(format!("{name}-captured.f32")))
+            } else {
+                None
+            };
+            run_headless(input, preference, Vec::new(), &options)?;
+            if let Some(path) = &options.audio_dump_path {
+                assert_eq!(std::fs::read(path)?, expected);
+            }
+            crate::audio_discovery::capture_artifact::tests::assert_native_pcm(
+                &output, &expected, 48_000,
+            )?;
+            let report = directory
+                .path()
+                .join(format!("{name}-{index}-validation.json"));
+            let args = vec![
+                "--audio-capture-check".into(),
+                report.as_os_str().to_owned(),
+                output.as_os_str().to_owned(),
+                "--audio-sample-rate".into(),
+                "48000".into(),
+                "--audio-capture-reference-f32".into(),
+                native.as_os_str().to_owned(),
+            ];
+            assert!(crate::cli::audio_discovery::validation::run_if_requested(
+                &args
+            )?);
+            let validation: Value = serde_json::from_slice(&std::fs::read(report)?)?;
+            assert_eq!(
+                validation["outcome"]["native_reference"]["status"],
+                "matched"
+            );
+        }
+    }
+    Ok(())
+}

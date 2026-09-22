@@ -109,10 +109,17 @@ pub fn encode_game_boy(trace: &GameBoyAudioTrace, cancel: &AtomicBool) -> Result
     }
 
     let mut writes = trace.clone();
-    writes
+    writes.events.retain(|event| {
+        matches!(
+            event.write,
+            GameBoyTraceWrite::Register { .. } | GameBoyTraceWrite::WaveRam { .. }
+        )
+    });
+    let observed_timing_event_count = trace
         .events
-        .retain(|event| !matches!(event.write, GameBoyTraceWrite::SequencerClock { .. }));
-    let observed_timing_event_count = (trace.events.len() - writes.events.len()) as u32;
+        .iter()
+        .filter(|event| matches!(event.write, GameBoyTraceWrite::SequencerClock { .. }))
+        .count() as u32;
     let mut header = stream::header();
     stream::put_u32(&mut header, 0x80, CLOCK_HZ);
     let mut preamble = vec![0xb3, 0x16, 0];
@@ -138,6 +145,7 @@ pub fn encode_game_boy(trace: &GameBoyAudioTrace, cancel: &AtomicBool) -> Result
                 reset: "power_on",
                 observed_timing_event_count,
             }),
+            nes: None,
             limitations: LIMITATIONS,
         },
         cancel,
@@ -296,6 +304,17 @@ fn validate(trace: &GameBoyAudioTrace, cancel: &AtomicBool) -> Result<()> {
                 );
             }
             GameBoyTraceWrite::Stop { .. } => {}
+            GameBoyTraceWrite::NativeBatch { .. }
+            | GameBoyTraceWrite::NativeDividerPhase { .. }
+            | GameBoyTraceWrite::PcmDrain { .. }
+            | GameBoyTraceWrite::NativeOutputChange { .. } => {
+                ensure!(
+                    trace.chip.native_replay.is_some()
+                        && event.pc == 0
+                        && event.instruction_source == AudioTraceSource::Unknown,
+                    "native Game Boy output events require an explicit contract and no instruction writer"
+                );
+            }
         }
     }
     Ok(())

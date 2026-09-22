@@ -2,11 +2,15 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 use serde::Serialize;
-use zeff_emu_common::audio_trace::{AudioTrace, Huc6280AudioTrace, WonderSwanAudioTrace};
+use zeff_emu_common::audio_trace::{
+    AudioTrace, Huc6280AudioTrace, NesAudioTrace, WonderSwanAudioTrace,
+};
 
 mod game_boy;
 mod huc6280;
 pub use game_boy::{GameBoyVgmExport, GameBoyVgmUnavailable, encode_game_boy};
+mod nes;
+pub use nes::{NesVgmExport, NesVgmUnavailable};
 mod sn76489;
 mod stream;
 mod wonderswan;
@@ -40,6 +44,8 @@ pub struct VgmCaptureMetadata {
     pub wonder_swan: Option<WonderSwanCaptureMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub game_boy: Option<GameBoyCaptureMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nes: Option<NesCaptureMetadata>,
     pub preamble_write_count: u32,
     pub guest_write_count: u32,
     pub wait_command_count: u32,
@@ -72,6 +78,17 @@ pub struct GameBoyCaptureMetadata {
     pub master_clock_hz: u32,
     pub reset: &'static str,
     pub observed_timing_event_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NesCaptureMetadata {
+    pub region: &'static str,
+    pub clock_hz_numerator: u64,
+    pub clock_hz_denominator: u32,
+    pub vgm_clock_hz: u32,
+    pub clock_rounding: &'static str,
+    pub reset: &'static str,
+    pub status_read_observation_count: u32,
 }
 
 fn is_one(value: &u32) -> bool {
@@ -112,10 +129,16 @@ pub fn encode_wonderswan(trace: &WonderSwanAudioTrace, cancel: &AtomicBool) -> R
     wonderswan::encode(trace, cancel)
 }
 
+pub fn encode_nes(trace: &NesAudioTrace, cancel: &AtomicBool) -> Result<NesVgmExport> {
+    nes::encode(trace, cancel)
+}
+
 #[cfg(test)]
 mod game_boy_tests;
 #[cfg(test)]
 mod huc6280_tests;
+#[cfg(test)]
+mod nes_tests;
 #[cfg(test)]
 mod sn76489_tests;
 #[cfg(test)]

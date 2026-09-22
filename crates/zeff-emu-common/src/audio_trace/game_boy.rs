@@ -1,9 +1,11 @@
-use super::{AudioTraceChip, ChipAudioTrace, ChipAudioTraceRecorder};
+use super::{
+    AudioTraceChip, AudioTraceEvent, AudioTraceSource, ChipAudioTrace, ChipAudioTraceRecorder,
+};
 
 pub type GameBoyAudioTrace = ChipAudioTrace<GameBoyTraceChip, GameBoyTraceWrite>;
 pub type GameBoyAudioTraceRecorder = ChipAudioTraceRecorder<GameBoyTraceChip, GameBoyTraceWrite>;
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum GameBoyTraceModel {
@@ -11,7 +13,7 @@ pub enum GameBoyTraceModel {
     Cgb,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum GameBoyResetKind {
@@ -19,7 +21,7 @@ pub enum GameBoyResetKind {
     PostBoot,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameBoyResetState {
     pub kind: GameBoyResetKind,
@@ -30,13 +32,25 @@ pub struct GameBoyResetState {
     pub double_speed: bool,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameBoyTraceChip {
     pub clock_hz: u32,
     pub model: GameBoyTraceModel,
     pub dmg_compatibility: bool,
     pub reset: GameBoyResetState,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub native_replay: Option<GameBoyNativeReplay>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameBoyNativeReplay {
+    pub version: u32,
+    pub sample_rate: u32,
 }
 
 impl AudioTraceChip for GameBoyTraceChip {
@@ -49,7 +63,7 @@ impl AudioTraceChip for GameBoyTraceChip {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum GameBoyTraceOrigin {
@@ -57,7 +71,7 @@ pub enum GameBoyTraceOrigin {
     CpuInterrupt,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum GameBoyDividerResetCause {
@@ -66,7 +80,16 @@ pub enum GameBoyDividerResetCause {
     SpeedSwitch,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum GameBoyOutputSetting {
+    SampleRate,
+    SampleGeneration,
+    ChannelMutes,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum GameBoyTraceWrite {
@@ -99,4 +122,51 @@ pub enum GameBoyTraceWrite {
     SpeedSwitchDelay {
         cycles: u64,
     },
+    NativeBatch {
+        cycles: u32,
+        repetitions: u32,
+    },
+    NativeDividerPhase {
+        skip_next: bool,
+    },
+    PcmDrain {
+        frames: u32,
+    },
+    NativeOutputChange {
+        setting: GameBoyOutputSetting,
+    },
+}
+
+impl GameBoyAudioTraceRecorder {
+    pub fn record_native_batch(&mut self, cycle: u64, cycles: u32) {
+        if let Some(trace) = self
+            .trace
+            .as_mut()
+            .filter(|trace| trace.invalidated.is_none())
+            && let Some(last) = trace.events.last_mut()
+            && let GameBoyTraceWrite::NativeBatch {
+                cycles: previous,
+                repetitions,
+            } = &mut last.write
+            && cycles != 0
+            && *previous == cycles
+            && *repetitions < u32::MAX
+            && last
+                .cycle
+                .checked_add(u64::from(cycles) * u64::from(*repetitions))
+                == Some(cycle)
+        {
+            *repetitions += 1;
+            return;
+        }
+        self.record(AudioTraceEvent {
+            cycle,
+            pc: 0,
+            instruction_source: AudioTraceSource::Unknown,
+            write: GameBoyTraceWrite::NativeBatch {
+                cycles,
+                repetitions: 1,
+            },
+        });
+    }
 }

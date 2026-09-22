@@ -63,12 +63,40 @@ enum SongSelection {
 }
 
 pub(crate) fn run_audio_discovery_if_requested() -> anyhow::Result<bool> {
-    let Some(request) = parse_audio_discovery_args(std::env::args_os().skip(1))? else {
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if huge::run_if_requested(&args)?
+        || psglib::run_if_requested(&args)?
+        || excerpts::run_if_requested(&args)?
+        || sweep::run_if_requested(&args)?
+        || validation::run_if_requested(&args)?
+        || corpus::run_if_requested(&args)?
+    {
+        return Ok(true);
+    }
+    let Some(request) = parse_audio_discovery_args(args)? else {
         return Ok(false);
     };
 
     run_request(&request)
 }
+
+#[path = "audio_discovery_corpus.rs"]
+mod corpus;
+
+#[path = "audio_discovery_sweep.rs"]
+mod sweep;
+
+#[path = "audio_discovery_excerpts.rs"]
+mod excerpts;
+
+#[path = "audio_discovery_psglib.rs"]
+mod psglib;
+
+#[path = "audio_discovery_huge.rs"]
+mod huge;
+
+#[path = "audio_discovery_validation.rs"]
+pub(super) mod validation;
 
 #[path = "audio_discovery_run.rs"]
 mod audio_discovery_run;
@@ -460,6 +488,9 @@ fn parse_audio_discovery_args(
 #[path = "audio_discovery_input.rs"]
 mod audio_discovery_input;
 use audio_discovery_input::*;
+pub(super) use audio_discovery_input::{
+    ensure_distinct_output_path, ensure_outside_output_directory,
+};
 #[cfg(test)]
 #[path = "audio_discovery_input_tests.rs"]
 mod audio_discovery_input_tests;
@@ -493,3 +524,6 @@ mod batch_tests;
 
 #[path = "audio_discovery_drivers.rs"]
 mod driver_evidence;
+#[cfg(test)]
+#[path = "audio_discovery_structural_tests.rs"]
+mod structural_tests;

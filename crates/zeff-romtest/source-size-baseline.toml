@@ -12,7 +12,6 @@ version = 1
 "crates/zeff-libretro/src/core/tests.rs" = 1061
 "crates/zeff-libretro/src/libretro_harness.rs" = 1565
 "crates/zeff-nes-core/src/hardware/cartridge/mappers/fds/tests.rs" = 907
-"crates/zeff-nes-core/src/hardware/cartridge/mod.rs" = 926
 "crates/zeff-nes-core/src/hardware/cpu/conformance_tests/conformance_vectors.rs" = 984
 "crates/zeff-nes-core/src/hardware/opcodes/dispatch.rs" = 912
 "crates/zeff-nes-core/src/hardware/opcodes/tests.rs" = 1115
@@ -135,3 +134,7 @@ reason = "Serialized settings types and defaults define one compatibility schema
 [exceptions."src/settings/tests.rs"]
 max_lines = 934
 reason = "Settings compatibility regressions share serialized fixtures; cap the existing test suite."
+
+[exceptions."crates/zeff-nes-core/src/hardware/cartridge/mod.rs"]
+max_lines = 927
+reason = "The existing mapper module gains only the audio_trace module declaration; new trace logic lives in a separate file."

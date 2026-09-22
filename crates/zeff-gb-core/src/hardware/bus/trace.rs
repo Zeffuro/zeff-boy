@@ -18,6 +18,7 @@ impl Bus {
 
     pub fn cpu_write_byte(&mut self, addr: u16, value: u8) -> u64 {
         if self.oam_dma_blocks_cpu_access(addr) {
+            self.trace_blocked_cpu_write(0, addr, value);
             return 0;
         }
         self.cpu_write_byte_unblocked(addr, value, 0)
@@ -51,6 +52,13 @@ impl Bus {
             width: TraceWriteWidth::Byte,
             mapped_addr: None,
         });
+    }
+
+    pub(super) fn trace_blocked_cpu_write(&mut self, offset: u64, addr: u16, value: u8) {
+        if self.traces_cpu_writes() {
+            // Blocked accesses use FF in this bus model; retain the attempted byte.
+            self.trace_cpu_write(offset, addr, 0xff, value, 0xff);
+        }
     }
 
     pub(super) fn trace_cpu_write(

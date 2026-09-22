@@ -1,6 +1,110 @@
 use super::*;
 
 #[test]
+fn candidate_evidence_is_visible_without_playback_actions() {
+    for (bytes, label, detail) in [
+        (
+            zeff_audio_discovery::drivers::nes_tose_structure::synthetic_rom(),
+            "Structural evidence",
+            "bounded descriptor group",
+        ),
+        (
+            zeff_audio_discovery::drivers::nes_sound_writes::synthetic_selector_rom(),
+            "Decoded sound-write evidence",
+            "selector consumer",
+        ),
+        (
+            zeff_audio_discovery::drivers::nes_sound_writes::synthetic_record_rom(),
+            "Decoded sound-write evidence",
+            "16 record prefixes",
+        ),
+        (
+            zeff_audio_discovery::drivers::nes_sound_writes::synthetic_dispatch_rom(),
+            "Decoded sound-write evidence",
+            "1 command dispatch",
+        ),
+        (
+            zeff_audio_discovery::drivers::nes_sound_writes::synthetic_binding_rom(),
+            "Decoded sound-write evidence",
+            "stream pointer-to-reader bindings",
+        ),
+        (
+            zeff_audio_discovery::drivers::nes_sound_writes::synthetic_head_edge_rom(),
+            "Decoded sound-write evidence",
+            "conditional command-handler links",
+        ),
+    ] {
+        let source = Arc::new(ScanInput {
+            cdda: None,
+            system: Some(System::Nes),
+            standalone_audio: None,
+            bytes: bytes.into(),
+            provenance: None,
+            analysis_profile: "structural-ui-test",
+            display_name: None,
+        });
+        let manifest = source.analyze(ScanLimits::default(), &AtomicBool::new(false));
+        assert_eq!(manifest.scan.song_count(), 0);
+        assert_eq!(manifest.scan.driver_candidates.len(), 1);
+        for width in [420.0, 1000.0] {
+            let mut state = super::super::AudioDiscoveryState::default();
+            state.bind_source(Some(source.clone()));
+            state.session.manifest = Some(manifest.clone());
+            let context = egui::Context::default();
+            for frame in 0..2 {
+                let output = context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 800.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| super::super::draw_audio_explorer(ui, &mut state),
+                );
+                if frame == 0 {
+                    continue;
+                }
+                let texts: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(texts.iter().any(|text| text.contains(label)));
+                assert!(texts.iter().any(|text| text.contains(detail)));
+                assert!(texts.iter().any(|text| text.contains("unknown")));
+                if manifest.scan.driver_candidates[0].code.is_some() {
+                    assert!(
+                        texts
+                            .iter()
+                            .any(|text| text.contains("possible caller links"))
+                    );
+                    if !manifest.scan.driver_candidates[0]
+                        .code
+                        .as_ref()
+                        .unwrap()
+                        .selector_consumers
+                        .is_empty()
+                    {
+                        assert!(
+                            texts
+                                .iter()
+                                .any(|text| text.contains("sequences unverified"))
+                        );
+                    }
+                }
+            }
+            assert!(state.workspace.selected_candidate.is_none());
+            assert!(state.workspace.take_preview_request().is_none());
+            assert!(state.workspace.take_export_request().is_none());
+        }
+    }
+}
+
+#[test]
 fn driver_only_results_are_visible_and_inspectable_without_playback_selection() {
     let mut bytes = vec![0; 32768];
     bytes[1000..1016].copy_from_slice(b"GHX Audio Engine");

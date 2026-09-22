@@ -56,14 +56,30 @@ impl Emulator {
     }
 
     pub fn step_instruction(&mut self) -> (u16, u8, bool, u64) {
+        self.step_instruction_inner(None)
+    }
+
+    pub fn step_instruction_with_accesses(
+        &mut self,
+        on_access: impl FnMut(CpuAccessTraceEvent),
+    ) -> (u16, u8, bool, u64) {
+        let mut on_access = on_access;
+        self.step_instruction_inner(Some(&mut on_access))
+    }
+
+    fn step_instruction_inner(
+        &mut self,
+        mut on_access: Option<&mut dyn FnMut(CpuAccessTraceEvent)>,
+    ) -> (u16, u8, bool, u64) {
         if matches!(self.cpu.running, CpuState::Suspended) {
             return (self.cpu.pc, self.bus.read_byte(self.cpu.pc), false, 0);
         }
 
         let watch_active = self.debug.has_watchpoints();
         let trace_enabled = self.instruction_trace.is_enabled();
-        let trace_active = watch_active || trace_enabled;
-        self.bus.trace_cpu_accesses = watch_active;
+        let access_observer_active = on_access.is_some();
+        let trace_active = watch_active || trace_enabled || access_observer_active;
+        self.bus.trace_cpu_accesses = watch_active || access_observer_active;
         self.bus.trace_cpu_writes = trace_enabled;
         if trace_active {
             self.bus
@@ -138,6 +154,9 @@ impl Emulator {
                         if watch_active {
                             debug.check_watch_read(addr as u16, value as u8);
                         }
+                        if let Some(on_access) = &mut on_access {
+                            on_access(event);
+                        }
                     }
                     CpuAccessTraceEvent::Write {
                         addr,
@@ -157,10 +176,14 @@ impl Emulator {
                                 kind: TraceWriteKind::Memory,
                             });
                         }
+                        if let Some(on_access) = &mut on_access {
+                            on_access(event);
+                        }
                     }
                 });
                 debug.hit_watchpoint.is_some()
             };
+            self.bus.trace_cpu_accesses = watch_active;
 
             if hit_watchpoint {
                 self.cpu.running = CpuState::Suspended;
@@ -521,6 +544,9 @@ fn gb_instruction_len(opcode: u8) -> usize {
         _ => 1,
     }
 }
+
+#[cfg(test)]
+mod access_tests;
 
 #[cfg(test)]
 mod tests {

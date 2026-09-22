@@ -31,6 +31,7 @@ fn fixture() -> (Vec<u8>, Profile) {
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     };
     (bytes, profile)
 }
@@ -214,6 +215,37 @@ fn every_admitted_profile_has_a_representable_separate_bootstrap() {
             &bytes[profile.audio_offset..]
         );
     }
+}
+
+#[test]
+fn compact_variants_preserve_every_legacy_identity_and_recipe() {
+    let mut source_names = Vec::new();
+    let mut source_hashes = Vec::new();
+    let mut source_count = 0;
+    for profile in all_profiles() {
+        for source in profile.known_sources() {
+            source_count += 1;
+            source_names.push(source.name);
+            source_hashes.push(source.sha256);
+            let recognized =
+                profile_by_identity(profile.system.code(), source.rom_len as u64, source.sha256)
+                    .expect("every known source remains qualified");
+            assert_eq!(recognized.source_name, source.name);
+            assert!(std::ptr::eq(recognized.profile, profile));
+            assert_eq!(
+                recognized.profile.recipe().header_layout,
+                profile.header_layout
+            );
+            assert_eq!(recognized.profile.recipe().first_raw_selector, 0x81);
+        }
+    }
+    source_names.sort_unstable();
+    source_names.dedup();
+    source_hashes.sort_unstable();
+    source_hashes.dedup();
+    assert_eq!(source_count, 36);
+    assert_eq!(source_names.len(), source_count);
+    assert_eq!(source_hashes.len(), source_count);
 }
 
 #[test]

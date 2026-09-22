@@ -1,4 +1,6 @@
+mod audio_trace;
 mod frame_seq;
+pub use audio_trace::GameBoyTraceReplayer;
 mod mixing;
 mod noise;
 mod output;

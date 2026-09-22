@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
 use self::bus::parse_addr_range_list_arg;
-use self::input::{parse_input_event_arg, parse_input_script, parse_zapper_event_arg};
+pub(in crate::cli) use self::input::parse_input_event_arg;
+use self::input::{parse_input_script, parse_zapper_event_arg};
 use self::numbers::{
     parse_pc_range_arg, parse_u8_arg, parse_u16_arg, parse_u64_arg, parse_usize_arg,
 };

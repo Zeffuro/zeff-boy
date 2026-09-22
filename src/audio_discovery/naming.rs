@@ -75,6 +75,9 @@ pub(crate) fn song(
             format!("Module {:02} - Subsong {:02}", song.module, song.subsong)
         }
         Some(SongRef::GbSoundSystem(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
+        Some(SongRef::Huge(song)) => {
+            format!("Descriptor {:04X}", song.bound.song.descriptor.offset)
+        }
         Some(SongRef::GbCarillon(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
         Some(SongRef::WsTose(song)) => format!("Selector {:03}", song.index),
         Some(SongRef::NesTose(song)) => format!("Selector {:03}", song.index),

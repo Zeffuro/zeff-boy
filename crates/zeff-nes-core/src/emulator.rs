@@ -5,6 +5,7 @@ use crate::hardware::timing::NesTiming;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod audio_trace;
 mod public_api;
 mod runtime;
 mod state_io;
@@ -84,6 +85,7 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
+        self.invalidate_audio_trace(zeff_emu_common::audio_trace::AudioTraceInvalidation::Reset);
         self.bus.reset();
         self.cpu.reset(&mut self.bus);
         self.opcode_log.clear();

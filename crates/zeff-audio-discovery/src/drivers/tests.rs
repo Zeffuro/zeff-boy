@@ -29,7 +29,7 @@ fn discovery_preflight_reports_cancellation_invalid_limits_and_unsupported_syste
             false,
             ScanStatus::Incomplete(ScanStop::InvalidLimits),
         ),
-        (System::Nes, defaults, false, ScanStatus::Unsupported),
+        (System::Gba, defaults, false, ScanStatus::Unsupported),
     ] {
         let report = scan(system, &bytes, limits, &AtomicBool::new(cancelled));
         assert_eq!(report.status, expected);

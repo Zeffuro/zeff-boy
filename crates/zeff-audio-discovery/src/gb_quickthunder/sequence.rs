@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::Budget;
 
-use super::{ReadError, profiles::Driver, word};
+use super::{ReadError, profiles::Driver, sampled, word};
 
 pub(super) struct Reader<'a, 'b, 'c> {
     bytes: &'a [u8],
@@ -16,11 +16,15 @@ pub(super) struct Reader<'a, 'b, 'c> {
 impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
     pub fn new(bytes: &'a [u8], driver: Driver, budget: &'b mut Budget<'c>) -> Self {
         let base = usize::from(driver.bank) * 0x4000;
+        let mut mapped = vec![(base, base + driver.profile.len)];
+        if sampled::is_sampled(driver) {
+            mapped.extend([(0x50, 0x53), (0x1740, 0x17e4)]);
+        }
         Self {
             bytes,
             driver,
             budget,
-            mapped: vec![(base, base + driver.profile.len)],
+            mapped,
             effects: BTreeSet::new(),
             instruments: BTreeSet::new(),
         }
@@ -71,6 +75,9 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
         if !self.instruments.insert((index, channel)) {
             return Ok(());
         }
+        if channel == 2 && sampled::is_sampled(self.driver) {
+            return self.sample(index);
+        }
         let table = if channel == 3 {
             self.driver.noise
         } else {
@@ -93,6 +100,25 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
         for &(at, width) in effects {
             self.effect(u32::from(word(&header, at)), width, false)?;
         }
+        Ok(())
+    }
+
+    fn sample(&mut self, index: u8) -> Result<(), ReadError> {
+        if index >= 21 {
+            return Err(ReadError::Invalid);
+        }
+        let descriptor = self.read(0x6c54 + u32::from(index) * 6, 6)?;
+        let pointer = usize::from(word(descriptor, 1));
+        let len = usize::from(word(descriptor, 3)) * 16;
+        let bank = usize::from(descriptor[5]);
+        if pointer < 0x4000 || len == 0 || pointer + len > 0x8000 || bank != 63 {
+            return Err(ReadError::Invalid);
+        }
+        let start = bank * 0x4000 + pointer - 0x4000;
+        self.bytes
+            .get(start..start + len)
+            .ok_or(ReadError::Invalid)?;
+        self.mapped.push((start, start + len));
         Ok(())
     }
 
@@ -126,8 +152,13 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
                 _ => (),
             }
             let note = self.byte(sequence + 1)?;
-            let pitched = note < 0xfd || channel == 2 && note == 0xfd;
-            if first && !pitched {
+            let sampled = channel == 2 && sampled::is_sampled(self.driver);
+            let pitched = if sampled {
+                note != 0xff
+            } else {
+                note < 0xfd || channel == 2 && note == 0xfd
+            };
+            if first && !pitched && !sampled {
                 return Err(ReadError::Invalid);
             }
             first = false;

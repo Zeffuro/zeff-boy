@@ -36,7 +36,10 @@ impl VgmExportRequest {
             "VGM export requires a matching standalone register-log source"
         );
         ensure!(
-            super::catalog::SongRef::Vgm(log).supports(format),
+            matches!(
+                format,
+                SongFormat::Vgm | SongFormat::Vgz | SongFormat::MappedAssets
+            ) && super::catalog::SongRef::Vgm(log).supports(format),
             "this VGM source cannot be exported in the selected format"
         );
         super::extract::ExtractionRequest::prepare(

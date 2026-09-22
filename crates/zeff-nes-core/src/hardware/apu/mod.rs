@@ -1,3 +1,4 @@
+mod audio_trace;
 mod dmc;
 mod filter;
 mod mixing;
@@ -7,6 +8,7 @@ mod runtime;
 mod triangle;
 
 use crate::hardware::timing::NesTiming;
+pub(crate) use audio_trace::{AUDIO_TRACE_CPU_ORIGIN, native_trace_chip};
 use filter::NesOutputFilter;
 use std::collections::VecDeque;
 use std::fmt;

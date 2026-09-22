@@ -12,7 +12,7 @@ mod tests;
 
 pub use native::prepare_rom;
 #[cfg(feature = "test-support")]
-pub use tests::synthetic_rom;
+pub use tests::{synthetic_rom, synthetic_rom_alternate};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct GbCarillonSong {
@@ -60,9 +60,9 @@ pub(crate) fn scan(
     budget: &mut Budget<'_>,
     remaining: usize,
 ) -> Result<(), ScanStop> {
-    for bank in profiles::recognized(bytes, budget)? {
+    for recognized in profiles::recognized(bytes, budget)? {
         for index in 0..8 {
-            match sequence::song(bytes, bank, index, budget) {
+            match sequence::song(bytes, recognized, index, budget) {
                 Ok(song) => {
                     if songs.len() >= remaining {
                         return Err(ScanStop::CandidateLimit);
@@ -88,9 +88,16 @@ pub fn validate_song(
     };
     let banks = profiles::recognized(bytes, &mut budget)
         .map_err(|stop| anyhow::anyhow!("Carillon validation stopped: {stop:?}"))?;
+    let recognized = banks
+        .iter()
+        .copied()
+        .find(|recognized| {
+            recognized.bank == expected.bank && recognized.profile.name == expected.profile
+        })
+        .ok_or_else(|| anyhow::anyhow!("Carillon inventory differs from its recognized source"))?;
     anyhow::ensure!(
-        banks.contains(&expected.bank)
-            && sequence::song(bytes, expected.bank, expected.index, &mut budget)
+        profiles::named(expected.profile).is_some()
+            && sequence::song(bytes, recognized, expected.index, &mut budget)
                 .ok()
                 .as_ref()
                 == Some(expected),

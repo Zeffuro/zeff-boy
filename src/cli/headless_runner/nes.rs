@@ -10,10 +10,23 @@ pub(super) fn run_nes_headless(
     rom_data: &[u8],
     firmware_search_dirs: &[std::path::PathBuf],
     opts: &HeadlessOptions,
+    capture: Option<super::audio_trace::Capture>,
 ) -> anyhow::Result<()> {
     ensure_system_headless_options("nes", opts)?;
 
-    let mut emulator = if path
+    let mut emulator = if capture.is_some() {
+        anyhow::ensure!(
+            !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("fds")),
+            "NES audio capture does not support FDS audio"
+        );
+        NesEmulator::new_with_audio_trace(
+            rom_data,
+            zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE,
+            zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS,
+        )?
+    } else if path
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("fds"))
     {
@@ -23,9 +36,10 @@ pub(super) fn run_nes_headless(
     } else {
         NesEmulator::new(rom_data, zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE)?
     };
-    let mut sram_recovery =
-        crate::save_paths::battery_sram_session(path, "nes", emulator.rom_hash());
+    let mut sram_recovery = (!opts.no_sram && capture.is_none())
+        .then(|| crate::save_paths::battery_sram_session(path, "nes", emulator.rom_hash()));
     if !opts.no_sram
+        && capture.is_none()
         && let Some(sram_path) = crate::emu_backend::nes::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {
                 log::warn!("Failed to load battery save: {e}");
@@ -47,6 +61,17 @@ pub(super) fn run_nes_headless(
     }
 
     let mut stuck = StuckTracker::from_options(opts);
+    let mut audio_dump = opts
+        .audio_dump_path
+        .as_ref()
+        .map(|path| {
+            super::audio_dump::StreamingAudioDump::new(
+                path,
+                zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE as u32,
+            )
+        })
+        .transpose()?;
+    let mut audio_scratch = Vec::new();
     let mut stuck_active = false;
     let mut screenshot_written = false;
     let mut current_input = InputMasks::default();
@@ -175,6 +200,12 @@ pub(super) fn run_nes_headless(
             emulator.step_frame();
         }
         frames_run = frame_number;
+        if capture.is_some() || audio_dump.is_some() {
+            emulator.drain_audio_samples_into(&mut audio_scratch);
+            if let Some(dump) = &mut audio_dump {
+                dump.write_samples(&audio_scratch)?;
+            }
+        }
         check_tas_assertions(
             opts,
             frames_run,
@@ -307,9 +338,9 @@ pub(super) fn run_nes_headless(
             );
         }
     }
-    if !opts.no_sram {
+    if let Some(recovery) = &mut sram_recovery {
         flush_battery(
-            &mut sram_recovery,
+            recovery,
             path,
             ActiveSystem::Nes,
             emulator.rom_hash(),
@@ -317,6 +348,22 @@ pub(super) fn run_nes_headless(
         );
     }
     fail_on_stuck_if_needed("nes", stuck.as_ref(), opts)?;
+
+    if let Some(dump) = audio_dump {
+        dump.finish()?;
+    }
+    if let Some(capture) = capture {
+        anyhow::ensure!(
+            frames_run == opts.max_frames,
+            "NES audio capture ended before the requested interval"
+        );
+        let settings = serde_json::json!({
+            "mapper": emulator.cartridge_effective_mapper_label(),
+            "sample_rate_hz": zeff_nes_core::emulator::DEFAULT_SAMPLE_RATE,
+            "start": "fresh_construction_without_warm_reset",
+        });
+        capture.finish_nes(emulator.finish_audio_trace(), frames_run, settings)?;
+    }
 
     Ok(())
 }

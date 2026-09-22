@@ -12,6 +12,7 @@ mod fixture;
 mod profiles;
 #[cfg(test)]
 mod tests;
+mod timer_banked;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use cgb_banked::fixture::fixture_rom as cgb_fixture_rom;
@@ -20,6 +21,10 @@ pub use cgb_banked::fixture::ram_fixture_rom as cgb_ram_fixture_rom;
 #[cfg(any(test, feature = "test-support"))]
 pub use fixture::{expanded_fixture_rom, fixture_rom};
 use profiles::{Profile, all_profiles};
+#[cfg(any(test, feature = "test-support"))]
+pub use timer_banked::fixture_rom as timer_fixture_rom;
+#[cfg(any(test, feature = "test-support"))]
+pub use timer_banked::fixture_rom_small as timer_small_fixture_rom;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,6 +100,9 @@ pub(crate) fn scan(
     budget: &mut Budget<'_>,
     max_candidates: usize,
 ) -> Result<(), ScanStop> {
+    if timer_banked::candidate(bytes) {
+        timer_banked::scan(bytes, songs, budget, max_candidates)?;
+    }
     if cgb_banked::candidate(bytes) {
         return cgb_banked::scan(bytes, songs, budget, max_candidates);
     }
@@ -119,6 +127,9 @@ pub fn prepare_rom(
     song: &GbNativeSong,
     cancel: &AtomicBool,
 ) -> AnyResult<PreparedGbNative> {
+    if timer_banked::owns(song.profile) {
+        return timer_banked::prepare(bytes, song, cancel);
+    }
     if cgb_banked::candidate(bytes) {
         return cgb_banked::prepare_rom(bytes, song, cancel);
     }
@@ -233,6 +244,9 @@ fn rom_span(bytes: &[u8], bank: u8, address: u16, len: usize) -> Option<RomSpan>
 }
 
 pub fn source_span_matches(media: &MediaIdentity, span: SourceSpan) -> bool {
+    if timer_banked::source_span_matches(media, span) {
+        return true;
+    }
     if cgb_banked::source_matches(media) {
         return valid_source_span(media.byte_len, span);
     }

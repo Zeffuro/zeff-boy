@@ -1,5 +1,6 @@
 use super::Bus;
 use crate::hardware::constants::*;
+use zeff_emu_common::audio_trace::{AudioTraceInvalidation, NesTraceOrigin, NesTraceWrite};
 use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
 const CPU_RAM_MIRROR_START: u16 = 0x0000;
@@ -22,7 +23,7 @@ impl Bus {
     #[inline]
     pub fn cpu_read(&mut self, addr: u16) -> u8 {
         let at = self.next_cpu_access_tick();
-        self.cpu_read_for_dma(addr, at)
+        self.cpu_read_for_dma_with_trace(addr, at, true, NesTraceOrigin::Cpu)
     }
 
     #[inline]
@@ -30,7 +31,7 @@ impl Bus {
         self.service_pending_dma(addr);
         self.begin_timed_cpu_cycle();
         let at = self.next_cpu_access_tick();
-        let value = self.cpu_read_for_dma(addr, at);
+        let value = self.cpu_read_for_dma_with_trace(addr, at, true, NesTraceOrigin::Cpu);
         self.finish_timed_cpu_cycle(false);
         value
     }
@@ -40,7 +41,7 @@ impl Bus {
         addr: u16,
         at: Option<zeff_emu_common::time::MasterTicks>,
     ) -> u8 {
-        self.cpu_read_for_dma_with_trace(addr, at, true)
+        self.cpu_read_for_dma_with_trace(addr, at, true, NesTraceOrigin::Dma)
     }
 
     pub(super) fn cpu_read_for_dma_with_trace(
@@ -48,6 +49,7 @@ impl Bus {
         addr: u16,
         at: Option<zeff_emu_common::time::MasterTicks>,
         trace: bool,
+        origin: NesTraceOrigin,
     ) -> u8 {
         let ppu_addr = self.ppu_data_addr_for_cpu_register_access(addr);
         let val = match addr {
@@ -59,7 +61,11 @@ impl Bus {
             }
             APU_REGISTER_START..=APU_PULSE_DMC_REGISTER_END => self.cpu_open_bus,
             OAM_DMA => self.cpu_open_bus,
-            APU_STATUS => self.apu.read_status(),
+            APU_STATUS => {
+                let value = self.apu.read_status();
+                self.record_audio_event(at, NesTraceWrite::StatusRead { value, origin });
+                value
+            }
             CONTROLLER1 => {
                 let zapper_hit = self.current_zapper_light_detected();
                 self.controller1.set_zapper_hit(zapper_hit);
@@ -130,6 +136,8 @@ impl Bus {
 
     #[inline]
     pub fn cpu_write(&mut self, addr: u16, val: u8) {
+        self.audio_trace
+            .invalidate(AudioTraceInvalidation::ExternalMutation);
         let access_is_odd = self.cpu_cycle_is_odd(self.cpu_access_elapsed_cycles);
         let at = self.next_cpu_access_tick();
         self.cpu_write_inner(addr, val, access_is_odd, at);
@@ -177,6 +185,14 @@ impl Bus {
             APU_REGISTER_START..=APU_PULSE_DMC_REGISTER_END | APU_STATUS | CONTROLLER2 => {
                 let dmc_was_idle = self.apu.dmc.bytes_remaining == 0;
                 self.apu.write_register(addr, val, access_is_odd);
+                self.record_audio_event(
+                    at,
+                    NesTraceWrite::Register {
+                        address: addr,
+                        value: val,
+                        odd_cycle: access_is_odd,
+                    },
+                );
                 if addr == APU_STATUS {
                     if val & 0x10 == 0 {
                         self.dma.cancel_dmc();

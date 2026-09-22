@@ -107,6 +107,29 @@ pub(super) fn inspect(
         result,
         report.gb_carillon_songs.len(),
         start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let source_sha256 = report
+        .media
+        .sha256
+        .as_deref()
+        .expect("preflight hashes accepted Game Boy sources");
+    let result = super::super::huge::catalog::scan(
+        bytes,
+        source_sha256,
+        &mut report.huge_songs,
+        budget,
+        capacity,
+    );
+    record(
+        report,
+        10,
+        result,
+        report.huge_songs.len(),
+        start - budget.remaining,
     )
 }
 

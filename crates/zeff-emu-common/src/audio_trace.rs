@@ -6,12 +6,14 @@ mod wonderswan;
 pub use wonderswan::*;
 mod game_boy;
 pub use game_boy::*;
+mod nes;
+pub use nes::*;
 
 use crate::time::ClockRate;
 
 pub const MAX_AUDIO_TRACE_EVENTS: usize = 262_144;
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum AudioTraceTiming {
@@ -22,14 +24,14 @@ pub enum AudioTraceTiming {
     CpuBusCycleBoundary,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum AudioTraceStart {
     Reset,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Sn76489ZeroPeriod {
@@ -37,7 +39,7 @@ pub enum Sn76489ZeroPeriod {
     Period1024,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Sn76489Tone2NoiseClock {
@@ -45,7 +47,7 @@ pub enum Sn76489Tone2NoiseClock {
     RisingEdge,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sn76489ResetState {
     pub tone_periods: [u16; 3],
@@ -59,7 +61,7 @@ pub struct Sn76489ResetState {
     pub noise_clocks_remaining: u32,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sn76489TraceChip {
     pub clock_hz: u32,
@@ -75,7 +77,7 @@ pub struct Sn76489TraceChip {
     pub reset: Sn76489ResetState,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum AudioTraceSource {
@@ -97,7 +99,7 @@ pub enum AudioTraceSource {
     Unknown,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum AudioTraceWrite {
@@ -105,7 +107,7 @@ pub enum AudioTraceWrite {
     GameGearStereo { port: u8, value: u8 },
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AudioTraceEvent<W = AudioTraceWrite> {
     pub cycle: u64,
@@ -114,7 +116,7 @@ pub struct AudioTraceEvent<W = AudioTraceWrite> {
     pub write: W,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum AudioTraceInvalidation {
@@ -147,15 +149,23 @@ fn is_one(value: &u32) -> bool {
     *value == 1
 }
 
+#[cfg(feature = "serde")]
+fn one() -> u32 {
+    1
+}
+
 pub type AudioTrace = ChipAudioTrace<Sn76489TraceChip, AudioTraceWrite>;
 pub type AudioTraceRecorder = ChipAudioTraceRecorder<Sn76489TraceChip, AudioTraceWrite>;
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChipAudioTrace<C, W> {
     pub generation: u64,
     pub cycle_hz: u32,
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "is_one"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "one", skip_serializing_if = "is_one")
+    )]
     pub cycle_hz_denominator: u32,
     pub chip: C,
     pub timing: AudioTraceTiming,

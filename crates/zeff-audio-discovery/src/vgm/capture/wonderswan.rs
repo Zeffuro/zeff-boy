@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail, ensure};
 use zeff_emu_common::audio_trace::{
-    AudioTraceStart, AudioTraceTiming, WonderSwanAudioTrace, WonderSwanResetState,
-    WonderSwanTraceOrigin, WonderSwanTraceWrite,
+    AudioTraceSource, AudioTraceStart, AudioTraceTiming, WonderSwanAudioTrace,
+    WonderSwanResetState, WonderSwanTraceOrigin, WonderSwanTraceWrite,
 };
 
 use super::{
@@ -54,6 +54,7 @@ pub fn encode(trace: &WonderSwanAudioTrace, cancel: &AtomicBool) -> Result<VgmCa
             }),
             limitations: LIMITATIONS,
             game_boy: None,
+            nes: None,
         },
         cancel,
         |write| match *write {
@@ -91,6 +92,21 @@ fn validate_trace(trace: &WonderSwanAudioTrace, cancel: &AtomicBool) -> Result<(
     );
     for event in &trace.events {
         ensure!(!cancel.load(Ordering::Relaxed), "VGM capture cancelled");
+        ensure!(
+            event.pc <= 0x0f_ffff,
+            "WonderSwan trace event PC is outside the native address space"
+        );
+        let origin = match event.write {
+            WonderSwanTraceWrite::Register { origin, .. }
+            | WonderSwanTraceWrite::WaveRam { origin, .. } => origin,
+        };
+        ensure!(
+            !matches!(
+                origin,
+                WonderSwanTraceOrigin::CpuInterrupt | WonderSwanTraceOrigin::SoundDma
+            ) || (event.pc == 0 && event.instruction_source == AudioTraceSource::Unknown),
+            "WonderSwan interrupt and Sound DMA events require unknown provenance"
+        );
         match event.write {
             WonderSwanTraceWrite::Register {
                 port,

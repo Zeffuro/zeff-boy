@@ -93,6 +93,7 @@ impl Bus {
             audio_trace_context: (0, zeff_emu_common::audio_trace::AudioTraceSource::Unknown),
             audio_trace_origin: zeff_emu_common::audio_trace::GameBoyTraceOrigin::Cpu,
             audio_trace_stopped: false,
+            audio_trace_native: false,
         };
 
         reader.read_exact(&mut bus.vram)?;

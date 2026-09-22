@@ -12,10 +12,14 @@ pub mod catalog;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cdda;
 pub mod classification;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod coverage;
 pub mod descriptor_midi;
 pub mod detectors;
 pub mod drivers;
 pub mod engine_software;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod findings;
 pub mod formats;
 pub mod gax;
 pub mod gax_native;
@@ -29,6 +33,7 @@ pub mod gb_sound_system;
 pub mod gb_tose;
 pub mod gba_bootstrap;
 pub mod gbass;
+pub mod huge;
 pub mod krawall;
 pub mod mp2k;
 pub mod musyx;
@@ -38,6 +43,7 @@ pub mod nes_music;
 pub mod nes_native;
 pub mod nes_tose;
 pub mod nsq;
+pub mod psglib;
 pub mod radriver;
 pub mod relations;
 pub mod rips;

@@ -5,11 +5,10 @@ use self::test_status::{
 };
 use super::*;
 
-mod audio_dump;
 mod memory_dump;
 mod test_status;
 
-use audio_dump::StreamingAudioDump;
+use super::audio_dump::StreamingAudioDump;
 
 const GB_MEMORY_TEST_TEXT_FAST_SCAN: u16 = 512;
 const GB_MEMORY_TEST_TEXT_FULL_SCAN: u16 = 0x1FFC;
@@ -23,8 +22,9 @@ pub(super) fn run_gb_headless(
 ) -> anyhow::Result<()> {
     let mut emulator = GbEmulator::from_rom_data(rom_data, mode_preference)?;
     if let Some(capture) = &mut capture {
-        emulator
-            .reset_and_begin_audio_trace(zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS)?;
+        emulator.reset_and_begin_native_audio_trace(
+            zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS,
+        )?;
         capture.configure_game_boy();
     }
     let capture_initial_hardware = capture
@@ -343,9 +343,11 @@ pub(super) fn run_gb_headless(
                 return result;
             }
         }
-        if let Some(audio_dump) = &mut audio_dump {
+        if audio_dump.is_some() || capture.is_some() {
             emulator.drain_audio_samples_into(&mut audio_scratch);
-            audio_dump.write_samples(&audio_scratch)?;
+            if let Some(audio_dump) = &mut audio_dump {
+                audio_dump.write_samples(&audio_scratch)?;
+            }
             audio_scratch.clear();
         }
 
@@ -476,10 +478,12 @@ pub(super) fn run_gb_headless(
     print_gb_memory_dumps(&emulator, opts);
     fail_on_stuck_if_needed("gb", stuck.as_ref(), opts)?;
 
-    if let Some(mut audio_dump) = audio_dump {
+    if audio_dump.is_some() || capture.is_some() {
         emulator.drain_audio_samples_into(&mut audio_scratch);
-        audio_dump.write_samples(&audio_scratch)?;
-        audio_dump.finish()?;
+        if let Some(mut audio_dump) = audio_dump {
+            audio_dump.write_samples(&audio_scratch)?;
+            audio_dump.finish()?;
+        }
     }
     if let Some(capture) = capture {
         capture.finish_game_boy(

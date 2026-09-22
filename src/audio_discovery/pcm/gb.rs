@@ -92,11 +92,11 @@ impl GbSession {
                     && prepared.bytes.get(0x147..0x14a) == Some(&[0x13, 5, 3])
             }
             GbNativeTiming::CgbDouble => {
-                prepared.bytes.len() == 0x20_0000
-                    && prepared.bytes.get(0x143) == Some(&0xc0)
+                prepared.bytes.get(0x143) == Some(&0xc0)
                     && matches!(
-                        prepared.bytes.get(0x147..0x14a),
-                        Some([0x19, 6, 0] | [0x1b, 6, 2])
+                        (prepared.bytes.len(), prepared.bytes.get(0x147..0x14a)),
+                        (0x20_0000, Some([0x19, 6, 0] | [0x1b, 6, 2]))
+                            | (0x10_0000, Some([0x1b, 5, 2]))
                     )
             }
         };

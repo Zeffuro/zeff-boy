@@ -13,6 +13,10 @@ pub(crate) mod batch;
 #[cfg(not(target_arch = "wasm32"))]
 mod bundle;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod capture_artifact;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod capture_excerpts;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod cdda;
 #[cfg(not(target_arch = "wasm32"))]
 mod container_export;
@@ -28,6 +32,14 @@ pub(crate) mod formats;
 mod gb_export;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod gsf;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod huge_export;
+#[cfg(not(target_arch = "wasm32"))]
+mod huge_gbs_export;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod huge_gbs_validation;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod huge_validation;
 pub(crate) mod media;
 #[cfg(not(target_arch = "wasm32"))]
 mod midi;
@@ -47,6 +59,8 @@ pub(crate) mod preview;
 #[cfg(not(target_arch = "wasm32"))]
 mod projection;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod psglib_export;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod render;
 pub(crate) mod roles;
 #[cfg(not(target_arch = "wasm32"))]
@@ -61,6 +75,8 @@ pub(crate) mod test_support;
 mod timeline;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod trace_capture;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod validation;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod vgm_export;
 

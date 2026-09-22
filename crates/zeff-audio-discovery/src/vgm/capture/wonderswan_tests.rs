@@ -32,13 +32,28 @@ fn trace() -> WonderSwanAudioTrace {
 }
 
 fn event(cycle: u64, write: WonderSwanTraceWrite) -> AudioTraceEvent<WonderSwanTraceWrite> {
+    let origin = match write {
+        WonderSwanTraceWrite::Register { origin, .. }
+        | WonderSwanTraceWrite::WaveRam { origin, .. } => origin,
+    };
+    let (pc, instruction_source) = if matches!(
+        origin,
+        WonderSwanTraceOrigin::CpuInterrupt | WonderSwanTraceOrigin::SoundDma
+    ) {
+        (0, AudioTraceSource::Unknown)
+    } else {
+        (
+            0x1234,
+            AudioTraceSource::CartridgeRom {
+                offset: 0x2040,
+                bit_reversed: false,
+            },
+        )
+    };
     AudioTraceEvent {
         cycle,
-        pc: 0x1234,
-        instruction_source: AudioTraceSource::CartridgeRom {
-            offset: 0x2040,
-            bit_reversed: false,
-        },
+        pc,
+        instruction_source,
         write,
     }
 }
@@ -204,7 +219,7 @@ fn mixed_commands_use_native_port_offsets_big_endian_memory_and_absolute_time() 
 
 #[test]
 fn invalid_or_unrepresentable_traces_reject() {
-    for invalid in 0..19 {
+    for invalid in 0..23 {
         let mut source = trace();
         source.events.push(event(
             0,
@@ -300,6 +315,29 @@ fn invalid_or_unrepresentable_traces_reject() {
                     address: 0,
                     value: 0,
                     origin: WonderSwanTraceOrigin::GeneralDma,
+                }
+            }
+            19 => source.events[0].pc = 0x10_0000,
+            20 => {
+                source.events[0].write = WonderSwanTraceWrite::Register {
+                    port: 0x80,
+                    value: 0,
+                    origin: WonderSwanTraceOrigin::CpuInterrupt,
+                }
+            }
+            21 => {
+                source.events[0].write = WonderSwanTraceWrite::Register {
+                    port: 0x89,
+                    value: 0,
+                    origin: WonderSwanTraceOrigin::SoundDma,
+                }
+            }
+            22 => {
+                source.events[0].instruction_source = AudioTraceSource::Unknown;
+                source.events[0].write = WonderSwanTraceWrite::Register {
+                    port: 0x80,
+                    value: 0,
+                    origin: WonderSwanTraceOrigin::CpuInterrupt,
                 }
             }
             _ => unreachable!(),

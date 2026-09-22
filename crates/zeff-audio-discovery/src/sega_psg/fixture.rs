@@ -21,6 +21,7 @@ pub(super) const PROFILE: Profile = Profile {
     header_layout: HeaderLayout::FourByteChannels,
     rejected_selectors: &[],
     supplemental_selectors: &[],
+    additional_sources: &[],
 };
 
 pub(super) const SIX_BYTE_PROFILE: Profile = Profile {

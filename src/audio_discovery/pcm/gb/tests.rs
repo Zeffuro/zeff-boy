@@ -74,6 +74,90 @@ fn native_handoff_reset_and_recording_match() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn timer_driver_preserves_speed_selection_and_chunked_replay() -> Result<()> {
+    let bytes = zeff_audio_discovery::gb_native::timer_fixture_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    assert!(report.gb_native_songs.len() >= 2);
+    for sample_rate in [44_100, 48_000] {
+        let mut recordings = Vec::new();
+        for song in &report.gb_native_songs {
+            let prepared = zeff_audio_discovery::gb_native::prepare_rom(&bytes, song, &cancel)?;
+            let mut session = GbSession::new(
+                prepared,
+                RenderOptions {
+                    sample_rate,
+                    ..options()
+                },
+                Vec::new(),
+                &cancel,
+            )?;
+            let expected = render(&mut session, 258)?;
+            assert_eq!(expected.len(), sample_rate as usize * 2);
+            assert!(expected.iter().any(|&sample| sample != 0));
+            assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBDouble);
+            session.reset()?;
+            assert_eq!(render(&mut session, 4096)?, expected);
+            recordings.push(expected);
+        }
+        assert!(recordings.windows(2).any(|pair| pair[0] != pair[1]));
+    }
+    Ok(())
+}
+
+#[test]
+fn timer_driver_retains_initial_underflow_and_periodic_correction() -> Result<()> {
+    let bytes = zeff_audio_discovery::gb_native::timer_fixture_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let prepared =
+        zeff_audio_discovery::gb_native::prepare_rom(&bytes, &report.gb_native_songs[0], &cancel)?;
+    let emulator = Emulator::from_rom_data(&prepared.bytes, HardwareModePreference::ForceCgb)?;
+    let mut state = zeff_gb_core::save_state::decode_on_thread(emulator.encode_state()?)?;
+    state.bus.cartridge.restore_rom_bytes(prepared.bytes);
+    state.bus.set_apu_sample_generation_enabled(false);
+    let mut times = Vec::new();
+    let mut elapsed = 0;
+    let mut ready = false;
+    while times.len() < 265 && elapsed < 70_224 * 400 {
+        if !ready
+            && state.bus.read_byte(prepared.ready_address) == prepared.ready_value
+            && (prepared.wait_start..prepared.wait_end).contains(&state.cpu.pc)
+        {
+            state
+                .bus
+                .write_byte(prepared.ack_address, prepared.ack_value);
+            ready = true;
+        }
+        if ready && state.cpu.pc == 0x50 {
+            times.push(elapsed);
+        }
+        state.cpu.step(&mut state.bus);
+        elapsed += state.cpu.last_step_master_ticks;
+    }
+    assert_eq!(times.len(), 265);
+    for (index, pair) in times.windows(2).enumerate() {
+        let expected = if matches!(index, 255 | 262) {
+            70_656
+        } else {
+            70_144
+        };
+        assert_eq!(pair[1] - pair[0], expected, "IRQ interval {index}");
+    }
+    Ok(())
+}
 #[test]
 fn ready_marker_alone_does_not_release_the_song() -> Result<()> {
     let mut prepared = fixture();

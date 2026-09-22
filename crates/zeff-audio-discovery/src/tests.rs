@@ -547,8 +547,8 @@ fn applicable_cartridge_detectors_complete_even_without_a_match() {
             report.applicable_detectors.len(),
             match system {
                 System::Gba => 15,
-                System::Nes => 4,
-                System::Gb => 10,
+                System::Nes => 6,
+                System::Gb => 11,
                 System::Ws => 2,
                 System::Sms | System::Gg => 2,
                 _ => 1,

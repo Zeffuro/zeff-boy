@@ -129,10 +129,16 @@ impl Emulator {
     }
 
     pub fn clear_game_genie(&mut self) {
+        self.invalidate_audio_trace(
+            zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
+        );
         self.bus.game_genie.clear();
     }
 
     pub fn add_game_genie_patch(&mut self, patch: crate::cheats::NesGameGeniePatch) {
+        self.invalidate_audio_trace(
+            zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
+        );
         self.bus.game_genie.patches.push(patch);
     }
 

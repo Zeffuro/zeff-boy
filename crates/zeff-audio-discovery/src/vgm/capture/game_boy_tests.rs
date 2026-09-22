@@ -10,6 +10,7 @@ fn trace() -> GameBoyAudioTrace {
         cycle_hz: 4_194_304,
         cycle_hz_denominator: 1,
         chip: GameBoyTraceChip {
+            native_replay: None,
             clock_hz: 4_194_304,
             model: GameBoyTraceModel::Dmg,
             dmg_compatibility: false,
@@ -49,6 +50,39 @@ fn register(cycle: u64, address: u16, value: u8) -> AudioTraceEvent<GameBoyTrace
             origin: GameBoyTraceOrigin::Cpu,
         },
     )
+}
+
+#[test]
+fn native_output_bookkeeping_does_not_change_the_vgm_projection() {
+    let cancel = AtomicBool::new(false);
+    let mut source = trace();
+    source.events.push(register(12, 0xff26, 0x80));
+    let baseline = encode_game_boy(&source, &cancel).unwrap().capture.unwrap();
+    source.chip.native_replay = Some(GameBoyNativeReplay {
+        version: 1,
+        sample_rate: 48_000,
+    });
+    for write in [
+        GameBoyTraceWrite::NativeDividerPhase { skip_next: false },
+        GameBoyTraceWrite::NativeBatch {
+            cycles: 4,
+            repetitions: 1,
+        },
+        GameBoyTraceWrite::PcmDrain { frames: 0 },
+        GameBoyTraceWrite::NativeOutputChange {
+            setting: GameBoyOutputSetting::ChannelMutes,
+        },
+    ] {
+        source.events.push(event(12, write));
+    }
+    let captured = encode_game_boy(&source, &cancel).unwrap().capture.unwrap();
+    assert_eq!(captured.bytes, baseline.bytes);
+    assert_eq!(
+        serde_json::to_value(captured.metadata).unwrap(),
+        serde_json::to_value(baseline.metadata).unwrap()
+    );
+    source.chip.native_replay = None;
+    assert!(encode_game_boy(&source, &cancel).is_err());
 }
 
 #[test]

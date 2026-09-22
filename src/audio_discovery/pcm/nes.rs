@@ -48,10 +48,15 @@ impl NesSession {
                 && matches!(
                     (prepared.timing, emulator.cartridge_header().timing),
                     (NesNativeTiming::Ntsc, TimingMode::Ntsc)
+                        | (NesNativeTiming::Pal, TimingMode::Pal)
                 ),
             "NES driver image does not match its mapper or timing profile"
         );
-        warnings.push("Runs the original sound driver in an isolated NES emulator using the reported NTSC profile; hardware-bit-exact output is not claimed.".to_owned());
+        let region = match prepared.timing {
+            NesNativeTiming::Ntsc => "NTSC",
+            NesNativeTiming::Pal => "PAL",
+        };
+        warnings.push(format!("Runs the original sound driver in an isolated NES emulator using the reported {region} profile; hardware-bit-exact output is not claimed."));
         warnings.push("Records the requested duration, including any loops or silence. Individual native channels are mixed together.".to_owned());
         Ok(Self {
             prepared,

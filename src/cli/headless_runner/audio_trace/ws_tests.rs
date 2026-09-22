@@ -55,6 +55,19 @@ fn ws_and_wsc_captures_are_atomic_and_preserve_source_and_save_sidecars() -> Res
         let zip_before = std::fs::read(&zipped)?;
         let sidecar_before = std::fs::read(&sidecar)?;
         let mut previous_vgm = None;
+        let native_path = directory.path().join(format!("native-{extension}.f32"));
+        run(
+            &rom,
+            &HeadlessOptions {
+                max_frames: 2,
+                no_sram: true,
+                audio_dump_path: Some(native_path.clone()),
+                input_events: vec![input],
+                ..Default::default()
+            },
+        )?;
+        let native = std::fs::read(native_path)?;
+        assert!(native.iter().any(|&byte| byte != 0));
 
         for (index, source) in [&rom, &zipped].into_iter().enumerate() {
             let output = directory
@@ -68,6 +81,11 @@ fn ws_and_wsc_captures_are_atomic_and_preserve_source_and_save_sidecars() -> Res
                 ..Default::default()
             };
             run(source, &options)?;
+            crate::audio_discovery::capture_artifact::tests::assert_native_pcm(
+                &output,
+                &native,
+                zeff_ws_core::emulator::DEFAULT_SAMPLE_RATE,
+            )?;
 
             let archive = std::fs::read(&output)?;
             let manifest: Value = serde_json::from_slice(&member(&archive, "manifest.json"))?;

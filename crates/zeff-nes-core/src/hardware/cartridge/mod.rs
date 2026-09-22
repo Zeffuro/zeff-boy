@@ -1,3 +1,4 @@
+mod audio_trace;
 mod dispatch;
 mod header;
 pub mod mappers;

@@ -256,6 +256,7 @@ pub(super) fn write_io(bus: &mut Bus, addr: u16, value: u8) -> u64 {
             bus.io
                 .apu
                 .skip_next_div_apu_event_if(skip_first_div_apu_event);
+            bus.trace_native_divider_phase(skip_first_div_apu_event);
         }
         NR10..=NR51 => {
             bus.trace_audio_register(addr, value);

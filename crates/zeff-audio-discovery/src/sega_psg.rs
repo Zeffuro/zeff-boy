@@ -20,6 +20,12 @@ pub use bootstrap::PreparedSegaPsg;
 pub use fixture::{fixture_rom, fixture_rom_six_byte, fixture_rom_supplemental};
 use profiles::{HeaderLayout, Profile, all_profiles};
 
+#[derive(Clone, Copy)]
+struct RecognizedProfile {
+    profile: &'static Profile,
+    source_name: &'static str,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SegaPsgRegion {
@@ -69,15 +75,44 @@ pub(crate) fn scan(
     budget: &mut Budget<'_>,
     remaining: usize,
 ) -> Result<(), ScanStop> {
-    let Some(profile) = recognized(bytes, system, budget)? else {
+    let Some(recognized) = recognized(bytes, system, budget)? else {
         return Ok(());
     };
-    scan_profile(bytes, profile, songs, budget, remaining)
+    scan_recognized(bytes, recognized, songs, budget, remaining)
 }
 
+#[cfg(test)]
 fn scan_profile(
     bytes: &[u8],
     profile: &Profile,
+    songs: &mut Vec<SegaPsgSong>,
+    budget: &mut Budget<'_>,
+    remaining: usize,
+) -> Result<(), ScanStop> {
+    scan_with_source(bytes, profile, profile.name, songs, budget, remaining)
+}
+
+fn scan_recognized(
+    bytes: &[u8],
+    recognized: RecognizedProfile,
+    songs: &mut Vec<SegaPsgSong>,
+    budget: &mut Budget<'_>,
+    remaining: usize,
+) -> Result<(), ScanStop> {
+    scan_with_source(
+        bytes,
+        recognized.profile,
+        recognized.source_name,
+        songs,
+        budget,
+        remaining,
+    )
+}
+
+fn scan_with_source(
+    bytes: &[u8],
+    profile: &Profile,
+    source_name: &'static str,
     songs: &mut Vec<SegaPsgSong>,
     budget: &mut Budget<'_>,
     remaining: usize,
@@ -86,12 +121,13 @@ fn scan_profile(
     let mut unresolved = false;
     for index in 0..usize::from(profile.song_count) {
         budget.charge()?;
-        let raw_index = raw_index(index).ok_or(ScanStop::ValidationLimit)?;
+        let raw_index = raw_index(profile, index).ok_or(ScanStop::ValidationLimit)?;
         if profile.rejected_selector(raw_index).is_some() {
             unresolved = true;
             continue;
         }
-        let song = inspect(bytes, profile, index).ok_or(ScanStop::ValidationLimit)?;
+        let song = inspect_with_source(bytes, profile, source_name, index)
+            .ok_or(ScanStop::ValidationLimit)?;
         if stop_only(bytes, &song, profile) {
             continue;
         }
@@ -117,10 +153,10 @@ pub fn prepare_rom(
         cancel,
         remaining: 1_000_000,
     };
-    let profile = recognized(bytes, song.system, &mut budget)
+    let recognized = recognized(bytes, song.system, &mut budget)
         .map_err(|stop| anyhow::anyhow!("Sega PSG validation stopped: {stop:?}"))?
         .ok_or_else(|| anyhow::anyhow!("Sega PSG source no longer matches its native profile"))?;
-    prepare_profile(bytes, song, profile, cancel)
+    prepare_with_source(bytes, song, recognized, cancel)
 }
 
 pub fn source_span_matches(media: &MediaIdentity, span: SourceSpan) -> bool {
@@ -144,20 +180,25 @@ pub fn source_span_matches(media: &MediaIdentity, span: SourceSpan) -> bool {
             && offset + len <= media.byte_len
     };
     matches(
-        u64::from(profile.driver_address),
-        profile.audio_offset as u64,
-        profile.audio_len() as u64,
-    ) || profile.supplemental_selectors.iter().any(|selector| {
-        selector.spans.iter().any(|extra| {
-            matches(
-                u64::from(extra.canonical_cpu_address),
-                u64::from(extra.effective_offset),
-                u64::from(extra.byte_len),
-            )
+        u64::from(profile.profile.driver_address),
+        profile.profile.audio_offset as u64,
+        profile.profile.audio_len() as u64,
+    ) || profile
+        .profile
+        .supplemental_selectors
+        .iter()
+        .any(|selector| {
+            selector.spans.iter().any(|extra| {
+                matches(
+                    u64::from(extra.canonical_cpu_address),
+                    u64::from(extra.effective_offset),
+                    u64::from(extra.byte_len),
+                )
+            })
         })
-    })
 }
 
+#[cfg(test)]
 fn prepare_profile(
     bytes: &[u8],
     song: &SegaPsgSong,
@@ -179,14 +220,43 @@ fn prepare_profile(
     bootstrap::prepare(bytes, profile, song.raw_index)
 }
 
+fn prepare_with_source(
+    bytes: &[u8],
+    song: &SegaPsgSong,
+    recognized: RecognizedProfile,
+    cancel: &AtomicBool,
+) -> AnyResult<PreparedSegaPsg> {
+    let profile = recognized.profile;
+    ensure!(
+        inspect_with_source(
+            bytes,
+            profile,
+            recognized.source_name,
+            usize::from(song.index)
+        )
+        .as_ref()
+            == Some(song),
+        "Sega PSG selection no longer matches its source"
+    );
+    ensure!(
+        !stop_only(bytes, song, profile),
+        "Sega PSG selector contains no sequence content"
+    );
+    ensure!(
+        !cancel.load(Ordering::Relaxed),
+        "Sega PSG preparation cancelled"
+    );
+    bootstrap::prepare(bytes, profile, song.raw_index)
+}
+
 fn recognized(
     bytes: &[u8],
     system: System,
     budget: &mut Budget<'_>,
-) -> Result<Option<&'static Profile>, ScanStop> {
+) -> Result<Option<RecognizedProfile>, ScanStop> {
     budget.charge()?;
-    let candidate =
-        all_profiles().any(|profile| profile.system == system && profile.rom_len == bytes.len());
+    let candidate = all_profiles()
+        .any(|profile| profile.system == system && profile.has_source_len(bytes.len()));
     #[cfg(any(test, feature = "test-support"))]
     let candidate = candidate
         || [
@@ -212,11 +282,15 @@ fn recognized(
     ))
 }
 
-fn profile_by_identity(system: &str, byte_len: u64, hash: &str) -> Option<&'static Profile> {
-    let profile = all_profiles().find(|profile| {
-        profile.system.code() == system
-            && profile.rom_len as u64 == byte_len
-            && profile.sha256 == hash
+fn profile_by_identity(system: &str, byte_len: u64, hash: &str) -> Option<RecognizedProfile> {
+    let profile = all_profiles().find_map(|profile| {
+        (profile.system.code() == system)
+            .then(|| profile.matched_source(byte_len, hash))
+            .flatten()
+            .map(|source_name| RecognizedProfile {
+                profile,
+                source_name,
+            })
     });
     #[cfg(any(test, feature = "test-support"))]
     let profile = profile.or_else(|| {
@@ -226,20 +300,34 @@ fn profile_by_identity(system: &str, byte_len: u64, hash: &str) -> Option<&'stat
             &fixture::SUPPLEMENTAL_PROFILE,
         ]
         .into_iter()
-        .find(|profile| {
-            system == profile.system.code()
-                && byte_len == profile.rom_len as u64
-                && hash == profile.sha256
+        .find_map(|profile| {
+            (system == profile.system.code())
+                .then(|| profile.matched_source(byte_len, hash))
+                .flatten()
+                .map(|source_name| RecognizedProfile {
+                    profile,
+                    source_name,
+                })
         })
     });
     profile
 }
 
+#[cfg(test)]
 fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<SegaPsgSong> {
+    inspect_with_source(bytes, profile, profile.name, index)
+}
+
+fn inspect_with_source(
+    bytes: &[u8],
+    profile: &Profile,
+    source_name: &'static str,
+    index: usize,
+) -> Option<SegaPsgSong> {
     if index >= usize::from(profile.song_count) {
         return None;
     }
-    let raw_index = raw_index(index)?;
+    let raw_index = raw_index(profile, index)?;
     if profile.rejected_selector(raw_index).is_some() {
         return None;
     }
@@ -248,7 +336,7 @@ fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<SegaPsgSong>
     let header_address = word(bytes, table_entry.effective_offset as usize)?;
     let header_prefix = mapped(bytes, profile, header_address, 6)?;
     let offset = header_prefix.effective_offset as usize;
-    let (count_offset, stride) = match profile.header_layout {
+    let (count_offset, stride) = match profile.recipe().header_layout {
         HeaderLayout::FourByteChannels => (2, 4),
         HeaderLayout::SixByteChannels if bytes[offset + 2] == 0 => (3, 6),
         HeaderLayout::SixByteChannels => return None,
@@ -289,7 +377,7 @@ fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<SegaPsgSong>
             .push("The original envelope lookup also reads the listed low-ROM data ranges.".into());
     }
     Some(SegaPsgSong {
-        profile: profile.name,
+        profile: source_name,
         system: profile.system,
         region: profile.region,
         timing: SegaPsgTiming::Ntsc,
@@ -327,8 +415,11 @@ fn word(bytes: &[u8], offset: usize) -> Option<u16> {
     ))
 }
 
-fn raw_index(index: usize) -> Option<u8> {
-    0x81_u8.checked_add(u8::try_from(index).ok()?)
+fn raw_index(profile: &Profile, index: usize) -> Option<u8> {
+    profile
+        .recipe()
+        .first_raw_selector
+        .checked_add(u8::try_from(index).ok()?)
 }
 
 fn stop_only(bytes: &[u8], song: &SegaPsgSong, profile: &Profile) -> bool {
@@ -339,8 +430,8 @@ fn stop_only(bytes: &[u8], song: &SegaPsgSong, profile: &Profile) -> bool {
             let width = match bytes.get(at) {
                 Some(0xf2) if at < end => return true,
                 // These native six-byte-layout commands only initialize channel RAM.
-                Some(0xe0) if profile.header_layout == HeaderLayout::SixByteChannels => 6,
-                Some(0xf0) if profile.header_layout == HeaderLayout::SixByteChannels => 5,
+                Some(0xe0) if profile.recipe().header_layout == HeaderLayout::SixByteChannels => 6,
+                Some(0xf0) if profile.recipe().header_layout == HeaderLayout::SixByteChannels => 5,
                 _ => return false,
             };
             if at + width > end || bytes.get(at..at + width).is_none() {

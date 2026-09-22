@@ -8,6 +8,13 @@ use zeff_emu_common::audio_trace::{
 };
 
 impl Bus {
+    #[cfg(test)]
+    pub(crate) fn native_audio_state(&self) -> Vec<u8> {
+        let mut writer = crate::save_state::StateWriter::new();
+        self.io.apu.write_state(&mut writer);
+        writer.into_bytes()
+    }
+
     pub(crate) fn audio_trace_chip(&self) -> GameBoyTraceChip {
         GameBoyTraceChip {
             clock_hz: GB_T_CYCLES_PER_SECOND as u32,
@@ -29,6 +36,12 @@ impl Bus {
                 divider_counter: self.io.timer.divider_counter(),
                 double_speed: self.hardware_mode == HardwareMode::CGBDouble,
             },
+            native_replay: self.audio_trace_native.then_some(
+                zeff_emu_common::audio_trace::GameBoyNativeReplay {
+                    version: 1,
+                    sample_rate: self.io.apu.sample_rate,
+                },
+            ),
         }
     }
 
@@ -189,5 +202,48 @@ impl Bus {
             instruction_source,
             write,
         });
+    }
+
+    pub(super) fn trace_native_batch(&mut self, cycles: u64) {
+        if self.audio_trace_native && self.audio_trace.is_enabled() {
+            if let Ok(cycles) = u32::try_from(cycles) {
+                self.audio_trace
+                    .record_native_batch(self.audio_trace_cycle, cycles);
+            } else {
+                self.audio_trace
+                    .invalidate(AudioTraceInvalidation::ClockOverflow);
+            }
+        }
+    }
+
+    pub(super) fn trace_native_divider_phase(&mut self, skip_next: bool) {
+        self.record_native_output(GameBoyTraceWrite::NativeDividerPhase { skip_next });
+    }
+
+    pub(super) fn trace_native_output_change(
+        &mut self,
+        setting: zeff_emu_common::audio_trace::GameBoyOutputSetting,
+    ) {
+        self.record_native_output(GameBoyTraceWrite::NativeOutputChange { setting });
+    }
+
+    pub(super) fn trace_native_drain(&mut self, frames: usize) {
+        if let Ok(frames) = u32::try_from(frames) {
+            self.record_native_output(GameBoyTraceWrite::PcmDrain { frames });
+        } else if self.audio_trace_native {
+            self.audio_trace
+                .invalidate(AudioTraceInvalidation::ClockOverflow);
+        }
+    }
+
+    fn record_native_output(&mut self, write: GameBoyTraceWrite) {
+        if self.audio_trace_native && self.audio_trace.is_enabled() {
+            self.audio_trace.record(AudioTraceEvent {
+                cycle: self.audio_trace_cycle,
+                pc: 0,
+                instruction_source: AudioTraceSource::Unknown,
+                write,
+            });
+        }
     }
 }

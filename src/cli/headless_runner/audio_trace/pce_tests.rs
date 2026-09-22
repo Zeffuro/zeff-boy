@@ -77,6 +77,9 @@ fn hucard_capture_preserves_pcm_and_binds_header_and_five_player_inputs() -> Res
             let samples = std::fs::read(pcm)?;
             assert!(samples.iter().any(|&byte| byte != 0));
             assert_eq!(samples, std::fs::read(plain_pcm)?);
+            crate::audio_discovery::capture_artifact::tests::assert_native_pcm(
+                &output, &samples, 44_100,
+            )?;
             let archive = std::fs::read(&output)?;
             let manifest: Value = serde_json::from_slice(&member(&archive, "manifest.json"))?;
             let trace: Value = serde_json::from_slice(&member(&archive, "trace.json"))?;

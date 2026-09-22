@@ -1,5 +1,6 @@
 use super::Bus;
 use crate::hardware::constants::RAM_MIRROR_MASK;
+use zeff_emu_common::audio_trace::{NesTraceOrigin, NesTraceWrite};
 use zeff_emu_common::time::MasterTicks;
 
 const PPU_DOTS_AFTER_CPU_ACCESS: u8 = 1;
@@ -88,7 +89,7 @@ impl Bus {
             }
             *controller_read_clocked = true;
         }
-        self.cpu_read_for_dma_with_trace(addr, self.dma_access_tick(), false);
+        self.cpu_read_for_dma_with_trace(addr, self.dma_access_tick(), false, NesTraceOrigin::Dma);
     }
 
     fn run_dma_cycle(&mut self, halted_read_addr: u16, controller_read_clocked: &mut bool) {
@@ -97,8 +98,22 @@ impl Bus {
         if get_cycle && self.dma.dmc_is_ready() {
             self.dma.consume_cycle_setup();
             let addr = self.apu.dmc.dma_address();
+            let source = self
+                .audio_trace
+                .is_enabled()
+                .then(|| self.audio_trace_source(addr));
             let byte = self.dmc_dma_read(addr);
             self.apu.dmc.fill_sample_buffer(byte);
+            if let Some(source) = source {
+                self.record_audio_event(
+                    self.dma_access_tick(),
+                    NesTraceWrite::DmcFetch {
+                        address: addr,
+                        value: byte,
+                        source,
+                    },
+                );
+            }
             self.dma.take_dmc();
         } else if get_cycle {
             if let Some(addr) = self.dma.oam_read_address() {

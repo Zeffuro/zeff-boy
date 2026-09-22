@@ -1,5 +1,3 @@
-use serde::Serialize;
-
 use crate::{Budget, ScanStop, tracker::FileSpan};
 
 mod patterns;
@@ -11,38 +9,10 @@ use patterns::{FAMILIES, PATTERNS, PatternKind};
 pub const SOURCE: &str = "https://github.com/bbbbbr/gbtoolsid";
 pub const REVISION: &str = "5ff49ad1282178eaebf47314d0c775c2b13d98b8";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct DriverCandidate {
-    pub family: &'static str,
-    pub variant: &'static str,
-    pub qualification: FingerprintQualification,
-    pub fingerprint_source: &'static str,
-    pub fingerprint_revision: &'static str,
-    pub evidence: Vec<FingerprintEvidence>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FingerprintQualification {
-    FingerprintOnly,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct FingerprintEvidence {
-    pub signature: &'static str,
-    pub kind: EvidenceKind,
-    pub span: FileSpan,
-    pub sha256: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceKind {
-    TextIdentifier,
-    InstructionBytes,
-    InstrumentData,
-    HeaderIdentifier,
-}
+pub use super::candidates::{
+    CandidateEvidence as FingerprintEvidence, CandidateQualification as FingerprintQualification,
+    DriverCandidate, EvidenceKind,
+};
 
 impl From<PatternKind> for EvidenceKind {
     fn from(kind: PatternKind) -> Self {
@@ -131,6 +101,8 @@ pub(crate) fn scan(
                 fingerprint_source: SOURCE,
                 fingerprint_revision: REVISION,
                 evidence,
+                inventory: None,
+                code: None,
             });
             break;
         }

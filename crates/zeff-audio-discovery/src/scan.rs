@@ -13,7 +13,7 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
     let cancelled = cancel.load(Ordering::Relaxed);
     let mut report = ScanReport::new(
         "multi-engine-structural",
-        33,
+        34,
         detectors::cartridge(system),
         &[
             "Structural candidates alone do not prove engine identity; recognized selectors and table references are separate evidence.",
@@ -44,6 +44,7 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
             "Game Boy TOSE playback requires a recognized relocated classic driver, compatible DMG cartridge mapping and bounded four-channel music sequences; no automatic duration or complete soundtrack is established.",
             "Game Boy driver fingerprints identify possible families from text, instruction bytes, instrument data or header identifiers. They have no playback selection, do not count as songs, and do not establish an active driver or complete soundtrack.",
             "QuickThunder and NES TOSE playback require recognized original routines, bounded sequence data and the reported cartridge/hardware contract; duration and complete soundtrack coverage remain unqualified.",
+            "hUGEDriver catalog entries require the pinned DMG MBC0 driver, supported effect-free data, the generated isolation bootstrap and a bounded control recurrence. They require source rebinding and runtime original/isolation/state/PCM validation before any audio output.",
             "Applicable detectors describe the selected source's supported analysis scope, not a claim of a match or completion. A complete empty result means those detectors found no supported songs.",
         ],
         MediaIdentity {

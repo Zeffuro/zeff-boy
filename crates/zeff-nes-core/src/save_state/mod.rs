@@ -271,6 +271,7 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
     };
 
     // CPU
+    emu.invalidate_audio_trace(zeff_emu_common::audio_trace::AudioTraceInvalidation::StateRestore);
     emu.cpu.read_state(&mut r)?;
     // Bus
     emu.bus.read_state(&mut r)?;

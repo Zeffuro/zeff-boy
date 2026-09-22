@@ -1,6 +1,6 @@
 use std::sync::atomic::AtomicBool;
 
-use crate::{Budget, RomSpan, ScanStop};
+use crate::{Budget, RomSpan, ScanStop, nes_native::NesNativeTiming};
 
 use super::{NesToseSong, NesToseTrack, closed_profiles::PROFILES};
 
@@ -10,12 +10,21 @@ pub(super) enum Input {
     Memory(u16),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PrgMapping {
+    Standard,
+    Mmc1Upper16K,
+    Mmc3A0008K,
+}
+
 pub(super) struct Profile {
     pub id: &'static str,
     pub header: [u8; 16],
     pub byte_len: usize,
     pub prg_hash: &'static str,
     pub mapper: u16,
+    pub timing: NesNativeTiming,
+    pub mapping: PrgMapping,
     pub bank: u8,
     pub init: u16,
     pub selector: u16,
@@ -47,7 +56,19 @@ impl Group {
 
 impl Profile {
     pub fn span(&self, address: u16, len: u16) -> RomSpan {
-        let offset = if self.mapper == 3 {
+        let offset = if self.mapping == PrgMapping::Mmc1Upper16K {
+            if address < 0xc000 {
+                u32::from(address - 0x8000)
+            } else {
+                u32::from(self.bank) * 0x4000 + u32::from(address - 0xc000)
+            }
+        } else if self.mapping == PrgMapping::Mmc3A0008K {
+            match address {
+                0x8000..=0x9fff => u32::from(address - 0x8000),
+                0xa000..=0xbfff => u32::from(self.bank) * 0x2000 + u32::from(address - 0xa000),
+                _ => (u32::from(self.header[4]) - 1) * 0x4000 + u32::from(address - 0xc000),
+            }
+        } else if self.mapper == 3 {
             u32::from(address - 0x8000)
         } else if address < 0xc000 {
             u32::from(self.bank) * 0x4000 + u32::from(address - 0x8000)

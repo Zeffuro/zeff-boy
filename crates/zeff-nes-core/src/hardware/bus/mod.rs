@@ -1,3 +1,4 @@
+mod audio_trace;
 mod cpu_io;
 mod dma;
 mod ppu_bus;
@@ -31,6 +32,9 @@ fn power_on_internal_ram() -> [u8; RAM_SIZE] {
 }
 
 pub struct Bus {
+    pub(crate) audio_trace: zeff_emu_common::audio_trace::NesAudioTraceRecorder,
+    audio_trace_instruction: Option<(u16, zeff_emu_common::audio_trace::AudioTraceSource)>,
+    audio_trace_non_instruction: bool,
     pub ram: [u8; RAM_SIZE],
     pub(crate) ppu: Ppu,
     pub apu: Apu,
@@ -134,6 +138,9 @@ impl Bus {
         }
 
         Self {
+            audio_trace: Default::default(),
+            audio_trace_instruction: None,
+            audio_trace_non_instruction: false,
             ram: power_on_internal_ram(),
             ppu,
             apu,

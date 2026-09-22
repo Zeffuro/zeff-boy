@@ -82,6 +82,15 @@ impl PreviewRequest {
         if let Some(song) = manifest.scan.song(selection)
             && let Some(owned) = PcmSong::from_ref(song)
         {
+            if matches!(song, SongRef::Vgm(_)) {
+                ensure!(
+                    source.system.is_none()
+                        && source.cdda.is_none()
+                        && source.standalone_audio
+                            == Some(crate::audio_discovery::media::StandaloneFormat::Vgm),
+                    "VGM preview requires a standalone register log"
+                );
+            }
             ExtractionRequest::prepare(
                 source,
                 manifest,
@@ -146,7 +155,7 @@ impl PreviewRequest {
         }
     }
 
-    pub(super) fn renderer(self, rate: u32, cancel: &AtomicBool) -> Result<PreviewRenderer> {
+    pub(crate) fn renderer(self, rate: u32, cancel: &AtomicBool) -> Result<PreviewRenderer> {
         if let PreviewSong::Cdda(track) = self.song {
             return CddaRenderSession::new(
                 self.source
@@ -212,11 +221,38 @@ impl PreviewRequest {
     }
 }
 
-pub(super) enum PreviewRenderer {
+pub(crate) enum PreviewRenderer {
     Mp2k(Box<RenderSession>),
     Natsume(Box<NativeRenderSession>),
     Cdda(Box<CddaRenderSession>),
     Pcm(Box<dyn PcmSession>),
+}
+
+impl PcmSession for PreviewRenderer {
+    fn duration_frames(&self) -> usize {
+        self.duration_frames()
+    }
+    fn position_frames(&self) -> usize {
+        self.position_frames()
+    }
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate()
+    }
+    fn track_count(&self) -> usize {
+        self.track_count()
+    }
+    fn warnings(&self) -> &[String] {
+        self.warnings()
+    }
+    fn reset(&mut self) -> Result<()> {
+        self.reset()
+    }
+    fn set_track_mask(&mut self, mask: u16) -> Result<()> {
+        self.set_track_mask(mask)
+    }
+    fn read(&mut self, output: &mut [i16], cancel: &AtomicBool) -> Result<usize> {
+        self.read(output, cancel)
+    }
 }
 
 impl PreviewRenderer {

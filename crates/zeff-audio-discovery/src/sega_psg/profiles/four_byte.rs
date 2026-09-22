@@ -1,4 +1,22 @@
-use super::{HeaderLayout, Profile, SegaPsgRegion, System};
+use super::{HeaderLayout, KnownSource, Profile, SegaPsgRegion, System};
+
+pub(super) const V1_00_ADDITIONAL_SOURCES: &[KnownSource] = &[KnownSource {
+    name: "sega-psg-bank-v1-01",
+    sha256: "31607839cab3b7a9db9766522ce68345e7e4c451172076542b0abb5a7f833b64",
+    rom_len: 0x80000,
+}];
+
+pub(super) const V1_02_ADDITIONAL_SOURCES: &[KnownSource] = &[KnownSource {
+    name: "sega-psg-bank-v1-03",
+    sha256: "82c1e73c2c775f1a70c282da23218391d8e91f842341bc217d3cdb23ff96cb6a",
+    rom_len: 0x80000,
+}];
+
+pub(super) const V1_04_ADDITIONAL_SOURCES: &[KnownSource] = &[KnownSource {
+    name: "sega-psg-bank-v1-05",
+    sha256: "ba218435e12f508bec780862193c9894eab4e20b42e0f1e04a74ae133182881b",
+    rom_len: 0x40000,
+}];
 
 pub(super) const PROFILES: &[Profile] = &[
     Profile {
@@ -17,23 +35,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
-    },
-    Profile {
-        name: "sega-psg-bank-v1-01",
-        sha256: "31607839cab3b7a9db9766522ce68345e7e4c451172076542b0abb5a7f833b64",
-        rom_len: 0x80000,
-        system: System::Gg,
-        region: SegaPsgRegion::Export,
-        audio_offset: 0x8000,
-        driver_address: 0x4000,
-        init_address: 0x43ed,
-        table: 0x512f,
-        song_count: 31,
-        frame_divider: 1,
-        audio_byte_len: 0x8000,
-        header_layout: HeaderLayout::FourByteChannels,
-        rejected_selectors: &[],
-        supplemental_selectors: &[],
+        additional_sources: V1_00_ADDITIONAL_SOURCES,
     },
     Profile {
         name: "sega-psg-bank-v1-02",
@@ -51,23 +53,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
-    },
-    Profile {
-        name: "sega-psg-bank-v1-03",
-        sha256: "82c1e73c2c775f1a70c282da23218391d8e91f842341bc217d3cdb23ff96cb6a",
-        rom_len: 0x80000,
-        system: System::Gg,
-        region: SegaPsgRegion::Japanese,
-        audio_offset: 0x8000,
-        driver_address: 0x4000,
-        init_address: 0x43ed,
-        table: 0x569b,
-        song_count: 19,
-        frame_divider: 1,
-        audio_byte_len: 0x8000,
-        header_layout: HeaderLayout::FourByteChannels,
-        rejected_selectors: &[],
-        supplemental_selectors: &[],
+        additional_sources: V1_02_ADDITIONAL_SOURCES,
     },
     Profile {
         name: "sega-psg-bank-v1-04",
@@ -85,23 +71,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
-    },
-    Profile {
-        name: "sega-psg-bank-v1-05",
-        sha256: "ba218435e12f508bec780862193c9894eab4e20b42e0f1e04a74ae133182881b",
-        rom_len: 0x40000,
-        system: System::Gg,
-        region: SegaPsgRegion::Export,
-        audio_offset: 0x8000,
-        driver_address: 0x8000,
-        init_address: 0x8486,
-        table: 0x8e32,
-        song_count: 16,
-        frame_divider: 1,
-        audio_byte_len: 0x4000,
-        header_layout: HeaderLayout::FourByteChannels,
-        rejected_selectors: &[],
-        supplemental_selectors: &[],
+        additional_sources: V1_04_ADDITIONAL_SOURCES,
     },
     Profile {
         name: "sega-psg-bank-v1-06",
@@ -119,6 +89,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-07",
@@ -136,6 +107,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-08",
@@ -153,6 +125,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-09",
@@ -170,6 +143,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-10",
@@ -187,6 +161,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-11",
@@ -204,6 +179,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-12",
@@ -221,6 +197,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-13",
@@ -238,6 +215,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-14",
@@ -255,6 +233,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-15",
@@ -272,6 +251,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-16",
@@ -289,6 +269,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-17",
@@ -306,6 +287,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-18",
@@ -323,6 +305,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-19",
@@ -340,6 +323,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-20",
@@ -357,6 +341,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-21",
@@ -374,6 +359,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-22",
@@ -391,6 +377,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-23",
@@ -408,6 +395,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-24",
@@ -425,6 +413,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-25",
@@ -442,6 +431,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-26",
@@ -459,6 +449,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v1-27",
@@ -476,5 +467,6 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::FourByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
 ];

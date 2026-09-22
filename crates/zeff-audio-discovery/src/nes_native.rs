@@ -8,7 +8,9 @@ use crate::{Budget, MediaIdentity, RomSpan, ScanStop, SourceSpan};
 mod bootstrap;
 #[cfg(any(test, feature = "test-support"))]
 mod fixture;
+mod foreground;
 mod nintendo;
+mod presets;
 mod profiles;
 #[cfg(test)]
 mod tests;
@@ -16,13 +18,20 @@ mod tests;
 #[cfg(any(test, feature = "test-support"))]
 pub use fixture::{fixture_rom, fixture_rom_pc10};
 #[cfg(any(test, feature = "test-support"))]
+pub use foreground::fixture_rom as fixture_rom_foreground;
+#[cfg(any(test, feature = "test-support"))]
 pub use nintendo::fixture_rom as fixture_rom_nintendo;
+#[cfg(any(test, feature = "test-support"))]
+pub use presets::fixture_rom as fixture_rom_presets;
+#[cfg(any(test, feature = "test-support"))]
+pub use presets::fixture_rom_cnrom as fixture_rom_presets_cnrom;
 use profiles::{Profile, all_profiles};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NesNativeTiming {
     Ntsc,
+    Pal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -74,7 +83,9 @@ pub(crate) fn scan(
     max_candidates: usize,
 ) -> Result<(), ScanStop> {
     let Some(profile) = recognized(bytes, budget)? else {
-        return nintendo::scan(bytes, songs, budget, max_candidates);
+        nintendo::scan(bytes, songs, budget, max_candidates)?;
+        foreground::scan(bytes, songs, budget, max_candidates)?;
+        return presets::scan(bytes, songs, budget, max_candidates);
     };
     for index in 0..profile.cues.len() {
         budget.charge()?;
@@ -94,6 +105,12 @@ pub fn prepare_rom(
     song: &NesNativeSong,
     cancel: &AtomicBool,
 ) -> AnyResult<PreparedNesNative> {
+    if presets::owns(song.profile) {
+        return presets::prepare(bytes, song, cancel);
+    }
+    if foreground::owns(song.profile) {
+        return foreground::prepare(bytes, song, cancel);
+    }
     if nintendo::owns(song.profile) {
         return nintendo::prepare(bytes, song, cancel);
     }
@@ -215,7 +232,9 @@ fn intersects(a: RomSpan, b: RomSpan) -> bool {
 }
 
 pub fn source_span_matches(media: &MediaIdentity, span: SourceSpan) -> bool {
-    nintendo::source_span_matches(media, span)
+    foreground::source_span_matches(media, span)
+        || nintendo::source_span_matches(media, span)
+        || presets::source_span_matches(media, span)
         || (media.system == "nes"
             && matches!(media.byte_len, 0x10010 | 0x12010)
             && media.sha256.as_deref().is_some_and(|hash| {

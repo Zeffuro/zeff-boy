@@ -50,7 +50,7 @@ pub(crate) fn write_game_boy_new(
             "unavailable": encoded.unavailable,
         }),
     };
-    let metadata = serde_json::to_vec_pretty(&json!({
+    let mut metadata = json!({
         "schema": "zeff-audio-trace-capture/1",
         "kind": "reset_to_end_game_boy_hardware_register_capture",
         "context": context,
@@ -63,7 +63,17 @@ pub(crate) fn write_game_boy_new(
             "The trace records its reset state. Headless CLI captures use an HLE post-boot state without firmware; API callers can start from power-on with firmware. It is not a hardware-bit-exact PCM claim.",
             "Standalone VGM preview and arbitrary-state live capture are not implemented.",
         ],
-    }))?;
+    });
+    if let Some(contract) = trace.chip.native_replay {
+        metadata["native_playback"] = json!({
+            "contract": contract,
+            "output_boundaries": "recorded_native_apu_batches_and_host_pcm_drains",
+        });
+        metadata["limitations"].as_array_mut().unwrap().push(json!(
+            "Native replay preserves the recorded APU service batches and output-drain boundaries, including samples discarded by NR52 power-off. Output-setting changes or incomplete output timelines prevent exact native playback; source PCM comparisons require matching sample rates."
+        ));
+    }
+    let metadata = serde_json::to_vec_pretty(&metadata)?;
 
     let mut bundle = super::super::bundle::Bundle::new();
     if let Some(vgm) = vgm {

@@ -5,8 +5,21 @@ use super::word;
 mod data;
 use data::PROFILES;
 
+#[cfg(test)]
+mod tests;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HeaderKind {
+    Executable,
+    BankTagged {
+        prefix: [u8; 3],
+        banks: &'static [u8],
+    },
+}
+
 pub(super) struct Profile {
     pub name: &'static str,
+    pub header: HeaderKind,
     pub len: usize,
     pub hash: &'static str,
     pub selector: u16,
@@ -18,6 +31,30 @@ pub(super) struct Profile {
     pub empty_operand: Option<usize>,
     pub default_empty: u16,
     pub release_operand: usize,
+}
+
+impl Profile {
+    fn header_matches(&self, code: &[u8], bank: u16) -> bool {
+        match self.header {
+            HeaderKind::Executable => code
+                .first()
+                .is_some_and(|&byte| matches!(byte, 0x21 | 0xc3)),
+            HeaderKind::BankTagged { prefix, banks } => {
+                (1..=u16::from(u8::MAX)).contains(&bank)
+                    && banks.contains(&(bank as u8))
+                    && code.first() == Some(&(bank as u8))
+                    && code.get(1..3) == Some(self.selector.to_le_bytes().as_slice())
+                    && code.get(3..6) == Some(prefix.as_slice())
+            }
+        }
+    }
+
+    fn code_offset(&self) -> usize {
+        match self.header {
+            HeaderKind::Executable => 0,
+            HeaderKind::BankTagged { .. } => 6,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -43,28 +80,44 @@ impl Driver {
 pub(super) fn recognized(bytes: &[u8], budget: &mut Budget<'_>) -> Result<Vec<Driver>, ScanStop> {
     budget.charge()?;
     let mut drivers = Vec::new();
-    if !super::supports_cartridge(bytes) {
+    let isolated_bank = if super::supports_cartridge(bytes) {
+        None
+    } else if let Some(bank) = super::isolated::source_bank(bytes, budget)? {
+        Some(bank)
+    } else {
         return Ok(drivers);
-    }
+    };
     for bank in 1..bytes.len() / 0x4000 {
         budget.charge()?;
-        let base = bank * 0x4000;
-        if !matches!(bytes[base], 0x21 | 0xc3) {
+        if isolated_bank.is_some_and(|qualified| usize::from(qualified) != bank) {
             continue;
         }
+        let base = bank * 0x4000;
         for profile in PROFILES {
+            if isolated_bank.is_some() && profile.name != "gb-quickthunder-14-05" {
+                continue;
+            }
+            if !profile.header_matches(&bytes[base..], bank as u16) {
+                continue;
+            }
             if let Some(driver) = recognize(bytes, bank as u16, profile, budget)? {
                 drivers.push(driver);
                 break;
             }
         }
     }
+    if let Some(driver) = super::sampled::recognize(bytes, budget)? {
+        drivers.push(driver);
+    }
     #[cfg(any(test, feature = "test-support"))]
-    super::tests::recognize(bytes, &mut drivers);
+    {
+        super::tests::recognize(bytes, &mut drivers);
+        super::sampled::tests::recognize(bytes, &mut drivers);
+    }
     Ok(drivers)
 }
 
-fn recognize(
+pub(super) fn recognize(
     bytes: &[u8],
     bank: u16,
     profile: &'static Profile,
@@ -72,6 +125,9 @@ fn recognize(
 ) -> Result<Option<Driver>, ScanStop> {
     let base = usize::from(bank) * 0x4000;
     let code = &bytes[base..base + profile.len];
+    if !profile.header_matches(code, bank) {
+        return Ok(None);
+    }
     let tick_offset = usize::from(profile.tick - 0x4000);
     if code.get(tick_offset) != Some(&0x21)
         || code.get(tick_offset + 3..tick_offset + 6) != Some(&[0x35, 0x28, 3])
@@ -83,7 +139,10 @@ fn recognize(
         return Ok(None);
     }
     let mut normalized = code.to_vec();
-    let mut at = 0;
+    if matches!(profile.header, HeaderKind::BankTagged { .. }) {
+        normalized[0] = 0;
+    }
+    let mut at = profile.code_offset();
     while at < code.len() {
         budget.charge()?;
         let op = code[at];

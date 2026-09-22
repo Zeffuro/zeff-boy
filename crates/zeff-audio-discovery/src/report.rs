@@ -35,7 +35,7 @@ pub struct ScanReport {
     pub status: ScanStatus,
     pub detector_outcomes: Vec<DetectorOutcome>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub driver_candidates: Vec<super::drivers::gb_fingerprints::DriverCandidate>,
+    pub driver_candidates: Vec<super::drivers::DriverCandidate>,
     pub candidates: Vec<SongCandidate>,
     pub song_tables: Vec<tables::SongTableInventory>,
     pub gax_songs: Vec<gax::GaxSong>,
@@ -65,6 +65,8 @@ pub struct ScanReport {
     pub gb_songs: Vec<gb_music::GbSong>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub gb_native_songs: Vec<super::gb_native::GbNativeSong>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub huge_songs: Vec<super::huge::catalog::HugeSong>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub gb_musyx_songs: Vec<super::gb_musyx::GbMusyxSong>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -188,6 +190,7 @@ impl ScanReport {
             aas_pcm_songs: Vec::new(),
             gb_songs: Vec::new(),
             gb_native_songs: Vec::new(),
+            huge_songs: Vec::new(),
             gb_musyx_songs: Vec::new(),
             gb_tose_songs: Vec::new(),
             gb_quickthunder_songs: Vec::new(),

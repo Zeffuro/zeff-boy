@@ -293,7 +293,7 @@ impl GbBankedSession {
                 zeff_audio_discovery::gb_carillon::supports_cartridge(&prepared.bytes)
             }
             CartridgeProfile::QuickThunder => {
-                zeff_audio_discovery::gb_quickthunder::supports_cartridge(&prepared.bytes)
+                zeff_audio_discovery::gb_quickthunder::supports_prepared_cartridge(&prepared.bytes)
             }
         };
         let hardware_matches = match cartridge {

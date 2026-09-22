@@ -44,6 +44,7 @@ use trace::*;
 use ws::run_ws_headless;
 
 mod audio;
+mod audio_dump;
 mod audio_trace;
 mod coleco;
 mod debug_state;
@@ -78,6 +79,7 @@ pub(crate) fn run_headless(
     firmware_search_dirs: Vec<std::path::PathBuf>,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
+    audio_dump::validate_paths(path, opts)?;
     validate_audio_trace_options(opts)?;
     if opts.tas_project_path.is_some() {
         return tas_project::run_tas_project_headless(path, firmware_search_dirs, opts);
@@ -96,6 +98,7 @@ pub(crate) fn run_headless(
     }
 
     let (rom_path, preloaded_data, system) = crate::app::detect_and_extract_rom(path)?;
+    audio_dump::validate_paths(&rom_path, opts)?;
     audio_trace::validate_system(system.code(), opts)?;
     validate_tas_system(opts, system.code())?;
     if system == ActiveSystem::Pce {
@@ -133,7 +136,9 @@ pub(crate) fn run_headless(
             run_gb_headless(&rom_path, &rom_data, mode_preference, opts, capture)
         }
         ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
-        ActiveSystem::Nes => run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts),
+        ActiveSystem::Nes => {
+            run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts, capture)
+        }
         ActiveSystem::Coleco => {
             run_coleco_headless(&rom_path, &rom_data, &firmware_search_dirs, opts, capture)
         }

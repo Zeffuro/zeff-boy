@@ -93,6 +93,7 @@ impl Bus {
         blocked: bool,
     ) -> u64 {
         if blocked {
+            self.trace_blocked_cpu_write(0, addr, value);
             return 0;
         }
 
@@ -108,12 +109,14 @@ impl Bus {
         master_tick_offset: u64,
     ) -> u64 {
         if blocked_by_oam_dma {
+            self.trace_blocked_cpu_write(master_tick_offset, addr, value);
             return 0;
         }
 
         if let Some(oam_accessible) = oam_accessible_at_access {
             if !oam_accessible {
                 self.maybe_trigger_oam_corruption(addr, OamCorruptionType::Write);
+                self.trace_blocked_cpu_write(master_tick_offset, addr, value);
                 return 0;
             }
 

@@ -385,7 +385,10 @@ pub(super) fn required_path_value<'a>(
     Ok(value)
 }
 
-pub(super) fn ensure_distinct_output_path(output: &Path, input: &Path) -> anyhow::Result<()> {
+pub(in crate::cli) fn ensure_distinct_output_path(
+    output: &Path,
+    input: &Path,
+) -> anyhow::Result<()> {
     let output = resolved_path(output)?;
     let input = resolved_path(input)?;
     #[cfg(windows)]
@@ -395,6 +398,24 @@ pub(super) fn ensure_distinct_output_path(output: &Path, input: &Path) -> anyhow
     ensure!(
         !same,
         "audio input, scan report, and export paths must be distinct"
+    );
+    Ok(())
+}
+
+pub(in crate::cli) fn ensure_outside_output_directory(
+    output: &Path,
+    directory: &Path,
+) -> anyhow::Result<()> {
+    let output = resolved_path(output)?;
+    let directory = resolved_path(directory)?;
+    #[cfg(windows)]
+    let (output, directory) = (
+        std::path::PathBuf::from(output.to_string_lossy().to_lowercase()),
+        std::path::PathBuf::from(directory.to_string_lossy().to_lowercase()),
+    );
+    ensure!(
+        !output.starts_with(directory),
+        "audio output must be outside other output directories"
     );
     Ok(())
 }

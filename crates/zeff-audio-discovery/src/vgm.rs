@@ -14,6 +14,7 @@ use super::{
 };
 
 pub mod capture;
+pub mod playback;
 mod structure;
 use structure::{command, gd3};
 
@@ -84,19 +85,21 @@ pub struct VgmLog {
     pub chips: Vec<VgmChip>,
     pub command_histogram: BTreeMap<u8, u32>,
     pub warnings: Vec<VgmWarning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sn_playback: Option<playback::SnPlayback>,
 }
 
 pub fn scan(bytes: &[u8], limits: ScanLimits, cancel: &AtomicBool) -> ScanReport {
     let mut report = ScanReport::new(
         "standalone-vgm-structural",
-        2,
+        3,
         super::detectors::VGM,
         &[
-            "VGM/VGZ logs are structurally preserved; chip clocks and commands do not identify a native console driver or provide audio playback.",
+            "VGM/VGZ logs are structurally preserved. Qualified SN76489 configurations support standalone playback; logs do not identify a native console driver or prove source PCM equivalence.",
             "Chip data block framing and ROM/RAM ranges are inspected. Compressed chip payloads are retained without decompression or playback validation.",
             "Gzip is accepted only as one CRC-valid member with no trailing bytes. Work units count parser steps; bounded hashing and gzip decoding are separate passes.",
             "VGM extra headers and undefined commands are unsupported. Known commands are gated to their supported version; each reserved opcode's first occurrence is warned and all occurrences are counted.",
-            "Chip clock fields and command counts are separate inventory evidence; command-to-clock consistency and chip register semantics are not validated for playback.",
+            "Standalone playback is restricted to the reported SN76489 contract. Other chip clocks and commands remain structural inventory without playback validation.",
         ],
         MediaIdentity {
             system: "standalone_vgm",
@@ -411,7 +414,7 @@ fn parse(
                 byte_len: (eof - used_end) as u32,
             });
         }
-        Some(VgmLog {
+        let mut log = VgmLog {
             title,
             source: FileSpan {
                 offset: 0,
@@ -439,7 +442,10 @@ fn parse(
             chips,
             command_histogram: histogram,
             warnings,
-        })
+            sn_playback: None,
+        };
+        log.sn_playback = playback::capability(data, &log);
+        Some(log)
     })();
     match stopped {
         Some(stop) => Err(stop),

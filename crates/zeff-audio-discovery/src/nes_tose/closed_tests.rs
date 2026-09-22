@@ -1,5 +1,5 @@
 #[cfg(test)]
-use super::NesToseSong;
+use super::{NesToseSong, closed::PrgMapping};
 use super::{
     closed::{Input, Profile},
     closed_profiles::PROFILES,
@@ -107,12 +107,26 @@ fn exact_profiles_preserve_groups_and_mapped_assets() {
             assert_eq!(song.tracks.len(), 4);
             let prepared = super::prepare_rom(&bytes, song, &AtomicBool::new(false)).unwrap();
             assert_eq!(prepared.mapper, profile.mapper);
-            assert!((0xf800..0xf900).contains(&prepared.wait_start));
+            assert_eq!(prepared.timing, profile.timing);
+            assert_eq!(
+                prepared.bytes[9] & 1,
+                u8::from(profile.timing == crate::nes_native::NesNativeTiming::Pal)
+            );
+            let bootstrap = if profile.mapping == PrgMapping::Mmc1Upper16K {
+                0xb800_u16
+            } else {
+                0xf800_u16
+            };
+            assert!((bootstrap..bootstrap + 256).contains(&prepared.wait_start));
             let vectors = profile.span(0xfffc, 2).effective_offset as usize;
             assert_eq!(
                 &prepared.bytes[vectors..vectors + 2],
-                &0xf800_u16.to_le_bytes()
+                &bootstrap.to_le_bytes()
             );
+            if profile.mapping == PrgMapping::Mmc1Upper16K {
+                let reset = 16 + usize::from(profile.header[4]) * 0x4000 - 4;
+                assert_eq!(&prepared.bytes[reset..reset + 2], &bootstrap.to_le_bytes());
+            }
             for span in &song.mapped_spans {
                 let range = span.effective_offset as usize
                     ..(span.effective_offset + span.byte_len) as usize;
@@ -186,7 +200,12 @@ fn closed_profiles_observe_candidate_and_work_limits() {
 
 #[test]
 fn instruction_dummy_reads_remain_in_mapped_source() {
-    for (profile_index, index, address) in [(1, 0, 0xa302), (1, 0, 0xa305), (5, 43, 0x875a)] {
+    for (profile_index, index, address) in [
+        (1, 0, 0xa302),
+        (1, 0, 0xa305),
+        (5, 43, 0x875a),
+        (13, 0, 0xd1f5),
+    ] {
         let bytes = synthetic_closed_rom(profile_index);
         let songs = inventory(&bytes);
         let song = songs.iter().find(|song| song.index == index).unwrap();

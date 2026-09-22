@@ -126,12 +126,10 @@ pub(super) fn ensure_system_headless_options(
     }
     if !matches!(
         system,
-        "gb" | "gba" | "coleco" | "pce" | "ws" | "sms" | "gg" | "sg"
+        "gb" | "gba" | "nes" | "coleco" | "pce" | "ws" | "sms" | "gg" | "sg"
     ) && opts.audio_dump_path.is_some()
     {
-        anyhow::bail!(
-            "--audio-dump is currently only supported for GB/GBC, GBA, ColecoVision, PC Engine, WonderSwan, and Sega 8-bit headless runs"
-        );
+        anyhow::bail!("--audio-dump requires a supported cartridge system");
     }
     if opts.gb_dmg_palette_preset.is_some() {
         anyhow::bail!("--gb-dmg-palette/--dmg-palette is only supported for GB/GBC headless runs");

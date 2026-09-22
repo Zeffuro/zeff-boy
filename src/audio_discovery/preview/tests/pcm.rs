@@ -12,6 +12,11 @@ fn engine_preview_transport_and_wav_share_the_selected_song() -> anyhow::Result<
     use zeff_emu_common::system::System;
     for (bytes, id, system) in [
         (
+            zeff_audio_discovery::huge::fixture::rom(),
+            SongId::Huge(0),
+            System::Gb,
+        ),
+        (
             test_support::engine_software::fixture(),
             SongId::EngineSoftware(0),
             System::Gba,
@@ -34,6 +39,16 @@ fn engine_preview_transport_and_wav_share_the_selected_song() -> anyhow::Result<
         ),
         (
             zeff_audio_discovery::gb_quickthunder::synthetic_rom(),
+            SongId::GbQuickThunder(0),
+            System::Gb,
+        ),
+        (
+            zeff_audio_discovery::gb_quickthunder::synthetic_rom_rocket(0x97),
+            SongId::GbQuickThunder(0),
+            System::Gb,
+        ),
+        (
+            zeff_audio_discovery::gb_quickthunder::synthetic_rom_rocket(0x99),
             SongId::GbQuickThunder(0),
             System::Gb,
         ),

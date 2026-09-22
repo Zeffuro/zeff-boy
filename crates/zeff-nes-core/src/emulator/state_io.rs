@@ -24,6 +24,9 @@ impl Emulator {
     }
 
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.invalidate_audio_trace(
+            zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
+        );
         self.bus.cartridge.load_battery_data(bytes)
     }
 
@@ -32,6 +35,9 @@ impl Emulator {
     }
 
     pub fn load_persistent_data(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.invalidate_audio_trace(
+            zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
+        );
         self.bus.cartridge.load_persistent_data(bytes)
     }
 
@@ -40,6 +46,7 @@ impl Emulator {
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
+        let rollback_audio_trace = self.bus.audio_trace.clone();
         let rollback_state = self.encode_state()?;
         let rollback_cpu = self.cpu.clone();
         let rollback_ppu = self.bus.ppu.clone();
@@ -60,6 +67,7 @@ impl Emulator {
             self.opcode_log = rollback_opcode_log;
             self.instruction_trace = rollback_instruction_trace;
             self.call_stack = rollback_call_stack;
+            self.bus.audio_trace = rollback_audio_trace;
             return Err(error);
         }
         self.opcode_log.clear();

@@ -1,8 +1,9 @@
-use super::Profile;
+use super::{HeaderKind, HeaderKind::Executable, Profile};
 
 pub(super) static PROFILES: &[Profile] = &[
     Profile {
         name: "gb-quickthunder-13-01",
+        header: Executable,
         len: 2073,
         hash: "6a3e1538ff51c2eb778325e15c52ad957e6dc40761a2dbc87afc8a5e3a766d9c",
         selector: 18239,
@@ -21,6 +22,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-13-02",
+        header: Executable,
         len: 2073,
         hash: "86936990185cb10ebc35a9e3f1544a0369ecfcabfe4c2085b3601ea686253f5d",
         selector: 18239,
@@ -39,6 +41,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-01",
+        header: Executable,
         len: 2168,
         hash: "be613946dfdb02e4f5309a82f00bc4e5076df2e6619650b80c787b760146c5db",
         selector: 18264,
@@ -56,7 +59,49 @@ pub(super) static PROFILES: &[Profile] = &[
         release_operand: 2145,
     },
     Profile {
+        name: "gb-quickthunder-14-11",
+        header: Executable,
+        len: 2171,
+        hash: "3e74539c9573ebeffe7581ed47067e170877bc58d9d05b7e182cca3c5416452e",
+        selector: 18263,
+        tick: 16393,
+        stride: 14,
+        pattern_bytes: 2,
+        operands: [1884, 76, 162, 1489, 372],
+        aliases: &[
+            &[76, 530, 931, 1400, 1715],
+            &[162, 627, 1003, 1797],
+            &[372, 837, 1234],
+        ],
+        empty_operand: None,
+        default_empty: 18681,
+        release_operand: 2148,
+    },
+    Profile {
+        name: "gb-quickthunder-14-bank-tag",
+        header: HeaderKind::BankTagged {
+            prefix: [0xc3, 0x78, 0x48],
+            banks: &[0x05, 0x17],
+        },
+        len: 2168,
+        hash: "444306d0b4b7e10ba9bb0dec73ff2478590f38220448893ecff8193aafb70bf6",
+        selector: 0x4754,
+        tick: 0x4006,
+        stride: 14,
+        pattern_bytes: 2,
+        operands: [1881, 73, 159, 1486, 369],
+        aliases: &[
+            &[73, 527, 928, 1397, 1712],
+            &[159, 624, 1000, 1794],
+            &[369, 834, 1231],
+        ],
+        empty_operand: None,
+        default_empty: 18678,
+        release_operand: 2145,
+    },
+    Profile {
         name: "gb-quickthunder-13-03",
+        header: Executable,
         len: 2073,
         hash: "55ed16d78b1ecaf179e6519f05ce956bb1ad238375b25a524af838240508fb09",
         selector: 18239,
@@ -75,6 +120,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-13-04",
+        header: Executable,
         len: 2073,
         hash: "1026d85c1d747e25e916e9bbd3edb371d398ef1345bcfce09de5d4a382a26dc5",
         selector: 18239,
@@ -93,6 +139,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-02",
+        header: Executable,
         len: 2188,
         hash: "6ba765b6f9243cafe0a5c30518eee899188e7b9529e86c25922eaf7f260fec25",
         selector: 18284,
@@ -111,6 +158,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-03",
+        header: Executable,
         len: 2155,
         hash: "153e3f5fd82f9272f268ec75caad0cc4c68f0d8cbbb89d91b5ad5b08df31370e",
         selector: 18251,
@@ -129,6 +177,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-04",
+        header: Executable,
         len: 2170,
         hash: "a0287e9beb73c44844075ca242c2d389844efbe0b46afff7eb0c956ffafdf51a",
         selector: 18266,
@@ -147,6 +196,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-05",
+        header: Executable,
         len: 2161,
         hash: "e1809a23bd7357e6bf352178a13c4c54d770bd19dba98a5d3937251d712d9cba",
         selector: 18257,
@@ -165,6 +215,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-06",
+        header: Executable,
         len: 2167,
         hash: "a0667bd79f475db767ee513c80d81a347b1ef25e604f1d3f6a2e6310d2a0f4ac",
         selector: 18263,
@@ -183,6 +234,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-13-05",
+        header: Executable,
         len: 2073,
         hash: "57463d96eb3f6eee0eac4e3b8aa79429cbf0791f734fd3f57b5c18e85d425973",
         selector: 18239,
@@ -201,6 +253,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-07",
+        header: Executable,
         len: 2161,
         hash: "b0beb8039bac19f80701b50be9367ec3e93666c56bc0cae7c6633ae4c03ab493",
         selector: 18257,
@@ -219,6 +272,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-08",
+        header: Executable,
         len: 2176,
         hash: "acb7cd0f51c0474c207ee997f1fd836a9ea26235111f7091dd85424b975e949c",
         selector: 18272,
@@ -237,6 +291,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-13-06",
+        header: Executable,
         len: 2069,
         hash: "25799483a37cafaca171f63674697913d485d053f741cdf0b0edd76bebcd7637",
         selector: 18239,
@@ -255,6 +310,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-13-07",
+        header: Executable,
         len: 2073,
         hash: "8023feb6ea13950bc510ed495ea45c4c2c2f0d2edfbe069bdd3027f1d234b543",
         selector: 18239,
@@ -273,6 +329,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-09",
+        header: Executable,
         len: 2170,
         hash: "cf05dbf651d46c74a9ae66ed11e343ce59f739c090a50e32c9122d430209163a",
         selector: 18272,
@@ -291,6 +348,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-14-10",
+        header: Executable,
         len: 2176,
         hash: "c44bed9363611a5fbb57b5ca015231e29b0cadbe4a44ffe8e737621416916992",
         selector: 18272,
@@ -309,6 +367,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-13-08",
+        header: Executable,
         len: 2079,
         hash: "4741f4f306f573ec4b2f0d221a7e3bf09ad70117ff4d2aa7028894ab1f25a72d",
         selector: 18245,
@@ -327,6 +386,7 @@ pub(super) static PROFILES: &[Profile] = &[
     },
     Profile {
         name: "gb-quickthunder-13-09",
+        header: Executable,
         len: 2073,
         hash: "c71fdcbecce2caf0054bb53b20d995161dc2962d8748762ef4ba0aa25042c740",
         selector: 18239,

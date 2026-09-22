@@ -97,6 +97,10 @@ pub(super) fn draw(
     };
     let can_preview = PreviewRequest::can_preview(manifest, selection);
     let is_cd = matches!(selection, SongId::Cdda(_));
+    let requires_validation = manifest
+        .scan
+        .song(selection)
+        .is_some_and(|song| song.requires_runtime_validation());
     let snapshot = state.player.snapshot();
     ui.horizontal_wrapped(|ui| {
         ui.strong(preview_label(
@@ -104,12 +108,18 @@ pub(super) fn draw(
             selection,
             mp2k_tracks.is_some(),
             is_cd,
+            snapshot.is_some(),
         ));
         let playing = snapshot.is_some_and(|snapshot| snapshot.playing);
         let button_width = ui
             .painter()
             .layout_no_wrap(
-                "Pause preview".to_owned(),
+                if requires_validation {
+                    "Verify & preview"
+                } else {
+                    "Pause preview"
+                }
+                .to_owned(),
                 egui::TextStyle::Button.resolve(ui.style()),
                 ui.visuals().text_color(),
             )
@@ -121,6 +131,8 @@ pub(super) fn draw(
                 can_preview,
                 egui::Button::new(if playing {
                     "Pause preview"
+                } else if requires_validation && snapshot.is_none() {
+                    "Verify & preview"
                 } else {
                     "Play preview"
                 })
@@ -226,6 +238,10 @@ pub(super) fn draw(
             "Uses the same approximate SoundFont synthesis as audio exports. MP2k reverb, modulation and dynamic Camelot effects are not reproduced. Seeking may take time to reconstruct active notes. Track controls can take one short audio buffer to apply."
         } else if is_cd {
             "Plays the CD track from index 1, without its pregap. Preview uses the output device's sample rate; WAV and FLAC exports preserve the original 44.1 kHz PCM."
+        } else if matches!(selection, SongId::Vgm(_)) {
+            "Plays the recorded PSG log once, stopping at its end or the preview limit. Seeking replays from the start. VGM timing and chip behavior can differ from the original capture."
+        } else if matches!(selection, SongId::Huge(_)) {
+            "Verifies original and isolated playback before returning audio. Stops at the verified capture endpoint or chosen maximum; seeking reads verified audio. Seamless loops and individual channel controls are unavailable."
         } else if matches!(selection, SongId::GbNative(_)) {
             "Plays the original Game Boy music. Playback stops at the qualified song end or first complete loop; seeking replays from the start."
         } else if matches!(selection, SongId::GbQuickThunder(_) | SongId::GbGhx(_) | SongId::GbSoundSystem(_) | SongId::GbCarillon(_)) {
@@ -318,11 +334,26 @@ fn options_for(state: &PreviewState, selection: SongId) -> RenderOptions {
     }
 }
 
-fn preview_label(manifest: &ScanManifest, selection: SongId, is_mp2k: bool, is_cd: bool) -> String {
-    if is_mp2k {
+fn preview_label(
+    manifest: &ScanManifest,
+    selection: SongId,
+    is_mp2k: bool,
+    is_cd: bool,
+    ready: bool,
+) -> String {
+    if matches!(selection, SongId::Huge(_)) {
+        if ready {
+            "hUGEDriver preview · verified audio"
+        } else {
+            "hUGEDriver preview · verification required"
+        }
+        .to_owned()
+    } else if is_mp2k {
         "MP2k preview · approximate".to_owned()
     } else if is_cd {
         "CD audio preview".to_owned()
+    } else if matches!(selection, SongId::Vgm(_)) {
+        "PSG register-log preview".to_owned()
     } else if matches!(selection, SongId::Natsume(_)) {
         "Natsume preview · original sound driver".to_owned()
     } else {

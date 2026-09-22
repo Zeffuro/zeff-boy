@@ -2,9 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::Budget;
 
-use super::{GbCarillonSong, GbCarillonTrack, ReadError, span};
-
-const STARTS: [u8; 8] = [0, 128, 64, 192, 32, 96, 160, 224];
+use super::{GbCarillonSong, GbCarillonTrack, ReadError, profiles::Recognition, span};
 
 fn order(data: &[u8], mut at: u8, budget: &mut Budget<'_>) -> Result<Option<(u8, u8)>, ReadError> {
     let mut seen = [false; 256];
@@ -52,16 +50,24 @@ fn instrument(data: &[u8], kind: u8, start: u8, budget: &mut Budget<'_>) -> Resu
 
 pub(super) fn song(
     bytes: &[u8],
-    bank: u16,
+    recognized: Recognition,
     index: u16,
     budget: &mut Budget<'_>,
 ) -> Result<GbCarillonSong, ReadError> {
-    let start = *STARTS.get(usize::from(index)).ok_or(ReadError::Invalid)?;
+    let bank = recognized.bank;
+    let profile = recognized.profile;
+    let selector_offset = usize::from(profile.selector_table - 0x4000);
     let offset = usize::from(bank) * 0x4000;
     let data = &bytes[offset..offset + 0x4000];
+    let start = data
+        .get(selector_offset + usize::from(index))
+        .copied()
+        .ok_or(ReadError::Invalid)?
+        .wrapping_add(1);
     let initial = order(data, start, budget)?.ok_or(ReadError::Invalid)?;
     let mut aliases = Vec::new();
-    for (other, &at) in STARTS.iter().enumerate() {
+    for other in 0..8 {
+        let at = data[selector_offset + other].wrapping_add(1);
         match order(data, at, budget) {
             Ok(Some(value)) if value == initial => aliases.push(other as u16),
             Err(ReadError::Stop(stop)) => return Err(ReadError::Stop(stop)),
@@ -125,15 +131,26 @@ pub(super) fn song(
             .map(|page| span(bank, u16::from(page) * 256, 256)),
     );
     Ok(GbCarillonSong {
-        profile: "carillon-cgb-v1",
+        profile: profile.name,
         index,
         bank,
         title: format!("Bank {bank:02X} audio selection {index}"),
         order_address: 0x4f00 + u16::from(initial.0),
         aliases,
-        table_entry: span(bank, 0x40f2 + index, 1),
-        tracks: notes.into_iter().enumerate().map(|(i, note_count)| GbCarillonTrack { number: i as u8 + 1, note_count }).collect(),
+        table_entry: span(bank, profile.selector_table + index, 1),
+        tracks: notes
+            .into_iter()
+            .enumerate()
+            .map(|(i, note_count)| GbCarillonTrack {
+                number: i as u8 + 1,
+                note_count,
+            })
+            .collect(),
         mapped_spans,
-        warnings: vec!["Native CGB double-speed driver, called once per VBlank. Role, duration and complete soundtrack membership are not established; sample commands are not supported.".into()],
+        warnings: vec![if profile.isolated {
+            "Runs an isolated authenticated Carillon module as a fixed CGB double-speed, one-call-per-VBlank projection. Original source mapper behavior and game timing are not established; role, duration and complete soundtrack membership are not established; sample commands are not supported.".into()
+        } else {
+            "Native CGB double-speed driver, called once per VBlank. Role, duration and complete soundtrack membership are not established; sample commands are not supported.".into()
+        }],
     })
 }

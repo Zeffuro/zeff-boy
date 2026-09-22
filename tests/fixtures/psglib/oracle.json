@@ -1,0 +1,30 @@
+{
+  "schema": "zeff-psglib-fixture-oracle/1",
+  "projection_rate_hz": 60,
+  "scheduler": "one PSGFrame call per NTSC VBlank",
+  "songs": [
+    {
+      "symbol": "psglib_song_0",
+      "play_loops": 0,
+      "frames": [
+        [128, 66, 144],
+        [130, 67, 145, 164, 68, 178, 228, 242],
+        [132, 65, 146],
+        [159, 191, 223, 255]
+      ],
+      "controls": ["wait", "substring", "loop", "end"]
+    },
+    {
+      "symbol": "psglib_song_1",
+      "play_loops": 0,
+      "frames": [
+        [134, 65, 147],
+        [],
+        [],
+        [128, 68, 144],
+        [159, 191, 223, 255]
+      ],
+      "controls": ["skip_2", "wait", "end"]
+    }
+  ]
+}

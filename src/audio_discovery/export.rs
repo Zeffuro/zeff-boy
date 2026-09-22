@@ -22,6 +22,7 @@ pub(crate) enum SongExportRequest {
     Gsf(super::gsf::GsfExportRequest),
     NativeGsf(super::gsf::native::NativeGsfRequest),
     NativeRip(super::native_rip_export::NativeRipRequest),
+    HugeGbs(super::huge_gbs_export::HugeGbsRequest),
     Gb(super::gb_export::GbExportRequest),
     Nes(super::nes_export::NesExportRequest),
     Natsume(super::natsume_export::NatsumeExportRequest),
@@ -73,6 +74,12 @@ impl SongExportRequest {
                 input, manifest, id, format, options,
             )
             .map(Self::NativeGsf);
+        }
+        if let SongRef::Huge(song) = song
+            && format == SongFormat::Gbs
+        {
+            return super::huge_gbs_export::HugeGbsRequest::prepare(input, manifest, song)
+                .map(Self::HugeGbs);
         }
         if matches!(format, SongFormat::Gbs | SongFormat::Nsf | SongFormat::Sgc)
             && !matches!(song, SongRef::Rip(_))
@@ -241,6 +248,7 @@ impl SongExportRequest {
             | SongRef::GbTose(_)
             | SongRef::GbGhx(_)
             | SongRef::GbSoundSystem(_)
+            | SongRef::Huge(_)
             | SongRef::GbCarillon(_)
             | SongRef::WsTose(_)
             | SongRef::GbQuickThunder(_)
@@ -273,6 +281,7 @@ impl SongExportRequest {
             Self::Gsf(request) => request.write_new(path, cancel, progress),
             Self::NativeGsf(request) => request.write_new(path, cancel, progress),
             Self::NativeRip(request) => request.write_new(path, cancel, progress),
+            Self::HugeGbs(request) => request.write_new(path, cancel, progress),
             Self::Gb(request) => request.write_new(path, cancel, progress),
             Self::Nes(request) => request.write_new(path, cancel, progress),
             Self::Natsume(request) => request.write_new(path, cancel, progress),

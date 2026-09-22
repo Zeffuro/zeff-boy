@@ -31,6 +31,42 @@ fn render(session: &mut GbBankedSession, block: usize) -> Result<Vec<i16>> {
 }
 
 #[test]
+fn isolated_carillon_retains_source_and_replays_at_both_sample_rates() -> Result<()> {
+    let bytes = zeff_audio_discovery::gb_carillon::synthetic_rom_alternate();
+    let original = bytes.clone();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    let song = &report.gb_carillon_songs[0];
+    assert_eq!(song.profile, "carillon-cgb-v1-isolated");
+    for sample_rate in [44_100, 48_000] {
+        let prepared = zeff_audio_discovery::gb_carillon::prepare_rom(&bytes, song, &cancel)?;
+        let mut session = GbBankedSession::new_carillon(
+            prepared,
+            RenderOptions {
+                sample_rate,
+                ..options()
+            },
+            song.warnings.clone(),
+            &cancel,
+        )?;
+        let expected = render(&mut session, 2048)?;
+        assert_eq!(expected.len(), sample_rate as usize * 2);
+        assert!(expected.iter().any(|&sample| sample != 0));
+        assert_eq!(session.emulator.cpu_peek8(0xff4d) & 0x80, 0x80);
+        assert_eq!(session.emulator.cpu_peek8(0xc7d4), 0xff);
+        session.reset()?;
+        assert_eq!(render(&mut session, 258)?, expected);
+    }
+    assert_eq!(bytes, original);
+    Ok(())
+}
+
+#[test]
 fn cgb_native_handoff_chunking_reset_and_requested_duration_are_stable() -> Result<()> {
     let mut session =
         GbBankedSession::new(fixture(), options(), Vec::new(), &AtomicBool::new(false))?;
@@ -203,6 +239,90 @@ fn quickthunder_switches_to_qualified_speed_before_audio_and_after_reset() -> Re
     assert_eq!(session.emulator.cpu_peek8(ack), 0);
     Ok(())
 }
+
+#[test]
+fn isolated_quickthunder_replays_source_banks_at_both_sample_rates() -> Result<()> {
+    let cancel = AtomicBool::new(false);
+    for header in [0x97, 0x99] {
+        let bytes = zeff_audio_discovery::gb_quickthunder::synthetic_rom_rocket(header);
+        let report = zeff_audio_discovery::scan(
+            zeff_emu_common::system::System::Gb,
+            &bytes,
+            Default::default(),
+            &cancel,
+        );
+        let song = &report.gb_quickthunder_songs[0];
+        for sample_rate in [44_100, 48_000] {
+            let make = || zeff_audio_discovery::gb_quickthunder::prepare_rom(&bytes, song, &cancel);
+            let mut session = GbBankedSession::new_quickthunder(
+                make()?,
+                RenderOptions {
+                    sample_rate,
+                    ..options()
+                },
+                song.warnings.clone(),
+                &cancel,
+            )?;
+            let expected = render(&mut session, 2048)?;
+            assert_eq!(expected.len(), sample_rate as usize * 2);
+            assert!(expected.iter().any(|&value| value != 0));
+            assert_eq!(session.emulator.hardware_mode(), HardwareMode::CGBDouble);
+            session.reset()?;
+            assert_eq!(render(&mut session, 258)?, expected);
+            session.set_track_mask(0)?;
+            session.reset()?;
+            assert!(render(&mut session, 512)?.iter().all(|&value| value == 0));
+            for (at, value) in [(0x143, 0x80), (0x147, header), (0x148, 1), (0x149, 2)] {
+                let mut invalid = make()?;
+                invalid.bytes[at] = value;
+                assert!(
+                    GbBankedSession::new_quickthunder(invalid, options(), Vec::new(), &cancel)
+                        .is_err()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+#[test]
+fn sampled_quickthunder_services_timer_vectors_and_restores_music_bank() -> Result<()> {
+    let cancel = AtomicBool::new(false);
+    let bytes = zeff_audio_discovery::gb_quickthunder::synthetic_rom_sampled();
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Gb,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    assert_eq!(report.gb_quickthunder_songs.len(), 4);
+    let song = &report.gb_quickthunder_songs[0];
+    for sample_rate in [44_100, 48_000] {
+        let prepared = zeff_audio_discovery::gb_quickthunder::prepare_rom(&bytes, song, &cancel)?;
+        let mut session = GbBankedSession::new_quickthunder(
+            prepared,
+            RenderOptions {
+                sample_rate,
+                ..options()
+            },
+            song.warnings.clone(),
+            &cancel,
+        )?;
+        let expected = render(&mut session, 2048)?;
+        assert!(expected.iter().any(|&value| value != 0));
+        assert_ne!(session.emulator.cpu_peek8(0xc164), 0);
+        assert_eq!(session.emulator.cpu_peek8(0xff88), 62);
+        assert_eq!(session.emulator.cpu_peek8(0xca06), 0xc3);
+        assert_eq!(session.emulator.cpu_peek8(0xca07), 0x40);
+        assert_eq!(session.emulator.cpu_peek8(0xca08), 0x17);
+        for address in 0xff30..0xff40 {
+            assert_eq!(session.emulator.cpu_peek8(address), 0x37);
+        }
+        session.reset()?;
+        assert_eq!(render(&mut session, 258)?, expected);
+    }
+    Ok(())
+}
+
 #[test]
 fn ghx_switches_to_qualified_speed_before_audio_and_after_reset() -> Result<()> {
     let bytes = zeff_audio_discovery::gb_ghx::synthetic_rom();

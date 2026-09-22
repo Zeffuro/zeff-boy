@@ -4,15 +4,22 @@ use serde::Serialize;
 
 use crate::{Budget, RomSpan, ScanStop};
 
+mod isolated;
 mod native;
 mod profiles;
+mod sampled;
 mod sequence;
 #[cfg(any(test, feature = "test-support"))]
 mod tests;
 
+pub use isolated::supports_prepared_cartridge;
 pub use native::prepare_rom;
 #[cfg(feature = "test-support")]
+pub use sampled::tests::synthetic_rom as synthetic_rom_sampled;
+#[cfg(feature = "test-support")]
 pub use tests::synthetic_rom;
+#[cfg(feature = "test-support")]
+pub use tests::synthetic_rom_rocket;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -100,6 +107,16 @@ fn song(
     index: u16,
     budget: &mut Budget<'_>,
 ) -> Result<GbQuickThunderSong, ReadError> {
+    if matches!(bytes[0x147], 0x97 | 0x99)
+        && driver.profile.name == "gb-quickthunder-14-05"
+        && index != 3
+    {
+        return Err(ReadError::Invalid);
+    }
+    let sampled = sampled::is_sampled(driver);
+    if sampled && ![1, 4, 5, 6].contains(&index) {
+        return Err(ReadError::Invalid);
+    }
     let mut reader = sequence::Reader::new(bytes, driver, budget);
     if driver.profile.len == 2069 {
         if bytes[0] == 1 {
@@ -118,9 +135,11 @@ fn song(
         return Err(ReadError::Invalid);
     }
     reader.read(u32::from(driver.frequency), 512)?;
-    reader.effect(u32::from(word(&header, wave_at)), 2, true)?;
-    reader.read(u32::from(word(&header, wave_at + 2)), 16)?;
-    reader.effect(u32::from(driver.release), 1, false)?;
+    if !sampled {
+        reader.effect(u32::from(word(&header, wave_at)), 2, true)?;
+        reader.read(u32::from(word(&header, wave_at + 2)), 16)?;
+        reader.effect(u32::from(driver.release), 1, false)?;
+    }
     let mut tracks = Vec::new();
     for channel in 0..4 {
         tracks.push(GbQuickThunderTrack {
@@ -143,7 +162,13 @@ fn song(
         table_entry: span(driver.offset(table), stride),
         tracks,
         mapped_spans: spans(reader.mapped),
-        warnings: Vec::new(),
+        warnings: if sampled {
+            vec!["Uses the authenticated timer callback and banked wave samples. Music-only playback resets the APU and driver state, with nominal VBlank music ticks and hardware timer samples; gameplay effects, warm reselection and natural loop/end times are excluded.".to_owned()]
+        } else if matches!(bytes[0x147], 0x97 | 0x99) {
+            vec!["Isolates the qualified Rocket Games sound bank in a fixed-ROM CGB player; the source board is not MBC5. Music-only playback starts from zeroed driver state, uses nominal VBlank timing and stops at the requested duration.".to_owned()]
+        } else {
+            Vec::new()
+        },
     })
 }
 

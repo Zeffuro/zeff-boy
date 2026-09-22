@@ -2,6 +2,7 @@ use super::*;
 
 static PROFILE: profiles::Profile = profiles::Profile {
     name: "gb-quickthunder-synthetic-v1",
+    header: profiles::HeaderKind::Executable,
     len: 0x100,
     hash: "",
     selector: 0x4000,
@@ -17,6 +18,7 @@ static PROFILE: profiles::Profile = profiles::Profile {
 
 static WIDE_PROFILE: profiles::Profile = profiles::Profile {
     name: "gb-quickthunder-synthetic-wide-v1",
+    header: profiles::HeaderKind::Executable,
     len: 0x100,
     hash: "",
     selector: 0x4000,
@@ -171,6 +173,88 @@ pub fn synthetic_rom() -> Vec<u8> {
     bytes[0x8432..0x8438].copy_from_slice(&[255, 0, 0, 0, 0x32, 0x44]);
     bytes[0x8442..0x8448].copy_from_slice(&[255, 0x30, 0x55, 0, 0x42, 0x44]);
     bytes
+}
+
+pub fn synthetic_rom_rocket(header: u8) -> Vec<u8> {
+    let (size, cgb, rom, ram) = match header {
+        0x97 => (0x40000, 0xc0, 3, 0),
+        0x99 => (0x80000, 0x80, 4, 2),
+        _ => panic!("unsupported synthetic board"),
+    };
+    let source = synthetic_rom();
+    let mut bytes = vec![0; size];
+    bytes[..0x150].copy_from_slice(&source[..0x150]);
+    bytes[0x143] = cgb;
+    bytes[0x147..0x14a].copy_from_slice(&[header, rom, ram]);
+    bytes[size - 0x4000..].copy_from_slice(&source[0x8000..0xc000]);
+    bytes
+}
+
+#[test]
+fn isolated_board_sources_require_identity_and_preserve_physical_spans() {
+    let cancel = AtomicBool::new(false);
+    for header in [0x97, 0x99] {
+        let bytes = synthetic_rom_rocket(header);
+        let original = bytes.clone();
+        let songs = inventory(&bytes);
+        assert_eq!(songs.len(), 1);
+        let song = &songs[0];
+        let start = bytes.len() - 0x4000;
+        assert_eq!(usize::from(song.bank) * 0x4000, start);
+        assert!(song.mapped_spans.iter().all(|span| {
+            span.effective_offset as usize >= start
+                && (span.effective_offset + span.byte_len) as usize <= bytes.len()
+        }));
+        let prepared = prepare_rom(&bytes, song, &cancel).unwrap();
+        assert_eq!(prepared.bytes.len(), 0x8000);
+        assert_eq!(&prepared.bytes[0x4000..], &bytes[start..]);
+        assert_eq!(&prepared.bytes[0x147..0x14a], &[0, 0, 0]);
+        assert!(!supports_cartridge(&bytes));
+        assert!(!supports_prepared_cartridge(&bytes));
+        assert!(supports_prepared_cartridge(&prepared.bytes));
+        assert!(inventory(&prepared.bytes).is_empty());
+        assert_eq!(bytes, original);
+        for at in [
+            0x140,
+            0x143,
+            0x147,
+            0x148,
+            0x149,
+            0x3000,
+            start,
+            start + 0x108,
+        ] {
+            let mut changed = bytes.clone();
+            changed[at] ^= 1;
+            assert!(inventory(&changed).is_empty(), "changed source at {at:x}");
+            assert!(prepare_rom(&changed, song, &cancel).is_err());
+        }
+        let mut stale = song.clone();
+        stale.bank -= 1;
+        assert!(prepare_rom(&bytes, &stale, &cancel).is_err());
+        let mut stale = song.clone();
+        stale.mapped_spans[0].effective_offset = 0;
+        assert!(super::isolated::project(&bytes, &stale).is_err());
+        assert!(prepare_rom(&bytes, song, &AtomicBool::new(true)).is_err());
+    }
+}
+
+#[test]
+fn arbitrary_mapper_labels_do_not_admit_playback() {
+    for header in [0, 0x97, 0x99, 0x98] {
+        let mut bytes = synthetic_rom();
+        bytes[0x147] = header;
+        assert!(inventory(&bytes).is_empty());
+    }
+    let bytes = synthetic_rom_rocket(0x99);
+    let cancel = AtomicBool::new(false);
+    let mut budget = Budget {
+        cancel: &cancel,
+        remaining: 2,
+    };
+    let mut songs = Vec::new();
+    assert!(scan(&bytes, &mut songs, &mut budget, 100).is_err());
+    assert!(songs.is_empty());
 }
 
 #[cfg(test)]

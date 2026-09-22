@@ -15,12 +15,18 @@ pub trait CpuBus {
     fn cpu_write_after_elapsed_cycles(&mut self, addr: u16, value: u8, elapsed_cycles: u64);
     fn prepare_cpu_instruction_accesses(&mut self);
     fn finish_cpu_instruction_accesses(&mut self, total_cycles: u64, pc: u16);
+    fn begin_cpu_non_instruction_accesses(&mut self) {}
     fn take_nmi_edge_for_vector(&mut self) -> bool {
         false
     }
 }
 
 impl CpuBus for Bus {
+    #[inline]
+    fn begin_cpu_non_instruction_accesses(&mut self) {
+        self.begin_audio_trace_non_instruction();
+    }
+
     #[inline]
     fn cpu_read(&mut self, addr: u16) -> u8 {
         Bus::cpu_read_timed(self, addr)
@@ -240,6 +246,7 @@ impl Cpu {
         self.last_step_branch_taken_same_page = false;
 
         if self.state != CpuState::Running {
+            bus.begin_cpu_non_instruction_accesses();
             let address = if self.state == CpuState::Halted {
                 self.jam_phase
                     .get_or_insert(JamPhase::StableHigh)
@@ -254,6 +261,7 @@ impl Cpu {
         }
 
         if self.nmi_pending && self.nmi_poll_delay == 0 {
+            bus.begin_cpu_non_instruction_accesses();
             self.nmi_pending = false;
             let cycles = self.service_nmi(bus);
             bus.finish_cpu_instruction_accesses(cycles, self.pc);
@@ -264,6 +272,7 @@ impl Cpu {
         }
 
         if self.irq_line && !self.irq_inhibited() {
+            bus.begin_cpu_non_instruction_accesses();
             let cycles = self.service_irq(bus);
             bus.finish_cpu_instruction_accesses(cycles, self.pc);
             self.last_step_kind = CpuStepKind::Irq;

@@ -239,6 +239,13 @@ fn draw_details(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, report: &Scan
         return;
     };
     match song {
+        SongRef::Huge(song) => {
+            ui.label(format!(
+                "hUGEDriver · descriptor {:04X}",
+                song.bound.song.descriptor.offset
+            ));
+            ui.label("Playback and export require runtime verification. Audio stops at the verified capture endpoint.");
+        }
         SongRef::Mp2k(candidate) => draw_mp2k_details(ui, workspace, candidate),
         SongRef::Gax(song) => draw_gax_details(ui, workspace, song),
         SongRef::Gb(song) => draw_gb_details(ui, workspace, song),
@@ -280,6 +287,7 @@ pub(super) fn song_title(candidate: &SongCandidate) -> String {
 
 fn song_label(song: SongRef<'_>) -> String {
     let detail = match song {
+        SongRef::Huge(_) => "4 channels · verification required".to_owned(),
         SongRef::Mp2k(candidate) => format!("{} tracks", candidate.tracks.len()),
         SongRef::Gax(song) => format!("{} channels", song.channels.len()),
         SongRef::EngineSoftware(song) => format!("{} channels", song.channels),

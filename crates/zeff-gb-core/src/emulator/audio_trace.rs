@@ -5,6 +5,14 @@ use zeff_emu_common::audio_trace::{AudioTraceInvalidation, AudioTraceTiming, Gam
 
 impl Emulator {
     pub fn reset_and_begin_audio_trace(&mut self, max_events: usize) -> anyhow::Result<()> {
+        self.begin_audio_trace(max_events, false)
+    }
+
+    pub fn reset_and_begin_native_audio_trace(&mut self, max_events: usize) -> anyhow::Result<()> {
+        self.begin_audio_trace(max_events, true)
+    }
+
+    fn begin_audio_trace(&mut self, max_events: usize, native: bool) -> anyhow::Result<()> {
         anyhow::ensure!(
             !matches!(self.hardware_mode, HardwareMode::SGB1 | HardwareMode::SGB2),
             "Game Boy audio capture supports DMG and CGB hardware"
@@ -14,6 +22,7 @@ impl Emulator {
             "Game Boy audio capture requires the APU enabled"
         );
         let mut reset = self.make_reset_emulator()?;
+        reset.bus.audio_trace_native = native;
         let recorder = self.bus.audio_trace.prepare(
             max_events,
             GB_T_CYCLES_PER_SECOND as u32,

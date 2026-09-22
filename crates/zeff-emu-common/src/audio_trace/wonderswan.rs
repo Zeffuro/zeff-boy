@@ -4,7 +4,7 @@ pub type WonderSwanAudioTrace = ChipAudioTrace<WonderSwanTraceChip, WonderSwanTr
 pub type WonderSwanAudioTraceRecorder =
     ChipAudioTraceRecorder<WonderSwanTraceChip, WonderSwanTraceWrite>;
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum WonderSwanTraceOrigin {
@@ -14,7 +14,7 @@ pub enum WonderSwanTraceOrigin {
     SoundDma,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum WonderSwanTraceWrite {
@@ -30,7 +30,7 @@ pub enum WonderSwanTraceWrite {
     },
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WonderSwanTraceChip {
     pub clock_hz: u32,
@@ -48,7 +48,7 @@ impl AudioTraceChip for WonderSwanTraceChip {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WonderSwanResetState {
     pub registers: [u8; 28],

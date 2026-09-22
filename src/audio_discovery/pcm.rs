@@ -15,16 +15,26 @@ use super::{
 
 mod gb;
 mod gb_banked;
+pub(crate) mod gb_trace;
 pub(crate) mod gba;
+pub(crate) mod huc6280_trace;
+mod huge;
 mod nes;
+pub(crate) mod nes_trace;
 mod sega;
+pub(crate) mod sn_trace;
 pub(crate) mod song;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tracker;
+mod vgm;
 mod ws;
+pub(crate) mod ws_trace;
 
 pub(crate) trait PcmSession: Send {
+    fn runtime_validation(&self) -> Option<&Value> {
+        None
+    }
     fn has_source_duration_limit(&self) -> bool {
         false
     }
@@ -89,6 +99,9 @@ pub(crate) fn write_new(
             && info.sample_rate == options.sample_rate,
         "audio session does not match its recording settings"
     );
+    if let Some(proof) = session.runtime_validation() {
+        metadata["runtime_validation"] = proof.clone();
+    }
     metadata["recording_options"] = serde_json::to_value(options)?;
     metadata["frames"] = info.frames.into();
     metadata["playback_warnings"] = serde_json::to_value(session.warnings())?;

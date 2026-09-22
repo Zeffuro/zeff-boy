@@ -64,6 +64,7 @@ pub struct Bus {
     audio_trace_context: (u32, zeff_emu_common::audio_trace::AudioTraceSource),
     audio_trace_origin: zeff_emu_common::audio_trace::GameBoyTraceOrigin,
     audio_trace_stopped: bool,
+    pub(crate) audio_trace_native: bool,
 }
 
 impl fmt::Debug for Bus {
@@ -166,6 +167,11 @@ impl Bus {
     }
 
     pub fn set_apu_sample_rate(&mut self, sample_rate: u32) {
+        if sample_rate.max(8000) != self.io.apu.sample_rate {
+            self.trace_native_output_change(
+                zeff_emu_common::audio_trace::GameBoyOutputSetting::SampleRate,
+            );
+        }
         self.io.apu.set_sample_rate(sample_rate);
     }
 
@@ -174,6 +180,11 @@ impl Bus {
     }
 
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        if enabled != self.io.apu.sample_generation_enabled {
+            self.trace_native_output_change(
+                zeff_emu_common::audio_trace::GameBoyOutputSetting::SampleGeneration,
+            );
+        }
         self.io.apu.set_sample_generation_enabled(enabled);
     }
 
@@ -183,10 +194,13 @@ impl Bus {
 
     pub fn apu_drain_samples_into(&mut self, target: &mut Vec<f32>) {
         self.io.apu.drain_samples_into(target);
+        self.trace_native_drain(target.len() / 2);
     }
 
     pub fn apu_drain_samples(&mut self) -> Vec<f32> {
-        self.io.apu.drain_samples()
+        let samples = self.io.apu.drain_samples();
+        self.trace_native_drain(samples.len() / 2);
+        samples
     }
 
     pub fn apu_channel_snapshot(&self) -> crate::hardware::apu::ApuChannelSnapshot {
@@ -194,6 +208,11 @@ impl Bus {
     }
 
     pub fn set_apu_channel_mutes(&mut self, mutes: [bool; 4]) {
+        if mutes != self.io.apu.channel_mutes() {
+            self.trace_native_output_change(
+                zeff_emu_common::audio_trace::GameBoyOutputSetting::ChannelMutes,
+            );
+        }
         self.io.apu.set_channel_mutes(mutes);
     }
 
@@ -506,6 +525,7 @@ impl Bus {
 
     #[inline]
     pub(in crate::hardware) fn step_apu(&mut self, system_t_cycles: u64) {
+        self.trace_native_batch(system_t_cycles);
         self.io.apu.step(system_t_cycles);
     }
 

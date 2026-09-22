@@ -3,7 +3,7 @@ use super::{AudioTraceChip, ChipAudioTrace, ChipAudioTraceRecorder};
 pub type Huc6280AudioTrace = ChipAudioTrace<Huc6280TraceChip, Huc6280TraceWrite>;
 pub type Huc6280AudioTraceRecorder = ChipAudioTraceRecorder<Huc6280TraceChip, Huc6280TraceWrite>;
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Huc6280TraceWrite {
     pub physical_address: u32,
@@ -11,7 +11,7 @@ pub struct Huc6280TraceWrite {
     pub value: u8,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Huc6280TraceRevision {
@@ -19,7 +19,7 @@ pub enum Huc6280TraceRevision {
     HuC6280A,
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Huc6280TraceChip {
     pub clock_hz_numerator: u64,
@@ -40,7 +40,7 @@ impl AudioTraceChip for Huc6280TraceChip {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Huc6280ResetState {
     pub channels: [Huc6280ChannelResetState; 6],
@@ -76,7 +76,7 @@ impl Default for Huc6280ResetState {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Huc6280ChannelResetState {
     pub frequency: u16,

@@ -5,6 +5,8 @@ use zeff_emu_common::system::System;
 mod gb_banked;
 mod gb_musyx;
 mod gb_tose;
+mod huge;
+mod huge_gbs;
 mod native_extensions;
 mod nes_queue;
 mod sega;

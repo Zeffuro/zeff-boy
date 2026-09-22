@@ -39,7 +39,7 @@ fn context(bytes: &[u8], firmware: Option<&[u8]>) -> Value {
     })
 }
 
-fn sega_trace(extension: &str) -> (AudioTrace, Value) {
+pub(crate) fn sega_trace(extension: &str) -> (AudioTrace, Value) {
     let bytes = sega_fixture(extension);
     let hint = match extension {
         "gg" => SystemHint::GameGear,
@@ -176,6 +176,19 @@ fn four_system_captures_retain_exact_events_and_enter_existing_vgm_catalog() -> 
         assert_eq!(scan.scan.song_count(), 1);
         assert_eq!(scan.scan.vgm_logs[0].samples, samples);
         assert!(scan.scan.vgm_logs[0].warnings.is_empty());
+        let selected = scan.scan.song(SongId::Vgm(0)).unwrap();
+        let mut player = crate::audio_discovery::pcm::song::PcmSong::from_ref(selected)
+            .expect("captured PSG configuration is playable")
+            .session(&vgm, RenderOptions::default(), &AtomicBool::new(false))?;
+        assert_eq!(player.duration_frames() as u64, samples * 48_000 / 44_100);
+        let mut pcm = [0; 1024];
+        let mut audible = false;
+        while player.position_frames() < player.duration_frames() {
+            let count = player.read(&mut pcm, &AtomicBool::new(false))?;
+            assert!(count > 0);
+            audible |= pcm[..count].iter().any(|sample| *sample != 0);
+        }
+        assert!(audible);
         let retained = directory.path().join(format!("retained-{index}.zip"));
         SongExportRequest::prepare(
             &input,

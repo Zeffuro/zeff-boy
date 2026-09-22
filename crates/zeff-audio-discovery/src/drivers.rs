@@ -5,8 +5,21 @@ use zeff_emu_common::system::System;
 
 use crate::{Budget, MediaIdentity, RomSpan, ScanLimits, ScanStatus, ScanStop};
 
+pub mod candidates;
 pub mod gb_fingerprints;
+pub mod nes_sound_writes;
+pub mod nes_tose_structure;
 
+pub use candidates::{
+    CandidateEvidence, CandidateQualification, CodeCall, CodeCommandDispatch, CodeCommandFetch,
+    CodeConditionalHeadCommandEdge, CodeInventory, CodePointerDisposition, CodeRecord,
+    CodeSelectorConsumer, CodeSelectorControl, CodeSelectorPointer, CodeStreamBinding,
+    CodeStreamPointer, CodeWrite, DriverCandidate, EvidenceKind, SelectorHold, SelectorHoldReason,
+    StructuralInventory, StructuralSelection, StructuralTrack,
+};
+
+#[cfg(test)]
+mod inventory_tests;
 #[cfg(test)]
 mod tests;
 
@@ -20,7 +33,7 @@ pub struct DriverReport {
     pub work_used: u64,
     pub findings: Vec<DriverFinding>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub driver_candidates: Vec<gb_fingerprints::DriverCandidate>,
+    pub driver_candidates: Vec<DriverCandidate>,
     pub limitations: &'static [&'static str],
 }
 
@@ -94,7 +107,7 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
     };
     let mut report = DriverReport {
         schema: "zeff-audio-driver-evidence/1",
-        detector_version: 2,
+        detector_version: if system == System::Nes { 10 } else { 2 },
         media: MediaIdentity {
             system: system.code(),
             byte_len: bytes.len() as u64,
@@ -105,21 +118,37 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
         work_used: 0,
         findings: Vec::new(),
         driver_candidates: Vec::new(),
-        limitations: &[
-            "Four fixed CGB MBC5 layouts provide table/header evidence. A separate public fingerprint pack identifies possible additional sound-driver families.",
-            "Fingerprint candidates report matching text, instruction bytes, instrument data or header identifiers. They do not establish an active driver, song table, playback contract or complete soundtrack.",
-            "Only the first occurrence of each fingerprint is retained. Multiple required fingerprints may occur in different banks or embedded programs.",
-            "Driver fingerprints and mapped table/header pointers do not validate sequence commands, runtime behavior, song boundaries or complete soundtrack coverage.",
-            "The inspected table extent comes from a known layout; it is not an inferred table terminator.",
-            "Known-ROM qualification lists only existing native playback selectors. It does not qualify GBS export or other selectors.",
-            "Evidence cannot be used as a playback selection. Native preparation independently authenticates the complete source and measured selector metadata.",
-            "This evidence pass has its own work and candidate limits. The bounded media-identity hash is a separate pass.",
-        ],
+        limitations: if system == System::Nes {
+            &[
+                "Decoded NES driver instructions and bounded descriptor/sequence structure are candidate evidence, not playback permission.",
+                "The mapped window states a required bank mapping; actual callers, initialization, timing and active-driver use remain unqualified.",
+                "Selector inspection is bounded by the recognized addressing form, not a proven table terminator or complete soundtrack inventory.",
+                "Structural groups have unknown music/effect roles, aliases, duration and natural ends or loops. Held groups retain the reason they were not enumerated.",
+                "Sound-register writes are decoded instruction evidence, not observed execution or proof of audible output.",
+                "NROM vector-code evidence identifies direct APU writes on statically decoded paths; it does not identify a driver family, song table or complete execution graph.",
+                "Caller links follow possible local control flow with returning-call fallthrough; they do not prove executed calls, routine boundaries or a playback ABI.",
+                "Selector consumers bound positive input paths and pointer reads, not the true table extent. Producers, negative inputs and sequence grammar remain unqualified; mapped pointers are not songs.",
+                "Record prefixes expose conditional pointer fields, not complete records or streams. Priority state, stream commands, timing and playback remain unqualified.",
+                "Guarded dispatches, stream fetch bindings and conditional head command edges describe possible static paths. Pointer lifetime, execution, table extent and stream grammar remain unqualified.",
+                "Native playback independently authenticates its qualified source and selection; candidate inventories have no playback or export selection.",
+            ]
+        } else {
+            &[
+                "Four fixed CGB MBC5 layouts provide table/header evidence. A separate public fingerprint pack identifies possible additional sound-driver families.",
+                "Fingerprint candidates report matching text, instruction bytes, instrument data or header identifiers. They do not establish an active driver, song table, playback contract or complete soundtrack.",
+                "Only the first occurrence of each fingerprint is retained. Multiple required fingerprints may occur in different banks or embedded programs.",
+                "Driver fingerprints and mapped table/header pointers do not validate sequence commands, runtime behavior, song boundaries or complete soundtrack coverage.",
+                "The inspected table extent comes from a known layout; it is not an inferred table terminator.",
+                "Known-ROM qualification lists only existing native playback selectors. It does not qualify GBS export or other selectors.",
+                "Evidence cannot be used as a playback selection. Native preparation independently authenticates the complete source and measured selector metadata.",
+                "This evidence pass has its own work and candidate limits. The bounded media-identity hash is a separate pass.",
+            ]
+        },
     };
     if stop.is_some() {
         return report;
     }
-    if system != System::Gb {
+    if !matches!(system, System::Gb | System::Nes) {
         report.status = ScanStatus::Unsupported;
         return report;
     }
@@ -127,21 +156,38 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
         cancel,
         remaining: limits.max_work,
     };
-    let result = crate::gb_native::detect_drivers(
-        bytes,
-        report.media.sha256.as_deref(),
-        &mut report.findings,
-        &mut budget,
-        limits.max_candidates as usize,
-    )
-    .and_then(|()| {
-        gb_fingerprints::scan(
+    let result = if system == System::Nes {
+        nes_tose_structure::scan(
             bytes,
             &mut report.driver_candidates,
             &mut budget,
-            limits.max_candidates as usize - report.findings.len(),
+            limits.max_candidates as usize,
         )
-    });
+        .and_then(|()| {
+            nes_sound_writes::scan(
+                bytes,
+                &mut report.driver_candidates,
+                &mut budget,
+                limits.max_candidates as usize,
+            )
+        })
+    } else {
+        crate::gb_native::detect_drivers(
+            bytes,
+            report.media.sha256.as_deref(),
+            &mut report.findings,
+            &mut budget,
+            limits.max_candidates as usize,
+        )
+        .and_then(|()| {
+            gb_fingerprints::scan(
+                bytes,
+                &mut report.driver_candidates,
+                &mut budget,
+                limits.max_candidates as usize - report.findings.len(),
+            )
+        })
+    };
     if let Err(stop) = result {
         report.status = ScanStatus::Incomplete(stop);
     }

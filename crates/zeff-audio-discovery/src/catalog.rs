@@ -20,6 +20,7 @@ pub enum SongId {
     Nes(usize),
     NesNative(usize),
     GbNative(usize),
+    Huge(usize),
     GbMusyx(usize),
     GbTose(usize),
     #[serde(rename = "gb_quickthunder")]
@@ -57,6 +58,7 @@ pub enum SongRef<'a> {
     Nes(&'a super::nes_music::NesSong),
     NesNative(&'a super::nes_native::NesNativeSong),
     GbNative(&'a super::gb_native::GbNativeSong),
+    Huge(&'a super::huge::catalog::HugeSong),
     GbMusyx(&'a super::gb_musyx::GbMusyxSong),
     GbTose(&'a super::gb_tose::GbToseSong),
     GbQuickThunder(&'a super::gb_quickthunder::GbQuickThunderSong),
@@ -96,6 +98,7 @@ impl ScanReport {
             .chain((0..self.aas_pcm_songs.len()).map(SongId::AasPcm))
             .chain((0..self.gb_songs.len()).map(SongId::Gb))
             .chain((0..self.gb_native_songs.len()).map(SongId::GbNative))
+            .chain((0..self.huge_songs.len()).map(SongId::Huge))
             .chain((0..self.gb_musyx_songs.len()).map(SongId::GbMusyx))
             .chain((0..self.gb_tose_songs.len()).map(SongId::GbTose))
             .chain((0..self.gb_quickthunder_songs.len()).map(SongId::GbQuickThunder))
@@ -141,6 +144,7 @@ impl ScanReport {
             SongId::Nes(index) => self.nes_songs.get(index).map(SongRef::Nes),
             SongId::NesNative(index) => self.nes_native_songs.get(index).map(SongRef::NesNative),
             SongId::GbNative(index) => self.gb_native_songs.get(index).map(SongRef::GbNative),
+            SongId::Huge(index) => self.huge_songs.get(index).map(SongRef::Huge),
             SongId::GbMusyx(index) => self.gb_musyx_songs.get(index).map(SongRef::GbMusyx),
             SongId::GbTose(index) => self.gb_tose_songs.get(index).map(SongRef::GbTose),
             SongId::GbQuickThunder(index) => self
@@ -184,6 +188,10 @@ impl ScanReport {
 }
 
 impl SongRef<'_> {
+    pub const fn requires_runtime_validation(self) -> bool {
+        matches!(self, Self::Huge(_))
+    }
+
     pub fn detector_id(self) -> &'static str {
         match self {
             Self::Mp2k(_) => "mp2k-sequence",
@@ -203,6 +211,7 @@ impl SongRef<'_> {
             Self::Nes(_) => "nes-queue-driver",
             Self::NesNative(_) => "nes-native-driver",
             Self::GbNative(_) => "gb-native-driver",
+            Self::Huge(_) => "gb-huge-driver",
             Self::GbMusyx(_) => "gb-musyx-driver",
             Self::GbTose(_) => "gb-tose-driver",
             Self::GbQuickThunder(_) => "gb-quickthunder-driver",
@@ -240,6 +249,11 @@ impl SongRef<'_> {
             Self::Nes(song) => Some(song.table_entry.into()),
             Self::NesNative(song) => Some(song.table_entry.into()),
             Self::GbNative(song) => Some(song.table_entry.into()),
+            Self::Huge(song) => Some(SourceSpan {
+                effective_offset: song.bound.song.descriptor.offset,
+                byte_len: song.bound.song.descriptor.byte_len,
+                canonical_cpu_address: None,
+            }),
             Self::GbTose(song) => Some(SourceSpan {
                 effective_offset: song.table_entry.effective_offset,
                 byte_len: song.table_entry.byte_len,
@@ -322,6 +336,7 @@ impl SongRef<'_> {
             Self::Nes(song) => format!("Song {} · {}", song.index, song.title),
             Self::NesNative(song) => song.title.clone(),
             Self::GbNative(song) => song.title.clone(),
+            Self::Huge(song) => format!("hUGE +{:04X}", song.bound.song.descriptor.offset),
             Self::GbMusyx(song) => song.title.clone(),
             Self::GbTose(song) => song.title.clone(),
             Self::GbQuickThunder(song) => song.title.clone(),
@@ -385,6 +400,7 @@ impl SongRef<'_> {
             Self::Nes(_) => "NES queue driver",
             Self::NesNative(_) => "NES native driver",
             Self::GbNative(_) => "Game Boy native driver",
+            Self::Huge(_) => "hUGEDriver (runtime validation required)",
             Self::GbMusyx(_) => "Game Boy MusyX",
             Self::GbTose(_) => "Game Boy TOSE",
             Self::GbQuickThunder(_) => "Game Boy QuickThunder",
@@ -482,6 +498,7 @@ impl SongRef<'_> {
             | Self::NesTose(_) => {
                 matches!(format, SongFormat::MappedAssets | SongFormat::Audio(_))
             }
+            Self::Huge(_) => matches!(format, SongFormat::Audio(_) | SongFormat::Gbs),
             Self::DescriptorMidi(_) => matches!(
                 format,
                 SongFormat::MappedAssets | SongFormat::Audio(_) | SongFormat::Midi
@@ -516,6 +533,7 @@ impl SongRef<'_> {
             Self::Vgm(log) => {
                 matches!(format, SongFormat::Vgm | SongFormat::MappedAssets)
                     || (format == SongFormat::Vgz && log.encoding == super::vgm::VgmEncoding::Gzip)
+                    || (log.sn_playback.is_some() && matches!(format, SongFormat::Audio(_)))
             }
             Self::Rip(rip) => {
                 format == SongFormat::MappedAssets

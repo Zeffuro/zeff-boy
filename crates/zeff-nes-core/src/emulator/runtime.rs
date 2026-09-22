@@ -60,13 +60,20 @@ impl Emulator {
         self.bus.cpu_odd_cycle = self.cpu.cycles % 2 == 1;
         self.bus
             .begin_cpu_step_timing(zeff_emu_common::time::MasterTicks::new(self.cpu.cycles));
+        self.bus.begin_audio_trace_instruction(pc_before);
 
         let cycles = CpuCore::step_cpu(&mut self.cpu, &mut self.bus);
+        self.bus.end_audio_trace_instruction();
 
         let dma_cycles = self.bus.dma_stall_cycles;
         self.bus.dma_stall_cycles = 0;
         let total_cycles = cycles + dma_cycles;
         self.cpu.cycles += dma_cycles;
+        if self.cpu.cycles < cycles_before {
+            self.invalidate_audio_trace(
+                zeff_emu_common::audio_trace::AudioTraceInvalidation::ClockOverflow,
+            );
+        }
 
         self.tick_peripherals_after_cpu_step(total_cycles);
         self.update_call_stack(pc_before, sp_before, opcode);
@@ -245,7 +252,10 @@ impl Emulator {
         let start_cycles = self.cpu.cycles;
         let max_cycles = self.bus.timing.max_cpu_cycles_per_frame() * 2;
 
-        if self.debug.any_active() || self.opcode_log.enabled || self.instruction_trace.is_enabled()
+        if self.debug.any_active()
+            || self.opcode_log.enabled
+            || self.instruction_trace.is_enabled()
+            || self.bus.audio_trace.is_enabled()
         {
             while !self.bus.ppu.frame_ready
                 && self.cpu.cycles.wrapping_sub(start_cycles) < max_cycles

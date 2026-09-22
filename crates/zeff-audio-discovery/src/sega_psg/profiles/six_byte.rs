@@ -1,6 +1,20 @@
 use super::{
-    HeaderLayout, Profile, RejectedSelector, RomSpan, SegaPsgRegion, SupplementalSelector, System,
+    HeaderLayout, KnownSource, Profile, RejectedSelector, RomSpan, SegaPsgRegion,
+    SupplementalSelector, System,
 };
+
+pub(super) const V2_01_ADDITIONAL_SOURCES: &[KnownSource] = &[
+    KnownSource {
+        name: "sega-psg-bank-v2-02",
+        sha256: "3f4d6b50225fd65111fbfd109d360c9973bb389c7b9eb622c88cb3d6a3ace4ef",
+        rom_len: 0x80000,
+    },
+    KnownSource {
+        name: "sega-psg-bank-v2-03",
+        sha256: "b456c2f22cc3cb8ee8db408a662d6c7a5f1d9c9f9017d7932f9f367c1d44e2e4",
+        rom_len: 0x80000,
+    },
+];
 
 const UNQUALIFIED_ENVELOPE: &str = "Native envelope lookup reads ROM data outside the qualified audio mapping; intended use is unresolved.";
 const MAJORS_REJECTED: &[RejectedSelector] = &[RejectedSelector {
@@ -103,6 +117,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::SixByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: LEAGUE_SUPPLEMENTAL,
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v2-01",
@@ -120,40 +135,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::SixByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
-    },
-    Profile {
-        name: "sega-psg-bank-v2-02",
-        sha256: "3f4d6b50225fd65111fbfd109d360c9973bb389c7b9eb622c88cb3d6a3ace4ef",
-        rom_len: 0x80000,
-        system: System::Gg,
-        region: SegaPsgRegion::Japanese,
-        audio_offset: 0x78000,
-        driver_address: 0x4000,
-        init_address: 0x44a3,
-        table: 0x4be5,
-        song_count: 17,
-        frame_divider: 1,
-        audio_byte_len: 0x8000,
-        header_layout: HeaderLayout::SixByteChannels,
-        rejected_selectors: &[],
-        supplemental_selectors: &[],
-    },
-    Profile {
-        name: "sega-psg-bank-v2-03",
-        sha256: "b456c2f22cc3cb8ee8db408a662d6c7a5f1d9c9f9017d7932f9f367c1d44e2e4",
-        rom_len: 0x80000,
-        system: System::Gg,
-        region: SegaPsgRegion::Japanese,
-        audio_offset: 0x78000,
-        driver_address: 0x4000,
-        init_address: 0x44a3,
-        table: 0x4be5,
-        song_count: 17,
-        frame_divider: 1,
-        audio_byte_len: 0x8000,
-        header_layout: HeaderLayout::SixByteChannels,
-        rejected_selectors: &[],
-        supplemental_selectors: &[],
+        additional_sources: V2_01_ADDITIONAL_SOURCES,
     },
     Profile {
         name: "sega-psg-bank-v2-04",
@@ -171,6 +153,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::SixByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v2-05",
@@ -188,6 +171,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::SixByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v2-06",
@@ -205,6 +189,7 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::SixByteChannels,
         rejected_selectors: &[],
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
     Profile {
         name: "sega-psg-bank-v2-07",
@@ -222,5 +207,6 @@ pub(super) const PROFILES: &[Profile] = &[
         header_layout: HeaderLayout::SixByteChannels,
         rejected_selectors: MAJORS_REJECTED,
         supplemental_selectors: &[],
+        additional_sources: &[],
     },
 ];

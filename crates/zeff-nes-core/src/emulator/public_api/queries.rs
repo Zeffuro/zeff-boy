@@ -113,6 +113,9 @@ impl Emulator {
     }
 
     pub fn bus_mut(&mut self) -> &mut Bus {
+        self.invalidate_audio_trace(
+            zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
+        );
         &mut self.bus
     }
 

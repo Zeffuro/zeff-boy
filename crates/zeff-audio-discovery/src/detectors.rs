@@ -119,8 +119,8 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
             },
             DetectorDescriptor {
                 id: "gb-native-driver",
-                semantic_version: 2,
-                scope: "Exact banked Game Boy drivers with qualified music selectors, closed driver state and DMG or CGB double-speed playback",
+                semantic_version: 4,
+                scope: "Exact banked Game Boy drivers with qualified music and effect selectors, closed driver state and DMG or CGB double-speed playback",
             },
             DetectorDescriptor {
                 id: "gb-musyx-driver",
@@ -134,7 +134,7 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
             },
             DetectorDescriptor {
                 id: "gb-quickthunder-driver",
-                semantic_version: 1,
+                semantic_version: 5,
                 scope: "Recognized QuickThunder drivers with bounded music structures and original Game Boy playback under the reported hardware profile",
             },
             DetectorDescriptor {
@@ -154,8 +154,13 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
             },
             DetectorDescriptor {
                 id: "gb-carillon-driver",
+                semantic_version: 2,
+                scope: "Qualified Carillon CGB interpreters, bounded orders/patterns/instruments, alias collapse and source-closed native playback",
+            },
+            DetectorDescriptor {
+                id: "gb-huge-driver",
                 semantic_version: 1,
-                scope: "Qualified Carillon CGB interpreter, bounded orders/patterns/instruments, explicit alias collapse and original-driver playback",
+                scope: "Pinned hUGEDriver v6.1.3 on a DMG MBC0 cartridge with the generated isolation bootstrap, bounded supported song data and a recurrence budget; runtime validation is still required before audio output",
             },
         ],
         System::Nes => &[
@@ -167,13 +172,23 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
             },
             DetectorDescriptor {
                 id: "nes-native-driver",
-                semantic_version: 2,
+                semantic_version: 4,
                 scope: "Exact NES driver profiles with qualified cartridge mapping, bounded native audio selectors and NTSC playback",
             },
             DetectorDescriptor {
                 id: "nes-tose-driver",
-                semantic_version: 1,
-                scope: "Recognized NES TOSE routines with bounded selectors, qualified cartridge mapping and original NTSC playback",
+                semantic_version: 4,
+                scope: "Recognized NES TOSE routines with bounded selectors, qualified cartridge mapping and qualified NTSC/PAL playback",
+            },
+            DetectorDescriptor {
+                id: "nes-tose-structure",
+                semantic_version: 2,
+                scope: "Decoded TOSE instruction and APU-write evidence with bounded selector/sequence inventories under a required PRG mapping; no native playback or complete soundtrack claim",
+            },
+            DetectorDescriptor {
+                id: "nes-sound-writes",
+                semantic_version: 7,
+                scope: "NROM vector-seeded code paths with direct APU-write witnesses; no driver-family, song-inventory or playback qualification",
             },
         ],
         System::Sms | System::Gg => &[

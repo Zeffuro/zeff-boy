@@ -6,7 +6,37 @@ fn additional_native_drivers_preserve_selection_assets_and_pcm() -> Result<()> {
     for (system, bytes, id, engine) in [
         (
             System::Gb,
+            zeff_audio_discovery::gb_native::timer_fixture_rom(),
+            SongId::GbNative(0),
+            "gb_native",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_native::timer_small_fixture_rom(),
+            SongId::GbNative(0),
+            "gb_native",
+        ),
+        (
+            System::Nes,
+            zeff_audio_discovery::nes_native::fixture_rom_presets(),
+            SongId::NesNative(0),
+            "nes_native",
+        ),
+        (
+            System::Nes,
+            zeff_audio_discovery::nes_native::fixture_rom_presets_cnrom(),
+            SongId::NesNative(0),
+            "nes_native",
+        ),
+        (
+            System::Gb,
             zeff_audio_discovery::gb_carillon::synthetic_rom(),
+            SongId::GbCarillon(0),
+            "gb_carillon",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_carillon::synthetic_rom_alternate(),
             SongId::GbCarillon(0),
             "gb_carillon",
         ),
@@ -49,6 +79,18 @@ fn additional_native_drivers_preserve_selection_assets_and_pcm() -> Result<()> {
             "gb_quickthunder",
         ),
         (
+            System::Gb,
+            zeff_audio_discovery::gb_quickthunder::synthetic_rom_rocket(0x97),
+            SongId::GbQuickThunder(0),
+            "gb_quickthunder",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_quickthunder::synthetic_rom_rocket(0x99),
+            SongId::GbQuickThunder(0),
+            "gb_quickthunder",
+        ),
+        (
             System::Nes,
             zeff_audio_discovery::nes_tose::synthetic_rom(),
             SongId::NesTose(0),
@@ -63,13 +105,31 @@ fn additional_native_drivers_preserve_selection_assets_and_pcm() -> Result<()> {
     ] {
         verify(system, bytes, id, engine)?;
     }
-    for profile in 0..4 {
+    for profile in 0..17 {
         verify(
             System::Nes,
             zeff_audio_discovery::nes_tose::synthetic_closed_rom(profile),
             SongId::NesTose(0),
             "nes_tose",
         )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn timer_effect_selections_export_and_revalidate_for_both_rom_sizes() -> Result<()> {
+    for bytes in [
+        zeff_audio_discovery::gb_native::timer_fixture_rom(),
+        zeff_audio_discovery::gb_native::timer_small_fixture_rom(),
+    ] {
+        for index in [2, 3] {
+            verify(
+                System::Gb,
+                bytes.clone(),
+                SongId::GbNative(index),
+                "gb_native",
+            )?;
+        }
     }
     Ok(())
 }
@@ -92,7 +152,15 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         );
     }
     assert!(PcmSong::can_play(selected) && PcmSong::is_native(selected));
-    assert_eq!(selected.span().unwrap().canonical_cpu_address, None);
+    let expected_address = match selected {
+        SongRef::GbNative(song) => Some(song.table_entry.canonical_cpu_address),
+        SongRef::NesNative(song) => Some(song.table_entry.canonical_cpu_address),
+        _ => None,
+    };
+    assert_eq!(
+        selected.span().unwrap().canonical_cpu_address,
+        expected_address
+    );
     for format in [SongFormat::Midi, SongFormat::Gbs, SongFormat::Nsf] {
         assert!(!selected.supports(format));
     }
@@ -111,6 +179,8 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         .write_new(&path, &cancel, &AtomicU32::new(0))?;
     let mut archive = zip::ZipArchive::new(std::fs::File::open(path)?)?;
     let spans = match id {
+        SongId::GbNative(index) => &manifest.scan.gb_native_songs[index].mapped_spans,
+        SongId::NesNative(index) => &manifest.scan.nes_native_songs[index].mapped_spans,
         SongId::GbCarillon(index) => &manifest.scan.gb_carillon_songs[index].mapped_spans,
         SongId::GbGhx(index) => &manifest.scan.gb_ghx_songs[index].mapped_spans,
         SongId::GbSoundSystem(index) => &manifest.scan.gb_sound_system_songs[index].mapped_spans,
@@ -183,6 +253,8 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         assert_eq!(actual, expected);
     }
     let spans = match id {
+        SongId::GbNative(index) => &mut manifest.scan.gb_native_songs[index].mapped_spans,
+        SongId::NesNative(index) => &mut manifest.scan.nes_native_songs[index].mapped_spans,
         SongId::GbCarillon(index) => &mut manifest.scan.gb_carillon_songs[index].mapped_spans,
         SongId::GbGhx(index) => &mut manifest.scan.gb_ghx_songs[index].mapped_spans,
         SongId::GbSoundSystem(index) => {

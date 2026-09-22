@@ -54,7 +54,7 @@ fn parse_input_keys(value: &str, flag: &str) -> anyhow::Result<(u8, u8, Option<u
     Ok((buttons, dpad, coleco_keypad, reset))
 }
 
-pub(super) fn parse_input_event_arg(
+pub(in crate::cli) fn parse_input_event_arg(
     value: &str,
     flag: &str,
 ) -> anyhow::Result<Vec<HeadlessInputEvent>> {
