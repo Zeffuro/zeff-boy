@@ -11,10 +11,14 @@ use super::keypad::Keypad;
 use super::ppu::{Ppu, PpuDebugSnapshot};
 use super::timer::Timers;
 use std::cell::RefCell;
+use zeff_emu_common::audio_trace::{
+    AudioTraceInvalidation, GbaAudioTraceOrigin, GbaAudioTraceRecorder,
+};
 use zeff_emu_common::debug::{TraceWriteKind, TraceWriteWidth};
 
 pub use zeff_emu_common::debug::BusAccessEvent as DebugTraceEvent;
 
+mod audio_trace;
 mod deadline;
 mod dma;
 mod event_service;
@@ -43,6 +47,12 @@ const BIOS_IRQ_FLAGS: u32 = 0x0300_7FF8;
 const INT_VBLANK: u16 = 1 << 0;
 const INT_HBLANK: u16 = 1 << 1;
 const INT_VCOUNT: u16 = 1 << 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AudioTraceAccessContext {
+    address: u32,
+    width: u8,
+}
 
 #[derive(Clone, Debug)]
 pub struct Bus {
@@ -76,6 +86,9 @@ pub struct Bus {
     pub(crate) debug_trace_reads: bool,
     pub(crate) debug_trace_writes: bool,
     pub(crate) debug_trace_events: RefCell<Vec<DebugTraceEvent>>,
+    audio_trace: GbaAudioTraceRecorder,
+    audio_trace_origin: GbaAudioTraceOrigin,
+    audio_trace_access: Option<AudioTraceAccessContext>,
     #[cfg(feature = "profiling")]
     pub(crate) profiling: crate::hardware::profiling::BusProfiling,
     #[cfg(test)]
@@ -141,6 +154,9 @@ impl Bus {
             debug_trace_reads: false,
             debug_trace_writes: false,
             debug_trace_events: RefCell::new(Vec::new()),
+            audio_trace: GbaAudioTraceRecorder::default(),
+            audio_trace_origin: GbaAudioTraceOrigin::Unknown,
+            audio_trace_access: None,
             #[cfg(feature = "profiling")]
             profiling: crate::hardware::profiling::BusProfiling::default(),
             #[cfg(test)]
@@ -157,6 +173,7 @@ impl Bus {
     }
 
     pub(crate) fn reset_hardware(&mut self) {
+        self.invalidate_audio_trace(AudioTraceInvalidation::Reset);
         let ppu_debug = self.ppu.debug_flags();
         self.ppu = Ppu::new();
         self.ppu
@@ -187,6 +204,8 @@ impl Bus {
         self.debug_trace_reads = false;
         self.debug_trace_writes = false;
         self.debug_trace_events.borrow_mut().clear();
+        self.audio_trace_origin = GbaAudioTraceOrigin::Unknown;
+        self.audio_trace_access = None;
         #[cfg(feature = "profiling")]
         {
             self.profiling = crate::hardware::profiling::BusProfiling::default();
@@ -369,11 +388,13 @@ impl Bus {
     }
 
     pub fn write8(&mut self, addr: u32, value: u8) {
+        let previous = self.set_audio_trace_access(addr, 1);
         if self.debug_trace_enabled && self.debug_trace_writes {
             self.write8_traced(addr, value);
         } else {
             self.write8_raw(addr, value);
         }
+        self.audio_trace_access = previous;
     }
 
     #[cold]
@@ -410,26 +431,23 @@ impl Bus {
     }
 
     pub fn write16(&mut self, addr: u32, value: u16) {
+        let previous = self.set_audio_trace_access(addr, 2);
         if self.debug_trace_enabled && self.debug_trace_writes {
             self.write16_traced(addr, value);
-            return;
-        }
-
-        if is_backup_addr(addr) {
+        } else if is_backup_addr(addr) {
             let byte = value.to_le_bytes()[(addr & 1) as usize];
             self.cartridge.backup_write8(addr, byte);
-            return;
+        } else {
+            let aligned = addr & !1;
+            if self.cartridge.is_eeprom_access_addr(aligned) {
+                self.cartridge.eeprom_write16(aligned, value);
+            } else if matches!(aligned, IO_START..=IO_END) {
+                self.io_write16(aligned, value);
+            } else {
+                self.write16_raw(aligned, value.to_le_bytes());
+            }
         }
-        let aligned = addr & !1;
-        if self.cartridge.is_eeprom_access_addr(aligned) {
-            self.cartridge.eeprom_write16(aligned, value);
-            return;
-        }
-        if matches!(aligned, IO_START..=IO_END) {
-            self.io_write16(aligned, value);
-            return;
-        }
-        self.write16_raw(aligned, value.to_le_bytes());
+        self.audio_trace_access = previous;
     }
 
     #[cold]
@@ -474,23 +492,22 @@ impl Bus {
     }
 
     pub fn write32(&mut self, addr: u32, value: u32) {
+        let previous = self.set_audio_trace_access(addr, 4);
         if self.debug_trace_enabled && self.debug_trace_writes {
             self.write32_traced(addr, value);
-            return;
-        }
-
-        if is_backup_addr(addr) {
+        } else if is_backup_addr(addr) {
             self.cartridge
                 .backup_write8(addr, value.to_le_bytes()[(addr & 3) as usize]);
-            return;
+        } else {
+            let aligned = addr & !3;
+            if matches!(aligned, IO_START..=IO_END) {
+                self.io_write16(aligned, value as u16);
+                self.io_write16(aligned + 2, (value >> 16) as u16);
+            } else {
+                self.write32_raw(aligned, value.to_le_bytes());
+            }
         }
-        let aligned = addr & !3;
-        if matches!(aligned, IO_START..=IO_END) {
-            self.io_write16(aligned, value as u16);
-            self.io_write16(aligned + 2, (value >> 16) as u16);
-            return;
-        }
-        self.write32_raw(aligned, value.to_le_bytes());
+        self.audio_trace_access = previous;
     }
 
     #[cold]
@@ -650,6 +667,9 @@ impl Bus {
     }
 
     pub fn register_ram_reset(&mut self, flags: u8) {
+        if flags & 0xC0 != 0 {
+            self.invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        }
         self.materialize_frame_service();
         if flags & (1 << 0) != 0 {
             self.ewram.fill(0);

@@ -4,20 +4,32 @@ use serde::Serialize;
 
 use crate::{Budget, RomSpan, ScanStop};
 
+mod direct;
 mod legacy;
 #[cfg(any(test, feature = "test-support"))]
 mod legacy_tests;
 mod native;
 mod profiles;
+mod scaled;
 mod sequence;
 #[cfg(any(test, feature = "test-support"))]
 mod tests;
+mod volume;
+pub mod wsr;
 
+#[cfg(feature = "test-support")]
+pub use direct::tests::synthetic_direct_rom;
 #[cfg(feature = "test-support")]
 pub use legacy_tests::synthetic_legacy_rom;
 pub use native::prepare_rom;
+#[cfg(any(test, feature = "test-support"))]
+pub use scaled::relocated_tests::synthetic_relocated_scaled_rom;
+#[cfg(feature = "test-support")]
+pub use scaled::tests::synthetic_scaled_rom;
 #[cfg(feature = "test-support")]
 pub use tests::synthetic_rom;
+#[cfg(feature = "test-support")]
+pub use volume::tests::synthetic_volume_rom;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,6 +48,7 @@ pub struct WsToseSong {
     pub tracks: Vec<WsToseTrack>,
     pub mapped_spans: Vec<RomSpan>,
     pub warnings: Vec<String>,
+    pub wsr_exportable: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -53,6 +66,31 @@ pub struct PreparedWsTose {
     pub ack_address: u32,
     pub wait_start: u32,
     pub wait_end: u32,
+    pub timing: Option<WsToseTiming>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WsToseTiming {
+    FixedV14 {
+        idle_address: u32,
+    },
+    FixedParagraph {
+        idle_address: u32,
+        slots: u16,
+        profile: &'static str,
+    },
+    DirectV1 {
+        idle_address: u32,
+    },
+    VolumeV1 {
+        idle_address: u32,
+    },
+    ScaledV1 {
+        idle_address: u32,
+    },
+    ScaledV2 {
+        idle_address: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +117,15 @@ pub(crate) fn scan(
     budget: &mut Budget<'_>,
     remaining: usize,
 ) -> Result<(), ScanStop> {
+    if scaled::scan(bytes, songs, budget, remaining)? {
+        return Ok(());
+    }
+    if volume::scan(bytes, songs, budget, remaining)? {
+        return Ok(());
+    }
+    if direct::scan(bytes, songs, budget, remaining)? {
+        return Ok(());
+    }
     if legacy::scan(bytes, songs, budget, remaining)? {
         return Ok(());
     }
@@ -172,6 +219,7 @@ fn song(
         tracks,
         mapped_spans: merged(reader.mapped),
         warnings,
+        wsr_exportable: false,
     })
 }
 
@@ -199,6 +247,15 @@ fn checked_profile(
 }
 
 pub fn validate_song(bytes: &[u8], song: &WsToseSong, cancel: &AtomicBool) -> anyhow::Result<()> {
+    if song.profile.starts_with("ws-tose-scaled-") {
+        return scaled::validate_song(bytes, song, cancel);
+    }
+    if song.profile.starts_with("ws-tose-volume-") {
+        return volume::validate_song(bytes, song, cancel);
+    }
+    if song.profile.starts_with("ws-tose-direct-") {
+        return direct::validate_song(bytes, song, cancel);
+    }
     if song.profile.starts_with("ws-tose-fixed-") {
         return legacy::validate_song(bytes, song, cancel);
     }

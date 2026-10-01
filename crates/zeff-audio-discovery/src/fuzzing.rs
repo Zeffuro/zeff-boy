@@ -61,10 +61,12 @@ pub fn rip(data: &[u8]) {
     let Some((control, source)) = input(data) else {
         return;
     };
-    let format = match control % 3 {
+    let format = match control % 5 {
         0 => RipFormat::Gbs,
         1 => RipFormat::Nsf,
-        _ => RipFormat::Nsfe,
+        2 => RipFormat::Nsfe,
+        3 => RipFormat::Hes,
+        _ => RipFormat::Wsr,
     };
     check(
         &super::rips::scan(source, format, limits(control), &cancel(control)),
@@ -343,6 +345,14 @@ fn check(report: &ScanReport, bytes: &[u8]) {
         )
         .chain(
             report
+                .gb_cosmigo_songs
+                .iter()
+                .map(|song| &song.mapped_spans),
+        )
+        .chain(report.gb_mplay_songs.iter().map(|song| &song.mapped_spans))
+        .chain(report.gb_imed_songs.iter().map(|song| &song.mapped_spans))
+        .chain(
+            report
                 .gb_sound_system_songs
                 .iter()
                 .map(|song| &song.mapped_spans),
@@ -374,8 +384,8 @@ fn check(report: &ScanReport, bytes: &[u8]) {
     }
     for rip in &report.music_rips {
         for offset in [
-            rip.init.initial_source_offset,
-            rip.play.initial_source_offset,
+            rip.init.and_then(|entry| entry.initial_source_offset),
+            rip.play.and_then(|entry| entry.initial_source_offset),
         ]
         .into_iter()
         .flatten()
@@ -405,6 +415,24 @@ fn check(report: &ScanReport, bytes: &[u8]) {
                 source_span(chunk.header.into(), bytes.len());
                 source_span(chunk.payload.into(), bytes.len());
             }
+        }
+        if let super::rips::RipDetails::Nsf2 { metadata, .. } = &rip.details {
+            for chunk in metadata {
+                source_span(chunk.header.into(), bytes.len());
+                source_span(chunk.payload.into(), bytes.len());
+            }
+        }
+        if let super::rips::RipDetails::Hes { data_header, .. } = &rip.details {
+            source_span((*data_header).into(), bytes.len());
+        }
+        if let super::rips::RipDetails::Wsr {
+            reset_entry,
+            cartridge_footer,
+            ..
+        } = &rip.details
+        {
+            source_span((*reset_entry).into(), bytes.len());
+            source_span((*cartridge_footer).into(), bytes.len());
         }
     }
 }

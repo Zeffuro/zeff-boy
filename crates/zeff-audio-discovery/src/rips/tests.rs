@@ -18,7 +18,7 @@ fn import_keeps_complete_identity_and_one_based_declared_song_numbers() {
     for format in [RipFormat::Gbs, RipFormat::Nsf] {
         let bytes = fixture(format);
         let rip = read(&bytes, format);
-        assert_eq!((rip.song_count, rip.first_song), (3, 2));
+        assert_eq!((rip.song_count, rip.first_song), (Some(3), Some(2)));
         assert_eq!(rip.title, "Test source");
         assert_eq!(
             rip.source,
@@ -30,10 +30,42 @@ fn import_keeps_complete_identity_and_one_based_declared_song_numbers() {
         assert_eq!(rip.sha256, zeff_firmware::sha256_hex(&bytes));
         assert_eq!(rip.program.offset, rip.header.byte_len);
         assert_eq!(rip.program.byte_len, 0x50);
-        assert_eq!(rip.init.initial_source_offset, Some(rip.program.offset));
-        assert_eq!(rip.play.initial_source_offset, Some(rip.program.offset + 1));
+        assert_eq!(
+            rip.init.unwrap().initial_source_offset,
+            Some(rip.program.offset)
+        );
+        assert_eq!(
+            rip.play.and_then(|entry| entry.initial_source_offset),
+            Some(rip.program.offset + 1)
+        );
         assert!(rip.opaque_metadata.is_none());
         assert!(rip.warnings.is_empty(), "{:?}", rip.warnings);
+    }
+}
+
+#[test]
+fn declared_container_fields_remain_numbers_and_entry_objects() {
+    let sources = [
+        (fixture(RipFormat::Gbs), RipFormat::Gbs, 0x400),
+        (fixture(RipFormat::Nsf), RipFormat::Nsf, 0x8000),
+        (
+            crate::test_support::rips::fixture(RipFormat::Nsfe),
+            RipFormat::Nsfe,
+            0x8000,
+        ),
+        (
+            crate::test_support::rips::nsf2_fixture(),
+            RipFormat::Nsf,
+            0x1234,
+        ),
+    ];
+    for (bytes, format, load_address) in sources {
+        let json = serde_json::to_value(read(&bytes, format)).unwrap();
+        assert_eq!(json["song_count"], 3);
+        assert_eq!(json["first_song"], 2);
+        assert_eq!(json["load_address"], load_address);
+        assert!(json["play"].is_object());
+        assert!(json["init"].is_object());
     }
 }
 
@@ -58,7 +90,7 @@ fn short_headers_versions_invalid_song_numbers_and_addresses_fail_closed() {
         }
         for (at, value) in [
             (0, 0),
-            (version, 2),
+            (version, if format == RipFormat::Nsf { 3 } else { 2 }),
             (version + 1, 0),
             (version + 2, 0),
             (version + 2, 4),
@@ -103,7 +135,7 @@ fn gbs_load_page_and_partial_final_page_are_not_file_relative_banks() {
     bytes[8..10].copy_from_slice(&0x4000u16.to_le_bytes());
     bytes[10..12].copy_from_slice(&0x4001u16.to_le_bytes());
     let rip = read(&bytes, RipFormat::Gbs);
-    assert_eq!(rip.init.initial_source_offset, Some(0xf0));
+    assert_eq!(rip.init.unwrap().initial_source_offset, Some(0xf0));
     assert!(matches!(
         rip.details,
         RipDetails::Gbs {
@@ -123,8 +155,8 @@ fn gbs_load_page_and_partial_final_page_are_not_file_relative_banks() {
             ..
         }
     ));
-    assert_eq!(rip.init.initial_source_offset, Some(0x70));
-    assert_eq!(rip.play.initial_source_offset, None);
+    assert_eq!(rip.init.unwrap().initial_source_offset, Some(0x70));
+    assert_eq!(rip.play.and_then(|entry| entry.initial_source_offset), None);
 }
 
 #[test]
@@ -197,7 +229,9 @@ fn nsf_declared_program_length_separates_opaque_appended_metadata() {
     assert_eq!(rip.source.byte_len as usize, bytes.len());
     bytes[0x7d] = 1;
     assert_eq!(
-        read(&bytes, RipFormat::Nsf).play.initial_source_offset,
+        read(&bytes, RipFormat::Nsf)
+            .play
+            .and_then(|entry| entry.initial_source_offset),
         None
     );
     bytes[0x7d] = 0x50;
@@ -235,8 +269,11 @@ fn nsf_initial_banks_resolve_to_source_bytes_including_load_padding() {
     bytes[12..14].copy_from_slice(&0xa122u16.to_le_bytes());
     bytes[0x70..0x78].copy_from_slice(&[1, 0, 2, 3, 0, 0, 0, 0]);
     let rip = read(&bytes, RipFormat::Nsf);
-    assert_eq!(rip.init.initial_source_offset, Some(0x1080));
-    assert_eq!(rip.play.initial_source_offset, Some(0x207f));
+    assert_eq!(rip.init.unwrap().initial_source_offset, Some(0x1080));
+    assert_eq!(
+        rip.play.and_then(|entry| entry.initial_source_offset),
+        Some(0x207f)
+    );
     assert!(matches!(
         rip.details,
         RipDetails::Nsf {
@@ -255,7 +292,10 @@ fn nsf_initial_banks_resolve_to_source_bytes_including_load_padding() {
     );
     bytes[10..12].copy_from_slice(&0x9000u16.to_le_bytes());
     assert_eq!(
-        read(&bytes, RipFormat::Nsf).init.initial_source_offset,
+        read(&bytes, RipFormat::Nsf)
+            .init
+            .unwrap()
+            .initial_source_offset,
         None
     );
 }
@@ -280,8 +320,11 @@ fn nsf_fds_low_mappings_retain_the_distinct_initial_bank_slots() {
     );
     bytes[0x7b] = 4;
     let rip = read(&bytes, RipFormat::Nsf);
-    assert_eq!(rip.init.initial_source_offset, Some(0x6090));
-    assert_eq!(rip.play.initial_source_offset, Some(0x70a0));
+    assert_eq!(rip.init.unwrap().initial_source_offset, Some(0x6090));
+    assert_eq!(
+        rip.play.and_then(|entry| entry.initial_source_offset),
+        Some(0x70a0)
+    );
     assert!(rip.warnings.contains(&RipWarning::FdsMapping));
 }
 
@@ -374,13 +417,17 @@ fn assert_scan_outcome(
         ScanLimits::default(),
         &AtomicBool::new(false),
     );
-    assert_eq!(report.detector_version, 2);
+    let version = if format == RipFormat::Nsf { 3 } else { 2 };
+    assert_eq!(report.detector_version, version);
     assert_eq!(report.status, status);
     assert!(report.music_rips.is_empty());
     assert_eq!(report.song_count(), 0);
     assert_eq!(report.work_used, work_used);
     assert_eq!(report.detector_outcomes.len(), 1);
-    assert_eq!(report.detector_outcomes[0].descriptor.semantic_version, 2);
+    assert_eq!(
+        report.detector_outcomes[0].descriptor.semantic_version,
+        version
+    );
     assert_eq!(report.detector_outcomes[0].state, state);
     assert_eq!(report.detector_outcomes[0].retained_matches, 0);
     assert_eq!(report.detector_outcomes[0].work_used, work_used);
@@ -396,6 +443,8 @@ fn scan_distinguishes_unsupported_malformed_and_incomplete_inputs() {
             RipFormat::Gbs => (0x70, 3, 4, 6),
             RipFormat::Nsf => (0x80, 5, 6, 8),
             RipFormat::Nsfe => unreachable!("fixed-header cases only"),
+            RipFormat::Hes => unreachable!("fixed-header cases only"),
+            RipFormat::Wsr => unreachable!("fixed-header cases only"),
         };
         let mut wrong_signature = bytes.clone();
         wrong_signature[0] ^= 0xff;
@@ -407,7 +456,7 @@ fn scan_distinguishes_unsupported_malformed_and_incomplete_inputs() {
             1,
         );
         let mut wrong_version = bytes.clone();
-        wrong_version[version_at] = 2;
+        wrong_version[version_at] = if format == RipFormat::Nsf { 3 } else { 2 };
         assert_scan_outcome(
             &wrong_version,
             format,

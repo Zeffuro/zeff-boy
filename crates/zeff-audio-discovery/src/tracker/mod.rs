@@ -5,6 +5,7 @@ use super::{Budget, ScanStop};
 
 mod inspect;
 mod it;
+mod playback;
 mod s3m;
 
 pub mod xm;
@@ -56,6 +57,7 @@ pub struct EmbeddedModule {
     pub samples: u16,
     pub sample_points: u32,
     pub source: ModuleSource,
+    pub mod_playback: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -179,5 +181,7 @@ pub fn verify_original(
 
 #[cfg(test)]
 mod metadata_tests;
+#[cfg(test)]
+mod playback_tests;
 #[cfg(test)]
 mod tests;

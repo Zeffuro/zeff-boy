@@ -136,21 +136,29 @@ pub(super) fn build(bytes: &[u8], song: &GaxNativeSong) -> anyhow::Result<Vec<u8
 }
 
 pub(super) fn workspace(native: &GaxNativeProfile) -> Option<(u32, u32)> {
-    let mut candidate = 0x0300_0000 + RESERVED_IRQ_BYTES;
-    if (0x0300_0000..0x0300_7e00).contains(&native.work_ram) {
-        candidate = candidate.max(native.work_ram.checked_add(RESERVED_IRQ_BYTES)?);
-    }
+    let mut floor = 0x0300_0000 + RESERVED_IRQ_BYTES;
     for copy in &native.ram_copies {
         let end = copy.destination.checked_add(copy.source.byte_len)?;
         if (0x0300_0000..0x0300_8000).contains(&copy.destination) {
             if end > 0x0300_7e00 {
                 return None;
             }
-            candidate = candidate.max(end.next_multiple_of(256));
+            floor = floor.max(end.next_multiple_of(256));
         }
     }
-    let available = 0x0300_7e00u32.checked_sub(candidate)?;
-    (available >= MIN_WORK_RAM_BYTES).then_some((candidate, available))
+    let state_in_iwram = (0x0300_0000..0x0300_7e00).contains(&native.work_ram);
+    let candidate = if state_in_iwram {
+        floor.max(native.work_ram.checked_add(RESERVED_IRQ_BYTES)?)
+    } else {
+        floor
+    };
+    if let Some(available) = 0x0300_7e00u32.checked_sub(candidate)
+        && available >= MIN_WORK_RAM_BYTES
+    {
+        return Some((candidate, available));
+    }
+    let below_state = native.work_ram.checked_sub(floor)?;
+    (state_in_iwram && below_state >= MIN_WORK_RAM_BYTES).then_some((floor, below_state))
 }
 
 struct Program {

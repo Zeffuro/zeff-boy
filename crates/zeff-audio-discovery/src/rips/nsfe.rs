@@ -145,22 +145,22 @@ pub(crate) fn inspect(bytes: &[u8], budget: &mut Budget<'_>) -> Result<RipInspec
         title: String::new(),
         author: String::new(),
         copyright: String::new(),
-        song_count,
-        first_song: raw_start_song + 1,
+        song_count: Some(song_count),
+        first_song: Some(raw_start_song + 1),
         source: span(0, bytes.len() as u32),
         sha256,
         header: span(0, 4),
         program,
         opaque_metadata: None,
-        load_address: period(info_payload, 0),
-        init: EntryPoint {
+        load_address: Some(period(info_payload, 0)),
+        init: Some(EntryPoint {
             cpu_address: period(info_payload, 2),
             initial_source_offset: None,
-        },
-        play: EntryPoint {
+        }),
+        play: Some(EntryPoint {
             cpu_address: period(info_payload, 4),
             initial_source_offset: None,
-        },
+        }),
         details: RipDetails::Nsfe {
             chunks,
             info_header,

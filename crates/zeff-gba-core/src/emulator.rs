@@ -3,6 +3,7 @@ use crate::hardware::cartridge::Cartridge;
 use crate::hardware::cpu::{Cpu, FetchedInstruction, InstructionSet};
 use sha2::{Digest, Sha256};
 use std::fmt;
+use zeff_emu_common::audio_trace::{GbaAudioTrace, MAX_AUDIO_TRACE_EVENTS};
 use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 
 mod public_api;
@@ -110,6 +111,32 @@ impl Emulator {
         {
             self.profiling_frames = 0;
         }
+    }
+
+    pub fn reset_and_begin_audio_trace(&mut self, max_events: usize) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.bus.has_external_bios(),
+            "GBA audio trace requires the post-BIOS reset model"
+        );
+        anyhow::ensure!(
+            (1..=MAX_AUDIO_TRACE_EVENTS).contains(&max_events),
+            "audio trace event limit must be between 1 and {MAX_AUDIO_TRACE_EVENTS}"
+        );
+        let apu = self.bus.apu.debug_snapshot();
+        anyhow::ensure!(
+            apu.sample_generation_enabled
+                && !apu.debug_capture_enabled
+                && apu.channel_mutes == [false; 6],
+            "GBA audio trace requires default APU output settings"
+        );
+        let trace = self.bus.prepare_audio_trace(max_events, self.rom_hash)?;
+        self.reset();
+        self.bus.install_audio_trace(trace);
+        Ok(())
+    }
+
+    pub fn finish_audio_trace(&mut self) -> Option<GbaAudioTrace> {
+        self.bus.finish_audio_trace()
     }
 }
 

@@ -319,6 +319,8 @@ fn container_song_counts_do_not_imply_discovered_sequences() {
         crate::rips::RipFormat::Gbs,
         crate::rips::RipFormat::Nsf,
         crate::rips::RipFormat::Nsfe,
+        crate::rips::RipFormat::Hes,
+        crate::rips::RipFormat::Wsr,
     ] {
         let bytes = test_support::rips::fixture(format);
         let report = crate::rips::scan(
@@ -336,6 +338,70 @@ fn container_song_counts_do_not_imply_discovered_sequences() {
 }
 
 #[test]
+fn hes_relations_declare_only_the_unmapped_request() {
+    let bytes = test_support::rips::fixture(crate::rips::RipFormat::Hes);
+    let report = crate::rips::scan(
+        &bytes,
+        crate::rips::RipFormat::Hes,
+        ScanLimits::default(),
+        &AtomicBool::new(false),
+    );
+    let result = graph(&report, SongId::Rip(0));
+    assert_eq!(result.status, GraphStatus::Complete);
+    assert_eq!(
+        result
+            .nodes
+            .iter()
+            .filter(|node| node.kind == AssetKind::EntryPoint)
+            .map(|node| node.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Request at CPU $4000"]
+    );
+    assert!(!result.nodes.iter().any(|node| node.kind == AssetKind::Song));
+    assert!(
+        result
+            .nodes
+            .iter()
+            .any(|node| node.label.contains("No song count is declared"))
+    );
+    bounded(&result);
+}
+
+#[test]
+fn wsr_relations_keep_body_and_trailer_without_entry_points() {
+    let bytes = test_support::rips::fixture(crate::rips::RipFormat::Wsr);
+    let report = crate::rips::scan(
+        &bytes,
+        crate::rips::RipFormat::Wsr,
+        ScanLimits::default(),
+        &AtomicBool::new(false),
+    );
+    let result = graph(&report, SongId::Rip(0));
+    assert_eq!(result.status, GraphStatus::Complete);
+    assert!(
+        !result
+            .nodes
+            .iter()
+            .any(|node| node.kind == AssetKind::EntryPoint)
+    );
+    assert!(result.nodes.iter().any(|node| node.label == "WSR ROM body"));
+    assert!(result.nodes.iter().any(|node| node.label == "WSR trailer"));
+    assert!(
+        result
+            .nodes
+            .iter()
+            .any(|node| node.label == "WSR reset bytes")
+    );
+    assert!(
+        result
+            .nodes
+            .iter()
+            .any(|node| node.label == "WonderSwan cartridge footer")
+    );
+    bounded(&result);
+}
+
+#[test]
 fn callback_locations_must_belong_to_the_container_program() {
     let format = crate::rips::RipFormat::Gbs;
     let bytes = test_support::rips::fixture(format);
@@ -345,12 +411,38 @@ fn callback_locations_must_belong_to_the_container_program() {
         ScanLimits::default(),
         &AtomicBool::new(false),
     );
-    report.music_rips[0].init.initial_source_offset = Some(0);
+    report.music_rips[0]
+        .init
+        .as_mut()
+        .unwrap()
+        .initial_source_offset = Some(0);
     let result = graph(&report, SongId::Rip(0));
     assert_eq!(
         result.status,
         GraphStatus::Incomplete(GraphStop::InvalidLocation)
     );
+    bounded(&result);
+}
+
+#[test]
+fn nsf2_features_do_not_establish_songs_or_entry_mappings() {
+    let bytes = test_support::rips::nsf2_fixture();
+    let report = crate::rips::scan(
+        &bytes,
+        crate::rips::RipFormat::Nsf,
+        ScanLimits::default(),
+        &AtomicBool::new(false),
+    );
+    let result = graph(&report, SongId::Rip(0));
+    assert_eq!(result.status, GraphStatus::Complete);
+    assert!(!result.nodes.iter().any(|node| node.kind == AssetKind::Song));
+    let entries: Vec<_> = result
+        .nodes
+        .iter()
+        .filter(|node| node.kind == AssetKind::EntryPoint)
+        .collect();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|node| node.location.is_none()));
     bounded(&result);
 }
 

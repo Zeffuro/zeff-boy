@@ -79,6 +79,9 @@ pub(crate) fn song(
             format!("Descriptor {:04X}", song.bound.song.descriptor.offset)
         }
         Some(SongRef::GbCarillon(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
+        Some(SongRef::GbCosmigo(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
+        Some(SongRef::GbMplay(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
+        Some(SongRef::GbImed(song)) => format!("Bank {:02X} - {:03}", song.bank, song.index),
         Some(SongRef::WsTose(song)) => format!("Selector {:03}", song.index),
         Some(SongRef::NesTose(song)) => format!("Selector {:03}", song.index),
         Some(SongRef::GbMusyx(song)) => {

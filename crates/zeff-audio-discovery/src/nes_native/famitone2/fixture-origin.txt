@@ -1,0 +1,2 @@
+Engine: Shiru FamiTone2 v1.11, public domain; archive SHA256 a1ff931d0460f891f0b2efca798dd9564bdea82786dc9d98cc8614218484f8e3.
+https://web.archive.org/web/20140920212348id_/http://shiru.untergrund.net/files/src/famitone2.zip — wrapper and two cues authored for these tests.

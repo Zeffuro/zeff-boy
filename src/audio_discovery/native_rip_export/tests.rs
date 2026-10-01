@@ -4,6 +4,10 @@ use crate::audio_discovery::{
 };
 use std::io::Read;
 
+mod famistudio;
+mod famitone2;
+mod ggsound;
+
 #[test]
 fn nsfe_single_and_bulk_exports_match_and_preserve_source_identity() -> Result<()> {
     let cancel = AtomicBool::new(false);

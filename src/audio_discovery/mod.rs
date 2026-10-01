@@ -40,6 +40,8 @@ mod huge_gbs_export;
 pub(crate) mod huge_gbs_validation;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod huge_validation;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod maxmod_export;
 pub(crate) mod media;
 #[cfg(not(target_arch = "wasm32"))]
 mod midi;

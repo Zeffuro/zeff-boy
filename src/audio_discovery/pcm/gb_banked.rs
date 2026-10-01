@@ -22,6 +22,9 @@ enum CartridgeProfile {
     Ghx,
     SoundSystem,
     Carillon,
+    Cosmigo,
+    Mplay,
+    Imed,
 }
 
 pub(crate) struct GbBankedSession {
@@ -174,6 +177,39 @@ impl GbBankedSession {
         )
     }
 
+    pub(crate) fn new_cosmigo(
+        prepared: PreparedGbBanked,
+        options: RenderOptions,
+        warnings: Vec<String>,
+        cancel: &AtomicBool,
+    ) -> Result<Self> {
+        Self::new_inner(
+            prepared,
+            CartridgeProfile::Cosmigo,
+            options,
+            warnings,
+            cancel,
+        )
+    }
+
+    pub(crate) fn new_mplay(
+        prepared: PreparedGbBanked,
+        options: RenderOptions,
+        warnings: Vec<String>,
+        cancel: &AtomicBool,
+    ) -> Result<Self> {
+        Self::new_inner(prepared, CartridgeProfile::Mplay, options, warnings, cancel)
+    }
+
+    pub(crate) fn new_imed(
+        prepared: PreparedGbBanked,
+        options: RenderOptions,
+        warnings: Vec<String>,
+        cancel: &AtomicBool,
+    ) -> Result<Self> {
+        Self::new_inner(prepared, CartridgeProfile::Imed, options, warnings, cancel)
+    }
+
     pub(crate) fn new_sound_system(
         prepared: zeff_audio_discovery::gb_sound_system::PreparedGbSoundSystem,
         options: RenderOptions,
@@ -222,7 +258,10 @@ impl GbBankedSession {
             | CartridgeProfile::QuickThunder
             | CartridgeProfile::Ghx
             | CartridgeProfile::SoundSystem
-            | CartridgeProfile::Carillon => 0x150..0x200,
+            | CartridgeProfile::Carillon
+            | CartridgeProfile::Cosmigo
+            | CartridgeProfile::Mplay
+            | CartridgeProfile::Imed => 0x150..0x200,
         };
         ensure!(
             prepared.wait_start >= window.start
@@ -292,6 +331,15 @@ impl GbBankedSession {
             CartridgeProfile::Carillon => {
                 zeff_audio_discovery::gb_carillon::supports_cartridge(&prepared.bytes)
             }
+            CartridgeProfile::Cosmigo => {
+                zeff_audio_discovery::gb_cosmigo::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Mplay => {
+                zeff_audio_discovery::gb_mplay::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Imed => {
+                zeff_audio_discovery::gb_imed::supports_cartridge(&prepared.bytes)
+            }
             CartridgeProfile::QuickThunder => {
                 zeff_audio_discovery::gb_quickthunder::supports_prepared_cartridge(&prepared.bytes)
             }
@@ -301,10 +349,20 @@ impl GbBankedSession {
                 prepared.timing == GbBankedTiming::Dmg
                     && !matches!(prepared.bytes.get(0x143), Some(0x80 | 0xc0))
             }
-            CartridgeProfile::QuickThunder | CartridgeProfile::Ghx | CartridgeProfile::Carillon => {
+            CartridgeProfile::QuickThunder
+            | CartridgeProfile::Ghx
+            | CartridgeProfile::Carillon
+            | CartridgeProfile::Cosmigo
+            | CartridgeProfile::Mplay => {
                 prepared.timing == GbBankedTiming::CgbDouble
                     && matches!(prepared.bytes.get(0x143), Some(0x80 | 0xc0))
             }
+            CartridgeProfile::Imed => match prepared.timing {
+                GbBankedTiming::Dmg => !matches!(prepared.bytes.get(0x143), Some(0x80 | 0xc0)),
+                GbBankedTiming::Cgb | GbBankedTiming::CgbDouble => {
+                    matches!(prepared.bytes.get(0x143), Some(0x80 | 0xc0))
+                }
+            },
             CartridgeProfile::SoundSystem => {
                 matches!(
                     prepared.timing,

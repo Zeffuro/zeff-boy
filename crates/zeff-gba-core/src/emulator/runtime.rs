@@ -72,6 +72,7 @@ impl Emulator {
             && !self.opcode_log.enabled
             && !self.instruction_trace.is_enabled()
             && !self.bus.debug_trace_enabled
+            && !self.bus.audio_trace_enabled()
     }
 
     pub fn step_instruction(&mut self) -> Option<FetchedInstruction> {
@@ -180,6 +181,7 @@ impl Emulator {
         } else {
             self.cpu.step(&mut self.bus)
         };
+        self.bus.clear_audio_trace_cpu_origin();
         if let Some(instruction) = fetched {
             self.opcode_log.push(instruction.into());
         }

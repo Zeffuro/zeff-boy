@@ -7,6 +7,28 @@ use xmrsplayer::xmrsplayer::XmrsPlayer;
 use super::{PcmSession, check_cancel, fade, validate_options};
 use crate::audio_discovery::render::RenderOptions;
 
+pub(crate) fn validate_module_input(
+    input: &crate::audio_discovery::media::ScanInput,
+    module: &zeff_audio_discovery::tracker::EmbeddedModule,
+) -> Result<()> {
+    use crate::audio_discovery::media::StandaloneFormat;
+    use zeff_audio_discovery::tracker::ModuleSource;
+    match module.source {
+        ModuleSource::Embedded => ensure!(
+            input.system.is_some() && input.standalone_audio.is_none(),
+            "embedded tracker playback requires a cartridge scan input"
+        ),
+        ModuleSource::Standalone { trailing_bytes } => ensure!(
+            input.system.is_none()
+                && input.standalone_audio == Some(StandaloneFormat::Tracker(module.format))
+                && module.span.offset == 0
+                && module.span.byte_len as usize + trailing_bytes as usize == input.bytes.len(),
+            "standalone tracker playback does not match its source input"
+        ),
+    }
+    Ok(())
+}
+
 self_cell::self_cell! {
     struct PlayerCell {
         owner: Arc<Module>,
@@ -27,6 +49,45 @@ pub(crate) struct TrackerSession {
 }
 
 impl TrackerSession {
+    pub(crate) fn from_mod(
+        bytes: &[u8],
+        song: &zeff_audio_discovery::tracker::EmbeddedModule,
+        options: RenderOptions,
+        cancel: &AtomicBool,
+    ) -> Result<Self> {
+        use zeff_audio_discovery::tracker::{EmbeddedFormat, verify_original};
+        check_cancel(cancel)?;
+        validate_options(options)?;
+        ensure!(
+            song.format == EmbeddedFormat::Mod && song.mod_playback,
+            "MOD playback is not supported for this module"
+        );
+        verify_original(bytes, song, cancel)?;
+        let start = song.span.offset as usize;
+        let data = &bytes[start..start + song.span.byte_len as usize];
+        let module = Module::load_mod(data)
+            .map_err(|error| anyhow::anyhow!("could not load the validated MOD: {error:?}"))?;
+        check_cancel(cancel)?;
+        ensure!(
+            module.get_num_channels() <= 4,
+            "MOD channel count changed during loading"
+        );
+        Ok(Self {
+            player: new_player(Arc::new(module), options.sample_rate),
+            options,
+            channels: 4,
+            duration: usize::from(options.max_seconds) * options.sample_rate as usize,
+            position: 0,
+            mask: all_mask(4),
+            ended: false,
+            warnings: vec![
+                "MOD playback approximates tracker tuning, effects and mixing without the Amiga filter; it does not execute the game's audio driver.".to_owned(),
+                "8xx panning uses the 0–255 tracker convention.".to_owned(),
+                "Records the requested duration; order loops repeat and terminated songs leave silence.".to_owned(),
+            ],
+        })
+    }
+
     pub(crate) fn from_xm(
         bytes: &[u8],
         options: RenderOptions,

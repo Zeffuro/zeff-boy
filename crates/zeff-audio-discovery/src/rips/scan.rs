@@ -16,18 +16,23 @@ pub fn scan(
         RipFormat::Gbs => detectors::GBS,
         RipFormat::Nsf => detectors::NSF,
         RipFormat::Nsfe => detectors::NSFE,
+        RipFormat::Hes => detectors::HES,
+        RipFormat::Wsr => detectors::WSR,
     };
     let mut report = ScanReport::new(
         format.detector_id(),
-        if format == RipFormat::Nsfe { 1 } else { 2 },
+        descriptors[0].semantic_version,
         descriptors,
         &[
-            "Imported GBS v1, NSF v1 and NSFe files are structurally inspected and preserved. No guest initialization or playback is performed.",
-            "One catalog entry represents the entire rip, with its declared song count and starting song. Header declarations do not identify a native ROM driver or establish individual song data spans.",
-            "GBS and NSF initial CPU mappings describe file-backed entry addresses only; bank changes, executable validity, synthesis and runtime behavior are unverified.",
-            "NSFe preserves ordered chunk spans and raw INFO/RATE/BANK declarations. NSF2, VRC7 and unknown critical NSFe chunks are unsupported; optional chunks are not interpreted.",
+            "Imported GBS v1, NSF v1/NSF2 and NSFe files are structurally inspected and preserved. No guest initialization or playback is performed.",
+            "One catalog entry represents the entire rip. Declared song counts and starting songs, when present, do not identify a native ROM driver or establish individual song data spans.",
+            "GBS and NSF v1 initial CPU mappings describe file-backed entry addresses only; bank changes, executable validity, synthesis and runtime behavior are unverified.",
+            "NSFe preserves ordered chunk spans and raw INFO/RATE/BANK declarations. NSFe NSF2/VRC7 and unknown critical chunks are unsupported; optional chunks are not interpreted.",
             "This NSFe subset requires nonempty DATA, at most one BANK and one RATE, RATE widths of 2, 4 or 6 bytes with nonzero periods, and an empty final NEND.",
             "NSFe normalized starting-song numbering is one-based. Its init/play source mappings, region overrides, mapper changes and effective timing are not inferred from chunk declarations.",
+            "NSF2 feature flags and appended metadata are inventoried without CPU mapping, effective timing, IRQ or non-returning-init interpretation.",
+            "HES v0 preserves one nonempty ROM DATA block, raw selector, request address and MPR declarations. It has no declared count or PLAY entry; CPU mapping, MPR state, timing and playback are not inferred.",
+            "WSR preserves an aligned ROM body and raw final trailer. It has no declared version, count, INIT, PLAY or CPU mapping; selector and trailer bytes are not interpreted.",
             "Work units count header-validation steps; bounded source hashing is a separate pass.",
         ],
         MediaIdentity {

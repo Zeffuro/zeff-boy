@@ -198,6 +198,7 @@ fn inspect(bytes: &[u8], profile: &'static str, index: usize, raw: u8) -> Option
     mapped_spans.sort_unstable();
     Some(NesNativeSong {
         profile,
+        source_sha256: None,
         index: index as u16,
         raw_index: raw,
         title: format!("Native audio selector {raw:02X}"),

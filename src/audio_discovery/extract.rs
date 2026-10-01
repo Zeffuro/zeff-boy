@@ -117,6 +117,11 @@ impl ExtractionRequest {
                     && address == expected_address)
                     || super::sega_psg::source_span_matches(&manifest.scan.media, span)
                     || super::nes_native::source_span_matches(&manifest.scan.media, span)
+                    || super::nes_native::source_bytes_span_matches(
+                        &input.bytes,
+                        &manifest.scan.media,
+                        span
+                    )
                     || super::gb_native::source_span_matches(&manifest.scan.media, span),
                 "raw selection CPU address does not map to its effective offset"
             );

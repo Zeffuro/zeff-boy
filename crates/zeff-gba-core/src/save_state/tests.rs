@@ -676,3 +676,21 @@ fn public_load_rejects_trailing_data_without_mutation() {
     expected.drain_audio_samples_into(&mut expected_audio);
     assert_eq!(actual_audio, expected_audio);
 }
+
+#[test]
+fn state_decode_invalidates_active_audio_trace_without_invalidating_failed_public_load() {
+    let state = encode_state(&Emulator::new(&minimal_rom(), 48_000).unwrap()).unwrap();
+
+    let mut direct = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    direct.reset_and_begin_audio_trace(16).unwrap();
+    decode_state(&mut direct, &state).unwrap();
+    assert_eq!(
+        direct.finish_audio_trace().unwrap().invalidated,
+        Some(zeff_emu_common::audio_trace::AudioTraceInvalidation::StateRestore)
+    );
+
+    let mut public = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    public.reset_and_begin_audio_trace(16).unwrap();
+    assert!(public.load_state(b"invalid").is_err());
+    assert_eq!(public.finish_audio_trace().unwrap().invalidated, None);
+}

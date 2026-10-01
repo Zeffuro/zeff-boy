@@ -26,7 +26,7 @@ fn huge_gbs_export_validates_before_atomic_publication() -> Result<()> {
     let rip = rips::inspect(&bytes, rips::RipFormat::Gbs, Default::default(), &cancel)
         .map_err(|stop| anyhow::anyhow!("GBS inspection stopped: {stop:?}"))?
         .context("exported GBS was not recognized")?;
-    assert_eq!(rip.song_count, 1);
+    assert_eq!(rip.song_count, Some(1));
     assert!(
         manifest
             .scan

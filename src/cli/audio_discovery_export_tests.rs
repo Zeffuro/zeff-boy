@@ -73,6 +73,8 @@ fn standalone_exports_share_the_loaded_media_pipeline_and_never_replace_files() 
                         | SongFormat::Gbs
                         | SongFormat::Nsf
                         | SongFormat::Nsfe
+                        | SongFormat::Hes
+                        | SongFormat::Wsr
                         | SongFormat::Sgc
                         | SongFormat::TrackerPack
                 )
@@ -99,6 +101,8 @@ fn standalone_exports_share_the_loaded_media_pipeline_and_never_replace_files() 
             | SongFormat::Gbs
             | SongFormat::Nsf
             | SongFormat::Nsfe
+            | SongFormat::Hes
+            | SongFormat::Wsr
             | SongFormat::Sgc
             | SongFormat::TrackerPack
             | SongFormat::Gsf
@@ -299,6 +303,7 @@ fn natsume_cli_rejects_non_audio_and_mp2k_only_options_even_when_default_valued(
 #[test]
 fn new_engine_cli_recording_options_match_the_shared_pcm_contract() -> anyhow::Result<()> {
     for id in [
+        SongId::Module(0),
         SongId::EngineSoftware(0),
         SongId::Gax(0),
         SongId::Krawall(0),

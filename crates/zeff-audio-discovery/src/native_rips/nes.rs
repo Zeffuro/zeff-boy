@@ -7,7 +7,14 @@ use super::{
 };
 use crate::nes_native::{NesNativeSong, NesNativeTiming};
 
+mod famistudio;
+mod famitone2;
+mod ggsound;
+
 pub(super) fn supported(song: &NesNativeSong) -> bool {
+    if famistudio::supported(song) || famitone2::supported(song) || ggsound::supported(song) {
+        return true;
+    }
     let profile = song.profile == "nes-native-konami-cnrom-01";
     #[cfg(any(test, feature = "test-support"))]
     let profile = profile || song.profile == "nes-native-synthetic";
@@ -19,6 +26,15 @@ pub(super) fn supported(song: &NesNativeSong) -> bool {
 }
 
 pub(super) fn encode(bytes: &[u8], song: &NesNativeSong, cancel: &AtomicBool) -> Result<NativeRip> {
+    if ggsound::supported(song) {
+        return ggsound::encode(bytes, song, cancel);
+    }
+    if famistudio::supported(song) {
+        return famistudio::encode(bytes, song, cancel);
+    }
+    if famitone2::supported(song) {
+        return famitone2::encode(bytes, song, cancel);
+    }
     crate::nes_native::prepare_rom(bytes, song, cancel)?;
     let init = u16::try_from(song.native.init.canonical_cpu_address)?;
     let play = u16::try_from(song.native.tick.canonical_cpu_address)?;

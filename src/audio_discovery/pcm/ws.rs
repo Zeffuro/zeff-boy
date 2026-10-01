@@ -9,6 +9,8 @@ use crate::audio_discovery::render::RenderOptions;
 
 const MAX_EMPTY_AUDIO_FRAMES: usize = 4;
 
+mod timing;
+
 pub(crate) struct WsSession {
     prepared: PreparedWsTose,
     emulator: Emulator,
@@ -21,6 +23,7 @@ pub(crate) struct WsSession {
     floats: Vec<f32>,
     warnings: Vec<String>,
     boot_pending: bool,
+    timing: Option<serde_json::Value>,
 }
 
 impl WsSession {
@@ -47,9 +50,12 @@ impl WsSession {
         let emulator = Self::emulator(&prepared, options.sample_rate)?;
         let duration =
             usize::try_from(u64::from(options.max_seconds) * u64::from(options.sample_rate))?;
-        warnings.push("Runs the qualified original driver with native WonderSwan vblank timing; hardware-bit-exact output is not claimed.".into());
-        warnings.push("Stops at the requested duration; automatic song-end and loop detection are unavailable. Native channels are mixed together.".into());
-        Ok(Self {
+        warnings.push(if matches!(prepared.timing, Some(zeff_audio_discovery::ws_tose::WsToseTiming::VolumeV1 { .. })) {
+            "Runs the qualified original driver and volume routine with its 160-line WonderSwan timer; hardware-bit-exact output is not claimed.".into()
+        } else {
+            "Runs the qualified original driver with native WonderSwan vblank timing; hardware-bit-exact output is not claimed.".into()
+        });
+        let mut session = Self {
             prepared,
             emulator,
             options,
@@ -61,7 +67,10 @@ impl WsSession {
             floats: Vec::new(),
             warnings,
             boot_pending: true,
-        })
+            timing: None,
+        };
+        session.measure_duration(cancel)?;
+        Ok(session)
     }
 
     fn step(&mut self, cancel: &AtomicBool) -> Result<()> {
@@ -116,6 +125,14 @@ impl WsSession {
 mod tests;
 
 impl PcmSession for WsSession {
+    fn runtime_validation(&self) -> Option<&serde_json::Value> {
+        self.timing.as_ref()
+    }
+    fn has_source_duration_limit(&self) -> bool {
+        self.timing.as_ref().is_some_and(|timing| {
+            timing["stop_reason"] == "driver_end" || timing["stop_reason"] == "driver_loop"
+        })
+    }
     fn duration_frames(&self) -> usize {
         self.duration
     }

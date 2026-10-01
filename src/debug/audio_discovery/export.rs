@@ -259,12 +259,12 @@ pub(super) fn draw(
         && matches!(state.song_format, SongFormat::Audio(_))
     {
         ui.small("Records the original sound driver for the chosen duration. WAV and FLAC preserve the rendered PCM; Ogg Vorbis is lossy.");
-        draw_native_options(ui, state);
+        draw_native_options(ui, state, false);
     } else if song.is_some_and(crate::audio_discovery::pcm::song::PcmSong::can_play)
         && matches!(state.song_format, SongFormat::Audio(_))
     {
-        ui.small("Records the same player used by preview for the chosen duration. WAV and FLAC preserve its PCM; Ogg Vorbis is lossy.");
-        draw_native_options(ui, state);
+        ui.small("Records the same player used by preview. WAV and FLAC preserve its PCM; Ogg Vorbis is lossy.");
+        draw_native_options(ui, state, matches!(song, Some(SongRef::WsTose(_))));
     } else if matches!(song, Some(SongRef::Gb(_) | SongRef::Nes(_)))
         && state.song_format == SongFormat::Midi
     {

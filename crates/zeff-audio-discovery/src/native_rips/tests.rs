@@ -32,14 +32,17 @@ fn gbs_preserves_logical_banks_and_returning_entry_points() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!((container.song_count, container.first_song), (1, 1));
+    assert_eq!(
+        (container.song_count, container.first_song),
+        (Some(1), Some(1))
+    );
     assert_eq!(
         (
             container.load_address,
-            container.init.cpu_address,
-            container.play.cpu_address
+            container.init.unwrap().cpu_address,
+            container.play.unwrap().cpu_address
         ),
-        (0x400, 0x800, 0x880)
+        (Some(0x400), 0x800, 0x880)
     );
     assert!(container.warnings.is_empty());
     assert_eq!(rip.bytes[0x70 + 0x400 + 26], song.raw_index);
@@ -77,9 +80,15 @@ fn nsf_contains_original_driver_with_returning_single_song_init() {
         )
         .unwrap()
         .unwrap();
-        assert_eq!((container.song_count, container.first_song), (1, 1));
         assert_eq!(
-            (container.init.cpu_address, container.play.cpu_address),
+            (container.song_count, container.first_song),
+            (Some(1), Some(1))
+        );
+        assert_eq!(
+            (
+                container.init.unwrap().cpu_address,
+                container.play.unwrap().cpu_address
+            ),
             (0x8000, 0xed30)
         );
         assert!(container.warnings.is_empty());

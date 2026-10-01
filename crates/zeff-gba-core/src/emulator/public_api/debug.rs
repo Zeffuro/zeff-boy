@@ -1,6 +1,7 @@
 use crate::emulator::Emulator;
 use crate::emulator::GbaOpcodeRecord;
 use zeff_emu_common::address::Address;
+use zeff_emu_common::audio_trace::AudioTraceInvalidation;
 use zeff_emu_common::cheats::CheatByteTarget;
 use zeff_emu_common::debug::{AddressWatchHit, AddressWatchpoint, WatchType};
 
@@ -10,6 +11,8 @@ impl Emulator {
     }
 
     pub fn cpu_write8(&mut self, addr: u32, value: u8) {
+        self.bus
+            .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
         let old = self.bus.peek8(addr);
         self.bus.write8(addr, value);
         self.debug.check_watch_write(addr, old, value);
@@ -26,6 +29,8 @@ impl Emulator {
     }
 
     pub fn cpu_write16(&mut self, addr: u32, value: u16) {
+        self.bus
+            .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
         self.bus.write16(addr, value);
     }
 
@@ -34,6 +39,8 @@ impl Emulator {
     }
 
     pub fn cpu_write32(&mut self, addr: u32, value: u32) {
+        self.bus
+            .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
         self.bus.write32(addr, value);
     }
 
@@ -166,6 +173,8 @@ impl Emulator {
         if target == self.cpu.pc() && thumb == self.cpu.thumb_state() || instruction_budget == 0 {
             return Err("invalid call target or budget".to_owned());
         }
+        self.bus
+            .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
         let return_mode = self.cpu.mode();
         let (return_pc, saved_lr, saved_cpsr) = self.cpu.begin_guest_call(target, thumb);
         let return_thumb = saved_cpsr & crate::hardware::cpu::CPSR_THUMB != 0;

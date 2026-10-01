@@ -621,6 +621,7 @@ impl Cpu {
 
     fn step_execute_phase(&mut self, bus: &mut Bus) -> Option<Option<FetchedInstruction>> {
         let fetched = self.active_fetched_instruction();
+        bus.set_audio_trace_cpu_active_pc(fetched.pc);
         let condition_passed = self.execution_state.condition_passed;
         let instruction_start_cycle = self.cycles.wrapping_sub(u64::from(fetched.fetch_cycles));
         let base_cycles = instruction_base_cycles(fetched, condition_passed);

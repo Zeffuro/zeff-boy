@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 use super::*;
 use crate::test_support::tracker::{it_fixture, mod_fixture, s3m_fixture, xm_fixture};
 
-fn detect(bytes: &[u8]) -> Vec<EmbeddedModule> {
+pub(super) fn detect(bytes: &[u8]) -> Vec<EmbeddedModule> {
     let cancel = AtomicBool::new(false);
     let mut budget = Budget {
         cancel: &cancel,

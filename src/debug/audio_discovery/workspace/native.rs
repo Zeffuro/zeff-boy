@@ -39,6 +39,24 @@ pub(super) fn draw(ui: &mut egui::Ui, song: SongRef<'_>) {
             ),
             &song.warnings,
         ),
+        SongRef::GbCosmigo(song) => (
+            &song.title,
+            song.tracks.len(),
+            format!("CGB double speed · bank {:02X}", song.bank),
+            &song.warnings,
+        ),
+        SongRef::GbMplay(song) => (
+            &song.title,
+            song.tracks.len(),
+            format!("CGB double speed · bank {:02X}", song.bank),
+            &song.warnings,
+        ),
+        SongRef::GbImed(song) => (
+            &song.title,
+            song.tracks.len(),
+            format!("bank {:02X}", song.bank),
+            &song.warnings,
+        ),
         SongRef::WsTose(song) => (
             &song.title,
             song.tracks.len(),

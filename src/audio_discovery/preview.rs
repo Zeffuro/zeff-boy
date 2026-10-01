@@ -32,6 +32,7 @@ struct Shared {
     cursor: AtomicU64,
     ready: AtomicU32,
     duration: AtomicUsize,
+    source_duration: AtomicBool,
     sample_rate: AtomicU32,
     tracks: AtomicUsize,
     mask: AtomicU16,
@@ -52,6 +53,7 @@ impl Shared {
             cursor: AtomicU64::new(1 << 32),
             ready: AtomicU32::new(0),
             duration: AtomicUsize::new(0),
+            source_duration: AtomicBool::new(false),
             sample_rate: AtomicU32::new(super::render::DEFAULT_SAMPLE_RATE),
             tracks: AtomicUsize::new(0),
             mask: AtomicU16::new(u16::MAX),
@@ -101,6 +103,7 @@ pub(crate) struct PreviewSnapshot {
     pub(crate) preparing: bool,
     pub(crate) position: usize,
     pub(crate) duration: usize,
+    pub(crate) source_duration: bool,
     pub(crate) sample_rate: u32,
     pub(crate) tracks: usize,
 }
@@ -212,6 +215,7 @@ impl PreviewPlayer {
             preparing: shared.ready.load(Ordering::Acquire) != (cursor >> 32) as u32,
             position,
             duration,
+            source_duration: shared.source_duration.load(Ordering::Acquire),
             sample_rate: shared.sample_rate.load(Ordering::Acquire),
             tracks: shared.tracks.load(Ordering::Acquire),
         })

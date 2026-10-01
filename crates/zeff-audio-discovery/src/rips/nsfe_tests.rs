@@ -40,7 +40,7 @@ fn nsfe_keeps_chunk_order_and_raw_declarations() {
     let rip = read(&bytes);
     assert_eq!(rip.format, RipFormat::Nsfe);
     assert_eq!(rip.version, None);
-    assert_eq!((rip.song_count, rip.first_song), (3, 2));
+    assert_eq!((rip.song_count, rip.first_song), (Some(3), Some(2)));
     assert_eq!(rip.sha256, zeff_firmware::sha256_hex(&bytes));
     assert_eq!(
         rip.header,
@@ -56,8 +56,8 @@ fn nsfe_keeps_chunk_order_and_raw_declarations() {
             byte_len: 0x50
         }
     );
-    assert_eq!(rip.init.initial_source_offset, None);
-    assert_eq!(rip.play.initial_source_offset, None);
+    assert_eq!(rip.init.unwrap().initial_source_offset, None);
+    assert_eq!(rip.play.and_then(|entry| entry.initial_source_offset), None);
     assert_eq!(rip.title, "");
     assert_eq!(rip.author, "");
     assert_eq!(rip.copyright, "");
@@ -203,10 +203,10 @@ fn nsfe_info_rate_and_bank_validation_preserve_specified_defaults() {
         (b"NEND", &[]),
     ]);
     let rip = read(&bytes);
-    assert_eq!((rip.song_count, rip.first_song), (255, 1));
-    assert_eq!(rip.load_address, 0x8ff0);
-    assert_eq!(rip.init.cpu_address, 0x9000);
-    assert_eq!(rip.play.cpu_address, 0x9001);
+    assert_eq!((rip.song_count, rip.first_song), (Some(255), Some(1)));
+    assert_eq!(rip.load_address, Some(0x8ff0));
+    assert_eq!(rip.init.map(|entry| entry.cpu_address), Some(0x9000));
+    assert_eq!(rip.play.map(|entry| entry.cpu_address), Some(0x9001));
     assert!(matches!(
         rip.details,
         RipDetails::Nsfe {
@@ -250,7 +250,7 @@ fn nsfe_info_rate_and_bank_validation_preserve_specified_defaults() {
             (b"NEND", &[])
         ]))
         .first_song,
-        255
+        Some(255)
     );
     for (rate, expected) in [
         (&[1, 0][..], (Some(1), None, None)),
@@ -499,8 +499,8 @@ fn exported_nsfe_reimports_as_one_structural_rip() {
             &exported.bytes[rip.program.offset as usize..][..rip.program.byte_len as usize],
             &nsf.bytes[0x80..]
         );
-        assert_eq!(rip.first_song, 1);
-        assert_eq!(rip.song_count, 1);
+        assert_eq!(rip.first_song, Some(1));
+        assert_eq!(rip.song_count, Some(1));
         assert_eq!(rip.format, RipFormat::Nsfe);
         assert!(SongRef::Rip(&rip).supports(SongFormat::Nsfe));
         let RipDetails::Nsfe {

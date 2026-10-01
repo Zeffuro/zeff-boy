@@ -4,10 +4,18 @@ pub fn fixture(format: RipFormat) -> Vec<u8> {
     if format == RipFormat::Nsfe {
         return nsfe_fixture();
     }
+    if format == RipFormat::Hes {
+        return hes_fixture();
+    }
+    if format == RipFormat::Wsr {
+        return wsr_fixture();
+    }
     let (header, at, text) = match format {
         RipFormat::Gbs => (0x70, 6, 0x10),
         RipFormat::Nsf => (0x80, 8, 0x0e),
         RipFormat::Nsfe => unreachable!("handled above"),
+        RipFormat::Hes => unreachable!("handled above"),
+        RipFormat::Wsr => unreachable!("handled above"),
     };
     let mut bytes = vec![0; header + 0x50];
     match format {
@@ -20,6 +28,8 @@ pub fn fixture(format: RipFormat) -> Vec<u8> {
             bytes[0x6e..0x70].copy_from_slice(&16639u16.to_le_bytes());
         }
         RipFormat::Nsfe => unreachable!("handled above"),
+        RipFormat::Hes => unreachable!("handled above"),
+        RipFormat::Wsr => unreachable!("handled above"),
     }
     let load: u16 = if format == RipFormat::Gbs {
         0x400
@@ -31,6 +41,48 @@ pub fn fixture(format: RipFormat) -> Vec<u8> {
     }
     bytes[text..text + 11].copy_from_slice(b"Test source");
     bytes[header..].fill(if format == RipFormat::Gbs { 0xc9 } else { 0x60 });
+    bytes
+}
+
+pub fn nsf2_fixture() -> Vec<u8> {
+    let mut bytes = vec![0; 0x80];
+    bytes[..8].copy_from_slice(b"NESM\x1a\x02\x03\x02");
+    bytes[8..10].copy_from_slice(&0x1234u16.to_le_bytes());
+    bytes[10..12].copy_from_slice(&0x0001u16.to_le_bytes());
+    bytes[12..14].copy_from_slice(&0u16.to_le_bytes());
+    bytes[0x0e..0x19].copy_from_slice(b"NSF2 source");
+    bytes[0x6e..0x70].copy_from_slice(&16639u16.to_le_bytes());
+    bytes[0x70..0x78].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    bytes[0x78..0x7a].copy_from_slice(&19997u16.to_le_bytes());
+    bytes[0x7a] = 3;
+    bytes[0x7b] = 0x7f;
+    bytes[0x7c] = 0xf0;
+    bytes[0x7d..0x80].copy_from_slice(&[0x50, 0, 0]);
+    bytes.extend([0x60; 0x50]);
+    chunk(&mut bytes, b"RATE", &[0xff, 0x40, 0x1d, 0x4e]);
+    chunk(&mut bytes, b"regn", &[1, 2]);
+    chunk(&mut bytes, b"NEND", &[]);
+    bytes
+}
+
+pub fn hes_fixture() -> Vec<u8> {
+    let mut bytes = vec![0; 0x20];
+    bytes[..8].copy_from_slice(b"HESM\0\xff\0\x40");
+    bytes[8..16].copy_from_slice(&[0xff, 0xf8, 0, 0, 0, 0, 0, 0]);
+    bytes[16..20].copy_from_slice(b"DATA");
+    bytes[20..24].copy_from_slice(&1u32.to_le_bytes());
+    bytes.push(0xea);
+    bytes
+}
+
+pub fn wsr_fixture() -> Vec<u8> {
+    let mut bytes = vec![0xff; 0x1_0000];
+    let trailer = bytes.len() - 32;
+    bytes[trailer..trailer + 4].copy_from_slice(b"WSRF");
+    bytes[trailer + 4] = 0xa5;
+    bytes[trailer + 5] = 0xff;
+    bytes[trailer + 6..trailer + 16].copy_from_slice(&[0; 10]);
+    bytes[trailer + 16..trailer + 22].copy_from_slice(&[0xea, 0, 0, 0, 0xf0, 0x90]);
     bytes
 }
 

@@ -265,6 +265,9 @@ fn draw_details(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, report: &Scan
         | SongRef::GbGhx(_)
         | SongRef::GbSoundSystem(_)
         | SongRef::GbCarillon(_)
+        | SongRef::GbCosmigo(_)
+        | SongRef::GbMplay(_)
+        | SongRef::GbImed(_)
         | SongRef::WsTose(_)
         | SongRef::NesTose(_)
         | SongRef::GbMusyx(_) => native::draw(ui, song),
@@ -321,6 +324,9 @@ fn song_label(song: SongRef<'_>) -> String {
         ),
         SongRef::GbSoundSystem(song) => format!("{} tracks", song.tracks.len()),
         SongRef::GbCarillon(song) => format!("{} tracks", song.tracks.len()),
+        SongRef::GbCosmigo(song) => format!("{} tracks", song.tracks.len()),
+        SongRef::GbMplay(song) => format!("{} tracks", song.tracks.len()),
+        SongRef::GbImed(song) => format!("{} tracks", song.tracks.len()),
         SongRef::WsTose(song) => format!("{} tracks · native WS", song.tracks.len()),
         SongRef::NesTose(song) => format!("{} tracks · NTSC", song.tracks.len()),
         SongRef::SegaPsg(song) => format!("{} channels · NTSC", song.channels.len()),
@@ -338,7 +344,10 @@ fn song_label(song: SongRef<'_>) -> String {
                 "silence entry · not music".to_owned()
             }
         },
-        SongRef::Rip(rip) => format!("first song {} · preserved source", rip.first_song),
+        SongRef::Rip(rip) => rip.first_song.map_or_else(
+            || "song count unknown · preserved source".to_owned(),
+            |first| format!("first song {first} · preserved source"),
+        ),
         SongRef::Vgm(log) => format!(
             "{} commands · {:.2} s",
             log.command_count,

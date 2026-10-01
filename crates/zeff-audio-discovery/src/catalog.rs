@@ -28,6 +28,9 @@ pub enum SongId {
     GbGhx(usize),
     GbSoundSystem(usize),
     GbCarillon(usize),
+    GbCosmigo(usize),
+    GbMplay(usize),
+    GbImed(usize),
     WsTose(usize),
     NesTose(usize),
     SegaPsg(usize),
@@ -65,6 +68,9 @@ pub enum SongRef<'a> {
     GbGhx(&'a super::gb_ghx::GbGhxSong),
     GbSoundSystem(&'a super::gb_sound_system::GbSoundSystemSong),
     GbCarillon(&'a super::gb_carillon::GbCarillonSong),
+    GbCosmigo(&'a super::gb_cosmigo::GbCosmigoSong),
+    GbMplay(&'a super::gb_mplay::GbMplaySong),
+    GbImed(&'a super::gb_imed::GbImedSong),
     WsTose(&'a super::ws_tose::WsToseSong),
     NesTose(&'a super::nes_tose::NesToseSong),
     SegaPsg(&'a super::sega_psg::SegaPsgSong),
@@ -105,6 +111,9 @@ impl ScanReport {
             .chain((0..self.gb_ghx_songs.len()).map(SongId::GbGhx))
             .chain((0..self.gb_sound_system_songs.len()).map(SongId::GbSoundSystem))
             .chain((0..self.gb_carillon_songs.len()).map(SongId::GbCarillon))
+            .chain((0..self.gb_cosmigo_songs.len()).map(SongId::GbCosmigo))
+            .chain((0..self.gb_mplay_songs.len()).map(SongId::GbMplay))
+            .chain((0..self.gb_imed_songs.len()).map(SongId::GbImed))
             .chain((0..self.ws_tose_songs.len()).map(SongId::WsTose))
             .chain((0..self.nes_tose_songs.len()).map(SongId::NesTose))
             .chain((0..self.nes_songs.len()).map(SongId::Nes))
@@ -157,6 +166,9 @@ impl ScanReport {
                 .get(index)
                 .map(SongRef::GbSoundSystem),
             SongId::GbCarillon(index) => self.gb_carillon_songs.get(index).map(SongRef::GbCarillon),
+            SongId::GbCosmigo(index) => self.gb_cosmigo_songs.get(index).map(SongRef::GbCosmigo),
+            SongId::GbMplay(index) => self.gb_mplay_songs.get(index).map(SongRef::GbMplay),
+            SongId::GbImed(index) => self.gb_imed_songs.get(index).map(SongRef::GbImed),
             SongId::WsTose(index) => self.ws_tose_songs.get(index).map(SongRef::WsTose),
             SongId::NesTose(index) => self.nes_tose_songs.get(index).map(SongRef::NesTose),
             SongId::SegaPsg(index) => self.sega_psg_songs.get(index).map(SongRef::SegaPsg),
@@ -218,6 +230,9 @@ impl SongRef<'_> {
             Self::GbGhx(_) => "gb-ghx-driver",
             Self::GbSoundSystem(_) => "gb-sound-system-driver",
             Self::GbCarillon(_) => "gb-carillon-driver",
+            Self::GbCosmigo(_) => "gb-cosmigo-driver",
+            Self::GbMplay(_) => "gb-mplay-driver",
+            Self::GbImed(_) => "gb-imed-driver",
             Self::WsTose(_) => "ws-tose-driver",
             Self::NesTose(_) => "nes-tose-driver",
             Self::SegaPsg(_) => "sega-psg-driver",
@@ -275,6 +290,21 @@ impl SongRef<'_> {
                 canonical_cpu_address: None,
             }),
             Self::GbCarillon(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbCosmigo(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbMplay(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbImed(song) => Some(SourceSpan {
                 effective_offset: song.table_entry.effective_offset,
                 byte_len: song.table_entry.byte_len,
                 canonical_cpu_address: None,
@@ -343,6 +373,9 @@ impl SongRef<'_> {
             Self::GbGhx(song) => song.title.clone(),
             Self::GbSoundSystem(song) => song.title.clone(),
             Self::GbCarillon(song) => song.title.clone(),
+            Self::GbCosmigo(song) => song.title.clone(),
+            Self::GbMplay(song) => song.title.clone(),
+            Self::GbImed(song) => song.title.clone(),
             Self::WsTose(song) => song.title.clone(),
             Self::NesTose(song) => song.title.clone(),
             Self::SegaPsg(song) => song.title.clone(),
@@ -357,15 +390,17 @@ impl SongRef<'_> {
                     log.title.clone()
                 }
             }
-            Self::Rip(rip) => format!(
-                "{} · {} songs",
-                if rip.title.is_empty() {
-                    rip.format.label()
-                } else {
-                    &rip.title
-                },
-                rip.song_count
-            ),
+            Self::Rip(rip) => match rip.song_count {
+                Some(song_count) => format!(
+                    "{} · {song_count} songs",
+                    if rip.title.is_empty() {
+                        rip.format.label()
+                    } else {
+                        &rip.title
+                    }
+                ),
+                None => rip.format.label().to_owned(),
+            },
             Self::Module(song) => {
                 if song.name.is_empty() {
                     "Untitled module".to_owned()
@@ -407,6 +442,9 @@ impl SongRef<'_> {
             Self::GbGhx(_) => "Game Boy GHX",
             Self::GbSoundSystem(_) => "Game Boy Sound System",
             Self::GbCarillon(_) => "Game Boy Carillon",
+            Self::GbCosmigo(_) => "Game Boy Cosmigo",
+            Self::GbMplay(_) => "Game Boy MPlay",
+            Self::GbImed(_) => "Game Boy IMEDGBoy",
             Self::WsTose(_) => "WonderSwan TOSE-style",
             Self::NesTose(_) => "NES TOSE",
             Self::SegaPsg(_) => "Sega PSG driver",
@@ -495,9 +533,15 @@ impl SongRef<'_> {
             | Self::GbGhx(_)
             | Self::GbSoundSystem(_)
             | Self::GbCarillon(_)
-            | Self::WsTose(_)
+            | Self::GbCosmigo(_)
+            | Self::GbMplay(_)
+            | Self::GbImed(_)
             | Self::NesTose(_) => {
                 matches!(format, SongFormat::MappedAssets | SongFormat::Audio(_))
+            }
+            Self::WsTose(song) => {
+                matches!(format, SongFormat::MappedAssets | SongFormat::Audio(_))
+                    || (format == SongFormat::Wsr && super::ws_tose::wsr::supported(song))
             }
             Self::Huge(_) => matches!(format, SongFormat::Audio(_) | SongFormat::Gbs),
             Self::DescriptorMidi(_) => matches!(
@@ -511,7 +555,8 @@ impl SongRef<'_> {
                         && super::gb_music::native::supports_native(song))
             }
             Self::Module(song) => {
-                matches!(format, SongFormat::MappedAssets | SongFormat::TrackerPack)
+                (song.mod_playback && matches!(format, SongFormat::Audio(_)))
+                    || matches!(format, SongFormat::MappedAssets | SongFormat::TrackerPack)
                     || matches!(
                         (song.format, format),
                         (super::tracker::EmbeddedFormat::Xm, SongFormat::Xm)
@@ -543,6 +588,8 @@ impl SongRef<'_> {
                         (super::rips::RipFormat::Gbs, SongFormat::Gbs)
                             | (super::rips::RipFormat::Nsf, SongFormat::Nsf)
                             | (super::rips::RipFormat::Nsfe, SongFormat::Nsfe)
+                            | (super::rips::RipFormat::Hes, SongFormat::Hes)
+                            | (super::rips::RipFormat::Wsr, SongFormat::Wsr)
                     )
             }
             Self::Cdda(_) => matches!(format, SongFormat::Audio(_)),

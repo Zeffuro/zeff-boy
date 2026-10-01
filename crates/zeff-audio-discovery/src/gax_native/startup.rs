@@ -150,16 +150,23 @@ pub(super) fn contains_division(bytes: &[u8], copies: &[GaxRamCopy], address: u3
 }
 
 fn block_copy(bytes: &[u8], at: usize) -> Option<Setup> {
-    let prefix = [
-        0xe3a0_c301,
-        0xe3a0_0014,
-        0xe380_0901,
-        0xe3a0_1f81,
-        0xe18c_00b1,
-        0xe28c_c0d4,
-    ];
     if at < 24
-        || !matches_arm(bytes, at - 24, &prefix)
+        || ![[0xe3a0_0014, 0xe380_0901], [0xe3a0_0901, 0xe380_0014]]
+            .iter()
+            .any(|&[load, combine]| {
+                matches_arm(
+                    bytes,
+                    at - 24,
+                    &[
+                        0xe3a0_c301,
+                        load,
+                        combine,
+                        0xe3a0_1f81,
+                        0xe18c_00b1,
+                        0xe28c_c0d4,
+                    ],
+                )
+            })
         || !matches_arm(
             bytes,
             at + 12,

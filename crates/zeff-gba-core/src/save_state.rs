@@ -1,4 +1,5 @@
 use anyhow::{Context, bail, ensure};
+use zeff_emu_common::audio_trace::AudioTraceInvalidation;
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 use crate::emulator::Emulator;
@@ -210,6 +211,8 @@ pub fn encode_state(emu: &Emulator) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn decode_state(emu: &mut Emulator, data: &[u8]) -> anyhow::Result<()> {
+    emu.bus
+        .invalidate_audio_trace(AudioTraceInvalidation::StateRestore);
     emu.bus.invalidate_event_deadline_after_state_load();
     let mut r = StateReader::new(data);
     let mut magic = [0u8; 8];

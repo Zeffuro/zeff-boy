@@ -86,9 +86,15 @@ fn synthetic_fixture_translates_every_approved_span_and_round_trips() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(rip.load_address, LOAD);
-    assert_eq!(rip.init.cpu_address, gbs.init_wrapper.offset as u16);
-    assert_eq!(rip.play.cpu_address, gbs.play_wrapper.offset as u16);
+    assert_eq!(rip.load_address, Some(LOAD));
+    assert_eq!(
+        rip.init.map(|entry| entry.cpu_address),
+        Some(gbs.init_wrapper.offset as u16)
+    );
+    assert_eq!(
+        rip.play.map(|entry| entry.cpu_address),
+        Some(gbs.play_wrapper.offset as u16)
+    );
     assert!(rip.warnings.is_empty());
 }
 

@@ -7,10 +7,12 @@ use serde_json::{Value, json};
 use zeff_emu_common::audio_trace::{AudioTraceChip, AudioTraceSource, ChipAudioTrace};
 
 mod game_boy;
+mod gba;
 mod native;
 mod nes;
 
 pub(crate) use game_boy::write_game_boy_new;
+pub(crate) use gba::write_gba_new;
 pub(super) use nes::validate_sample_provenance as validate_nes_sample_provenance;
 pub(crate) use nes::write_nes_new;
 

@@ -82,6 +82,9 @@ impl PreviewRequest {
         if let Some(song) = manifest.scan.song(selection)
             && let Some(owned) = PcmSong::from_ref(song)
         {
+            if let SongRef::Module(module) = song {
+                crate::audio_discovery::pcm::tracker::validate_module_input(source, module)?;
+            }
             if matches!(song, SongRef::Vgm(_)) {
                 ensure!(
                     source.system.is_none()
@@ -256,6 +259,10 @@ impl PcmSession for PreviewRenderer {
 }
 
 impl PreviewRenderer {
+    pub(super) fn has_source_duration(&self) -> bool {
+        matches!(self, Self::Pcm(renderer) if renderer.has_source_duration_limit())
+    }
+
     pub(super) fn duration_frames(&self) -> usize {
         match self {
             Self::Mp2k(renderer) => renderer.duration_frames(),

@@ -63,6 +63,7 @@ fn inventory(bytes: &[u8]) -> Vec<super::WsToseSong> {
 fn identifies_loop_and_native_contract() {
     let bytes = synthetic_rom();
     let songs = inventory(&bytes);
+    assert!(songs.iter().all(|song| !song.wsr_exportable));
     assert_eq!(songs.len(), 1);
     assert_eq!(songs[0].tracks[0].note_count, 1);
     let cancel = std::sync::atomic::AtomicBool::new(false);

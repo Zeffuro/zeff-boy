@@ -6,9 +6,12 @@ use serde::Serialize;
 use crate::{Budget, MediaIdentity, RomSpan, ScanStop, SourceSpan};
 
 mod bootstrap;
+pub(crate) mod famistudio;
+pub(crate) mod famitone2;
 #[cfg(any(test, feature = "test-support"))]
 mod fixture;
 mod foreground;
+pub(crate) mod ggsound;
 mod nintendo;
 mod presets;
 mod profiles;
@@ -17,6 +20,24 @@ mod tests;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use fixture::{fixture_rom, fixture_rom_pc10};
+#[cfg(any(test, feature = "test-support"))]
+pub fn fixture_rom_famitone2(relocated: bool) -> Vec<u8> {
+    famitone2::rom(relocated)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn fixture_rom_famitone2_four_channel(relocated: bool) -> Vec<u8> {
+    famitone2::four_channel_rom(relocated)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn fixture_rom_famistudio(relocated: bool) -> Vec<u8> {
+    famistudio::rom(relocated)
+}
+#[cfg(any(test, feature = "test-support"))]
+pub fn fixture_rom_ggsound(relocated: bool) -> Vec<u8> {
+    ggsound::rom(relocated)
+}
 #[cfg(any(test, feature = "test-support"))]
 pub use foreground::fixture_rom as fixture_rom_foreground;
 #[cfg(any(test, feature = "test-support"))]
@@ -37,6 +58,8 @@ pub enum NesNativeTiming {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct NesNativeSong {
     pub profile: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
     pub index: u16,
     pub raw_index: u8,
     pub title: String,
@@ -85,7 +108,10 @@ pub(crate) fn scan(
     let Some(profile) = recognized(bytes, budget)? else {
         nintendo::scan(bytes, songs, budget, max_candidates)?;
         foreground::scan(bytes, songs, budget, max_candidates)?;
-        return presets::scan(bytes, songs, budget, max_candidates);
+        presets::scan(bytes, songs, budget, max_candidates)?;
+        famitone2::scan(bytes, songs, budget, max_candidates)?;
+        famistudio::scan(bytes, songs, budget, max_candidates)?;
+        return ggsound::scan(bytes, songs, budget, max_candidates);
     };
     for index in 0..profile.cues.len() {
         budget.charge()?;
@@ -105,6 +131,15 @@ pub fn prepare_rom(
     song: &NesNativeSong,
     cancel: &AtomicBool,
 ) -> AnyResult<PreparedNesNative> {
+    if ggsound::owns(song.profile) {
+        return ggsound::prepare(bytes, song, cancel);
+    }
+    if famistudio::owns(song.profile) {
+        return famistudio::prepare(bytes, song, cancel);
+    }
+    if famitone2::owns(song.profile) {
+        return famitone2::prepare(bytes, song, cancel);
+    }
     if presets::owns(song.profile) {
         return presets::prepare(bytes, song, cancel);
     }
@@ -201,6 +236,7 @@ fn inspect(bytes: &[u8], profile: &Profile, index: usize) -> Option<NesNativeSon
     }
     Some(NesNativeSong {
         profile: profile.id,
+        source_sha256: None,
         index: index as u16,
         raw_index: cue.raw,
         title: format!("Native audio selector {:02X}", cue.raw),
@@ -245,4 +281,20 @@ pub fn source_span_matches(media: &MediaIdentity, span: SourceSpan) -> bool {
             && span.effective_offset >= 16
             && u64::from(span.effective_offset) + u64::from(span.byte_len) <= 0x8010
             && span.canonical_cpu_address == Some(0x8000 + span.effective_offset - 16))
+}
+
+pub fn source_bytes_span_matches(bytes: &[u8], media: &MediaIdentity, span: SourceSpan) -> bool {
+    famitone2::source_span_matches(bytes, media, span)
+        || famistudio::source_span_matches(bytes, media, span)
+        || ggsound::source_span_matches(bytes, media, span)
+}
+
+pub(crate) fn retained_source_span_matches(
+    song: &NesNativeSong,
+    media: &MediaIdentity,
+    span: SourceSpan,
+) -> bool {
+    famitone2::retained_span_matches(song, media, span)
+        || famistudio::retained_span_matches(song, media, span)
+        || ggsound::retained_span_matches(song, media, span)
 }

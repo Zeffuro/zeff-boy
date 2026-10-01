@@ -1,0 +1,2 @@
+Engine fixture normalized from FamiStudio 4.5.3, https://github.com/BleuBleu/FamiStudio/tree/c09dca64788606c09fcb5e70db28b9dd1f34be78/SoundEngine.
+The upstream engine notice is preserved in engine-license.txt.

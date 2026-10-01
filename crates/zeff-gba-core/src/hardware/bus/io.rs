@@ -113,6 +113,9 @@ impl Bus {
                 let timer = (offset / 4) as usize;
                 let control = (offset & 0x2) != 0;
                 self.timers.write16(timer, control, value);
+                if timer < 2 {
+                    self.record_audio_control(addr, value, value);
+                }
                 self.invalidate_event_deadline(0);
             }
             KEYINPUT => {}
@@ -137,28 +140,41 @@ impl Bus {
             }
             0x0400_0060..=0x0400_0080 | 0x0400_0090..=0x0400_009E => {
                 self.write_gba_psg16(addr, value);
+                if addr == 0x0400_0080 {
+                    self.record_audio_control(addr, value, value);
+                }
             }
             0x0400_0082 => {
+                let applied = value & 0x770F;
+                self.write_io16_raw(offset, applied);
+                self.record_audio_control(addr, value, applied);
                 if value & (1 << 11) != 0 {
                     self.apu.reset_fifo(0);
+                    self.record_audio_fifo_reset(0, addr);
                 }
                 if value & (1 << 15) != 0 {
                     self.apu.reset_fifo(1);
+                    self.record_audio_fifo_reset(1, addr);
                 }
-                self.write_io16_raw(offset, value & 0x770F);
             }
             0x0400_0084 => {
-                self.write_io16_raw(offset, value & 0x0080);
-                self.apu.write_psg(0xFF26, (value & 0x0080) as u8);
+                let applied = value & 0x0080;
+                self.write_io16_raw(offset, applied);
+                self.apu.write_psg(0xFF26, applied as u8);
+                self.record_audio_control(addr, value, applied);
             }
             0x0400_0088 => {
-                self.write_io16_raw(offset, value & SOUNDBIAS_WRITABLE_MASK);
+                let applied = value & SOUNDBIAS_WRITABLE_MASK;
+                self.write_io16_raw(offset, applied);
+                self.record_audio_control(addr, value, applied);
             }
             0x0400_00A0 | 0x0400_00A2 => {
                 self.apu.write_fifo_halfword(0, value);
+                self.record_audio_fifo_halfword(0, addr, value);
             }
             0x0400_00A4 | 0x0400_00A6 => {
                 self.apu.write_fifo_halfword(1, value);
+                self.record_audio_fifo_halfword(1, addr, value);
             }
             0x0400_00B0..=0x0400_00DF => {
                 self.write_io16_raw(offset, value);
@@ -191,7 +207,9 @@ impl Bus {
         self.materialize_frame_service();
         let current = read_io16(&self.io, SOUNDBIAS);
         let level = if high { 0x0200 } else { 0x0000 };
-        self.write_io16_raw(SOUNDBIAS, (current & 0xC000) | level);
+        let applied = (current & 0xC000) | level;
+        self.write_io16_raw(SOUNDBIAS, applied);
+        self.record_audio_control_at(0x0400_0088, applied, applied);
     }
 
     pub(crate) fn bios_irq_flags(&self) -> u16 {
@@ -294,6 +312,61 @@ impl Bus {
         if start <= end {
             self.io[start..=end].fill(0);
         }
+    }
+
+    fn record_audio_control(&mut self, address: u32, raw_value: u16, io_value: u16) {
+        let access = self.audio_trace_access(address);
+        self.record_audio_trace(zeff_emu_common::audio_trace::GbaAudioTraceWrite::Control {
+            address: (address & 0x3FF) as u16,
+            raw_value,
+            io_value,
+            access,
+            origin: self.audio_trace_origin,
+        });
+    }
+
+    fn record_audio_control_at(&mut self, address: u32, raw_value: u16, io_value: u16) {
+        let access = zeff_emu_common::audio_trace::GbaAudioTraceAccess {
+            address,
+            width: 2,
+            halfword_lane: 0,
+        };
+        self.record_audio_trace(zeff_emu_common::audio_trace::GbaAudioTraceWrite::Control {
+            address: (address & 0x3FF) as u16,
+            raw_value,
+            io_value,
+            access,
+            origin: self.audio_trace_origin,
+        });
+    }
+
+    fn record_audio_fifo_halfword(&mut self, fifo: usize, address: u32, value: u16) {
+        self.record_audio_trace(
+            zeff_emu_common::audio_trace::GbaAudioTraceWrite::FifoHalfword {
+                fifo: if fifo == 0 {
+                    zeff_emu_common::audio_trace::GbaDirectSoundFifo::A
+                } else {
+                    zeff_emu_common::audio_trace::GbaDirectSoundFifo::B
+                },
+                value,
+                access: self.audio_trace_access(address),
+                origin: self.audio_trace_origin,
+            },
+        );
+    }
+
+    fn record_audio_fifo_reset(&mut self, fifo: usize, address: u32) {
+        self.record_audio_trace(
+            zeff_emu_common::audio_trace::GbaAudioTraceWrite::FifoReset {
+                fifo: if fifo == 0 {
+                    zeff_emu_common::audio_trace::GbaDirectSoundFifo::A
+                } else {
+                    zeff_emu_common::audio_trace::GbaDirectSoundFifo::B
+                },
+                access: self.audio_trace_access(address),
+                origin: self.audio_trace_origin,
+            },
+        );
     }
 }
 

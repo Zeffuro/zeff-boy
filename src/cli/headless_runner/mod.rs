@@ -135,7 +135,7 @@ pub(crate) fn run_headless(
         ActiveSystem::GameBoy => {
             run_gb_headless(&rom_path, &rom_data, mode_preference, opts, capture)
         }
-        ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts),
+        ActiveSystem::GameBoyAdvance => run_gba_headless(&rom_path, &rom_data, opts, capture),
         ActiveSystem::Nes => {
             run_nes_headless(&rom_path, &rom_data, &firmware_search_dirs, opts, capture)
         }

@@ -65,7 +65,7 @@ pub(super) fn load_input(request: &AudioDiscoveryRequest) -> anyhow::Result<Scan
 
     ensure!(
         has_extension(&request.input_path, "zip"),
-        "audio discovery supports cartridge files, standalone XM/MOD/S3M/IT/VGM/VGZ/GBS/NSF/NSFe files, direct .cue sets, or a ZIP with an explicitly selected cartridge, audio file, or .cue member; CHD and ISO input are not supported here"
+        "audio discovery supports cartridge files, standalone XM/MOD/S3M/IT/VGM/VGZ/GBS/NSF/NSFe/HES/WSR files, direct .cue sets, or a ZIP with an explicitly selected cartridge, audio file, or .cue member; CHD and ISO input are not supported here"
     );
     let member = request
         .archive_member
@@ -192,6 +192,12 @@ pub(super) fn standalone_zip_input(
                 }
                 StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Nsfe) => {
                     "zip_nsfe_member"
+                }
+                StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Hes) => {
+                    "zip_hes_member"
+                }
+                StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Wsr) => {
+                    "zip_wsr_member"
                 }
             },
             sha256: source_sha256.clone(),
@@ -328,7 +334,7 @@ pub(super) fn normalize_archive_member(member: &str) -> anyhow::Result<String> {
         cartridge_system(path).is_some()
             || audio_format(path).is_some()
             || has_extension(path, "cue"),
-        "--archive-member must name a supported cartridge, XM/MOD/S3M/IT/VGM/VGZ/GBS/NSF/NSFe, or .cue ZIP member"
+        "--archive-member must name a supported cartridge, XM/MOD/S3M/IT/VGM/VGZ/GBS/NSF/NSFe/HES/WSR, or .cue ZIP member"
     );
     Ok(member)
 }

@@ -156,6 +156,7 @@ fn inspect(bytes: &[u8], profile: Profile, index: usize, raw_index: u8) -> Optio
     }
     Some(NesNativeSong {
         profile: profile.id,
+        source_sha256: None,
         index: index as u16,
         raw_index,
         title: format!("APU preset {raw_index}"),

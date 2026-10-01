@@ -20,7 +20,10 @@ pub(super) struct Reader<'a, 'b, 'c> {
     bank: usize,
     profile: Profile,
     legacy: bool,
+    fixed_resources: bool,
+    wrapped_sweep_index: bool,
     cpu_base: u32,
+    paragraph_bias: usize,
     budget: &'b mut Budget<'c>,
     pub mapped: Vec<RomSpan>,
 }
@@ -32,7 +35,10 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
             bank,
             profile,
             legacy: false,
+            fixed_resources: false,
+            wrapped_sweep_index: false,
             cpu_base: 0x30000,
+            paragraph_bias: 0,
             budget,
             mapped: vec![profile.span()],
         }
@@ -46,25 +52,50 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
     ) -> Self {
         Self {
             legacy: true,
+            fixed_resources: true,
             cpu_base: u32::from(profile.segment) * 16,
+            paragraph_bias: profile.paragraph_bias(),
             ..Self::new(bytes, bank, profile, budget)
         }
     }
 
     pub fn word(&mut self, at: usize) -> Result<u16, ReadError> {
         self.budget.charge()?;
-        if at + 2 > 0x10000 {
-            return Err(ReadError::Invalid);
-        }
-        let mut span = super::span(self.bank, at, 2);
+        let physical = at
+            .checked_add(self.paragraph_bias)
+            .filter(|&at| at <= 0xfffe)
+            .ok_or(ReadError::Invalid)?;
+        let mut span = super::span(self.bank, physical, 2);
         span.canonical_cpu_address = self.cpu_base + at as u32;
         self.mapped.push(span);
-        super::word(self.bytes, self.bank * 0x10000 + at)
+        super::word(self.bytes, self.bank * 0x10000 + physical)
+    }
+
+    pub fn scaled(
+        bytes: &'a [u8],
+        bank: usize,
+        profile: Profile,
+        budget: &'b mut Budget<'c>,
+    ) -> Self {
+        Self {
+            fixed_resources: true,
+            cpu_base: u32::from(profile.segment) * 16,
+            paragraph_bias: profile.paragraph_bias(),
+            ..Self::new(bytes, bank, profile, budget)
+        }
+    }
+
+    pub fn with_wrapped_sweep_index(mut self) -> Self {
+        self.wrapped_sweep_index = true;
+        self
     }
 
     fn fixed(&self, address: usize, len: usize) -> Result<(), ReadError> {
+        let address = address
+            .checked_add(self.profile.paragraph_bias())
+            .ok_or(ReadError::Invalid)?;
         let start = self.profile.fixed & 0xffff;
-        let end = if self.legacy {
+        let end = if self.fixed_resources {
             self.profile.end & 0xffff
         } else {
             usize::from(self.profile.init)
@@ -76,7 +107,11 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
     }
 
     fn wave(&self, wave: u8) -> Result<(), ReadError> {
-        let wave = if self.legacy { wave & 15 } else { wave };
+        let wave = if self.fixed_resources {
+            wave & 15
+        } else {
+            wave
+        };
         let at = usize::from(self.profile.wave) + usize::from(wave) * 16;
         self.fixed(at, 16)
     }
@@ -125,7 +160,7 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
             match opcode {
                 0x00..=0x9f => {
                     if opcode & 15 < 12 {
-                        if self.legacy {
+                        if self.fixed_resources {
                             self.fixed(usize::from(self.profile.frequency), 48)?;
                         } else {
                             let note = usize::from(opcode.wrapping_mul(2));
@@ -141,7 +176,7 @@ impl<'a, 'b, 'c> Reader<'a, 'b, 'c> {
                 0xa3 | 0xa5 | 0xaa | 0xab | 0xae | 0xaf | 0xc0..=0xcf | 0xe0..=0xfc | 0xfe => (),
                 0xd0..=0xdf => state.volume_rise = opcode & 15 != 0,
                 0xa1 => {
-                    if argument != 0 && argument & 15 == 0 {
+                    if argument != 0 && argument & 15 == 0 && !self.wrapped_sweep_index {
                         return Err(ReadError::Invalid);
                     }
                 }

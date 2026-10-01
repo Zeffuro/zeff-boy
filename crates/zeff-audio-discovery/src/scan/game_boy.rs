@@ -112,6 +112,43 @@ pub(super) fn inspect(
     let capacity = report.limits.max_candidates as usize
         - report.song_count()
         - report.driver_candidates.len();
+    let result =
+        super::super::gb_cosmigo::scan(bytes, &mut report.gb_cosmigo_songs, budget, capacity);
+    record(
+        report,
+        10,
+        result,
+        report.gb_cosmigo_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result = super::super::gb_mplay::scan(bytes, &mut report.gb_mplay_songs, budget, capacity);
+    record(
+        report,
+        11,
+        result,
+        report.gb_mplay_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result = super::super::gb_imed::scan(bytes, &mut report.gb_imed_songs, budget, capacity);
+    record(
+        report,
+        12,
+        result,
+        report.gb_imed_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
     let source_sha256 = report
         .media
         .sha256
@@ -126,7 +163,7 @@ pub(super) fn inspect(
     );
     record(
         report,
-        10,
+        13,
         result,
         report.huge_songs.len(),
         start - budget.remaining,

@@ -389,6 +389,8 @@ fn emerald_gpio_uses_only_halfword_and_word_gamepak_writes() {
     assert_eq!(bus.read16(0x0800_00C6), 7);
 }
 
+#[path = "tests/audio_trace.rs"]
+mod audio_trace;
 #[path = "tests/bg_window.rs"]
 mod bg_window;
 #[path = "tests/dma_eeprom_audio.rs"]

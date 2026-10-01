@@ -204,6 +204,7 @@ impl ScanReport {
     ) -> AssetGraph {
         let mut builder = Builder {
             media: &self.media,
+            nes_native: None,
             graph: AssetGraph {
                 schema: "zeff-audio-relations/1",
                 song,
@@ -236,6 +237,9 @@ impl ScanReport {
             }
             builder.charge()?;
             let selected = self.song(song).ok_or(GraphStop::MissingSong)?;
+            if let crate::catalog::SongRef::NesNative(song) = selected {
+                builder.nes_native = Some(song);
+            }
             for descriptor in self.applicable_detectors {
                 builder.charge()?;
                 if descriptor.id == selected.detector_id() {
@@ -260,6 +264,7 @@ type Result<T> = std::result::Result<T, GraphStop>;
 
 struct Builder<'a> {
     media: &'a crate::MediaIdentity,
+    nes_native: Option<&'a crate::nes_native::NesNativeSong>,
     graph: AssetGraph,
     cancel: &'a AtomicBool,
     located: BTreeMap<(AssetKind, AssetLocation), u32>,
@@ -407,6 +412,17 @@ impl Builder<'_> {
                                     canonical_cpu_address: Some(address),
                                 },
                             )
+                            || self.nes_native.is_some_and(|song| {
+                                crate::nes_native::retained_source_span_matches(
+                                    song,
+                                    self.media,
+                                    SourceSpan {
+                                        effective_offset: offset,
+                                        byte_len,
+                                        canonical_cpu_address: Some(address),
+                                    },
+                                )
+                            })
                             || crate::sega_psg::source_span_matches(
                                 self.media,
                                 SourceSpan {

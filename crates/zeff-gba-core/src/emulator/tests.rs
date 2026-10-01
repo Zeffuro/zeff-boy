@@ -260,6 +260,42 @@ fn external_bios_requires_exact_hardware_size() {
 }
 
 #[test]
+fn audio_trace_begin_validates_before_reset_and_external_mutations_invalidate() {
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    emu.reset_and_begin_audio_trace(4).unwrap();
+    assert!(emu.reset_and_begin_audio_trace(0).is_err());
+    emu.cpu_write8(0x0200_0000, 0x5A);
+    let trace = emu.finish_audio_trace().unwrap();
+    assert_eq!(
+        trace.invalidated,
+        Some(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation)
+    );
+}
+
+#[test]
+fn audio_trace_rejects_external_bios_and_nondefault_apu_settings() {
+    let bios = vec![0; crate::hardware::constants::BIOS_SIZE];
+    let mut with_bios = Emulator::new_with_bios(&minimal_rom(), &bios, 48_000).unwrap();
+    assert!(with_bios.reset_and_begin_audio_trace(4).is_err());
+
+    let mut muted = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    muted.set_apu_channel_mutes([true, false, false, false, false, false]);
+    assert!(muted.reset_and_begin_audio_trace(4).is_err());
+}
+
+#[test]
+fn audio_trace_invalidates_when_sample_rate_is_reapplied() {
+    let mut emu = Emulator::new(&minimal_rom(), 48_000).unwrap();
+    emu.reset_and_begin_audio_trace(4).unwrap();
+    emu.set_sample_rate(48_000);
+
+    assert_eq!(
+        emu.finish_audio_trace().unwrap().invalidated,
+        Some(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation)
+    );
+}
+
+#[test]
 #[ignore = "requires ZEFF_GBA_BIOS_PATH and ZEFF_GBA_ROM_PATH"]
 fn external_retail_bios_reaches_game_pak_rom() {
     let bios = std::fs::read(std::env::var("ZEFF_GBA_BIOS_PATH").unwrap()).unwrap();
@@ -537,6 +573,7 @@ fn guest_call_returns_across_thumb_mode() {
     rom[4..6].copy_from_slice(&0x202A_u16.to_le_bytes());
     rom[6..8].copy_from_slice(&0x4770_u16.to_le_bytes());
     let mut emu = Emulator::new(&rom, 48_000).unwrap();
+    emu.reset_and_begin_audio_trace(16).unwrap();
     emu.debug_suspend();
     let pc = emu.cpu_pc();
 
@@ -545,6 +582,10 @@ fn guest_call_returns_across_thumb_mode() {
     assert_eq!(emu.cpu_pc(), pc);
     assert!(!emu.cpu_thumb_state());
     assert!(emu.is_cpu_suspended());
+    assert_eq!(
+        emu.finish_audio_trace().unwrap().invalidated,
+        Some(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation)
+    );
 }
 
 #[test]

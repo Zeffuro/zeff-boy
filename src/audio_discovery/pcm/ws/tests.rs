@@ -81,3 +81,148 @@ fn ws_handoff_requires_both_wait_pc_and_marker() -> Result<()> {
     assert!(WsSession::new(prepared, options(), Vec::new(), &AtomicBool::new(false)).is_err());
     Ok(())
 }
+
+#[test]
+fn direct_ws_preserves_selector_banks_and_stops_at_driver_end() -> Result<()> {
+    let bytes = zeff_audio_discovery::ws_tose::synthetic_direct_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Ws,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    assert_eq!(report.ws_tose_songs.len(), 2);
+    for (song, (first, count)) in report.ws_tose_songs.iter().zip([(0, 4), (4, 1)]) {
+        let prepared = zeff_audio_discovery::ws_tose::prepare_rom(&bytes, song, &cancel)?;
+        let options = RenderOptions {
+            fade_seconds: 0,
+            ..options()
+        };
+        let mut session = WsSession::new(prepared, options, Vec::new(), &cancel)?;
+        assert!(session.has_source_duration_limit());
+        assert_eq!(
+            session.runtime_validation().unwrap()["stop_reason"],
+            "driver_end"
+        );
+        assert!(session.duration_frames() < options.sample_rate as usize);
+        let expected = render(&mut session, 2048)?;
+        assert!(expected.iter().any(|&value| value != 0));
+        assert_eq!(session.emulator.cpu_peek16(0x1df0), first);
+        assert_eq!(session.emulator.cpu_peek16(0x1df2), count);
+        assert_eq!(session.emulator.cpu_peek8(0x1df7), 0x21);
+        assert_eq!(session.emulator.io_peek8(0xc3), 0xff);
+        for slot in 0..8 {
+            assert_eq!(session.emulator.cpu_peek16(0x1e21 + slot * 0x34), 0xffff);
+        }
+        session.reset()?;
+        assert_eq!(render(&mut session, 258)?, expected);
+        session.set_track_mask(0)?;
+        session.reset()?;
+        assert!(render(&mut session, 512)?.iter().all(|&value| value == 0));
+        let mut prepared = zeff_audio_discovery::ws_tose::prepare_rom(&bytes, song, &cancel)?;
+        prepared.timing = None;
+        let mut untimed = WsSession::new(prepared, options, Vec::new(), &cancel)?;
+        let full = render(&mut untimed, 2048)?;
+        assert_eq!(full[..expected.len()], expected);
+        assert_eq!(untimed.emulator.io_peek8(0x90) & 15, 0);
+        assert_eq!(untimed.emulator.cpu_peek8(0x1df8), 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn volume_ws_runs_grouped_selectors_and_original_timer_mixer() -> Result<()> {
+    let bytes = zeff_audio_discovery::ws_tose::synthetic_volume_rom();
+    let cancel = AtomicBool::new(false);
+    let report = zeff_audio_discovery::scan(
+        zeff_emu_common::system::System::Ws,
+        &bytes,
+        Default::default(),
+        &cancel,
+    );
+    assert_eq!(report.ws_tose_songs.len(), 4);
+    for (song, (first, count)) in report
+        .ws_tose_songs
+        .iter()
+        .zip([(0, 1), (1, 2), (3, 3), (6, 4)])
+    {
+        let prepared = zeff_audio_discovery::ws_tose::prepare_rom(&bytes, song, &cancel)?;
+        let mut session = WsSession::new(prepared, options(), Vec::new(), &cancel)?;
+        assert!(session.has_source_duration_limit());
+        assert_eq!(
+            session.runtime_validation().unwrap()["stop_reason"],
+            "driver_end"
+        );
+        let expected = render(&mut session, 2048)?;
+        assert!(expected.iter().any(|&value| value != 0));
+        assert_eq!(session.emulator.cpu_peek16(0x1df0), first);
+        assert_eq!(session.emulator.cpu_peek16(0x1df2), count);
+        assert_eq!(session.emulator.cpu_peek8(0x4a), 63);
+        assert_eq!(session.emulator.io_peek8(0xa2) & 3, 3);
+        assert_eq!(session.emulator.io_peek8(0xa4), 160);
+        assert_eq!(session.emulator.io_peek8(0xa5), 0);
+        session.reset()?;
+        assert_eq!(render(&mut session, 258)?, expected);
+        session.set_track_mask(0)?;
+        session.reset()?;
+        assert!(render(&mut session, 512)?.iter().all(|&value| value == 0));
+        let mut prepared = zeff_audio_discovery::ws_tose::prepare_rom(&bytes, song, &cancel)?;
+        prepared.bytes[0x3f6000] = 0xc3;
+        let mut silent = WsSession::new(prepared, options(), Vec::new(), &cancel)?;
+        assert!(render(&mut silent, 2048)?.iter().all(|&value| value == 0));
+    }
+    Ok(())
+}
+
+#[test]
+fn scaled_ws_runs_grouped_selectors_and_native_endings() -> Result<()> {
+    for (bytes, bank, profile) in [
+        (
+            zeff_audio_discovery::ws_tose::synthetic_scaled_rom(),
+            3,
+            "ws-tose-scaled-v1",
+        ),
+        (
+            zeff_audio_discovery::ws_tose::synthetic_relocated_scaled_rom(),
+            0,
+            "ws-tose-scaled-v2",
+        ),
+    ] {
+        let cancel = AtomicBool::new(false);
+        let report = zeff_audio_discovery::scan(
+            zeff_emu_common::system::System::Ws,
+            &bytes,
+            Default::default(),
+            &cancel,
+        );
+        assert_eq!(report.ws_tose_songs.len(), 4);
+        for (song, (first, count)) in
+            report
+                .ws_tose_songs
+                .iter()
+                .zip([(0, 1), (1, 2), (3, 3), (6, 4)])
+        {
+            let prepared = zeff_audio_discovery::ws_tose::prepare_rom(&bytes, song, &cancel)?;
+            let mut session = WsSession::new(prepared, options(), Vec::new(), &cancel)?;
+            assert!(session.has_source_duration_limit());
+            assert_eq!(
+                session.runtime_validation().unwrap()["stop_reason"],
+                "driver_end"
+            );
+            let expected = render(&mut session, 2048)?;
+            assert!(expected.iter().any(|&value| value != 0));
+            assert_eq!(session.emulator.cpu_peek16(0x1df0), first);
+            assert_eq!(session.emulator.cpu_peek16(0x1df2), count);
+            assert_eq!(session.emulator.io_peek8(0xb2), 0x40);
+            assert_eq!(session.emulator.io_peek8(0xc0) & 15, bank);
+            assert_eq!(session.runtime_validation().unwrap()["profile"], profile);
+            session.reset()?;
+            assert_eq!(render(&mut session, 258)?, expected);
+            session.set_track_mask(0)?;
+            session.reset()?;
+            assert!(render(&mut session, 512)?.iter().all(|&value| value == 0));
+        }
+    }
+    Ok(())
+}

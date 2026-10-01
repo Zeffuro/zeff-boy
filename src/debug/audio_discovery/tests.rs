@@ -370,6 +370,7 @@ fn workspace_selects_embedded_modules_without_a_fake_cpu_address() {
             samples: 1,
             sample_points: 16,
             source: crate::audio_discovery::tracker::ModuleSource::Embedded,
+            mod_playback: false,
         });
     let mut workspace = AudioWorkspace::default();
     workspace.ensure_selection(&report);

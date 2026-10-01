@@ -42,6 +42,24 @@ fn additional_native_drivers_preserve_selection_assets_and_pcm() -> Result<()> {
         ),
         (
             System::Gb,
+            zeff_audio_discovery::gb_cosmigo::synthetic_rom(),
+            SongId::GbCosmigo(0),
+            "gb_cosmigo",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_mplay::synthetic_rom(),
+            SongId::GbMplay(0),
+            "gb_mplay",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_imed::synthetic_rom(),
+            SongId::GbImed(0),
+            "gb_imed",
+        ),
+        (
+            System::Gb,
             zeff_audio_discovery::gb_ghx::synthetic_rom(),
             SongId::GbGhx(0),
             "gb_ghx",
@@ -151,6 +169,15 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
             zeff_audio_discovery::classification::AudioRole::Unknown
         );
     }
+    if matches!(
+        id,
+        SongId::GbCosmigo(_) | SongId::GbMplay(_) | SongId::GbImed(_)
+    ) {
+        assert_eq!(
+            selected.classification().role,
+            zeff_audio_discovery::classification::AudioRole::Unknown
+        );
+    }
     assert!(PcmSong::can_play(selected) && PcmSong::is_native(selected));
     let expected_address = match selected {
         SongRef::GbNative(song) => Some(song.table_entry.canonical_cpu_address),
@@ -182,6 +209,9 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         SongId::GbNative(index) => &manifest.scan.gb_native_songs[index].mapped_spans,
         SongId::NesNative(index) => &manifest.scan.nes_native_songs[index].mapped_spans,
         SongId::GbCarillon(index) => &manifest.scan.gb_carillon_songs[index].mapped_spans,
+        SongId::GbCosmigo(index) => &manifest.scan.gb_cosmigo_songs[index].mapped_spans,
+        SongId::GbMplay(index) => &manifest.scan.gb_mplay_songs[index].mapped_spans,
+        SongId::GbImed(index) => &manifest.scan.gb_imed_songs[index].mapped_spans,
         SongId::GbGhx(index) => &manifest.scan.gb_ghx_songs[index].mapped_spans,
         SongId::GbSoundSystem(index) => &manifest.scan.gb_sound_system_songs[index].mapped_spans,
         SongId::WsTose(index) => &manifest.scan.ws_tose_songs[index].mapped_spans,
@@ -256,6 +286,9 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         SongId::GbNative(index) => &mut manifest.scan.gb_native_songs[index].mapped_spans,
         SongId::NesNative(index) => &mut manifest.scan.nes_native_songs[index].mapped_spans,
         SongId::GbCarillon(index) => &mut manifest.scan.gb_carillon_songs[index].mapped_spans,
+        SongId::GbCosmigo(index) => &mut manifest.scan.gb_cosmigo_songs[index].mapped_spans,
+        SongId::GbMplay(index) => &mut manifest.scan.gb_mplay_songs[index].mapped_spans,
+        SongId::GbImed(index) => &mut manifest.scan.gb_imed_songs[index].mapped_spans,
         SongId::GbGhx(index) => &mut manifest.scan.gb_ghx_songs[index].mapped_spans,
         SongId::GbSoundSystem(index) => {
             &mut manifest.scan.gb_sound_system_songs[index].mapped_spans

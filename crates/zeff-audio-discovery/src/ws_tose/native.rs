@@ -5,6 +5,15 @@ use anyhow::{Result, ensure};
 use super::{PreparedWsTose, WsToseSong};
 
 pub fn prepare_rom(bytes: &[u8], song: &WsToseSong, cancel: &AtomicBool) -> Result<PreparedWsTose> {
+    if song.profile.starts_with("ws-tose-scaled-") {
+        return super::scaled::prepare_rom(bytes, song, cancel);
+    }
+    if song.profile.starts_with("ws-tose-volume-") {
+        return super::volume::prepare_rom(bytes, song, cancel);
+    }
+    if song.profile.starts_with("ws-tose-direct-") {
+        return super::direct::prepare_rom(bytes, song, cancel);
+    }
     if song.profile.starts_with("ws-tose-fixed-") {
         return super::legacy::prepare_rom(bytes, song, cancel);
     }
@@ -74,6 +83,7 @@ pub fn prepare_rom(bytes: &[u8], song: &WsToseSong, cancel: &AtomicBool) -> Resu
         ack_address: 0x3e01,
         wait_start,
         wait_end: wait_start + 7,
+        timing: None,
     })
 }
 

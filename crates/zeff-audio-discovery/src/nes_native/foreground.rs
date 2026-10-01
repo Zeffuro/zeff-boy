@@ -114,6 +114,7 @@ fn inspect(bytes: &[u8], profile: &'static str, index: usize) -> Option<NesNativ
     }
     Some(NesNativeSong {
         profile,
+        source_sha256: None,
         index: index as u16,
         raw_index: index as u8 + 1,
         title: format!("Native audio selector {:02X}", index + 1),

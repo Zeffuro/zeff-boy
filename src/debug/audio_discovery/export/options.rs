@@ -1,9 +1,13 @@
 use super::*;
 
-pub(super) fn draw_native_options(ui: &mut egui::Ui, state: &mut ExportState) {
+pub(super) fn draw_native_options(ui: &mut egui::Ui, state: &mut ExportState, ws: bool) {
     ui.add_enabled_ui(!state.is_busy(), |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label("Duration (seconds)");
+            ui.label(if ws {
+                "Maximum duration (seconds)"
+            } else {
+                "Duration (seconds)"
+            });
             ui.add(
                 egui::DragValue::new(&mut state.native_options.max_seconds)
                     .range(1..=MAX_DURATION_SECONDS),
@@ -30,7 +34,11 @@ pub(super) fn draw_native_options(ui: &mut egui::Ui, state: &mut ExportState) {
                 });
         });
     });
-    ui.small("The fade is included in the duration. Song endings and loops are not detected automatically.");
+    ui.small(if ws {
+        "Qualified tracks stop at a driver ending or loop; others use the duration limit. The fade is included."
+    } else {
+        "The fade is included in the duration. Song endings and loops are not detected automatically."
+    });
 }
 
 pub(super) fn draw_song_options(ui: &mut egui::Ui, state: &mut ExportState) {

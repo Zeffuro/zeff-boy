@@ -7,10 +7,15 @@ pub(super) fn run_gba_headless(
     path: &Path,
     rom_data: &[u8],
     opts: &HeadlessOptions,
+    capture: Option<super::audio_trace::Capture>,
 ) -> anyhow::Result<()> {
     ensure_system_headless_options("gba", opts)?;
 
     let mut emulator = GbaEmulator::from_rom_data(rom_data)?;
+    if capture.is_some() {
+        emulator
+            .reset_and_begin_audio_trace(zeff_emu_common::audio_trace::MAX_AUDIO_TRACE_EVENTS)?;
+    }
     let mut sram_recovery =
         crate::save_paths::battery_sram_session(path, "gba", emulator.rom_hash());
     if opts.gba_hidden_bg_layers.iter().any(|&hidden| hidden) {
@@ -24,7 +29,8 @@ pub(super) fn run_gba_headless(
                 .set_ppu_debug_bg_layers(std::array::from_fn(|i| !opts.gba_hidden_bg_layers[i]));
         }
     }
-    if !opts.no_sram
+    if capture.is_none()
+        && !opts.no_sram
         && let Some(sram_path) = crate::emu_backend::gba::try_load_battery_sram(&mut emulator, path)
             .unwrap_or_else(|e| {
                 log::warn!("Failed to load battery save: {e}");
@@ -103,7 +109,9 @@ pub(super) fn run_gba_headless(
         if current_input.reset {
             emulator.reset();
         }
-        emulator.set_input(current_input.buttons, current_input.dpad);
+        if capture.is_none() {
+            emulator.set_input(current_input.buttons, current_input.dpad);
+        }
 
         if opts.trace_opcodes || bus_trace_active || opts.break_on_gba_bad_state {
             emulator.clear_frame_ready();
@@ -299,7 +307,7 @@ pub(super) fn run_gba_headless(
     if let Some(path) = &opts.audio_dump_path {
         write_audio_dump_f32le(path, &audio_dump, emulator.apu_debug_snapshot().sample_rate)?;
     }
-    if !opts.no_sram {
+    if capture.is_none() && !opts.no_sram {
         flush_battery(
             &mut sram_recovery,
             path,
@@ -327,5 +335,12 @@ pub(super) fn run_gba_headless(
         }
     }
 
+    if let Some(capture) = capture {
+        anyhow::ensure!(
+            frames_run == opts.max_frames && !emulator.is_cpu_suspended(),
+            "GBA FIFO capture did not complete its requested interval"
+        );
+        capture.finish_gba(emulator.finish_audio_trace(), rom_data, frames_run)?;
+    }
     Ok(())
 }

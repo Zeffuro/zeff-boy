@@ -20,6 +20,7 @@ use super::{
 
 #[cfg(test)]
 mod tests;
+pub(crate) mod wsr;
 
 enum Selection {
     GbNative(Box<zeff_audio_discovery::gb_native::GbNativeSong>),

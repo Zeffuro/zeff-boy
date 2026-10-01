@@ -31,6 +31,12 @@ pub(crate) fn audio_format(path: &Path) -> Option<StandaloneFormat> {
                 "nsfe" => Some(StandaloneFormat::Rip(
                     crate::audio_discovery::rips::RipFormat::Nsfe,
                 )),
+                "hes" => Some(StandaloneFormat::Rip(
+                    crate::audio_discovery::rips::RipFormat::Hes,
+                )),
+                "wsr" => Some(StandaloneFormat::Rip(
+                    crate::audio_discovery::rips::RipFormat::Wsr,
+                )),
                 _ => None,
             },
         )
@@ -38,7 +44,7 @@ pub(crate) fn audio_format(path: &Path) -> Option<StandaloneFormat> {
 
 pub(crate) fn load_audio(path: &Path) -> Result<ScanInput> {
     let format = audio_format(path)
-        .context("select an XM, MOD, S3M, IT, VGM, VGZ, GBS, NSF or NSFe audio file")?;
+        .context("select an XM, MOD, S3M, IT, VGM, VGZ, GBS, NSF, NSFe, HES or WSR audio file")?;
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("failed to inspect audio file {}", path.display()))?;
     ensure!(metadata.is_file(), "audio input must be a regular file");
@@ -72,6 +78,12 @@ pub(crate) fn load_audio(path: &Path) -> Result<ScanInput> {
             }
             StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Nsfe) => {
                 "direct_nsfe_file"
+            }
+            StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Hes) => {
+                "direct_hes_file"
+            }
+            StandaloneFormat::Rip(crate::audio_discovery::rips::RipFormat::Wsr) => {
+                "direct_wsr_file"
             }
         },
         sha256: zeff_firmware::sha256_hex(&bytes),

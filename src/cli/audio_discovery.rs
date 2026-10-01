@@ -64,7 +64,8 @@ enum SongSelection {
 
 pub(crate) fn run_audio_discovery_if_requested() -> anyhow::Result<bool> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    if huge::run_if_requested(&args)?
+    if maxmod::run_if_requested(&args)?
+        || huge::run_if_requested(&args)?
         || psglib::run_if_requested(&args)?
         || excerpts::run_if_requested(&args)?
         || sweep::run_if_requested(&args)?
@@ -94,6 +95,9 @@ mod psglib;
 
 #[path = "audio_discovery_huge.rs"]
 mod huge;
+
+#[path = "audio_discovery_maxmod.rs"]
+mod maxmod;
 
 #[path = "audio_discovery_validation.rs"]
 pub(super) mod validation;
@@ -509,6 +513,14 @@ mod vgm_tests;
 #[cfg(test)]
 #[path = "audio_discovery_rip_tests.rs"]
 mod rip_tests;
+
+#[cfg(test)]
+#[path = "audio_discovery_nsf2_tests.rs"]
+mod nsf2_tests;
+
+#[cfg(test)]
+#[path = "audio_discovery_unenumerated_rip_tests.rs"]
+mod unenumerated_rip_tests;
 
 #[cfg(test)]
 #[path = "audio_discovery_native_rip_tests.rs"]

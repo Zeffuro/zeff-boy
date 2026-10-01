@@ -42,7 +42,10 @@ pub(super) fn draw(ui: &mut egui::Ui, state: &mut AudioDiscoveryState) {
                 .set_title("Open Audio File")
                 .add_filter("Tracker modules", &["xm", "mod", "s3m", "it"])
                 .add_filter("VGM register logs", &["vgm", "vgz"])
-                .add_filter("GBS, NSF and NSFe music rips", &["gbs", "nsf", "nsfe"])
+                .add_filter(
+                    "GBS, NSF, NSFe, HES and WSR music rips",
+                    &["gbs", "nsf", "nsfe", "hes", "wsr"],
+                )
                 .pick_file()
             && let Err(error) = state.open_audio_file(&path)
         {
@@ -219,7 +222,13 @@ mod tests {
             catalog::SongId, rips::RipFormat, test_support::rips::fixture,
         };
         let directory = tempfile::tempdir()?;
-        for format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
+        for format in [
+            RipFormat::Gbs,
+            RipFormat::Nsf,
+            RipFormat::Nsfe,
+            RipFormat::Hes,
+            RipFormat::Wsr,
+        ] {
             let bytes = fixture(format);
             let path = directory
                 .path()
@@ -230,7 +239,10 @@ mod tests {
             finish_scan(&mut state);
             let report = &state.session.manifest.as_ref().unwrap().scan;
             assert_eq!(report.song_count(), 1);
-            assert_eq!(report.music_rips[0].song_count, 3);
+            assert_eq!(
+                report.music_rips[0].song_count,
+                (!matches!(format, RipFormat::Hes | RipFormat::Wsr)).then_some(3)
+            );
             for width in [420.0, 1000.0] {
                 let output = egui::Context::default().run_ui(
                     egui::RawInput {

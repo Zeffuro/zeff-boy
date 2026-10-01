@@ -196,6 +196,7 @@ pub(crate) fn parse(
             samples,
             sample_points,
             source: ModuleSource::Embedded,
+            mod_playback: false,
         })
     })();
     match stopped {

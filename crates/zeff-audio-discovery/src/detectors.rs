@@ -10,7 +10,7 @@ pub struct DetectorDescriptor {
 
 const MODULES: DetectorDescriptor = DetectorDescriptor {
     id: "tracker-structure",
-    semantic_version: 1,
+    semantic_version: 2,
     scope: "XM 1.04, 31-instrument MOD, supported S3M/IT structures; not native console drivers",
 };
 pub const TRACKER: &[DetectorDescriptor] = &[MODULES];
@@ -21,13 +21,23 @@ pub const GBS: &[DetectorDescriptor] = &[DetectorDescriptor {
 }];
 pub const NSF: &[DetectorDescriptor] = &[DetectorDescriptor {
     id: "nsf-container",
-    semantic_version: 2,
-    scope: "Standalone NSF v1 header, program mapping and source preservation; no guest execution",
+    semantic_version: 3,
+    scope: "Standalone NSF v1 mapping and NSF2 structural feature inventory with source preservation; no guest execution",
 }];
 pub const NSFE: &[DetectorDescriptor] = &[DetectorDescriptor {
     id: "nsfe-container",
     semantic_version: 1,
     scope: "Standalone NSFe chunk structure and source preservation; no guest execution or playback qualification",
+}];
+pub const HES: &[DetectorDescriptor] = &[DetectorDescriptor {
+    id: "hes-container",
+    semantic_version: 1,
+    scope: "Standalone HES v0 one-DATA ROM subset and source preservation; no guest execution or playback qualification",
+}];
+pub const WSR: &[DetectorDescriptor] = &[DetectorDescriptor {
+    id: "wsr-container",
+    semantic_version: 1,
+    scope: "Standalone aligned WonderSwan WSR trailer and source preservation; no guest execution or playback qualification",
 }];
 pub const VGM: &[DetectorDescriptor] = &[DetectorDescriptor {
     id: "vgm-register-log",
@@ -71,7 +81,7 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
             },
             DetectorDescriptor {
                 id: "gax-native-driver",
-                semantic_version: 1,
+                semantic_version: 2,
                 scope: "Recognized GAX initialization, playback and interrupt routines with bounded song headers",
             },
             DetectorDescriptor {
@@ -163,6 +173,21 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
                 scope: "Qualified Carillon CGB interpreters, bounded orders/patterns/instruments, alias collapse and source-closed native playback",
             },
             DetectorDescriptor {
+                id: "gb-cosmigo-driver",
+                semantic_version: 1,
+                scope: "Authenticated MBC5 CGB Cosmigo standard four-channel driver, bounded selected orders and original-driver playback; roles, duration and complete soundtrack membership are not established",
+            },
+            DetectorDescriptor {
+                id: "gb-mplay-driver",
+                semantic_version: 1,
+                scope: "Authenticated MBC5 CGB MPlay v2 standard four-channel driver, bounded selected orders and original-driver playback; roles, duration and complete soundtrack membership are not established",
+            },
+            DetectorDescriptor {
+                id: "gb-imed-driver",
+                semantic_version: 1,
+                scope: "Authenticated IMEDGBoy driver modules with bounded selected entries and original-driver playback; roles, duration and complete soundtrack membership are not established",
+            },
+            DetectorDescriptor {
                 id: "gb-huge-driver",
                 semantic_version: 1,
                 scope: "Pinned hUGEDriver v6.1.3 on a DMG MBC0 cartridge with the generated isolation bootstrap, bounded supported song data and a recurrence budget; runtime validation is still required before audio output",
@@ -177,8 +202,8 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
             },
             DetectorDescriptor {
                 id: "nes-native-driver",
-                semantic_version: 4,
-                scope: "Exact NES driver profiles with qualified cartridge mapping, bounded native audio selectors and NTSC playback",
+                semantic_version: 5,
+                scope: "Qualified NES driver profiles and bounded FamiTone2/FamiStudio/GGSound NROM cues with source-bound NTSC playback",
             },
             DetectorDescriptor {
                 id: "nes-tose-driver",
@@ -208,7 +233,7 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
             MODULES,
             DetectorDescriptor {
                 id: "ws-tose-driver",
-                semantic_version: 2,
+                semantic_version: 7,
                 scope: "Qualified TOSE-style eight-slot routines, bounded selectors and original WonderSwan playback",
             },
         ],

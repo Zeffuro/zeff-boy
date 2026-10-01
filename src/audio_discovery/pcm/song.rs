@@ -12,6 +12,7 @@ pub(crate) use export::PcmExportRequest;
 #[derive(Clone, Serialize)]
 #[serde(tag = "engine", content = "song", rename_all = "snake_case")]
 pub(crate) enum PcmSong {
+    Module(Box<zeff_audio_discovery::tracker::EmbeddedModule>),
     Huge(Box<zeff_audio_discovery::huge::catalog::HugeSong>),
     Vgm(Box<zeff_audio_discovery::vgm::VgmLog>),
     EngineSoftware(Box<zeff_audio_discovery::engine_software::EngineSoftwareSong>),
@@ -36,6 +37,9 @@ pub(crate) enum PcmSong {
     GbGhx(Box<zeff_audio_discovery::gb_ghx::GbGhxSong>),
     GbSoundSystem(Box<zeff_audio_discovery::gb_sound_system::GbSoundSystemSong>),
     GbCarillon(Box<zeff_audio_discovery::gb_carillon::GbCarillonSong>),
+    GbCosmigo(Box<zeff_audio_discovery::gb_cosmigo::GbCosmigoSong>),
+    GbMplay(Box<zeff_audio_discovery::gb_mplay::GbMplaySong>),
+    GbImed(Box<zeff_audio_discovery::gb_imed::GbImedSong>),
     WsTose(Box<zeff_audio_discovery::ws_tose::WsToseSong>),
     NesTose(Box<zeff_audio_discovery::nes_tose::NesToseSong>),
     GbBanked(Box<zeff_audio_discovery::gb_music::GbSong>),
@@ -66,10 +70,14 @@ impl PcmSong {
                 | SongRef::GbGhx(_)
                 | SongRef::GbSoundSystem(_)
                 | SongRef::GbCarillon(_)
+                | SongRef::GbCosmigo(_)
+                | SongRef::GbMplay(_)
+                | SongRef::GbImed(_)
                 | SongRef::WsTose(_)
                 | SongRef::NesTose(_)
                 | SongRef::SegaPsg(_)
-        ) || matches!(song, SongRef::Vgm(log) if log.sn_playback.is_some())
+        ) || matches!(song, SongRef::Module(module) if module.mod_playback)
+            || matches!(song, SongRef::Vgm(log) if log.sn_playback.is_some())
             || matches!(song, SongRef::Gax(song) if song.xm_exportable)
             || matches!(song, SongRef::Nes(song) if zeff_audio_discovery::nes_music::native::supports_native(song))
             || matches!(song, SongRef::Gb(song) if zeff_audio_discovery::gb_music::native::supports_native(song))
@@ -96,6 +104,9 @@ impl PcmSong {
                 | SongRef::GbGhx(_)
                 | SongRef::GbSoundSystem(_)
                 | SongRef::GbCarillon(_)
+                | SongRef::GbCosmigo(_)
+                | SongRef::GbMplay(_)
+                | SongRef::GbImed(_)
                 | SongRef::WsTose(_)
                 | SongRef::NesTose(_)
                 | SongRef::SegaPsg(_)
@@ -104,6 +115,9 @@ impl PcmSong {
     }
     pub(crate) fn from_ref(song: SongRef<'_>) -> Option<Self> {
         match song {
+            SongRef::Module(module) if module.mod_playback => {
+                Some(Self::Module(Box::new(module.clone())))
+            }
             SongRef::Huge(song) => Some(Self::Huge(Box::new(song.clone()))),
             SongRef::Vgm(log) if log.sn_playback.is_some() => {
                 Some(Self::Vgm(Box::new(log.clone())))
@@ -133,6 +147,9 @@ impl PcmSong {
             SongRef::GbGhx(song) => Some(Self::GbGhx(Box::new(song.clone()))),
             SongRef::GbSoundSystem(song) => Some(Self::GbSoundSystem(Box::new(song.clone()))),
             SongRef::GbCarillon(song) => Some(Self::GbCarillon(Box::new(song.clone()))),
+            SongRef::GbCosmigo(song) => Some(Self::GbCosmigo(Box::new(song.clone()))),
+            SongRef::GbMplay(song) => Some(Self::GbMplay(Box::new(song.clone()))),
+            SongRef::GbImed(song) => Some(Self::GbImed(Box::new(song.clone()))),
             SongRef::WsTose(song) => Some(Self::WsTose(Box::new(song.clone()))),
             SongRef::NesTose(song) => Some(Self::NesTose(Box::new(song.clone()))),
             SongRef::Gb(song) if zeff_audio_discovery::gb_music::native::supports_native(song) => {
@@ -152,6 +169,11 @@ impl PcmSong {
         super::validate_options(options)?;
         super::check_cancel(cancel)?;
         let (xm, warnings) = match self {
+            Self::Module(module) => {
+                return Ok(Box::new(TrackerSession::from_mod(
+                    bytes, module, options, cancel,
+                )?));
+            }
             Self::Huge(song) => {
                 return Ok(Box::new(super::huge::HugeSession::new(
                     bytes, song, options, cancel,
@@ -201,6 +223,15 @@ impl PcmSong {
                     cancel,
                 )?));
             }
+            Self::GbCosmigo(song) => {
+                let prepared = zeff_audio_discovery::gb_cosmigo::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_cosmigo(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
             Self::GbQuickThunder(song) => {
                 let prepared =
                     zeff_audio_discovery::gb_quickthunder::prepare_rom(bytes, song, cancel)?;
@@ -212,6 +243,24 @@ impl PcmSong {
                         cancel,
                     )?,
                 ));
+            }
+            Self::GbMplay(song) => {
+                let prepared = zeff_audio_discovery::gb_mplay::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_mplay(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbImed(song) => {
+                let prepared = zeff_audio_discovery::gb_imed::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_imed(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
             }
             Self::WsTose(song) => {
                 let prepared = zeff_audio_discovery::ws_tose::prepare_rom(bytes, song, cancel)?;
@@ -407,7 +456,11 @@ impl PcmSong {
 
     fn mapped_spans(&self) -> Option<&[RomSpan]> {
         Some(match self {
-            Self::Huge(_) | Self::GbBanked(_) | Self::NesQueue(_) | Self::Vgm(_) => return None,
+            Self::Module(_)
+            | Self::Huge(_)
+            | Self::GbBanked(_)
+            | Self::NesQueue(_)
+            | Self::Vgm(_) => return None,
             Self::EngineSoftware(song) => &song.mapped_spans,
             Self::Gax(song) => &song.mapped_spans,
             Self::Krawall(song) => &song.mapped_spans,
@@ -428,6 +481,9 @@ impl PcmSong {
             Self::GbGhx(song) => &song.mapped_spans,
             Self::GbSoundSystem(song) => &song.mapped_spans,
             Self::GbCarillon(song) => &song.mapped_spans,
+            Self::GbCosmigo(song) => &song.mapped_spans,
+            Self::GbMplay(song) => &song.mapped_spans,
+            Self::GbImed(song) => &song.mapped_spans,
             Self::WsTose(song) => &song.mapped_spans,
             Self::NesTose(song) => &song.mapped_spans,
             Self::SegaPsg(song) => &song.mapped_spans,

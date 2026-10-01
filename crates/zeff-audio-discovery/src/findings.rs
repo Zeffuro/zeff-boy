@@ -196,6 +196,9 @@ fn payload_kind(song: SongRef<'_>) -> FindingPayloadKind {
         | SongRef::GbGhx(_)
         | SongRef::GbSoundSystem(_)
         | SongRef::GbCarillon(_)
+        | SongRef::GbCosmigo(_)
+        | SongRef::GbMplay(_)
+        | SongRef::GbImed(_)
         | SongRef::WsTose(_)
         | SongRef::NesTose(_)
         | SongRef::SegaPsg(_) => FindingPayloadKind::NativeExecutable,

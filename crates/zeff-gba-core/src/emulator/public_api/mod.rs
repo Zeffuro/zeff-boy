@@ -1,4 +1,5 @@
 use crate::emulator::Emulator;
+use zeff_emu_common::audio_trace::AudioTraceInvalidation;
 
 mod debug;
 mod queries;
@@ -9,18 +10,32 @@ impl Emulator {
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
+        self.bus
+            .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
         self.bus.apu.set_sample_rate(rate);
     }
 
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        if self.bus.apu.debug_snapshot().sample_generation_enabled != enabled {
+            self.bus
+                .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        }
         self.bus.apu.set_sample_generation_enabled(enabled);
     }
 
     pub fn set_apu_debug_capture_enabled(&mut self, enabled: bool) {
+        if self.bus.apu.debug_snapshot().debug_capture_enabled != enabled {
+            self.bus
+                .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        }
         self.bus.apu.set_debug_capture_enabled(enabled);
     }
 
     pub fn set_apu_channel_mutes(&mut self, mutes: [bool; 6]) {
+        if self.bus.apu.channel_mutes() != mutes {
+            self.bus
+                .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        }
         self.bus.apu.set_channel_mutes(mutes);
     }
 
@@ -66,11 +81,18 @@ impl Emulator {
 
     pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
         self.bus
+            .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        self.bus
             .keypad
             .set_host_input(buttons_pressed, dpad_pressed);
     }
 
     pub fn set_tilt_input(&mut self, x: f32, y: f32) -> bool {
-        self.bus.cartridge.set_tilt_input(x, y)
+        let changed = self.bus.cartridge.set_tilt_input(x, y);
+        if changed {
+            self.bus
+                .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        }
+        changed
     }
 }

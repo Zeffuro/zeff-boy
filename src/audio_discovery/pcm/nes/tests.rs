@@ -1,5 +1,9 @@
 use super::*;
 
+mod famistudio;
+mod famitone2;
+mod ggsound;
+
 #[test]
 fn register_presets_consume_requests_and_replay_at_both_rates() -> Result<()> {
     use zeff_audio_discovery::nes_native;

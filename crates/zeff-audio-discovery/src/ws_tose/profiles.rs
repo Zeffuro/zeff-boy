@@ -21,13 +21,17 @@ pub(super) struct Profile {
 
 impl Profile {
     pub fn offset(self, address: u16) -> usize {
-        (self.fixed & !0xffff) + usize::from(address)
+        (self.fixed & !0xffff) + self.paragraph_bias() + usize::from(address)
+    }
+    pub fn paragraph_bias(self) -> usize {
+        usize::from(self.segment & 0x0fff) * 16
     }
     pub fn span(self) -> crate::RomSpan {
         crate::RomSpan {
             effective_offset: self.fixed as u32,
             byte_len: (self.end - self.fixed) as u32,
-            canonical_cpu_address: u32::from(self.segment) * 16 + (self.fixed & 0xffff) as u32,
+            canonical_cpu_address: u32::from(self.segment & 0xf000) * 16
+                + (self.fixed & 0xffff) as u32,
         }
     }
 }

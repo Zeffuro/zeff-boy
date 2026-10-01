@@ -2,6 +2,7 @@ use super::{Bus, DEADLINE_PPU, DEADLINE_TIMERS, SOUNDBIAS, read_io16};
 use crate::hardware::timer::{
     Timer, TimerIrqExtraDelays, TimerOverflowCounts, TimerTimingState, Timers,
 };
+use zeff_emu_common::audio_trace::AudioTraceInvalidation;
 
 impl Bus {
     fn projected_timers_at(&self, cycles: u64) -> Timers {
@@ -143,6 +144,9 @@ impl Bus {
             });
             self.event_deadline.remaining -= step;
             let chunk_start_cycles = self.master_cycles;
+            if self.master_cycles.checked_add(u64::from(step)).is_none() {
+                self.invalidate_audio_trace(AudioTraceInvalidation::ClockOverflow);
+            }
             self.master_cycles = self.master_cycles.wrapping_add(u64::from(step));
             self.timer_observation_cycles = self.master_cycles;
 

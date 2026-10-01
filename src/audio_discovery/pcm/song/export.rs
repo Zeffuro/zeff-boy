@@ -46,6 +46,13 @@ impl PcmExportRequest {
         if matches!(format, SongFormat::Audio(_)) {
             validate_options(options)?;
         }
+        if let SongRef::Module(module) = song {
+            ensure!(
+                matches!(format, SongFormat::Audio(_)),
+                "tracker assets use the source exporter"
+            );
+            super::super::tracker::validate_module_input(input, module)?;
+        }
         if matches!(song, SongRef::Vgm(_)) {
             ensure!(
                 matches!(format, SongFormat::Audio(_))
@@ -116,6 +123,15 @@ impl PcmExportRequest {
             }
             if let PcmSong::GbCarillon(song) = &self.song {
                 zeff_audio_discovery::gb_carillon::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbCosmigo(song) = &self.song {
+                zeff_audio_discovery::gb_cosmigo::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbMplay(song) = &self.song {
+                zeff_audio_discovery::gb_mplay::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbImed(song) = &self.song {
+                zeff_audio_discovery::gb_imed::validate_song(&self.bytes, song, cancel)?;
             }
             if let PcmSong::WsTose(song) = &self.song {
                 zeff_audio_discovery::ws_tose::validate_song(&self.bytes, song, cancel)?;

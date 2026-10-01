@@ -80,6 +80,9 @@ pub(super) fn run(
         .duration
         .store(renderer.duration_frames(), Ordering::Release);
     shared
+        .source_duration
+        .store(renderer.has_source_duration(), Ordering::Release);
+    shared
         .sample_rate
         .store(renderer.sample_rate(), Ordering::Release);
     shared

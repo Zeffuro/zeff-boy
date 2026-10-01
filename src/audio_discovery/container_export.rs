@@ -71,9 +71,9 @@ impl ContainerExportRequest {
                 "rip": rip,
                 "limitations": [
                     "This imported executable-rip container is preserved without running its program or attributing a native cartridge driver.",
-                    "The declared song count and first song are header metadata. No per-song byte extents, MIDI, sound banks or playback are inferred.",
+                    "Counts and start selectors are retained only where declared. No per-song byte extents, MIDI, sound banks or playback are inferred.",
                     "Initial entry offsets describe header-directed source mapping, not callable code or successful playback. Runtime banking and register changes are unobserved.",
-                    "All source bytes are retained. NSF tails remain opaque; NSFe chunks retain their original order and physical spans."
+                    "All source bytes are retained. NSF v1 tails remain opaque; NSF2 metadata and NSFe chunks retain their original order and physical spans."
                 ],
             }),
         })
@@ -96,9 +96,21 @@ impl ContainerExportRequest {
             bundle.add(&source_path, &self.bytes)?;
             self.metadata["source_path"] = json!(source_path);
             let mut assets = Vec::new();
-            let spans = if let RipDetails::Nsfe { chunks, .. } = &self.rip.details {
-                std::iter::once(("header.bin".to_owned(), self.rip.header))
-                    .chain(chunks.iter().enumerate().map(|(index, chunk)| {
+            let mut spans = vec![("header.bin".to_owned(), self.rip.header)];
+            if matches!(self.rip.details, RipDetails::Wsr { .. }) {
+                spans = vec![
+                    ("body.bin".to_owned(), self.rip.program),
+                    ("trailer.bin".to_owned(), self.rip.header),
+                ];
+            } else if !matches!(self.rip.details, RipDetails::Nsfe { .. }) {
+                spans.push(("program.bin".to_owned(), self.rip.program));
+            }
+            match &self.rip.details {
+                RipDetails::Nsfe { chunks, .. }
+                | RipDetails::Nsf2 {
+                    metadata: chunks, ..
+                } => {
+                    spans.extend(chunks.iter().enumerate().map(|(index, chunk)| {
                         (
                             format!("chunks/{index:04}.bin"),
                             super::tracker::FileSpan {
@@ -106,18 +118,14 @@ impl ContainerExportRequest {
                                 byte_len: chunk.header.byte_len + chunk.payload.byte_len,
                             },
                         )
-                    }))
-                    .collect::<Vec<_>>()
-            } else {
-                [
-                    ("header.bin", Some(self.rip.header)),
-                    ("program.bin", Some(self.rip.program)),
-                    ("metadata.bin", self.rip.opaque_metadata),
-                ]
-                .into_iter()
-                .filter_map(|(name, span)| span.map(|span| (name.to_owned(), span)))
-                .collect()
-            };
+                    }));
+                }
+                _ => {
+                    if let Some(span) = self.rip.opaque_metadata {
+                        spans.push(("metadata.bin".to_owned(), span));
+                    }
+                }
+            }
             for (name, span) in spans {
                 ensure!(
                     !cancel.load(Ordering::Relaxed),

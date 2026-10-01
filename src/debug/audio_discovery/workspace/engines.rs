@@ -177,10 +177,10 @@ pub(super) fn draw_module_details(
     span_button(ui, workspace, module.span, "Module data");
     match module.source {
         crate::audio_discovery::tracker::ModuleSource::Embedded => {
-            ui.small("Exports preserve the validated module extent. Unrecognized trailing chunks are not included.");
+            ui.small("Source exports preserve the validated module extent. Unrecognized trailing chunks are not included.");
         }
         crate::audio_discovery::tracker::ModuleSource::Standalone { trailing_bytes } => {
-            ui.small(format!("Exports preserve the complete source file, including {trailing_bytes} unrecognized trailing bytes."));
+            ui.small(format!("Source exports preserve the complete source file, including {trailing_bytes} unrecognized trailing bytes."));
         }
     }
     ui.small(format!(

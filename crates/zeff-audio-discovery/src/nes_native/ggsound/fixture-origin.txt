@@ -1,0 +1,2 @@
+GGSound, https://github.com/gradualgames/ggsound
+Unlicense; pinned 4ac57e5e8d4670eea9e832a879de02b7f5bd53c8.

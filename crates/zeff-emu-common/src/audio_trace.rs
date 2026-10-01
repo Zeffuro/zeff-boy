@@ -1,5 +1,7 @@
 //! Bounded evidence of writes applied to an emulated audio chip.
 
+mod gba;
+pub use gba::*;
 mod huc6280;
 pub use huc6280::*;
 mod wonderswan;
@@ -289,6 +291,11 @@ impl<C: AudioTraceChip, W> ChipAudioTraceRecorder<C, W> {
         self.trace
             .as_ref()
             .is_some_and(|trace| trace.invalidated.is_none())
+    }
+
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.trace.is_some()
     }
 
     pub fn record(&mut self, event: AudioTraceEvent<W>) {

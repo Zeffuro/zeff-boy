@@ -199,6 +199,7 @@ pub(crate) fn xm(
             samples,
             sample_points,
             source: ModuleSource::Embedded,
+            mod_playback: false,
         })
     })();
     match stopped {
@@ -298,6 +299,7 @@ pub(crate) fn mod_file(
             samples,
             sample_points: sample_points as u32,
             source: ModuleSource::Embedded,
+            mod_playback: super::playback::supported(&data[..length], channels),
         })
     })();
     match stopped {

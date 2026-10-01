@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use super::{Apu, FIFO_CAPACITY, FifoDmaRequests};
 use crate::hardware::constants::CPU_CLOCK_HZ;
+use zeff_emu_common::audio_trace::{GbaAudioTraceFifoState, GbaDirectSoundFifo};
 
 const GBA_MASTER_OUTPUT_GAIN: f32 = 0.75;
 const GBA_OUTPUT_LOW_PASS_CUTOFF_HZ: f32 = 8_000.0;
@@ -102,16 +103,43 @@ impl Apu {
     }
 
     pub(crate) fn on_timer_overflow(&mut self, timer: usize, soundcnt_h: u16) -> FifoDmaRequests {
+        self.on_timer_overflow_observed(timer, soundcnt_h).requests
+    }
+
+    pub(crate) fn on_timer_overflow_observed(
+        &mut self,
+        timer: usize,
+        soundcnt_h: u16,
+    ) -> DirectSoundTimerResult {
         let mut requests = FifoDmaRequests::default();
+        let mut pops = [None; 2];
         if direct_sound_uses_timer(soundcnt_h, 10, timer) && direct_sound_enabled(soundcnt_h, 8) {
-            self.current_a = self.fifo_a.pop_front().unwrap_or(0);
+            let before_len = self.fifo_a.len() as u8;
+            let value = self.fifo_a.pop_front();
+            self.current_a = value.unwrap_or(0);
             requests.a = self.fifo_a.len() <= 16;
+            pops[0] = Some(DirectSoundFifoPop {
+                fifo: GbaDirectSoundFifo::A,
+                before_len,
+                after_len: self.fifo_a.len() as u8,
+                value: self.current_a,
+                underflow: value.is_none(),
+            });
         }
         if direct_sound_uses_timer(soundcnt_h, 14, timer) && direct_sound_enabled(soundcnt_h, 12) {
-            self.current_b = self.fifo_b.pop_front().unwrap_or(0);
+            let before_len = self.fifo_b.len() as u8;
+            let value = self.fifo_b.pop_front();
+            self.current_b = value.unwrap_or(0);
             requests.b = self.fifo_b.len() <= 16;
+            pops[1] = Some(DirectSoundFifoPop {
+                fifo: GbaDirectSoundFifo::B,
+                before_len,
+                after_len: self.fifo_b.len() as u8,
+                value: self.current_b,
+                underflow: value.is_none(),
+            });
         }
-        requests
+        DirectSoundTimerResult { requests, pops }
     }
 
     #[cfg(test)]
@@ -229,6 +257,27 @@ impl Apu {
         }
     }
 
+    pub(crate) fn direct_sound_fifo_state(&self, fifo: usize) -> GbaAudioTraceFifoState {
+        let queue = if fifo == 0 {
+            &self.fifo_a
+        } else {
+            &self.fifo_b
+        };
+        let mut values = [0; FIFO_CAPACITY];
+        for (slot, value) in values.iter_mut().zip(queue.iter().copied()) {
+            *slot = value;
+        }
+        GbaAudioTraceFifoState {
+            queue: values,
+            len: queue.len() as u8,
+            current: if fifo == 0 {
+                self.current_a
+            } else {
+                self.current_b
+            },
+        }
+    }
+
     fn mix_direct_sound(&self, soundcnt_h: u16, soundcnt_x: u16) -> (f32, f32) {
         if soundcnt_x & 0x0080 == 0 {
             return (0.0, 0.0);
@@ -270,6 +319,21 @@ impl Apu {
         };
         (left * volume, right * volume)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirectSoundFifoPop {
+    pub fifo: GbaDirectSoundFifo,
+    pub before_len: u8,
+    pub after_len: u8,
+    pub value: i8,
+    pub underflow: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DirectSoundTimerResult {
+    pub requests: FifoDmaRequests,
+    pub pops: [Option<DirectSoundFifoPop>; 2],
 }
 
 fn gba_output_sample(sample: f32) -> f32 {

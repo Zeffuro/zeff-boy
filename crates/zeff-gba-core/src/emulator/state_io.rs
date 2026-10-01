@@ -1,5 +1,6 @@
 use crate::emulator::Emulator;
 use crate::hardware::cartridge::RtcDateTime;
+use zeff_emu_common::audio_trace::AudioTraceInvalidation;
 use zeff_emu_common::save_ram::SaveRamKind;
 
 impl Emulator {
@@ -20,7 +21,12 @@ impl Emulator {
     }
 
     pub fn set_rtc_date_time(&mut self, date_time: RtcDateTime) -> bool {
-        self.bus.cartridge.set_rtc_date_time(date_time)
+        let changed = self.bus.cartridge.set_rtc_date_time(date_time);
+        if changed {
+            self.bus
+                .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        }
+        changed
     }
 
     pub fn dump_battery_sram(&self) -> Option<Vec<u8>> {
@@ -50,12 +56,20 @@ impl Emulator {
             .bus
             .cartridge
             .load_complete_rtc_persistence(bytes)?;
+        candidate
+            .bus
+            .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
         *self = candidate;
         Ok(())
     }
 
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
-        self.bus.cartridge.load_battery_data(bytes)
+        self.bus.cartridge.load_battery_data(bytes)?;
+        if self.bus.cartridge.has_battery() {
+            self.bus
+                .invalidate_audio_trace(AudioTraceInvalidation::ExternalMutation);
+        }
+        Ok(())
     }
 
     pub fn encode_state(&self) -> anyhow::Result<Vec<u8>> {
@@ -64,6 +78,9 @@ impl Emulator {
 
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
         let mut candidate = self.clone();
+        candidate
+            .bus
+            .invalidate_audio_trace(AudioTraceInvalidation::StateRestore);
         crate::save_state::decode_state(&mut candidate, data)?;
         candidate.bus.apu.clear_host_output_after_state_load();
         candidate.opcode_log.clear();

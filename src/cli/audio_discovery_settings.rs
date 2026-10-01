@@ -107,10 +107,15 @@ pub(super) fn recording_player(id: SongId, format: SongFormat) -> bool {
             | SongId::GbSoundSystem(_)
             | SongId::Huge(_)
             | SongId::GbCarillon(_)
+            | SongId::GbCosmigo(_)
+            | SongId::GbMplay(_)
+            | SongId::GbImed(_)
             | SongId::WsTose(_)
             | SongId::GbQuickThunder(_)
             | SongId::NesTose(_)
             | SongId::SegaPsg(_)
-    ) || (matches!(id, SongId::Gb(_) | SongId::Nes(_) | SongId::Vgm(_))
-        && matches!(format, SongFormat::Audio(_)))
+    ) || (matches!(
+        id,
+        SongId::Gb(_) | SongId::Nes(_) | SongId::Vgm(_) | SongId::Module(_)
+    ) && matches!(format, SongFormat::Audio(_)))
 }

@@ -2,7 +2,9 @@ use super::super::constants::{GAMEPAK_ROM_END, GAMEPAK0_START};
 use super::super::dma::DmaChannel;
 use super::super::timer::TimerOverflowCounts;
 use super::super::timing::{AccessType, access_cycles_with_waitcnt};
+use super::audio_trace::DmaTraceRead;
 use super::*;
+use zeff_emu_common::audio_trace::{GbaAudioTraceDmaKind, GbaAudioTraceOrigin, GbaAudioTraceWrite};
 
 const INT_DMA0: u16 = 1 << 8;
 
@@ -86,7 +88,20 @@ impl Bus {
                     waitcnt,
                 ));
                 let value = self.read32(src);
+                let origin = self.audio_trace_dma(
+                    channel,
+                    GbaAudioTraceDmaKind::Fifo,
+                    DmaTraceRead {
+                        requested_source: src,
+                        aligned_source: src & !3,
+                        width: 4,
+                        value,
+                        source_latched: false,
+                    },
+                );
+                let previous_origin = self.set_audio_trace_origin(origin);
                 self.write32(fifo_addr, value);
+                self.set_audio_trace_origin(previous_origin);
                 src = step_dma_addr(src, src_mode, 4);
             }
             self.pending_dma_cycles = self
@@ -112,7 +127,24 @@ impl Bus {
     ) {
         for (timer, count) in timer_overflows.into_iter().enumerate().take(2) {
             for _ in 0..count {
-                let requests = self.apu.on_timer_overflow(timer, soundcnt_h);
+                let requests = if self.audio_trace_enabled() {
+                    let result = self.apu.on_timer_overflow_observed(timer, soundcnt_h);
+                    for pop in result.pops.into_iter().flatten() {
+                        self.record_audio_trace(GbaAudioTraceWrite::FifoPop {
+                            fifo: pop.fifo,
+                            timer: timer as u8,
+                            effective_soundcnt_h: soundcnt_h,
+                            before_len: pop.before_len,
+                            after_len: pop.after_len,
+                            value: pop.value,
+                            underflow: pop.underflow,
+                            origin: GbaAudioTraceOrigin::Timer { timer: timer as u8 },
+                        });
+                    }
+                    result.requests
+                } else {
+                    self.apu.on_timer_overflow(timer, soundcnt_h)
+                };
                 if requests.a {
                     self.run_sound_fifo_dma(0);
                 }
@@ -202,9 +234,23 @@ impl Bus {
                     waitcnt,
                 ));
 
+                let read_addr = dma_source_addr(channel, src) & !1;
                 let value = self.cartridge.eeprom_read16(src);
                 self.record_read(src, u32::from(value), 2);
+                let origin = self.audio_trace_dma(
+                    channel,
+                    GbaAudioTraceDmaKind::Normal,
+                    DmaTraceRead {
+                        requested_source: src,
+                        aligned_source: read_addr,
+                        width,
+                        value: u32::from(value),
+                        source_latched: false,
+                    },
+                );
+                let previous_origin = self.set_audio_trace_origin(origin);
                 self.write16(dst, value);
+                self.set_audio_trace_origin(previous_origin);
                 src = step_dma_addr(src, configured_src_mode, unit);
                 dst = step_dma_addr(dst, dest_mode, unit);
             }
@@ -248,7 +294,20 @@ impl Bus {
                 if !source_uses_latch {
                     ch.data_latch = value;
                 }
+                let origin = self.audio_trace_dma(
+                    channel,
+                    GbaAudioTraceDmaKind::Normal,
+                    DmaTraceRead {
+                        requested_source: src,
+                        aligned_source: read_addr,
+                        width,
+                        value,
+                        source_latched: source_uses_latch,
+                    },
+                );
+                let previous_origin = self.set_audio_trace_origin(origin);
                 self.write32(write_addr, value);
+                self.set_audio_trace_origin(previous_origin);
             } else {
                 let source_uses_latch = dma_source_uses_latch(read_addr);
                 let value = if source_uses_latch {
@@ -259,7 +318,20 @@ impl Bus {
                 if !source_uses_latch {
                     ch.data_latch = u32::from(value) | (u32::from(value) << 16);
                 }
+                let origin = self.audio_trace_dma(
+                    channel,
+                    GbaAudioTraceDmaKind::Normal,
+                    DmaTraceRead {
+                        requested_source: src,
+                        aligned_source: read_addr,
+                        width,
+                        value: u32::from(value),
+                        source_latched: source_uses_latch,
+                    },
+                );
+                let previous_origin = self.set_audio_trace_origin(origin);
                 self.write16(write_addr, value);
+                self.set_audio_trace_origin(previous_origin);
             }
             src = step_dma_addr(
                 src,

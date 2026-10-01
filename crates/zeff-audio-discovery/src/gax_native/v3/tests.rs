@@ -233,12 +233,40 @@ fn workspace_uses_available_iwram_without_crossing_reserved_stacks() {
     native.work_ram = 0x0300_5d64;
     assert_eq!(driver::workspace(&native), Some((0x0300_5e00, 0x2000)));
     native.work_ram += 4;
-    assert!(driver::workspace(&native).is_none());
+    assert_eq!(driver::workspace(&native), Some((0x0300_0100, 0x5c68)));
     native.work_ram = 0x0200_1000;
     native.ram_copies[0].source.byte_len = 0x5e00;
     assert_eq!(driver::workspace(&native), Some((0x0300_5e00, 0x2000)));
     native.ram_copies[0].source.byte_len += 4;
     assert!(driver::workspace(&native).is_none());
+}
+
+#[test]
+fn high_state_workspace_stays_below_state_and_above_copied_runtime() {
+    let bytes = fixture(true, true);
+    let mut native = discover(&bytes).remove(0).native;
+    native.work_ram = 0x0300_6e4c;
+    assert_eq!(driver::workspace(&native), Some((0x0300_0100, 0x6d4c)));
+    native.work_ram = 0x0300_7dfc;
+    assert_eq!(driver::workspace(&native), Some((0x0300_0100, 0x7cfc)));
+    native.work_ram = 0x0300_6e4c;
+    native.ram_copies[0].source.byte_len = 0x4e00;
+    assert_eq!(driver::workspace(&native), Some((0x0300_4e00, 0x204c)));
+    native.ram_copies[0].source.byte_len = 0x4e50;
+    assert!(driver::workspace(&native).is_none());
+    native.ram_copies[0].source.byte_len = 0x6e50;
+    assert!(driver::workspace(&native).is_none());
+}
+
+#[test]
+fn crt_waitcnt_immediate_order_preserves_validated_copies() {
+    let mut bytes = fixture(true, true);
+    let expected = discover(&bytes).remove(0).native.ram_copies;
+    put32(&mut bytes, 0xec, 0xe3a0_0901);
+    put32(&mut bytes, 0xf0, 0xe380_0014);
+    assert_eq!(discover(&bytes).remove(0).native.ram_copies, expected);
+    put32(&mut bytes, 0xf0, 0xe380_0010);
+    assert!(discover(&bytes).is_empty());
 }
 
 #[test]

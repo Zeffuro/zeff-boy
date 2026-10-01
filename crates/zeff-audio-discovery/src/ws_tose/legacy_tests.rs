@@ -76,6 +76,7 @@ fn inventory(bytes: &[u8]) -> Vec<super::WsToseSong> {
 fn fixed_rows_select_four_tracks_and_single_track() {
     let bytes = synthetic_legacy_rom();
     let songs = inventory(&bytes);
+    assert!(songs.iter().all(|song| !song.wsr_exportable));
     assert_eq!(
         songs
             .iter()

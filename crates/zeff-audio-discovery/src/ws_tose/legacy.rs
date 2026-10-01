@@ -11,6 +11,10 @@ use super::{
 #[path = "legacy_profiles.rs"]
 mod profiles;
 
+#[cfg(test)]
+#[path = "paragraph_tests.rs"]
+mod paragraph_tests;
+
 #[derive(Clone, Copy)]
 pub(super) struct FixedProfile {
     pub driver: Profile,
@@ -93,18 +97,26 @@ fn track_count(bytes: &[u8], profile: FixedProfile, index: u16) -> u16 {
     let at = profile.driver.offset(profile.table) + usize::from(index) * 6;
     let first = super::word(bytes, at).unwrap_or(u16::MAX);
     let mut channels = 0_u8;
-    if [0, 4 * 0x2a].contains(&first)
-        && (0..4).all(|i| {
-            let Some(channel) = super::word(bytes, at + i * 6 + 2)
-                .ok()
-                .filter(|&value| value < 4)
-            else {
-                return false;
-            };
-            channels |= 1 << channel;
-            super::word(bytes, at + i * 6).ok() == Some(first + i as u16 * 0x2a)
-        })
-        && channels == 15
+    let mut slots = 0_u8;
+    let unordered = profiles::is_paragraph(profile.driver.name);
+    if (0..4).all(|i| {
+        let Some(channel) = super::word(bytes, at + i * 6 + 2)
+            .ok()
+            .filter(|&value| value < 4)
+        else {
+            return false;
+        };
+        let Some(slot) = super::word(bytes, at + i * 6)
+            .ok()
+            .filter(|value| value.is_multiple_of(0x2a) && *value < 8 * 0x2a)
+        else {
+            return false;
+        };
+        channels |= 1 << channel;
+        slots |= 1 << (slot / 0x2a);
+        unordered || slot == first + i as u16 * 0x2a
+    }) && channels == 15
+        && [0x0f, 0xf0].contains(&slots)
     {
         4
     } else {
@@ -152,7 +164,7 @@ fn song(
     if tracks.iter().all(|track| track.note_count == 0) {
         return Err(ReadError::Invalid);
     }
-    let mut table_entry = super::span(bank, at, usize::from(count) * 6);
+    let mut table_entry = super::span(bank, at + driver.paragraph_bias(), usize::from(count) * 6);
     table_entry.canonical_cpu_address = u32::from(driver.segment) * 16 + at as u32;
     let mut warnings = vec![
         "Native driver selection; soundtrack membership and duration are not established.".into(),
@@ -169,7 +181,26 @@ fn song(
         tracks,
         mapped_spans: super::merged(reader.mapped),
         warnings,
+        wsr_exportable: wsr_exportable(bytes, profile, index, budget)?,
     })
+}
+
+fn wsr_exportable(
+    bytes: &[u8],
+    profile: FixedProfile,
+    index: u16,
+    budget: &mut Budget<'_>,
+) -> Result<bool, ReadError> {
+    if profile.driver.name != "ws-tose-fixed-v5"
+        || profile.hardware != WsToseHardware::Mono
+        || index != 32
+    {
+        return Ok(false);
+    }
+    for _ in bytes.chunks(256) {
+        budget.charge()?;
+    }
+    Ok(zeff_firmware::sha256_hex(bytes) == super::wsr::QUALIFIED_SOURCE_SHA)
 }
 
 fn checked_profile(
@@ -269,6 +300,7 @@ pub(super) fn prepare_rom(
     code.extend([
         0xb0, 8, 0xe6, 0xb0, 0xb0, 0x40, 0xe6, 0xb6, 0xe6, 0xb2, 0xfb,
     ]);
+    let idle_address = 0x3c00 + code.len() as u32 + 1;
     code.extend([0xf4, 0xeb, 0xfd]);
     let interrupt = 0x3c00 + code.len() as u16;
     code.extend([
@@ -315,6 +347,18 @@ pub(super) fn prepare_rom(
         ack_address: 0x3e01,
         wait_start,
         wait_end: wait_start + 7,
+        timing: if profiles::is_paragraph(driver.name) {
+            Some(super::WsToseTiming::FixedParagraph {
+                idle_address,
+                slots: driver.slots,
+                profile: driver.name,
+            })
+        } else {
+            (driver.name == "ws-tose-fixed-v14"
+                && zeff_firmware::sha256_hex(bytes)
+                    == "f638c48c81400a067697b6e21dfdb4551d2e68ec8a9c0e8d185bb15b024cc892")
+                .then_some(super::WsToseTiming::FixedV14 { idle_address })
+        },
     })
 }
 

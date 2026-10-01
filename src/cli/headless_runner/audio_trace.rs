@@ -47,9 +47,9 @@ pub(super) fn validate_system(system: &str, options: &HeadlessOptions) -> Result
         options.audio_trace_path.is_none()
             || matches!(
                 system,
-                "gb" | "nes" | "sms" | "gg" | "sg" | "coleco" | "pce" | "ws"
+                "gb" | "gba" | "nes" | "sms" | "gg" | "sg" | "coleco" | "pce" | "ws"
             ),
-        "--audio-trace currently supports GB/GBC, base NES, Master System, Game Gear, SG-1000, ColecoVision, PC Engine HuCards and WonderSwan cartridges"
+        "--audio-trace currently supports GB/GBC, GBA FIFO feeds, base NES, Master System, Game Gear, SG-1000, ColecoVision, PC Engine HuCards and WonderSwan cartridges"
     );
     if system == "gb" && options.audio_trace_path.is_some() {
         ensure!(
@@ -67,6 +67,21 @@ pub(super) fn validate_system(system: &str, options: &HeadlessOptions) -> Result
             "NES --audio-trace requires active sample generation and a full fresh interval; --no-apu, --expect-test-pass and --break-at are unsupported"
         );
     }
+    if system == "gba" && options.audio_trace_path.is_some() {
+        ensure!(
+            !options.no_apu
+                && !options.expect_test_pass
+                && options.break_at.is_none()
+                && !options.break_on_gba_bad_state
+                && options.input_events.is_empty()
+                && options.input_events_p2.is_empty()
+                && options.input_events_p3.is_empty()
+                && options.input_events_p4.is_empty()
+                && options.input_events_p5.is_empty()
+                && !options.gba_audio_mutes.iter().any(|&muted| muted),
+            "GBA FIFO capture requires active, unmuted audio and a complete fresh interval without input scripts"
+        );
+    }
     Ok(())
 }
 
@@ -77,6 +92,33 @@ pub(super) struct Capture {
 }
 
 impl Capture {
+    pub(super) fn finish_gba(
+        mut self,
+        trace: Option<zeff_emu_common::audio_trace::GbaAudioTrace>,
+        source: &[u8],
+        frames_run: u64,
+    ) -> Result<()> {
+        let trace = trace.ok_or_else(|| anyhow::anyhow!("GBA FIFO capture is missing"))?;
+        self.metadata["system"] = json!("gba");
+        self.metadata["frames_run"] = json!(frames_run);
+        self.metadata["firmware"] = Value::Null;
+        self.metadata["settings"] = json!({"system_start": "post_bios_core_reset"});
+        crate::audio_discovery::trace_capture::write_gba_new(
+            &self.path,
+            &trace,
+            source,
+            self.metadata,
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
+        println!(
+            "[headless] audio-trace={} events={} cycles={}",
+            self.path.display(),
+            trace.events.len(),
+            trace.end_cycle
+        );
+        Ok(())
+    }
+
     pub(super) fn prepare(
         requested_path: &Path,
         loaded_path: &Path,
@@ -309,6 +351,9 @@ mod gb_tests;
 mod nes_tests;
 
 #[cfg(test)]
+mod gba_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::audio_discovery::trace_capture::tests::{member, sega_fixture};
@@ -320,12 +365,10 @@ mod tests {
             audio_trace_path: Some("capture.zip".into()),
             ..Default::default()
         };
-        for system in ["gb", "nes", "sms", "gg", "sg", "coleco", "pce", "ws"] {
+        for system in ["gb", "gba", "nes", "sms", "gg", "sg", "coleco", "pce", "ws"] {
             assert!(validate_system(system, &options).is_ok());
         }
-        for system in ["gba", "unsupported"] {
-            assert!(validate_system(system, &options).is_err());
-        }
+        assert!(validate_system("unsupported", &options).is_err());
         options
             .input_events
             .push(crate::cli::types::HeadlessInputEvent {

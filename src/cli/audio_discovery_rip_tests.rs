@@ -10,6 +10,8 @@ fn native_format(format: RipFormat) -> SongFormat {
         RipFormat::Gbs => SongFormat::Gbs,
         RipFormat::Nsf => SongFormat::Nsf,
         RipFormat::Nsfe => SongFormat::Nsfe,
+        RipFormat::Hes => SongFormat::Hes,
+        RipFormat::Wsr => SongFormat::Wsr,
     }
 }
 
@@ -69,7 +71,7 @@ fn direct_and_selected_zip_rips_preserve_identity_and_do_not_overwrite_exports()
             );
             let rip = &manifest.scan.music_rips[0];
             assert_eq!(rip.format, format);
-            assert_eq!((rip.song_count, rip.first_song), (3, 2));
+            assert_eq!((rip.song_count, rip.first_song), (Some(3), Some(2)));
             assert_eq!(
                 manifest.source.as_ref().unwrap().selected_member.is_some(),
                 zipped
@@ -199,6 +201,8 @@ fn cartridge_extensions_do_not_import_embedded_rip_headers() -> anyhow::Result<(
         (RipFormat::Gbs, "gb"),
         (RipFormat::Nsf, "nes"),
         (RipFormat::Nsfe, "nes"),
+        (RipFormat::Hes, "pce"),
+        (RipFormat::Wsr, "ws"),
     ] {
         let source = directory.path().join(format!("looks-like-rip.{extension}"));
         std::fs::write(&source, fixture(format))?;

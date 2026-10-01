@@ -30,7 +30,13 @@ fn input(format: RipFormat) -> ScanInput {
 #[test]
 fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    for rip_format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
+    for rip_format in [
+        RipFormat::Gbs,
+        RipFormat::Nsf,
+        RipFormat::Nsfe,
+        RipFormat::Hes,
+        RipFormat::Wsr,
+    ] {
         let input = input(rip_format);
         let manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));
         assert_eq!(manifest.scan.song_count(), 1);
@@ -49,6 +55,8 @@ fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Res
             RipFormat::Gbs => SongFormat::Gbs,
             RipFormat::Nsf => SongFormat::Nsf,
             RipFormat::Nsfe => SongFormat::Nsfe,
+            RipFormat::Hes => SongFormat::Hes,
+            RipFormat::Wsr => SongFormat::Wsr,
         };
         for format in [native, SongFormat::MappedAssets] {
             let path = directory.path().join(format!(
@@ -87,14 +95,10 @@ fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Res
                     let len = asset["span"]["byte_len"].as_u64().unwrap() as usize;
                     assert_eq!(data.as_slice(), &input.bytes[start..start + len]);
                     assert_eq!(asset["sha256"], zeff_firmware::sha256_hex(&data));
-                    if rip_format == RipFormat::Nsfe {
-                        assert_eq!(start, reconstructed.len());
-                        reconstructed.extend_from_slice(&data);
-                    }
+                    assert_eq!(start, reconstructed.len());
+                    reconstructed.extend_from_slice(&data);
                 }
-                if rip_format == RipFormat::Nsfe {
-                    assert_eq!(reconstructed.as_slice(), input.bytes.as_ref());
-                }
+                assert_eq!(reconstructed.as_slice(), input.bytes.as_ref());
                 assert_eq!(
                     zip.by_name("metadata.bin").is_ok(),
                     rip_format == RipFormat::Nsf
@@ -114,7 +118,13 @@ fn native_and_asset_exports_preserve_complete_source_and_physical_spans() -> Res
 #[test]
 fn export_fails_closed_for_stale_inventory_identity_source_and_cancellation() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    for format in [RipFormat::Gbs, RipFormat::Nsf, RipFormat::Nsfe] {
+    for format in [
+        RipFormat::Gbs,
+        RipFormat::Nsf,
+        RipFormat::Nsfe,
+        RipFormat::Hes,
+        RipFormat::Wsr,
+    ] {
         let mut input = input(format);
         let mut manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));
         let path = directory.path().join(format.extension());
@@ -159,6 +169,53 @@ fn export_fails_closed_for_stale_inventory_identity_source_and_cancellation() ->
         );
         input.standalone_audio = Some(StandaloneFormat::Vgm);
         assert!(prepare(&input, &manifest).is_err());
+        assert!(!path.exists());
+    }
+    Ok(())
+}
+
+#[test]
+fn nsf2_export_rechecks_metadata_spans_and_feature_declarations() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let bytes = crate::audio_discovery::test_support::rips::nsf2_fixture();
+    let source = SourceIdentity {
+        kind: "rip-test",
+        sha256: zeff_firmware::sha256_hex(&bytes),
+        len: bytes.len(),
+        container: None,
+        selected_member: None,
+    };
+    let input = ScanInput::standalone(bytes, source, StandaloneFormat::Rip(RipFormat::Nsf), None);
+    let manifest = input.analyze(ScanLimits::default(), &AtomicBool::new(false));
+    assert_eq!(manifest.scan.music_rips[0].version, Some(2));
+    for mutation in 0..3 {
+        let mut changed = manifest.clone();
+        let RipDetails::Nsf2 {
+            metadata,
+            raw_flags,
+            ..
+        } = &mut changed.scan.music_rips[0].details
+        else {
+            panic!("expected NSF2 inventory");
+        };
+        match mutation {
+            0 => metadata[0].payload.byte_len = u32::MAX,
+            1 => metadata[0].header.offset = 0,
+            _ => *raw_flags ^= 0x10,
+        }
+        let path = directory.path().join(format!("changed-{mutation}.zip"));
+        let request = SongExportRequest::prepare(
+            &input,
+            &changed,
+            SongId::Rip(0),
+            SongFormat::MappedAssets,
+            RenderOptions::default(),
+        )?;
+        assert!(
+            request
+                .write_new(&path, &AtomicBool::new(false), &AtomicU32::new(0))
+                .is_err()
+        );
         assert!(!path.exists());
     }
     Ok(())

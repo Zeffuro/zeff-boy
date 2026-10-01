@@ -252,6 +252,76 @@ fn dma3_serial_eeprom_status_poll_clears_during_cpu_time() {
 }
 
 #[test]
+fn dma3_eeprom_read_keeps_raw_addresses_and_fifo_trace_provenance() {
+    let source = 0x0D00_0001;
+    let ignored_destination = 0x1400_00A1;
+    let fifo_destination = 0x0400_00A1;
+    let channel = |destination| crate::hardware::dma::DmaChannel {
+        source,
+        destination,
+        count: 1,
+        control: 0x8000,
+        active_source: source,
+        active_destination: destination,
+        active_count: 1,
+        data_latch: 0,
+    };
+
+    let mut ignored = Bus::new(eeprom_cartridge(), 48_000);
+    ignored.debug_trace_enabled = true;
+    ignored.debug_trace_reads = true;
+    ignored.debug_trace_writes = true;
+    ignored.dma.set_channel(3, channel(ignored_destination));
+    ignored.try_run_immediate_dma(3);
+    assert_eq!(ignored.apu.fifo_len(0), 0);
+    assert!(ignored.debug_trace_events.into_inner().iter().any(|event| {
+        matches!(
+            event,
+            DebugTraceEvent::Read {
+                addr,
+                width: TraceWriteWidth::Halfword,
+                ..
+            } if *addr == source
+        )
+    }));
+
+    let mut without_trace = Bus::new(eeprom_cartridge(), 48_000);
+    without_trace.dma.set_channel(3, channel(fifo_destination));
+    without_trace.try_run_immediate_dma(3);
+
+    let mut with_trace = Bus::new(eeprom_cartridge(), 48_000);
+    with_trace.begin_audio_trace(16, [0x44; 32]).unwrap();
+    with_trace.dma.set_channel(3, channel(fifo_destination));
+    with_trace.try_run_immediate_dma(3);
+    for fifo in 0..2 {
+        assert_eq!(
+            with_trace.apu.direct_sound_fifo_state(fifo),
+            without_trace.apu.direct_sound_fifo_state(fifo)
+        );
+    }
+    let trace = with_trace.finish_audio_trace().unwrap();
+    assert!(trace.events.iter().any(|event| {
+        matches!(
+            event.write,
+            zeff_emu_common::audio_trace::GbaAudioTraceWrite::FifoHalfword {
+                access,
+                origin: zeff_emu_common::audio_trace::GbaAudioTraceOrigin::Dma(dma),
+                ..
+            } if access.address == fifo_destination
+                && access.width == 2
+                && access.halfword_lane == 0
+                && dma.kind == zeff_emu_common::audio_trace::GbaAudioTraceDmaKind::Normal
+                && dma.requested_source == source
+                && dma.aligned_source == source - 1
+                && dma.width == 2
+                && !dma.source_latched
+                && matches!(dma.source_lanes[0], zeff_emu_common::audio_trace::GbaAudioTraceSource::Unknown { address } if address == source - 1)
+                && matches!(dma.source_lanes[1], zeff_emu_common::audio_trace::GbaAudioTraceSource::Unknown { address } if address == source)
+        )
+    }));
+}
+
+#[test]
 fn hblank_dma_repeats_with_count_reload_and_destination_reload() {
     let mut bus = Bus::new(cartridge(), 48_000);
     bus.write32(0x0200_0000, 0x1111_2222);

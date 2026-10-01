@@ -240,11 +240,17 @@ pub(super) fn draw(
             "Plays the CD track from index 1, without its pregap. Preview uses the output device's sample rate; WAV and FLAC exports preserve the original 44.1 kHz PCM."
         } else if matches!(selection, SongId::Vgm(_)) {
             "Plays the recorded PSG log once, stopping at its end or the preview limit. Seeking replays from the start. VGM timing and chip behavior can differ from the original capture."
+        } else if matches!(selection, SongId::Module(_)) {
+            if can_preview {
+                "Plays the MOD with approximate tracker tuning, effects and mixing. Seeking replays from the start; playback uses the preview limit rather than detecting song endings."
+            } else {
+                "Preview is unavailable for this module. You can inspect it or export the original file."
+            }
         } else if matches!(selection, SongId::Huge(_)) {
             "Verifies original and isolated playback before returning audio. Stops at the verified capture endpoint or chosen maximum; seeking reads verified audio. Seamless loops and individual channel controls are unavailable."
         } else if matches!(selection, SongId::GbNative(_)) {
             "Plays the original Game Boy music. Playback stops at the qualified song end or first complete loop; seeking replays from the start."
-        } else if matches!(selection, SongId::GbQuickThunder(_) | SongId::GbGhx(_) | SongId::GbSoundSystem(_) | SongId::GbCarillon(_)) {
+        } else if matches!(selection, SongId::GbQuickThunder(_) | SongId::GbGhx(_) | SongId::GbSoundSystem(_) | SongId::GbCarillon(_) | SongId::GbCosmigo(_) | SongId::GbMplay(_) | SongId::GbImed(_)) {
             "Runs the original Game Boy sound driver under its reported hardware profile until the preview limit. Seeking replays from the start; automatic loop detection and individual channel controls are unavailable."
         } else if matches!(selection, SongId::GbTose(_)) {
             "Runs the original Game Boy sound driver with DMG timing until the preview limit. Seeking replays from the start; automatic loop detection and individual channel controls are unavailable."
@@ -255,7 +261,7 @@ pub(super) fn draw(
         } else if matches!(selection, SongId::SegaPsg(_)) {
             "Runs the original PSG driver with NTSC timing. Songs play until the preview limit; seeking replays from the start. Automatic loop detection and individual channel controls are unavailable."
         } else if matches!(selection, SongId::WsTose(_)) {
-            "Runs the original WonderSwan driver under its reported hardware profile until the preview limit. Seeking replays from the start; automatic loop detection and individual channel controls are unavailable."
+            "Runs the original WonderSwan driver. Qualified tracks stop at a driver ending or loop; others use the preview limit. Seeking replays from the start; channels are mixed together."
         } else {
             "Runs the original sound driver in a separate GBA emulator. Songs play until the preview limit; automatic loop detection and individual channel controls are unavailable. Seeking replays the driver from the start."
         });
@@ -289,7 +295,9 @@ fn draw_position(
         } else {
             "--:--".to_owned()
         };
-        let suffix = if matches!(selection, SongId::Mp2k(_) | SongId::Cdda(_)) {
+        let suffix = if matches!(selection, SongId::Mp2k(_) | SongId::Cdda(_))
+            || snapshot.is_some_and(|snapshot| snapshot.source_duration)
+        {
             ""
         } else {
             " preview limit"

@@ -27,6 +27,8 @@ pub(crate) mod song;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tracker;
+#[cfg(test)]
+mod tracker_tests;
 mod vgm;
 mod ws;
 pub(crate) mod ws_trace;
@@ -152,7 +154,7 @@ fn check_cancel(cancel: &AtomicBool) -> Result<()> {
 }
 
 fn fade(sample: i16, frame: usize, total: usize, rate: u32, seconds: u8) -> i16 {
-    let fade_frames = usize::from(seconds) * rate as usize;
+    let fade_frames = (usize::from(seconds) * rate as usize).min(total);
     let remaining = total.saturating_sub(frame + 1);
     if fade_frames < 2 || remaining >= fade_frames {
         sample

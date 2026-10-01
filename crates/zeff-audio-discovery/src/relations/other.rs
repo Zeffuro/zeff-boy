@@ -11,6 +11,9 @@ pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
         | SongRef::GbGhx(_)
         | SongRef::GbSoundSystem(_)
         | SongRef::GbCarillon(_)
+        | SongRef::GbCosmigo(_)
+        | SongRef::GbMplay(_)
+        | SongRef::GbImed(_)
         | SongRef::WsTose(_)
         | SongRef::GbQuickThunder(_)
         | SongRef::NesTose(_)
@@ -314,21 +317,38 @@ pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
         SongRef::Vgm(log) => vgm(b, log)?,
         SongRef::Rip(rip) => {
             let root = b.root(Kind::Container, rip.format.label(), Some(rip.source.into()))?;
+            let is_wsr = matches!(&rip.details, crate::rips::RipDetails::Wsr { .. });
             b.child(
                 root,
                 Kind::Metadata,
-                "Container header",
+                if is_wsr {
+                    "WSR trailer"
+                } else {
+                    "Container header"
+                },
                 Some(rip.header.into()),
                 Relation::Contains,
             )?;
             let program = b.child(
                 root,
                 Kind::Program,
-                "Preserved program",
+                if is_wsr {
+                    "WSR ROM body"
+                } else {
+                    "Preserved program"
+                },
                 Some(rip.program.into()),
                 Relation::Contains,
             )?;
-            for (name, entry) in [("Init", rip.init), ("Play", rip.play)] {
+            let init_name = if matches!(&rip.details, crate::rips::RipDetails::Hes { .. }) {
+                "Request"
+            } else {
+                "Init"
+            };
+            for (name, entry) in [(init_name, rip.init), ("Play", rip.play)] {
+                let Some(entry) = entry else {
+                    continue;
+                };
                 b.charge()?;
                 if entry.initial_source_offset.is_some_and(|offset| {
                     offset < rip.program.offset
@@ -354,7 +374,17 @@ pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
                 if location.is_none() {
                     b.unresolved(
                         node,
-                        "No source byte is mapped at this address in the initial bank state",
+                        if matches!(
+                            &rip.details,
+                            crate::rips::RipDetails::Nsf2 { .. }
+                                | crate::rips::RipDetails::Nsfe { .. }
+                                | crate::rips::RipDetails::Hes { .. }
+                                | crate::rips::RipDetails::Wsr { .. }
+                        ) {
+                            "Initial source mapping has not been resolved"
+                        } else {
+                            "No source byte is mapped at this address in the initial bank state"
+                        },
                     )?;
                 }
             }
@@ -367,7 +397,36 @@ pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
                     Relation::Contains,
                 )?;
             }
-            b.unresolved(root, &format!("{} declared songs; native sequence, instrument and sample graphs are not mapped", rip.song_count))?;
+            if let crate::rips::RipDetails::Wsr {
+                reset_entry,
+                cartridge_footer,
+                ..
+            } = &rip.details
+            {
+                b.child(
+                    root,
+                    Kind::Metadata,
+                    "WSR reset bytes",
+                    Some((*reset_entry).into()),
+                    Relation::Contains,
+                )?;
+                b.child(
+                    root,
+                    Kind::Metadata,
+                    "WonderSwan cartridge footer",
+                    Some((*cartridge_footer).into()),
+                    Relation::Contains,
+                )?;
+            }
+            b.unresolved(
+                root,
+                &match rip.song_count {
+                    Some(song_count) => format!(
+                        "{song_count} declared songs; native sequence, instrument and sample graphs are not mapped"
+                    ),
+                    None => "No song count is declared; native sequence, instrument and sample graphs are not mapped".to_owned(),
+                },
+            )?;
         }
         #[cfg(not(target_arch = "wasm32"))]
         SongRef::Cdda(track) => {

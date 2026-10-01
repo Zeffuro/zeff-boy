@@ -7,14 +7,23 @@ use super::{
     Budget, MAX_CANDIDATES, MAX_ROM_BYTES, MAX_SCAN_WORK, MalformedInput, ScanLimits, ScanStop,
 };
 
+mod hes;
+mod nsf2;
 mod nsfe;
 mod scan;
 mod structure;
+mod wsr;
 pub use scan::scan;
+#[cfg(test)]
+mod hes_tests;
+#[cfg(test)]
+mod nsf2_tests;
 #[cfg(test)]
 mod nsfe_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wsr_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,6 +31,8 @@ pub enum RipFormat {
     Gbs,
     Nsf,
     Nsfe,
+    Hes,
+    Wsr,
 }
 
 impl RipFormat {
@@ -30,6 +41,8 @@ impl RipFormat {
             Self::Gbs => "gbs",
             Self::Nsf => "nsf",
             Self::Nsfe => "nsfe",
+            Self::Hes => "hes",
+            Self::Wsr => "wsr",
         }
     }
 
@@ -38,6 +51,8 @@ impl RipFormat {
             Self::Gbs => "Game Boy GBS",
             Self::Nsf => "NES NSF",
             Self::Nsfe => "NES NSFe",
+            Self::Hes => "PC Engine HES",
+            Self::Wsr => "WonderSwan WSR",
         }
     }
 
@@ -46,6 +61,8 @@ impl RipFormat {
             Self::Gbs => "standalone_gbs",
             Self::Nsf => "standalone_nsf",
             Self::Nsfe => "standalone_nsfe",
+            Self::Hes => "standalone_hes",
+            Self::Wsr => "standalone_wsr",
         }
     }
 
@@ -54,6 +71,8 @@ impl RipFormat {
             Self::Gbs => "gbs-container",
             Self::Nsf => "nsf-container",
             Self::Nsfe => "nsfe-container",
+            Self::Hes => "hes-container",
+            Self::Wsr => "wsr-container",
         }
     }
 }
@@ -65,16 +84,16 @@ pub struct MusicRip {
     pub title: String,
     pub author: String,
     pub copyright: String,
-    pub song_count: u8,
-    pub first_song: u8,
+    pub song_count: Option<u8>,
+    pub first_song: Option<u8>,
     pub source: FileSpan,
     pub sha256: String,
     pub header: FileSpan,
     pub program: FileSpan,
     pub opaque_metadata: Option<FileSpan>,
-    pub load_address: u16,
-    pub init: EntryPoint,
-    pub play: EntryPoint,
+    pub load_address: Option<u16>,
+    pub init: Option<EntryPoint>,
+    pub play: Option<EntryPoint>,
     pub details: RipDetails,
     pub warnings: Vec<RipWarning>,
 }
@@ -126,6 +145,37 @@ pub enum RipDetails {
         bank_payload: Option<FileSpan>,
         initial_banks: [u8; 8],
         banking_enabled: bool,
+    },
+    Nsf2 {
+        raw_flags: u8,
+        irq_enabled: bool,
+        init_non_returning: bool,
+        play_suppressed: bool,
+        metadata_required: bool,
+        declared_program_bytes: u32,
+        header_ntsc_period_us: u16,
+        header_pal_period_us: u16,
+        header_region_bits: u8,
+        header_expansion_bits: u8,
+        initial_banks: [u8; 8],
+        metadata: Vec<NsfeChunk>,
+        rate_ntsc_period_us: Option<u16>,
+        rate_pal_period_us: Option<u16>,
+        rate_dendy_period_us: Option<u16>,
+    },
+    Hes {
+        raw_start_song: u8,
+        initial_mprs: [u8; 8],
+        data_header: FileSpan,
+        physical_load_address: u32,
+        reserved: [u8; 4],
+    },
+    Wsr {
+        raw_byte_4: u8,
+        raw_start_song: u8,
+        opaque_trailer: [u8; 10],
+        reset_entry: FileSpan,
+        cartridge_footer: FileSpan,
     },
 }
 
@@ -252,10 +302,21 @@ pub(crate) fn inspect_with_budget(
     if format == RipFormat::Nsfe {
         return nsfe::inspect(bytes, budget);
     }
+    if format == RipFormat::Hes {
+        return hes::inspect(bytes, budget);
+    }
+    if format == RipFormat::Wsr {
+        return wsr::inspect(bytes, budget);
+    }
+    if format == RipFormat::Nsf && bytes.starts_with(b"NESM\x1a") && bytes.get(5) == Some(&2) {
+        return nsf2::inspect(bytes, budget);
+    }
     let (header_len, version_at, songs_at, text_at) = match format {
         RipFormat::Gbs if bytes.starts_with(b"GBS") => (0x70, 3, 4, 0x10),
         RipFormat::Nsf if bytes.starts_with(b"NESM\x1a") => (0x80, 5, 6, 0x0e),
         RipFormat::Nsfe => unreachable!("NSFe is parsed before fixed headers"),
+        RipFormat::Hes => unreachable!("HES is parsed before fixed headers"),
+        RipFormat::Wsr => unreachable!("WSR has a trailer"),
         _ => return Ok(RipInspection::Unsupported),
     };
     if bytes.len() <= version_at {
@@ -299,8 +360,8 @@ pub(crate) fn inspect_with_budget(
         title,
         author,
         copyright,
-        song_count,
-        first_song,
+        song_count: Some(song_count),
+        first_song: Some(first_song),
         source: FileSpan {
             offset: 0,
             byte_len: bytes.len() as u32,
@@ -312,9 +373,9 @@ pub(crate) fn inspect_with_budget(
         },
         program,
         opaque_metadata,
-        load_address,
-        init,
-        play,
+        load_address: Some(load_address),
+        init: Some(init),
+        play: Some(play),
         details,
         warnings,
     })))
