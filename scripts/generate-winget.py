@@ -81,6 +81,12 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
 
     schema_root = "https://aka.ms"
+    base_version = tuple(map(int, re.split(r"[-+]", version)[0].split(".")))
+    runtime_dependency = (
+        "  Dependencies:\n    PackageDependencies:\n"
+        "    - PackageIdentifier: Microsoft.VCRedist.2015+.x64\n"
+        if base_version < (0, 4, 2) else ""
+    )
     write(
         output / f"{PACKAGE_ID}.yaml",
         f"""# yaml-language-server: $schema={schema_root}/winget-manifest.version.{MANIFEST_VERSION}.schema.json
@@ -101,12 +107,20 @@ PackageVersion: {version}
 InstallerType: inno
 Scope: user
 UpgradeBehavior: install
+InstallationMetadata:
+  DefaultInstallLocation: '%LOCALAPPDATA%\\Programs\\Zeff Boy'
+  Files:
+  - RelativeFilePath: zeff-boy.exe
+    FileType: launch
+    DisplayName: Zeff Boy
 ProductCode: '{INNO_PRODUCT_CODE}'
 AppsAndFeaturesEntries:
-- ProductCode: '{INNO_PRODUCT_CODE}'
+- DisplayName: Zeff Boy
+  Publisher: Zeffuro
+  ProductCode: '{INNO_PRODUCT_CODE}'
 Installers:
 - Architecture: x64
-  InstallerUrl: {url}
+{runtime_dependency}  InstallerUrl: {url}
   InstallerSha256: {sha256.upper()}
 ManifestType: installer
 ManifestVersion: {MANIFEST_VERSION}

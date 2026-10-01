@@ -60,6 +60,9 @@ jobs:
         run: python scripts/build-optimized.py --artifact desktop --expected-target "${{ matrix.target }}" --output-dir "${{ runner.temp }}/zeff-pgo-desktop" --target-dir target
       - name: Promote verified optimized binary
         run: python -c "import shutil,sys;shutil.copy2(sys.argv[1],sys.argv[2])" "${{ runner.temp }}/zeff-pgo-desktop/artifacts/optimized-${{ matrix.artifact }}" "target/${{ matrix.target }}/release/${{ matrix.artifact }}"
+      - name: Verify static Windows runtime
+        if: runner.os == 'Windows'
+        run: python scripts/verify-windows-runtime.py "target/${{ matrix.target }}/release/${{ matrix.artifact }}"
       - name: Upload optimization evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -174,6 +177,9 @@ jobs:
         run: python scripts/build-optimized.py --artifact libretro --expected-target "${{ matrix.target }}" --output-dir "${{ runner.temp }}/zeff-pgo-libretro" --target-dir target
       - name: Promote verified optimized core
         run: python -c "import shutil,sys;shutil.copy2(sys.argv[1],sys.argv[2])" "${{ runner.temp }}/zeff-pgo-libretro/artifacts/optimized-${{ matrix.lib }}" "target/${{ matrix.target }}/release/${{ matrix.lib }}"
+      - name: Verify static Windows runtime
+        if: runner.os == 'Windows'
+        run: python scripts/verify-windows-runtime.py "target/${{ matrix.target }}/release/${{ matrix.lib }}"
       - name: Upload optimization evidence
         if: always()
         uses: actions/upload-artifact@v7

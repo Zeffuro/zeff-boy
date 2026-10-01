@@ -86,6 +86,21 @@ class BuildOptimizedTests(unittest.TestCase):
     def test_generate_profile_flag_has_explicit_stable_value(self):
         self.assertEqual(DRIVER.profile_generate_flags(), "-Cprofile-generate=.")
 
+    def test_windows_static_runtime_flags_survive_each_pgo_phase(self):
+        host = "x86_64-pc-windows-msvc"
+        static = "-Ctarget-feature=+crt-static"
+        phases = [(), (DRIVER.profile_generate_flags(),),
+                  ("-Cprofile-use=C:/profile data.profdata",
+                   "-Cllvm-args=-pgo-warn-missing-function")]
+        for phase in phases:
+            with self.subTest(phase=phase):
+                self.assertEqual(DRIVER.build_rustflags(host, *phase).split("\x1f"),
+                                 [static, *phase])
+                self.assertEqual(DRIVER.build_rustflags("aarch64-apple-darwin", *phase),
+                                 "\x1f".join(phase))
+                self.assertEqual(DRIVER.build_rustflags("x86_64-unknown-linux-gnu", *phase),
+                                 "\x1f".join(phase))
+
     def test_c_pgo_filter_preserves_argument_vector(self):
         args = ["-O2", "source file.c", "-fprofile-generate=.", "-DVALUE=a b",
                 "-fprofile-use", "profile data", "-o", "output file.o"]

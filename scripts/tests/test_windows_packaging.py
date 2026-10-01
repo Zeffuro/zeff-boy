@@ -14,6 +14,25 @@ GENERATOR_SPEC.loader.exec_module(GENERATOR)
 
 
 class WindowsPackagingTests(unittest.TestCase):
+    def test_static_runtime_release_has_no_redist_dependency(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_args = GENERATOR.parse_args
+            try:
+                GENERATOR.parse_args = lambda: type(
+                    "Args", (), {"version": "0.4.2", "output_root": Path(temp_dir), "sha256": "a" * 64}
+                )()
+                GENERATOR.main()
+            finally:
+                GENERATOR.parse_args = original_args
+            manifest = (
+                Path(temp_dir) / "manifests/z/Zeffuro/ZeffBoy/0.4.2/Zeffuro.ZeffBoy.installer.yaml"
+            ).read_text(encoding="utf-8")
+            self.assertNotIn("Dependencies:", manifest)
+            self.assertNotIn("Microsoft.VCRedist", manifest)
+            self.assertNotIn("DisplayVersion:", manifest)
+            self.assertIn("PackageVersion: 0.4.2", manifest)
+            self.assertIn("v0.4.2/zeff-boy-v0.4.2", manifest)
+
     def test_winget_manifest_targets_the_per_user_inno_installer(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_root = Path(temp_dir)
@@ -38,9 +57,35 @@ class WindowsPackagingTests(unittest.TestCase):
             self.assertIn("InstallerType: inno", manifest)
             self.assertIn("Scope: user", manifest)
             self.assertIn("UpgradeBehavior: install", manifest)
+            self.assertIn(
+                """- Architecture: x64
+  Dependencies:
+    PackageDependencies:
+    - PackageIdentifier: Microsoft.VCRedist.2015+.x64""",
+                manifest,
+            )
+            self.assertIn(
+                r"""InstallationMetadata:
+  DefaultInstallLocation: '%LOCALAPPDATA%\Programs\Zeff Boy'
+  Files:
+  - RelativeFilePath: zeff-boy.exe
+    FileType: launch
+    DisplayName: Zeff Boy""",
+                manifest,
+            )
             self.assertIn("ProductCode: '{C2417DE7-B9ED-4BE0-AB8B-74873C3B0C49}_is1'", manifest)
+            self.assertIn(
+                """AppsAndFeaturesEntries:
+- DisplayName: Zeff Boy
+  Publisher: Zeffuro
+  ProductCode: '{C2417DE7-B9ED-4BE0-AB8B-74873C3B0C49}_is1'""",
+                manifest,
+            )
             self.assertIn("zeff-boy-v0.4.0-x86_64-pc-windows-msvc-setup.exe", manifest)
             self.assertNotIn("NestedInstallerType", manifest)
+            self.assertNotIn("NestedInstallerFiles", manifest)
+            self.assertNotIn("Commands:", manifest)
+            self.assertNotIn("DisplayVersion:", manifest)
 
     def test_release_upload_includes_the_setup_executable(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")

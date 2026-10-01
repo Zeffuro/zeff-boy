@@ -42,6 +42,11 @@ def profile_generate_flags():
     return "-Cprofile-generate=."
 
 
+def build_rustflags(host, *profile_flags):
+    flags = ["-Ctarget-feature=+crt-static"] if host.endswith("-windows-msvc") else []
+    return "\x1f".join([*flags, *profile_flags])
+
+
 def strip_c_pgo_args(arguments):
     result = []
     for argument in arguments:
@@ -460,6 +465,7 @@ def main(argv=None):
         tc = tools(root)
         host = tc["host"]
         reject_native_config_rustflags(root, host, env)
+        env["CARGO_ENCODED_RUSTFLAGS"] = build_rustflags(host)
         macos_compilers = configure_macos_c_wrappers(out, host, env, root)
         target = (a.target_dir or root / "target").resolve()
         target.mkdir(parents=True, exist_ok=True)
@@ -486,6 +492,7 @@ def main(argv=None):
         before = fingerprint(root)
         report.update(
             toolchain=tc,
+            base_rustflags=build_rustflags(host).split("\x1f") if build_rustflags(host) else [],
             macos_compilers=macos_compilers,
             source_before=before,
             target_dir=str(target),
@@ -538,7 +545,7 @@ def main(argv=None):
         if a.artifact == "libretro":
             shutil.copy2(harness, held_harness)
         report["phase"] = "instrumented"
-        env["CARGO_ENCODED_RUSTFLAGS"] = profile_generate_flags()
+        env["CARGO_ENCODED_RUSTFLAGS"] = build_rustflags(host, profile_generate_flags())
         execute(build + select, root, env, logs / "instrumented.log")
         instrumented = held / ("instrumented-" + primary_name)
         shutil.copy2(primary, instrumented)
@@ -626,8 +633,8 @@ def main(argv=None):
                 "source, toolchain, or corpus changed before profile use"
             )
         report["phase"] = "optimized"
-        env["CARGO_ENCODED_RUSTFLAGS"] = (
-            f"-Cprofile-use={hashed}\x1f-Cllvm-args=-pgo-warn-missing-function"
+        env["CARGO_ENCODED_RUSTFLAGS"] = build_rustflags(
+            host, f"-Cprofile-use={hashed}", "-Cllvm-args=-pgo-warn-missing-function"
         )
         report["profile_diagnostics"] = {}
         execute(build + select, root, env, logs / "optimized.log", True,
@@ -643,7 +650,7 @@ def main(argv=None):
                 "source, toolchain, or corpus changed during profile use"
             )
         report["phase"] = "verification"
-        env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+        env["CARGO_ENCODED_RUSTFLAGS"] = build_rustflags(host)
         verified = []
         for i, f in enumerate(fixtures):
             frames = min(a.verify_frames, f["frames"])
