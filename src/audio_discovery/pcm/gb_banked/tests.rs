@@ -1,5 +1,12 @@
 use super::*;
 
+mod cached_registers;
+mod channel_timer;
+mod page_state;
+mod timed_events;
+mod timer_drivers;
+mod wave_state;
+
 fn fixture() -> PreparedGbBanked {
     use zeff_audio_discovery::gb_music::native;
     native::prepare_rom(

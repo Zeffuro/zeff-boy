@@ -353,6 +353,29 @@ fn check(report: &ScanReport, bytes: &[u8]) {
         .chain(report.gb_imed_songs.iter().map(|song| &song.mapped_spans))
         .chain(
             report
+                .gb_blackbox_songs
+                .iter()
+                .map(|song| &song.mapped_spans),
+        )
+        .chain(
+            report
+                .gb_resident_songs
+                .iter()
+                .map(|song| &song.mapped_spans),
+        )
+        .chain(report.gb_timer_songs.iter().map(|song| &song.mapped_spans))
+        .chain(report.gb_cache_songs.iter().map(|song| &song.mapped_spans))
+        .chain(report.gb_wave_songs.iter().map(|song| &song.mapped_spans))
+        .chain(
+            report
+                .gb_channel_songs
+                .iter()
+                .map(|song| &song.mapped_spans),
+        )
+        .chain(report.gb_page_songs.iter().map(|song| &song.mapped_spans))
+        .chain(report.gb_timed_songs.iter().map(|song| &song.mapped_spans))
+        .chain(
+            report
                 .gb_sound_system_songs
                 .iter()
                 .map(|song| &song.mapped_spans),

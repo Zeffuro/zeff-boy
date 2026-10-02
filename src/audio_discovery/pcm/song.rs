@@ -40,6 +40,15 @@ pub(crate) enum PcmSong {
     GbCosmigo(Box<zeff_audio_discovery::gb_cosmigo::GbCosmigoSong>),
     GbMplay(Box<zeff_audio_discovery::gb_mplay::GbMplaySong>),
     GbImed(Box<zeff_audio_discovery::gb_imed::GbImedSong>),
+    #[serde(rename = "gb_blackbox")]
+    GbBlackBox(Box<zeff_audio_discovery::gb_blackbox::GbBlackBoxSong>),
+    GbResident(Box<zeff_audio_discovery::gb_resident::GbResidentSong>),
+    GbTimer(Box<zeff_audio_discovery::gb_timer::GbTimerSong>),
+    GbCache(Box<zeff_audio_discovery::gb_cache::GbCacheSong>),
+    GbWave(Box<zeff_audio_discovery::gb_wave::GbWaveSong>),
+    GbChannel(Box<zeff_audio_discovery::gb_channel::GbChannelSong>),
+    GbPage(Box<zeff_audio_discovery::gb_page::GbPageSong>),
+    GbTimed(Box<zeff_audio_discovery::gb_timed::GbTimedSong>),
     WsTose(Box<zeff_audio_discovery::ws_tose::WsToseSong>),
     NesTose(Box<zeff_audio_discovery::nes_tose::NesToseSong>),
     GbBanked(Box<zeff_audio_discovery::gb_music::GbSong>),
@@ -73,6 +82,14 @@ impl PcmSong {
                 | SongRef::GbCosmigo(_)
                 | SongRef::GbMplay(_)
                 | SongRef::GbImed(_)
+                | SongRef::GbBlackBox(_)
+                | SongRef::GbResident(_)
+                | SongRef::GbTimer(_)
+                | SongRef::GbCache(_)
+                | SongRef::GbWave(_)
+                | SongRef::GbChannel(_)
+                | SongRef::GbPage(_)
+                | SongRef::GbTimed(_)
                 | SongRef::WsTose(_)
                 | SongRef::NesTose(_)
                 | SongRef::SegaPsg(_)
@@ -107,6 +124,14 @@ impl PcmSong {
                 | SongRef::GbCosmigo(_)
                 | SongRef::GbMplay(_)
                 | SongRef::GbImed(_)
+                | SongRef::GbBlackBox(_)
+                | SongRef::GbResident(_)
+                | SongRef::GbTimer(_)
+                | SongRef::GbCache(_)
+                | SongRef::GbWave(_)
+                | SongRef::GbChannel(_)
+                | SongRef::GbPage(_)
+                | SongRef::GbTimed(_)
                 | SongRef::WsTose(_)
                 | SongRef::NesTose(_)
                 | SongRef::SegaPsg(_)
@@ -150,6 +175,14 @@ impl PcmSong {
             SongRef::GbCosmigo(song) => Some(Self::GbCosmigo(Box::new(song.clone()))),
             SongRef::GbMplay(song) => Some(Self::GbMplay(Box::new(song.clone()))),
             SongRef::GbImed(song) => Some(Self::GbImed(Box::new(song.clone()))),
+            SongRef::GbBlackBox(song) => Some(Self::GbBlackBox(Box::new(song.clone()))),
+            SongRef::GbResident(song) => Some(Self::GbResident(Box::new(song.clone()))),
+            SongRef::GbTimer(song) => Some(Self::GbTimer(Box::new(song.clone()))),
+            SongRef::GbCache(song) => Some(Self::GbCache(Box::new(song.clone()))),
+            SongRef::GbWave(song) => Some(Self::GbWave(Box::new(song.clone()))),
+            SongRef::GbChannel(song) => Some(Self::GbChannel(Box::new(song.clone()))),
+            SongRef::GbPage(song) => Some(Self::GbPage(Box::new(song.clone()))),
+            SongRef::GbTimed(song) => Some(Self::GbTimed(Box::new(song.clone()))),
             SongRef::WsTose(song) => Some(Self::WsTose(Box::new(song.clone()))),
             SongRef::NesTose(song) => Some(Self::NesTose(Box::new(song.clone()))),
             SongRef::Gb(song) if zeff_audio_discovery::gb_music::native::supports_native(song) => {
@@ -256,6 +289,98 @@ impl PcmSong {
             Self::GbImed(song) => {
                 let prepared = zeff_audio_discovery::gb_imed::prepare_rom(bytes, song, cancel)?;
                 return Ok(Box::new(super::gb_banked::GbBankedSession::new_imed(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbBlackBox(song) => {
+                let prepared = zeff_audio_discovery::gb_blackbox::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_blackbox(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbResident(song) => {
+                let prepared = zeff_audio_discovery::gb_resident::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_resident(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbTimer(song) => {
+                anyhow::ensure!(
+                    u32::from(options.max_seconds)
+                        <= zeff_audio_discovery::gb_timer::MAX_PREVIEW_SECONDS,
+                    "Timer driver playback is qualified for at most 180 seconds"
+                );
+                let prepared = zeff_audio_discovery::gb_timer::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_timer(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbCache(song) => {
+                anyhow::ensure!(
+                    u32::from(options.max_seconds)
+                        <= zeff_audio_discovery::gb_cache::MAX_PREVIEW_SECONDS,
+                    "Cached-register driver playback is qualified for at most 180 seconds"
+                );
+                let prepared = zeff_audio_discovery::gb_cache::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_cache(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbWave(song) => {
+                anyhow::ensure!(
+                    u32::from(options.max_seconds)
+                        <= zeff_audio_discovery::gb_wave::MAX_PREVIEW_SECONDS,
+                    "Wave driver playback is qualified for at most 180 seconds"
+                );
+                let prepared = zeff_audio_discovery::gb_wave::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_wave(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbChannel(song) => {
+                anyhow::ensure!(
+                    u32::from(options.max_seconds)
+                        <= zeff_audio_discovery::gb_channel::MAX_PREVIEW_SECONDS,
+                    "Channel driver playback is qualified for at most 180 seconds"
+                );
+                let prepared = zeff_audio_discovery::gb_channel::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_channel(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbPage(song) => {
+                let prepared = zeff_audio_discovery::gb_page::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_page(
+                    prepared,
+                    options,
+                    song.warnings.clone(),
+                    cancel,
+                )?));
+            }
+            Self::GbTimed(song) => {
+                let prepared = zeff_audio_discovery::gb_timed::prepare_rom(bytes, song, cancel)?;
+                return Ok(Box::new(super::gb_banked::GbBankedSession::new_timed(
                     prepared,
                     options,
                     song.warnings.clone(),
@@ -484,6 +609,14 @@ impl PcmSong {
             Self::GbCosmigo(song) => &song.mapped_spans,
             Self::GbMplay(song) => &song.mapped_spans,
             Self::GbImed(song) => &song.mapped_spans,
+            Self::GbBlackBox(song) => &song.mapped_spans,
+            Self::GbResident(song) => &song.mapped_spans,
+            Self::GbTimer(song) => &song.mapped_spans,
+            Self::GbCache(song) => &song.mapped_spans,
+            Self::GbWave(song) => &song.mapped_spans,
+            Self::GbChannel(song) => &song.mapped_spans,
+            Self::GbPage(song) => &song.mapped_spans,
+            Self::GbTimed(song) => &song.mapped_spans,
             Self::WsTose(song) => &song.mapped_spans,
             Self::NesTose(song) => &song.mapped_spans,
             Self::SegaPsg(song) => &song.mapped_spans,

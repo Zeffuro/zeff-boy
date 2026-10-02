@@ -10,6 +10,8 @@ use zeff_gb_core::{
 use super::{PcmSession, check_cancel, fade, validate_options};
 use crate::audio_discovery::render::RenderOptions;
 
+mod constructors;
+
 const MAX_BOOT_FRAMES: usize = 120;
 const MAX_EMPTY_AUDIO_FRAMES: usize = 4;
 
@@ -25,6 +27,14 @@ enum CartridgeProfile {
     Cosmigo,
     Mplay,
     Imed,
+    BlackBox,
+    Resident,
+    Timer,
+    Cache,
+    Wave,
+    Channel,
+    Page,
+    Timed,
 }
 
 pub(crate) struct GbBankedSession {
@@ -43,205 +53,6 @@ pub(crate) struct GbBankedSession {
 }
 
 impl GbBankedSession {
-    pub(crate) fn new(
-        prepared: PreparedGbBanked,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        Self::new_inner(
-            prepared,
-            CartridgeProfile::Banked,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
-    pub(crate) fn new_musyx(
-        prepared: zeff_audio_discovery::gb_musyx::PreparedGbMusyx,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        Self::new_inner(
-            PreparedGbBanked {
-                bytes: prepared.bytes,
-                timing: GbBankedTiming::Cgb,
-                ready_address: prepared.ready_address,
-                ready_value: prepared.ready_value,
-                ack_address: prepared.ack_address,
-                ack_value: prepared.ack_value,
-                wait_start: prepared.wait_start,
-                wait_end: prepared.wait_end,
-            },
-            CartridgeProfile::Musyx,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
-    pub(crate) fn new_tose(
-        prepared: zeff_audio_discovery::gb_tose::PreparedGbTose,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        Self::new_inner(
-            PreparedGbBanked {
-                bytes: prepared.bytes,
-                timing: GbBankedTiming::Dmg,
-                ready_address: prepared.ready_address,
-                ready_value: prepared.ready_value,
-                ack_address: prepared.ack_address,
-                ack_value: prepared.ack_value,
-                wait_start: prepared.wait_start,
-                wait_end: prepared.wait_end,
-            },
-            CartridgeProfile::Tose,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
-    pub(crate) fn new_quickthunder(
-        prepared: zeff_audio_discovery::gb_quickthunder::PreparedGbQuickThunder,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        let timing = match prepared.hardware {
-            zeff_audio_discovery::gb_quickthunder::GbQuickThunderHardware::CgbDouble => {
-                GbBankedTiming::CgbDouble
-            }
-        };
-        Self::new_inner(
-            PreparedGbBanked {
-                bytes: prepared.bytes,
-                timing,
-                ready_address: prepared.ready_address,
-                ready_value: prepared.ready_value,
-                ack_address: prepared.ack_address,
-                ack_value: prepared.ack_value,
-                wait_start: prepared.wait_start,
-                wait_end: prepared.wait_end,
-            },
-            CartridgeProfile::QuickThunder,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
-    pub(crate) fn new_ghx(
-        prepared: zeff_audio_discovery::gb_ghx::PreparedGbGhx,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        let timing = match prepared.hardware {
-            zeff_audio_discovery::gb_ghx::GbGhxHardware::CgbDouble => GbBankedTiming::CgbDouble,
-        };
-        Self::new_inner(
-            PreparedGbBanked {
-                bytes: prepared.bytes,
-                timing,
-                ready_address: prepared.ready_address,
-                ready_value: prepared.ready_value,
-                ack_address: prepared.ack_address,
-                ack_value: prepared.ack_value,
-                wait_start: prepared.wait_start,
-                wait_end: prepared.wait_end,
-            },
-            CartridgeProfile::Ghx,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
-    pub(crate) fn new_carillon(
-        prepared: PreparedGbBanked,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        Self::new_inner(
-            prepared,
-            CartridgeProfile::Carillon,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
-    pub(crate) fn new_cosmigo(
-        prepared: PreparedGbBanked,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        Self::new_inner(
-            prepared,
-            CartridgeProfile::Cosmigo,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
-    pub(crate) fn new_mplay(
-        prepared: PreparedGbBanked,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        Self::new_inner(prepared, CartridgeProfile::Mplay, options, warnings, cancel)
-    }
-
-    pub(crate) fn new_imed(
-        prepared: PreparedGbBanked,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        Self::new_inner(prepared, CartridgeProfile::Imed, options, warnings, cancel)
-    }
-
-    pub(crate) fn new_sound_system(
-        prepared: zeff_audio_discovery::gb_sound_system::PreparedGbSoundSystem,
-        options: RenderOptions,
-        warnings: Vec<String>,
-        cancel: &AtomicBool,
-    ) -> Result<Self> {
-        let timing = match prepared.hardware {
-            zeff_audio_discovery::gb_sound_system::GbSoundSystemHardware::CgbNormal => {
-                GbBankedTiming::Cgb
-            }
-            zeff_audio_discovery::gb_sound_system::GbSoundSystemHardware::CgbDouble => {
-                GbBankedTiming::CgbDouble
-            }
-        };
-        Self::new_inner(
-            PreparedGbBanked {
-                bytes: prepared.bytes,
-                timing,
-                ready_address: prepared.ready_address,
-                ready_value: prepared.ready_value,
-                ack_address: prepared.ack_address,
-                ack_value: prepared.ack_value,
-                wait_start: prepared.wait_start,
-                wait_end: prepared.wait_end,
-            },
-            CartridgeProfile::SoundSystem,
-            options,
-            warnings,
-            cancel,
-        )
-    }
-
     fn new_inner(
         prepared: PreparedGbBanked,
         cartridge: CartridgeProfile,
@@ -253,6 +64,7 @@ impl GbBankedSession {
         validate_options(options)?;
         let window = match cartridge {
             CartridgeProfile::Banked => 0xa0..0x100,
+            CartridgeProfile::Cache => 0x3e00..0x4000,
             CartridgeProfile::Musyx
             | CartridgeProfile::Tose
             | CartridgeProfile::QuickThunder
@@ -261,7 +73,14 @@ impl GbBankedSession {
             | CartridgeProfile::Carillon
             | CartridgeProfile::Cosmigo
             | CartridgeProfile::Mplay
-            | CartridgeProfile::Imed => 0x150..0x200,
+            | CartridgeProfile::Imed
+            | CartridgeProfile::BlackBox
+            | CartridgeProfile::Resident
+            | CartridgeProfile::Timer
+            | CartridgeProfile::Timed
+            | CartridgeProfile::Page
+            | CartridgeProfile::Channel
+            | CartridgeProfile::Wave => 0x150..0x200,
         };
         ensure!(
             prepared.wait_start >= window.start
@@ -340,12 +159,36 @@ impl GbBankedSession {
             CartridgeProfile::Imed => {
                 zeff_audio_discovery::gb_imed::supports_cartridge(&prepared.bytes)
             }
+            CartridgeProfile::BlackBox => {
+                zeff_audio_discovery::gb_blackbox::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Resident => {
+                zeff_audio_discovery::gb_resident::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Timer => {
+                zeff_audio_discovery::gb_timer::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Cache => {
+                zeff_audio_discovery::gb_cache::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Wave => {
+                zeff_audio_discovery::gb_wave::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Channel => {
+                zeff_audio_discovery::gb_channel::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Page => {
+                zeff_audio_discovery::gb_page::supports_cartridge(&prepared.bytes)
+            }
+            CartridgeProfile::Timed => {
+                zeff_audio_discovery::gb_timed::supports_cartridge(&prepared.bytes)
+            }
             CartridgeProfile::QuickThunder => {
                 zeff_audio_discovery::gb_quickthunder::supports_prepared_cartridge(&prepared.bytes)
             }
         };
         let hardware_matches = match cartridge {
-            CartridgeProfile::Tose => {
+            CartridgeProfile::Tose | CartridgeProfile::Resident | CartridgeProfile::Timer => {
                 prepared.timing == GbBankedTiming::Dmg
                     && !matches!(prepared.bytes.get(0x143), Some(0x80 | 0xc0))
             }
@@ -353,10 +196,19 @@ impl GbBankedSession {
             | CartridgeProfile::Ghx
             | CartridgeProfile::Carillon
             | CartridgeProfile::Cosmigo
-            | CartridgeProfile::Mplay => {
+            | CartridgeProfile::Mplay
+            | CartridgeProfile::BlackBox => {
                 prepared.timing == GbBankedTiming::CgbDouble
                     && matches!(prepared.bytes.get(0x143), Some(0x80 | 0xc0))
             }
+            CartridgeProfile::Timed => prepared.timing == GbBankedTiming::Dmg,
+            CartridgeProfile::Page => matches!(
+                prepared.timing,
+                GbBankedTiming::Cgb | GbBankedTiming::CgbDouble
+            ),
+            CartridgeProfile::Channel => prepared.timing == GbBankedTiming::Dmg,
+            CartridgeProfile::Wave => prepared.timing == GbBankedTiming::CgbDouble,
+            CartridgeProfile::Cache => prepared.timing == GbBankedTiming::Dmg,
             CartridgeProfile::Imed => match prepared.timing {
                 GbBankedTiming::Dmg => !matches!(prepared.bytes.get(0x143), Some(0x80 | 0xc0)),
                 GbBankedTiming::Cgb | GbBankedTiming::CgbDouble => {
@@ -421,7 +273,12 @@ impl GbBankedSession {
         if !self.boot_pending {
             return Ok(());
         }
-        for _ in 0..MAX_BOOT_FRAMES {
+        let boot_frames = if matches!(self.cartridge, CartridgeProfile::Cache) {
+            610
+        } else {
+            MAX_BOOT_FRAMES
+        };
+        for _ in 0..boot_frames {
             self.step(cancel)?;
             self.floats.clear();
             if self.emulator.cpu_peek8(self.prepared.ready_address) == self.prepared.ready_value

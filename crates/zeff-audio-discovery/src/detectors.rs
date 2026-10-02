@@ -192,6 +192,46 @@ pub fn cartridge(system: System) -> &'static [DetectorDescriptor] {
                 semantic_version: 1,
                 scope: "Pinned hUGEDriver v6.1.3 on a DMG MBC0 cartridge with the generated isolation bootstrap, bounded supported song data and a recurrence budget; runtime validation is still required before audio output",
             },
+            DetectorDescriptor {
+                id: "gb-blackbox-driver",
+                semantic_version: 1,
+                scope: "Three exact Black Box Music Box sources and twelve isolated native contexts; game DIV scheduling and complete soundtracks remain unqualified",
+            },
+            DetectorDescriptor {
+                id: "gb-resident-driver",
+                semantic_version: 1,
+                scope: "Eight exact DMG MBC1 resident drivers and 32 isolated selections with VBlank or timer scheduling; complete soundtracks and original gameplay phase remain unqualified",
+            },
+            DetectorDescriptor {
+                id: "gb-timer-driver",
+                semantic_version: 1,
+                scope: "Three exact DMG MBC1/MBC2 drivers and 60 isolated selections with native decompression and dynamic timer scheduling, qualified up to 180 seconds; complete soundtracks and original gameplay phase remain unqualified",
+            },
+            DetectorDescriptor {
+                id: "gb-timed-driver",
+                semantic_version: 1,
+                scope: "Two exact GB-compatible MBC5 drivers with DMG frame scheduling; CGB playback, original gameplay phase and complete soundtracks remain unqualified",
+            },
+            DetectorDescriptor {
+                id: "gb-page-driver",
+                semantic_version: 1,
+                scope: "Three exact CGB MBC5 page-state drivers with native decompression and frame scheduling; original gameplay phase and complete soundtracks remain unqualified",
+            },
+            DetectorDescriptor {
+                id: "gb-channel-driver",
+                semantic_version: 1,
+                scope: "Game Boy channel driver; original gameplay phase and complete soundtracks remain unqualified",
+            },
+            DetectorDescriptor {
+                id: "gb-wave-driver",
+                semantic_version: 1,
+                scope: "Game Boy wave-state driver; original gameplay phase and complete soundtracks remain unqualified",
+            },
+            DetectorDescriptor {
+                id: "gb-cache-driver",
+                semantic_version: 1,
+                scope: "Game Boy cached-register driver; original gameplay phase and complete soundtracks remain unqualified",
+            },
         ],
         System::Nes => &[
             MODULES,

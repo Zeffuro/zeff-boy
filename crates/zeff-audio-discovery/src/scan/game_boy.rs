@@ -167,6 +167,105 @@ pub(super) fn inspect(
         result,
         report.huge_songs.len(),
         start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result =
+        super::super::gb_blackbox::scan(bytes, &mut report.gb_blackbox_songs, budget, capacity);
+    record(
+        report,
+        14,
+        result,
+        report.gb_blackbox_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result =
+        super::super::gb_resident::scan(bytes, &mut report.gb_resident_songs, budget, capacity);
+    record(
+        report,
+        15,
+        result,
+        report.gb_resident_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result = super::super::gb_timer::scan(bytes, &mut report.gb_timer_songs, budget, capacity);
+    record(
+        report,
+        16,
+        result,
+        report.gb_timer_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result = super::super::gb_timed::scan(bytes, &mut report.gb_timed_songs, budget, capacity);
+    record(
+        report,
+        17,
+        result,
+        report.gb_timed_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result = super::super::gb_page::scan(bytes, &mut report.gb_page_songs, budget, capacity);
+    record(
+        report,
+        18,
+        result,
+        report.gb_page_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result =
+        super::super::gb_channel::scan(bytes, &mut report.gb_channel_songs, budget, capacity);
+    record(
+        report,
+        19,
+        result,
+        report.gb_channel_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result = super::super::gb_wave::scan(bytes, &mut report.gb_wave_songs, budget, capacity);
+    record(
+        report,
+        20,
+        result,
+        report.gb_wave_songs.len(),
+        start - budget.remaining,
+    )?;
+    let start = budget.remaining;
+    let capacity = report.limits.max_candidates as usize
+        - report.song_count()
+        - report.driver_candidates.len();
+    let result = super::super::gb_cache::scan(bytes, &mut report.gb_cache_songs, budget, capacity);
+    record(
+        report,
+        21,
+        result,
+        report.gb_cache_songs.len(),
+        start - budget.remaining,
     )
 }
 

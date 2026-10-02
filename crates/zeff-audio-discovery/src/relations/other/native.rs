@@ -235,6 +235,166 @@ pub(super) fn project(b: &mut Builder<'_>, song: SongRef<'_>) -> Result<()> {
             )?;
             b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
         }
+        SongRef::GbBlackBox(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbResident(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbTimer(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbCache(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbWave(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbChannel(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbPage(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
+        SongRef::GbTimed(song) => {
+            b.graph.profile = Some(label(song.profile));
+            let root = b.root(
+                Kind::Song,
+                &song.title,
+                Some(file_location(song.table_entry)),
+            )?;
+            selector(
+                b,
+                root,
+                file_location(song.table_entry),
+                u32::from(song.index),
+            )?;
+            mapped(
+                b,
+                root,
+                song.mapped_spans.iter().copied().map(file_location),
+            )?;
+            b.unresolved(root, "Original-driver playback has no automatic song-end or complete soundtrack contract; mapped data is a partial inventory")?;
+        }
         SongRef::WsTose(song) => {
             b.graph.profile = Some(label(song.profile));
             let root = b.root(
