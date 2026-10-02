@@ -133,6 +133,30 @@ impl PcmExportRequest {
             if let PcmSong::GbImed(song) = &self.song {
                 zeff_audio_discovery::gb_imed::validate_song(&self.bytes, song, cancel)?;
             }
+            if let PcmSong::GbBlackBox(song) = &self.song {
+                zeff_audio_discovery::gb_blackbox::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbResident(song) = &self.song {
+                zeff_audio_discovery::gb_resident::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbTimer(song) = &self.song {
+                zeff_audio_discovery::gb_timer::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbCache(song) = &self.song {
+                zeff_audio_discovery::gb_cache::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbWave(song) = &self.song {
+                zeff_audio_discovery::gb_wave::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbChannel(song) = &self.song {
+                zeff_audio_discovery::gb_channel::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbPage(song) = &self.song {
+                zeff_audio_discovery::gb_page::validate_song(&self.bytes, song, cancel)?;
+            }
+            if let PcmSong::GbTimed(song) = &self.song {
+                zeff_audio_discovery::gb_timed::validate_song(&self.bytes, song, cancel)?;
+            }
             if let PcmSong::WsTose(song) = &self.song {
                 zeff_audio_discovery::ws_tose::validate_song(&self.bytes, song, cancel)?;
             }

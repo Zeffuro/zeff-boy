@@ -268,6 +268,14 @@ fn draw_details(ui: &mut egui::Ui, workspace: &mut AudioWorkspace, report: &Scan
         | SongRef::GbCosmigo(_)
         | SongRef::GbMplay(_)
         | SongRef::GbImed(_)
+        | SongRef::GbBlackBox(_)
+        | SongRef::GbResident(_)
+        | SongRef::GbTimer(_)
+        | SongRef::GbCache(_)
+        | SongRef::GbWave(_)
+        | SongRef::GbChannel(_)
+        | SongRef::GbPage(_)
+        | SongRef::GbTimed(_)
         | SongRef::WsTose(_)
         | SongRef::NesTose(_)
         | SongRef::GbMusyx(_) => native::draw(ui, song),
@@ -327,6 +335,22 @@ fn song_label(song: SongRef<'_>) -> String {
         SongRef::GbCosmigo(song) => format!("{} tracks", song.tracks.len()),
         SongRef::GbMplay(song) => format!("{} tracks", song.tracks.len()),
         SongRef::GbImed(song) => format!("{} tracks", song.tracks.len()),
+        SongRef::GbBlackBox(song) => format!(
+            "4 channels · order {} · bank {:02X}",
+            song.initial_order, song.bank
+        ),
+        SongRef::GbResident(song) => {
+            format!(
+                "4 channels · selector {} · bank {:02X}",
+                song.index, song.bank
+            )
+        }
+        SongRef::GbTimer(song) => format!("Selection {:03}", song.index),
+        SongRef::GbCache(song) => format!("Selection {:03}", song.index),
+        SongRef::GbWave(song) => format!("Selection {:03}", song.index),
+        SongRef::GbChannel(song) => format!("Selection {:03}", song.index),
+        SongRef::GbPage(song) => format!("Selection {:03}", song.index),
+        SongRef::GbTimed(song) => format!("Selection {:03}", song.index),
         SongRef::WsTose(song) => format!("{} tracks · native WS", song.tracks.len()),
         SongRef::NesTose(song) => format!("{} tracks · NTSC", song.tracks.len()),
         SongRef::SegaPsg(song) => format!("{} channels · NTSC", song.channels.len()),

@@ -31,6 +31,15 @@ pub enum SongId {
     GbCosmigo(usize),
     GbMplay(usize),
     GbImed(usize),
+    #[serde(rename = "gb_blackbox")]
+    GbBlackBox(usize),
+    GbResident(usize),
+    GbTimer(usize),
+    GbCache(usize),
+    GbWave(usize),
+    GbChannel(usize),
+    GbPage(usize),
+    GbTimed(usize),
     WsTose(usize),
     NesTose(usize),
     SegaPsg(usize),
@@ -71,6 +80,14 @@ pub enum SongRef<'a> {
     GbCosmigo(&'a super::gb_cosmigo::GbCosmigoSong),
     GbMplay(&'a super::gb_mplay::GbMplaySong),
     GbImed(&'a super::gb_imed::GbImedSong),
+    GbBlackBox(&'a super::gb_blackbox::GbBlackBoxSong),
+    GbResident(&'a super::gb_resident::GbResidentSong),
+    GbTimer(&'a super::gb_timer::GbTimerSong),
+    GbCache(&'a super::gb_cache::GbCacheSong),
+    GbWave(&'a super::gb_wave::GbWaveSong),
+    GbChannel(&'a super::gb_channel::GbChannelSong),
+    GbPage(&'a super::gb_page::GbPageSong),
+    GbTimed(&'a super::gb_timed::GbTimedSong),
     WsTose(&'a super::ws_tose::WsToseSong),
     NesTose(&'a super::nes_tose::NesToseSong),
     SegaPsg(&'a super::sega_psg::SegaPsgSong),
@@ -114,6 +131,14 @@ impl ScanReport {
             .chain((0..self.gb_cosmigo_songs.len()).map(SongId::GbCosmigo))
             .chain((0..self.gb_mplay_songs.len()).map(SongId::GbMplay))
             .chain((0..self.gb_imed_songs.len()).map(SongId::GbImed))
+            .chain((0..self.gb_blackbox_songs.len()).map(SongId::GbBlackBox))
+            .chain((0..self.gb_resident_songs.len()).map(SongId::GbResident))
+            .chain((0..self.gb_timer_songs.len()).map(SongId::GbTimer))
+            .chain((0..self.gb_cache_songs.len()).map(SongId::GbCache))
+            .chain((0..self.gb_wave_songs.len()).map(SongId::GbWave))
+            .chain((0..self.gb_channel_songs.len()).map(SongId::GbChannel))
+            .chain((0..self.gb_page_songs.len()).map(SongId::GbPage))
+            .chain((0..self.gb_timed_songs.len()).map(SongId::GbTimed))
             .chain((0..self.ws_tose_songs.len()).map(SongId::WsTose))
             .chain((0..self.nes_tose_songs.len()).map(SongId::NesTose))
             .chain((0..self.nes_songs.len()).map(SongId::Nes))
@@ -169,6 +194,14 @@ impl ScanReport {
             SongId::GbCosmigo(index) => self.gb_cosmigo_songs.get(index).map(SongRef::GbCosmigo),
             SongId::GbMplay(index) => self.gb_mplay_songs.get(index).map(SongRef::GbMplay),
             SongId::GbImed(index) => self.gb_imed_songs.get(index).map(SongRef::GbImed),
+            SongId::GbBlackBox(index) => self.gb_blackbox_songs.get(index).map(SongRef::GbBlackBox),
+            SongId::GbResident(index) => self.gb_resident_songs.get(index).map(SongRef::GbResident),
+            SongId::GbTimer(index) => self.gb_timer_songs.get(index).map(SongRef::GbTimer),
+            SongId::GbCache(index) => self.gb_cache_songs.get(index).map(SongRef::GbCache),
+            SongId::GbWave(index) => self.gb_wave_songs.get(index).map(SongRef::GbWave),
+            SongId::GbChannel(index) => self.gb_channel_songs.get(index).map(SongRef::GbChannel),
+            SongId::GbPage(index) => self.gb_page_songs.get(index).map(SongRef::GbPage),
+            SongId::GbTimed(index) => self.gb_timed_songs.get(index).map(SongRef::GbTimed),
             SongId::WsTose(index) => self.ws_tose_songs.get(index).map(SongRef::WsTose),
             SongId::NesTose(index) => self.nes_tose_songs.get(index).map(SongRef::NesTose),
             SongId::SegaPsg(index) => self.sega_psg_songs.get(index).map(SongRef::SegaPsg),
@@ -233,6 +266,14 @@ impl SongRef<'_> {
             Self::GbCosmigo(_) => "gb-cosmigo-driver",
             Self::GbMplay(_) => "gb-mplay-driver",
             Self::GbImed(_) => "gb-imed-driver",
+            Self::GbBlackBox(_) => "gb-blackbox-driver",
+            Self::GbResident(_) => "gb-resident-driver",
+            Self::GbTimer(_) => "gb-timer-driver",
+            Self::GbCache(_) => "gb-cache-driver",
+            Self::GbWave(_) => "gb-wave-driver",
+            Self::GbChannel(_) => "gb-channel-driver",
+            Self::GbPage(_) => "gb-page-driver",
+            Self::GbTimed(_) => "gb-timed-driver",
             Self::WsTose(_) => "ws-tose-driver",
             Self::NesTose(_) => "nes-tose-driver",
             Self::SegaPsg(_) => "sega-psg-driver",
@@ -309,6 +350,46 @@ impl SongRef<'_> {
                 byte_len: song.table_entry.byte_len,
                 canonical_cpu_address: None,
             }),
+            Self::GbBlackBox(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbResident(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbTimer(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbCache(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbWave(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbChannel(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbPage(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
+            Self::GbTimed(song) => Some(SourceSpan {
+                effective_offset: song.table_entry.effective_offset,
+                byte_len: song.table_entry.byte_len,
+                canonical_cpu_address: None,
+            }),
             Self::WsTose(song) => Some(SourceSpan {
                 effective_offset: song.table_entry.effective_offset,
                 byte_len: song.table_entry.byte_len,
@@ -376,6 +457,14 @@ impl SongRef<'_> {
             Self::GbCosmigo(song) => song.title.clone(),
             Self::GbMplay(song) => song.title.clone(),
             Self::GbImed(song) => song.title.clone(),
+            Self::GbBlackBox(song) => song.title.clone(),
+            Self::GbResident(song) => song.title.clone(),
+            Self::GbTimer(song) => song.title.clone(),
+            Self::GbCache(song) => song.title.clone(),
+            Self::GbWave(song) => song.title.clone(),
+            Self::GbChannel(song) => song.title.clone(),
+            Self::GbPage(song) => song.title.clone(),
+            Self::GbTimed(song) => song.title.clone(),
             Self::WsTose(song) => song.title.clone(),
             Self::NesTose(song) => song.title.clone(),
             Self::SegaPsg(song) => song.title.clone(),
@@ -445,6 +534,14 @@ impl SongRef<'_> {
             Self::GbCosmigo(_) => "Game Boy Cosmigo",
             Self::GbMplay(_) => "Game Boy MPlay",
             Self::GbImed(_) => "Game Boy IMEDGBoy",
+            Self::GbBlackBox(_) => "Game Boy Black Box Music Box",
+            Self::GbResident(_) => "Game Boy resident four-channel driver",
+            Self::GbTimer(_) => "Game Boy timer-paged driver",
+            Self::GbCache(_) => "Game Boy cached-register driver",
+            Self::GbWave(_) => "Game Boy wave-state driver",
+            Self::GbChannel(_) => "Game Boy channel driver",
+            Self::GbPage(_) => "Game Boy page-state driver",
+            Self::GbTimed(_) => "Game Boy timed event driver",
             Self::WsTose(_) => "WonderSwan TOSE-style",
             Self::NesTose(_) => "NES TOSE",
             Self::SegaPsg(_) => "Sega PSG driver",
@@ -536,6 +633,14 @@ impl SongRef<'_> {
             | Self::GbCosmigo(_)
             | Self::GbMplay(_)
             | Self::GbImed(_)
+            | Self::GbBlackBox(_)
+            | Self::GbResident(_)
+            | Self::GbTimer(_)
+            | Self::GbCache(_)
+            | Self::GbWave(_)
+            | Self::GbChannel(_)
+            | Self::GbPage(_)
+            | Self::GbTimed(_)
             | Self::NesTose(_) => {
                 matches!(format, SongFormat::MappedAssets | SongFormat::Audio(_))
             }

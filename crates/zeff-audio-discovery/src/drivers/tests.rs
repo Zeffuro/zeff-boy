@@ -42,12 +42,16 @@ fn discovery_preflight_reports_cancellation_invalid_limits_and_unsupported_syste
 }
 
 #[test]
-fn execution_fixture_does_not_count_as_a_retail_driver_fingerprint() {
+fn execution_fixture_keeps_native_qualification_when_static_interrupt_evidence_hits_its_cap() {
     let bytes = crate::gb_native::cgb_fixture_rom();
     let cancel = AtomicBool::new(false);
     let report = scan(System::Gb, &bytes, ScanLimits::default(), &cancel);
-    assert_eq!(report.status, ScanStatus::Complete);
+    assert_eq!(
+        report.status,
+        ScanStatus::Incomplete(ScanStop::InventoryLimit)
+    );
     assert!(report.findings.is_empty());
+    assert!(report.driver_candidates.is_empty());
     assert_eq!(report.media.sha256, Some(zeff_firmware::sha256_hex(&bytes)));
     assert_eq!(
         crate::scan(System::Gb, &bytes, ScanLimits::default(), &cancel)

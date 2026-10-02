@@ -7,6 +7,7 @@ use crate::{Budget, MediaIdentity, RomSpan, ScanLimits, ScanStatus, ScanStop};
 
 pub mod candidates;
 pub mod gb_fingerprints;
+pub mod gb_sound_writes;
 pub mod nes_sound_writes;
 pub mod nes_tose_structure;
 
@@ -107,7 +108,7 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
     };
     let mut report = DriverReport {
         schema: "zeff-audio-driver-evidence/1",
-        detector_version: if system == System::Nes { 10 } else { 2 },
+        detector_version: if system == System::Nes { 10 } else { 3 },
         media: MediaIdentity {
             system: system.code(),
             byte_len: bytes.len() as u64,
@@ -141,6 +142,10 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
                 "The inspected table extent comes from a known layout; it is not an inferred table terminator.",
                 "Known-ROM qualification lists only existing native playback selectors. It does not qualify GBS export or other selectors.",
                 "Evidence cannot be used as a playback selection. Native preparation independently authenticates the complete source and measured selector metadata.",
+                "GB sound-write code candidates decode reset/interrupt roots in immutable MBC0 ROM or under an explicit bank-zero lower-window mapping requirement. Switchable upper windows, other mappers and runtime bank selection remain unqualified.",
+                "GB CALL/RST links describe possible static paths through nested calls, jumps and branches, with possible returning-call fallthrough. They do not prove execution, routine boundaries, init/play ABI or a song table.",
+                "Only immediate LDH (n),A and LD (nn),A writes to FF10..FF26 and FF30..FF3F are indexed. Register-indirect writes, computed jumps, RAM code and HALT-bug paths remain outside this bounded pass.",
+                "Conflicting instruction boundaries, invalid opcodes or truncated mapped instructions suppress the GB code candidate; graph and evidence caps report an explicit incomplete stop.",
                 "This evidence pass has its own work and candidate limits. The bounded media-identity hash is a separate pass.",
             ]
         },
@@ -181,6 +186,14 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
         )
         .and_then(|()| {
             gb_fingerprints::scan(
+                bytes,
+                &mut report.driver_candidates,
+                &mut budget,
+                limits.max_candidates as usize - report.findings.len(),
+            )
+        })
+        .and_then(|()| {
+            gb_sound_writes::scan(
                 bytes,
                 &mut report.driver_candidates,
                 &mut budget,

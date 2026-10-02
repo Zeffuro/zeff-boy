@@ -60,6 +60,108 @@ fn additional_native_drivers_preserve_selection_assets_and_pcm() -> Result<()> {
         ),
         (
             System::Gb,
+            zeff_audio_discovery::gb_blackbox::synthetic_rom(),
+            SongId::GbBlackBox(0),
+            "gb_blackbox",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_blackbox::synthetic_rom(),
+            SongId::GbBlackBox(1),
+            "gb_blackbox",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_resident::synthetic_rom(),
+            SongId::GbResident(0),
+            "gb_resident",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_resident::synthetic_rom(),
+            SongId::GbResident(1),
+            "gb_resident",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_resident::synthetic_timer_rom(),
+            SongId::GbResident(0),
+            "gb_resident",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_resident::synthetic_timer_rom(),
+            SongId::GbResident(1),
+            "gb_resident",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_timer::synthetic_rom(),
+            SongId::GbTimer(0),
+            "gb_timer",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_timer::synthetic_rom(),
+            SongId::GbTimer(1),
+            "gb_timer",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_cache::synthetic_rom(),
+            SongId::GbCache(0),
+            "gb_cache",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_wave::synthetic_rom(),
+            SongId::GbWave(0),
+            "gb_wave",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_channel::synthetic_rom(),
+            SongId::GbChannel(0),
+            "gb_channel",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_page::synthetic_rom(),
+            SongId::GbPage(0),
+            "gb_page",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_page::synthetic_normal_rom(),
+            SongId::GbPage(0),
+            "gb_page",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_timed::synthetic_rom(),
+            SongId::GbTimed(0),
+            "gb_timed",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_timed::synthetic_rom(),
+            SongId::GbTimed(1),
+            "gb_timed",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_timer::synthetic_mbc2_rom(),
+            SongId::GbTimer(0),
+            "gb_timer",
+        ),
+        (
+            System::Gb,
+            zeff_audio_discovery::gb_timer::synthetic_mbc2_rom(),
+            SongId::GbTimer(1),
+            "gb_timer",
+        ),
+        (
+            System::Gb,
             zeff_audio_discovery::gb_ghx::synthetic_rom(),
             SongId::GbGhx(0),
             "gb_ghx",
@@ -171,7 +273,17 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
     }
     if matches!(
         id,
-        SongId::GbCosmigo(_) | SongId::GbMplay(_) | SongId::GbImed(_)
+        SongId::GbCosmigo(_)
+            | SongId::GbMplay(_)
+            | SongId::GbImed(_)
+            | SongId::GbBlackBox(_)
+            | SongId::GbResident(_)
+            | SongId::GbTimer(_)
+            | SongId::GbCache(_)
+            | SongId::GbWave(_)
+            | SongId::GbChannel(_)
+            | SongId::GbPage(_)
+            | SongId::GbTimed(_)
     ) {
         assert_eq!(
             selected.classification().role,
@@ -196,6 +308,25 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         .asset_relations(id, Default::default(), &cancel);
     assert_eq!(graph.status, GraphStatus::Complete);
     let directory = tempfile::tempdir()?;
+    if matches!(id, SongId::GbTimer(_)) {
+        let path = directory.path().join("duration-refused.wav");
+        let excessive = RenderOptions {
+            max_seconds: 181,
+            ..Default::default()
+        };
+        assert!(
+            SongExportRequest::prepare(
+                &input,
+                &manifest,
+                id,
+                SongFormat::Audio(AudioFormat::Wav),
+                excessive
+            )?
+            .write_new(&path, &cancel, &AtomicU32::new(0))
+            .is_err()
+        );
+        assert!(!path.exists());
+    }
     let options = RenderOptions {
         max_seconds: 1,
         sample_rate: 44_100,
@@ -212,6 +343,14 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         SongId::GbCosmigo(index) => &manifest.scan.gb_cosmigo_songs[index].mapped_spans,
         SongId::GbMplay(index) => &manifest.scan.gb_mplay_songs[index].mapped_spans,
         SongId::GbImed(index) => &manifest.scan.gb_imed_songs[index].mapped_spans,
+        SongId::GbBlackBox(index) => &manifest.scan.gb_blackbox_songs[index].mapped_spans,
+        SongId::GbResident(index) => &manifest.scan.gb_resident_songs[index].mapped_spans,
+        SongId::GbTimer(index) => &manifest.scan.gb_timer_songs[index].mapped_spans,
+        SongId::GbCache(index) => &manifest.scan.gb_cache_songs[index].mapped_spans,
+        SongId::GbWave(index) => &manifest.scan.gb_wave_songs[index].mapped_spans,
+        SongId::GbChannel(index) => &manifest.scan.gb_channel_songs[index].mapped_spans,
+        SongId::GbPage(index) => &manifest.scan.gb_page_songs[index].mapped_spans,
+        SongId::GbTimed(index) => &manifest.scan.gb_timed_songs[index].mapped_spans,
         SongId::GbGhx(index) => &manifest.scan.gb_ghx_songs[index].mapped_spans,
         SongId::GbSoundSystem(index) => &manifest.scan.gb_sound_system_songs[index].mapped_spans,
         SongId::WsTose(index) => &manifest.scan.ws_tose_songs[index].mapped_spans,
@@ -289,6 +428,14 @@ fn verify(system: System, bytes: Vec<u8>, id: SongId, engine: &str) -> Result<()
         SongId::GbCosmigo(index) => &mut manifest.scan.gb_cosmigo_songs[index].mapped_spans,
         SongId::GbMplay(index) => &mut manifest.scan.gb_mplay_songs[index].mapped_spans,
         SongId::GbImed(index) => &mut manifest.scan.gb_imed_songs[index].mapped_spans,
+        SongId::GbBlackBox(index) => &mut manifest.scan.gb_blackbox_songs[index].mapped_spans,
+        SongId::GbResident(index) => &mut manifest.scan.gb_resident_songs[index].mapped_spans,
+        SongId::GbTimer(index) => &mut manifest.scan.gb_timer_songs[index].mapped_spans,
+        SongId::GbCache(index) => &mut manifest.scan.gb_cache_songs[index].mapped_spans,
+        SongId::GbWave(index) => &mut manifest.scan.gb_wave_songs[index].mapped_spans,
+        SongId::GbChannel(index) => &mut manifest.scan.gb_channel_songs[index].mapped_spans,
+        SongId::GbPage(index) => &mut manifest.scan.gb_page_songs[index].mapped_spans,
+        SongId::GbTimed(index) => &mut manifest.scan.gb_timed_songs[index].mapped_spans,
         SongId::GbGhx(index) => &mut manifest.scan.gb_ghx_songs[index].mapped_spans,
         SongId::GbSoundSystem(index) => {
             &mut manifest.scan.gb_sound_system_songs[index].mapped_spans

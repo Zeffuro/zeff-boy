@@ -13,7 +13,7 @@ pub fn scan(system: System, bytes: &[u8], limits: ScanLimits, cancel: &AtomicBoo
     let cancelled = cancel.load(Ordering::Relaxed);
     let mut report = ScanReport::new(
         "multi-engine-structural",
-        35,
+        42,
         detectors::cartridge(system),
         &[
             "Structural candidates alone do not prove engine identity; recognized selectors and table references are separate evidence.",
