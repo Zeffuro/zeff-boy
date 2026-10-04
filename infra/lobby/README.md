@@ -19,7 +19,7 @@ Compose uses 0.5 CPU and 256 MiB. STUN defaults to Cloudflare and TURN stays off
 Private servers can opt into external TURN with `ZEFF_LOBBY_ALLOW_TURN=true`,
 `ZEFF_LOBBY_TURN_URLS` and `ZEFF_LOBBY_TURN_SECRET`. Public TURN is rejected.
 
-Compose pins `docker.io/zeffuro/zeff-boy-lobby:0.1.0`. Public mode needs a new image.
+Compose pins `docker.io/zeffuro/zeff-boy-lobby:0.1.1`.
 Set `LOBBY_VERSION` after publishing a new lobby release.
 Actions requires `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` with image push access.
 Release with `lobby-v<crate-version>`. Emulator tags use `v*`.

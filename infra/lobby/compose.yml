@@ -1,6 +1,6 @@
 services:
   lobby:
-    image: docker.io/zeffuro/zeff-boy-lobby:${LOBBY_VERSION:-0.1.0}
+    image: docker.io/zeffuro/zeff-boy-lobby:${LOBBY_VERSION:-0.1.1}
     environment:
       ZEFF_LOBBY_BIND: 0.0.0.0:8080
       ZEFF_LOBBY_PUBLIC: ${ZEFF_LOBBY_PUBLIC:-false}
