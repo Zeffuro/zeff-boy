@@ -93,7 +93,7 @@ pub(crate) fn run(
         }
         timer.forget();
     }
-    let mut app = construct::create(
+    let app = construct::create(
         backend,
         settings,
         #[cfg(not(target_arch = "wasm32"))]
@@ -102,6 +102,8 @@ pub(crate) fn run(
         #[cfg(target_arch = "wasm32")]
         wasm_event_loop_proxy,
     );
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut app = app;
     #[cfg(not(target_arch = "wasm32"))]
     if let Some((system, rom_path, source_path, rom_hash, supports_symbol_loading)) =
         app.initial_backend.as_ref().map(|b| {

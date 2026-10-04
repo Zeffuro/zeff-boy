@@ -6,7 +6,8 @@ emulator window or deployed web app.
 
 ## Deploy
 
-Paste `compose.yml` into Coolify's Docker Compose resource. Set:
+Create a public Git application in Coolify from `Zeffuro/zeff-boy`, branch
+`master`. Choose Docker Compose and `/infra/lobby/compose.yml`. Set:
 
 - Domain: `https://lobby.fakegaming.eu`; container port: `8080`.
 - `ZEFF_LOBBY_ACCESS_TOKEN`: random 32..256 bytes, shared privately with testers.

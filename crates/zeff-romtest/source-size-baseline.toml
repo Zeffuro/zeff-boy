@@ -47,10 +47,6 @@ version = 1
 "src/settings/tests.rs" = 913
 "src/ui/pce_snapshot.rs" = 1519
 
-[exceptions."src/app.rs"]
-max_lines = 962
-reason = "Application state and startup wiring remain together; cap the existing module until lifecycle extraction."
-
 [exceptions."src/app/remote.rs"]
 max_lines = 905
 reason = "Remote command dispatch and its protocol checks remain together; cap the existing dispatcher."
@@ -60,8 +56,8 @@ max_lines = 1002
 reason = "TAS editor application integration remains together; cap the existing event and session wiring."
 
 [exceptions."src/app/window_events.rs"]
-max_lines = 1169
-reason = "Window event dispatch shares application input state; cap the existing handler pending an event-family split."
+max_lines = 1176
+reason = "Window event dispatch gains netplay window routing and focus tracking; new netplay logic remains separate."
 
 [exceptions."src/audio/native.rs"]
 max_lines = 941
@@ -92,8 +88,8 @@ max_lines = 969
 reason = "Branch diff interaction tests share layout witnesses and fixtures; cap the existing regression suite."
 
 [exceptions."src/emu_backend/loader.rs"]
-max_lines = 950
-reason = "Backend loading dispatch shares source preparation and validation; cap the existing loader."
+max_lines = 951
+reason = "Backend loading dispatch gains source-media length in NES provenance; cap the existing loader."
 
 [exceptions."src/emu_backend/loader/tas/direct_pce_cd.rs"]
 max_lines = 925
@@ -134,7 +130,3 @@ reason = "Serialized settings types and defaults define one compatibility schema
 [exceptions."src/settings/tests.rs"]
 max_lines = 934
 reason = "Settings compatibility regressions share serialized fixtures; cap the existing test suite."
-
-[exceptions."crates/zeff-nes-core/src/hardware/cartridge/mod.rs"]
-max_lines = 927
-reason = "The existing mapper module gains only the audio_trace module declaration; new trace logic lives in a separate file."
