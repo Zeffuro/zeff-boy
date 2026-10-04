@@ -1,5 +1,6 @@
+use crate::platform::Instant;
 use std::collections::{BTreeMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -59,9 +60,19 @@ impl Session {
     }
 
     pub(crate) fn start(backend: &mut EmuBackend, start: Start) -> Result<Self> {
-        let mut admission = identity::identity_with_delay(backend, start.build, start.input_delay)?;
-        admission.build_info =
-            super::compatibility::describe(backend, start.allow_different_versions);
+        let admission = identity::identity_with_delay(backend, start.build, start.input_delay)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut admission = admission;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            admission.build_info =
+                super::compatibility::describe(backend, start.allow_different_versions);
+        }
+        #[cfg(target_arch = "wasm32")]
+        ensure!(
+            !start.allow_different_versions,
+            "browser netplay requires matching builds"
+        );
         let checkpoint = backend.encode_state_bytes()?;
         let nes = nes_mut(backend)?;
         let publication = nes.host_persistence_enabled();
@@ -172,10 +183,12 @@ impl Session {
         Ok(self.responses.pop_front())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn events(&self) -> &crossbeam_channel::Receiver<Event> {
         self.network.events()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn accept_event(
         &mut self,
         backend: &mut EmuBackend,
@@ -361,5 +374,5 @@ fn nes_mut(backend: &mut EmuBackend) -> Result<&mut crate::emu_backend::nes::Nes
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

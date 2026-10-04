@@ -7,7 +7,8 @@ param(
         "wasm_gba_browser_app_consumes_and_presents_detached_frame",
         "wasm_coleco_"
     )]
-    [string]$TestFilter = "browser_indexeddb_transaction_matches_detached_control"
+    [string]$TestFilter = "browser_indexeddb_transaction_matches_detached_control",
+    [switch]$Netplay
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,6 +56,7 @@ $archive = Join-Path $toolRoot "downloads\edgedriver-$edgeVersion-win64.zip"
 $runRoot = Join-Path $targetRoot "wasm-browser-runs\$([guid]::NewGuid().ToString('N'))"
 $profile = Join-Path $runRoot "edge-profile"
 $webdriverConfig = Join-Path $runRoot "webdriver.json"
+$netplayLobby = $null
 
 Push-Location $repoRoot
 try {
@@ -113,14 +115,24 @@ try {
     $previousWebDriverConfig = $env:WASM_BINDGEN_TEST_WEBDRIVER_JSON
     $previousTestTimeout = $env:WASM_BINDGEN_TEST_TIMEOUT
     $previousPath = $env:Path
+    $previousAddress = $env:WASM_BINDGEN_TEST_ADDRESS
     try {
         $env:CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER = $runner
         $env:RUST_LOG = "warn"
         $env:MSEDGEDRIVER = $driver
         $env:WASM_BINDGEN_TEST_WEBDRIVER_JSON = $webdriverConfig
-        $env:WASM_BINDGEN_TEST_TIMEOUT = "60"
+        $env:WASM_BINDGEN_TEST_TIMEOUT = if ($Netplay) { "180" } else { "60" }
         $env:Path = "$(Split-Path -Parent $driver);$previousPath"
-        & cargo test --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $TestFilter
+        if ($Netplay) {
+            & cargo build --locked -p zeff-netplay-connect --features native --example browser-test-lobby
+            if ($LASTEXITCODE -ne 0) { throw "Netplay lobby fixture build failed" }
+            $netplayLobby = Start-Process -FilePath (Join-Path $targetRoot "debug\examples\browser-test-lobby.exe") -ArgumentList @("127.0.0.1:47180", "http://127.0.0.1:47181") -WindowStyle Hidden -PassThru
+            $env:WASM_BINDGEN_TEST_ADDRESS = "127.0.0.1:47181"
+            & cargo test --locked -p zeff-netplay-connect --target wasm32-unknown-unknown --features browser-tests browser_
+            if ($LASTEXITCODE -ne 0) { throw "Browser transport tests failed" }
+            $TestFilter = "browser_netplay_"
+        }
+        & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $TestFilter
         if ($LASTEXITCODE -ne 0) {
             throw "browser WASM speculation test failed with exit code $LASTEXITCODE"
         }
@@ -131,6 +143,8 @@ try {
         $env:WASM_BINDGEN_TEST_WEBDRIVER_JSON = $previousWebDriverConfig
         $env:WASM_BINDGEN_TEST_TIMEOUT = $previousTestTimeout
         $env:Path = $previousPath
+        $env:WASM_BINDGEN_TEST_ADDRESS = $previousAddress
+        if ($netplayLobby -and -not $netplayLobby.HasExited) { Stop-Process -Id $netplayLobby.Id }
     }
 } finally {
     try {

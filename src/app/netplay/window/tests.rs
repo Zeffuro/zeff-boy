@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::netplay::tests::{app, capture, connect_pair, wait};
+use crate::debug::MenuAction;
 
 #[test]
 fn closing_native_controls_keeps_the_worker_session_and_pause_vote() {

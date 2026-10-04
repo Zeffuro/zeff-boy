@@ -411,6 +411,13 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     pub(in crate::app) fn check_pending_state_load(&mut self) {
         let data = self.pending_state_load.borrow_mut().take();
+        if self.netplay.fenced() {
+            if data.is_some() {
+                self.toast_manager
+                    .info("Disconnect netplay before changing the game");
+            }
+            return;
+        }
         if let Some((name, bytes)) = data {
             if !self.core_supports_save_states() {
                 self.toast_manager

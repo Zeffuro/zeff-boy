@@ -45,6 +45,7 @@ impl App {
 
     #[cfg(target_arch = "wasm32")]
     pub(super) fn stop_emu_thread_for_user_stop(&mut self) {
+        self.retire_netplay_frontend();
         self.retire_emu_thread(true);
         for (_, notify_stop) in &mut self.wasm_retired_threads {
             *notify_stop = true;
@@ -64,6 +65,8 @@ impl App {
                         }
                     }
                     EmuResponse::SramFlushFailed(error) => {
+                        self.netplay
+                            .preparation_failed(format!("Battery save failed: {error}"));
                         log::error!("Browser battery save failed: {error}");
                         self.toast_manager
                             .error(format!("Battery save failed: {error}"));

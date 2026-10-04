@@ -7,6 +7,7 @@ use super::{ActiveSystem, EmuBackend};
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod audio_discovery_tests;
 mod config;
+mod nes_policy;
 mod pce_cd;
 mod systems;
 #[cfg(not(target_arch = "wasm32"))]
@@ -236,19 +237,7 @@ fn load_backend_from_rom_source_inner(
         })?,
     };
 
-    let raw_source_media_sha256 = matches!(
-        system,
-        ActiveSystem::GameBoy
-            | ActiveSystem::GameBoyAdvance
-            | ActiveSystem::Nes
-            | ActiveSystem::Coleco
-            | ActiveSystem::MasterSystem
-            | ActiveSystem::GameGear
-            | ActiveSystem::Sg1000
-            | ActiveSystem::Pce
-            | ActiveSystem::WonderSwan
-    )
-    .then(|| zeff_firmware::sha256_bytes(&rom_data));
+    let raw_source_media_sha256 = systems::source_media_digest(system, &rom_data);
     let raw_source_media_len = rom_data.len();
     #[cfg(not(target_arch = "wasm32"))]
     let nes_tas_media = if system != ActiveSystem::Nes {
@@ -293,7 +282,13 @@ fn load_backend_from_rom_source_inner(
         None
     };
     #[cfg(target_arch = "wasm32")]
-    let nes_tas_media: Option<([u8; 32], [u8; 32], [u8; 32])> = None;
+    let nes_tas_media = nes_policy::browser_media(
+        system,
+        source_path,
+        rom_path,
+        raw_source_media_len,
+        raw_source_media_sha256,
+    );
     #[cfg(not(target_arch = "wasm32"))]
     let gba_tas_media = if system != ActiveSystem::GameBoyAdvance {
         None
@@ -460,6 +455,8 @@ fn load_backend_from_rom_source_inner(
             rom_path,
             super::nes::NesTasLoadSetup {
                 loaded_from_source_path,
+                #[cfg(target_arch = "wasm32")]
+                loaded_from_browser_bytes: nes_tas_media.is_some(),
                 any_mod_enabled: mod_load.any_enabled,
                 any_mod_applied: mod_load.any_applied,
                 initial_input: config.initial_input,

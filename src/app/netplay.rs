@@ -1,4 +1,5 @@
-use std::time::{Duration, Instant};
+use crate::platform::Instant;
+use std::time::Duration;
 
 use anyhow::{Result, ensure};
 use zeff_netplay::wire::Message;
@@ -11,6 +12,7 @@ use crate::netplay::{
 };
 use zeff_netplay::endpoint::ConnectionScope;
 
+#[cfg(not(target_arch = "wasm32"))]
 mod window;
 
 #[derive(PartialEq, Eq)]
@@ -40,6 +42,12 @@ enum Phase {
 #[derive(Default)]
 pub(super) struct Frontend {
     phase: Phase,
+    #[cfg(target_arch = "wasm32")]
+    preparing_started: bool,
+    #[cfg(target_arch = "wasm32")]
+    preparing_cancelled: bool,
+    #[cfg(target_arch = "wasm32")]
+    preparation_error: Option<String>,
     connector: Option<Connector>,
     in_flight: bool,
     confirmed: u64,
@@ -53,16 +61,24 @@ pub(super) struct Frontend {
     paused: bool,
     local_pause: bool,
     next_frame: Option<Instant>,
+    #[cfg(not(target_arch = "wasm32"))]
     proof: Option<proof::Observation>,
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     observed_frames: Vec<(Message, [u8; 2], Vec<f32>)>,
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(in crate::app) queued_audio: Option<(Vec<f32>, usize)>,
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     observed_connection: Option<(std::net::SocketAddr, std::net::SocketAddr, ConnectionScope)>,
 }
 
 impl Frontend {
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn preparation_failed(&mut self, error: String) {
+        if matches!(self.phase, Phase::Preparing(_)) {
+            self.preparation_error = Some(error);
+        }
+    }
+
     pub(super) fn fenced(&self) -> bool {
         self.phase != Phase::Idle
     }
@@ -98,6 +114,11 @@ impl Frontend {
 }
 
 impl App {
+    #[cfg(target_arch = "wasm32")]
+    pub(in crate::app) fn worker_gameplay_commands_allowed(&self) -> bool {
+        !self.netplay.fenced()
+    }
+
     pub(in crate::app) fn begin_netplay(&mut self, invitation: Option<String>) -> Result<()> {
         let request = if self.debug_windows.netplay.lobby {
             let mut options = self.debug_windows.netplay.lobby_options()?;
@@ -143,14 +164,17 @@ impl App {
             !self.recording.is_replay_active() && self.recording.audio_recorder.is_none(),
             "stop recording or replay before netplay"
         );
+        #[cfg(not(target_arch = "wasm32"))]
         ensure!(
             !self.tcp_link_active && !self.live_control.is_enabled(),
             "disconnect link and live control before netplay"
         );
+        #[cfg(not(target_arch = "wasm32"))]
         ensure!(
             self.pending_rom_preparation.is_none() && self.pending_archive_selection.is_none(),
             "finish loading media before netplay"
         );
+        #[cfg(not(target_arch = "wasm32"))]
         ensure!(
             !self.show_settings_window
                 && !self.show_mods_window
@@ -208,6 +232,38 @@ impl App {
     }
 
     pub(in crate::app) fn pump_netplay(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if matches!(self.netplay.phase, Phase::Preparing(_)) && self.frames_in_flight == 0 {
+            if !self.netplay.preparing_started {
+                let result =
+                    zeff_netplay::rollback::InputDelay::new(self.debug_windows.netplay.input_delay)
+                        .and_then(|delay| self.browser_netplay_candidate(delay));
+                if let Err(error) = result {
+                    self.finish_netplay(error.to_string(), true);
+                    return;
+                }
+                self.stop_emu_thread();
+                self.netplay.preparing_started = true;
+                return;
+            }
+            if !self.wasm_retired_threads.is_empty() {
+                return;
+            }
+            if let Some(error) = self.netplay.preparation_error.take() {
+                self.finish_netplay(error, true);
+                return;
+            }
+            if self.netplay.preparing_cancelled {
+                let result =
+                    zeff_netplay::rollback::InputDelay::new(self.debug_windows.netplay.input_delay)
+                        .and_then(|delay| self.prepare_netplay_game(delay));
+                self.finish_netplay(
+                    result.map_or_else(|error| error.to_string(), |_| "Connection canceled".into()),
+                    true,
+                );
+                return;
+            }
+        }
         if matches!(self.netplay.phase, Phase::Preparing(_)) && self.frames_in_flight == 0 {
             let Phase::Preparing(request) = std::mem::take(&mut self.netplay.phase) else {
                 unreachable!()
@@ -258,14 +314,20 @@ impl App {
             }
             let result = self.netplay.connector.as_mut().unwrap().poll();
             match result {
-                Ok(Some(mut start)) => {
+                Ok(Some(start)) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let mut start = start;
                     self.debug_windows.netplay.input_delay = start.input_delay.frames();
-                    start.verify_every_frame = self
-                        .netplay
-                        .proof
-                        .as_ref()
-                        .is_some_and(|proof| !proof.cadence)
-                        || cfg!(test);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        start.verify_every_frame = self
+                            .netplay
+                            .proof
+                            .as_ref()
+                            .is_some_and(|proof| !proof.cadence)
+                            || cfg!(test);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
                     if let Some(proof) = &mut self.netplay.proof {
                         proof.connection = start
                             .stream
@@ -274,7 +336,7 @@ impl App {
                             .zip(start.stream.peer_addr().ok())
                             .map(|(local, peer)| (local, peer, start.scope));
                     }
-                    #[cfg(test)]
+                    #[cfg(all(test, not(target_arch = "wasm32")))]
                     {
                         self.netplay.observed_connection = start
                             .stream
@@ -317,6 +379,12 @@ impl App {
             } else {
                 (0, 0)
             };
+            #[cfg(target_arch = "wasm32")]
+            let (buttons, dpad) = if self.wasm_tab_visible.get() {
+                (buttons, dpad)
+            } else {
+                (0, 0)
+            };
             let raw = host_to_nes(buttons, dpad);
             match self.send_emu_command_checked(EmuCommand::StepNetplay(raw)) {
                 Ok(()) => {
@@ -335,6 +403,12 @@ impl App {
     }
 
     pub(in crate::app) fn request_netplay_stop(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if matches!(self.netplay.phase, Phase::Preparing(_)) && self.netplay.preparing_started {
+            self.netplay.preparing_cancelled = true;
+            self.debug_windows.netplay.status = "Finishing the pending save…".into();
+            return;
+        }
         if matches!(self.netplay.phase, Phase::Preparing(_) | Phase::Connecting) {
             self.finish_netplay("Connection canceled".into(), true);
         } else if matches!(self.netplay.phase, Phase::Admission | Phase::Running) {
@@ -373,6 +447,7 @@ impl App {
 
     fn finish_netplay(&mut self, reason: String, restored: bool) {
         self.netplay = Frontend {
+            #[cfg(not(target_arch = "wasm32"))]
             proof: self.netplay.proof.take(),
             phase: if restored {
                 Phase::Idle
@@ -409,6 +484,14 @@ impl App {
             audio.discard_queued_samples();
         }
         self.timing.last_frame_time = crate::platform::Instant::now();
+        #[cfg(target_arch = "wasm32")]
+        if self.emu_thread.is_none() && self.rom_info.rom_path.is_some() {
+            self.stop_game();
+            self.debug_windows
+                .netplay
+                .status
+                .push_str(". Load the game again.");
+        }
     }
 
     pub(in crate::app) fn netplay_worker_lost(&mut self) {
@@ -437,31 +520,36 @@ fn host_to_nes(buttons: u8, dpad: u8) -> u8 {
     (buttons & 0x0f) | ((dpad & 4) << 2) | ((dpad & 8) << 2) | ((dpad & 2) << 5) | ((dpad & 1) << 7)
 }
 
+mod actions;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) mod proof;
 mod responses;
+#[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+mod visibility_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod chat_tests;
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod reference_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod rollback_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod pause_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod private_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod lan_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod compatibility_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod lobby_tests;

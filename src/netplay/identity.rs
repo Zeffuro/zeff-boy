@@ -53,7 +53,13 @@ pub(crate) fn identity_with_delay(
         .nes_tas_load_provenance()
         .context("netplay requires loader-owned media provenance")?;
     let load = provenance.load;
+    #[cfg(not(target_arch = "wasm32"))]
     ensure!(load.direct_nes_file, "netplay requires a direct .nes file");
+    #[cfg(target_arch = "wasm32")]
+    ensure!(
+        load.direct_browser_nes,
+        "load a direct .nes file for browser netplay"
+    );
     ensure!(
         !load.any_mod_enabled && !load.any_mod_applied,
         "netplay does not support ROM modifications"
@@ -184,5 +190,5 @@ fn persistent_hash(backend: &EmuBackend) -> Result<[u8; 32]> {
     Ok(Sha256::digest(nes.emu.dump_persistent_data().unwrap_or_default()).into())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

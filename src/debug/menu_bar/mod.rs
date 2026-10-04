@@ -59,15 +59,10 @@ pub(crate) enum MenuAction {
     OpenBarcodeBoyScan,
     TriggerBarcodeBoyScan(String),
     HostTcpLink,
-    #[cfg(not(target_arch = "wasm32"))]
     HostNesNetplay,
-    #[cfg(not(target_arch = "wasm32"))]
     JoinNesNetplay(String),
-    #[cfg(not(target_arch = "wasm32"))]
     StopNesNetplay,
-    #[cfg(not(target_arch = "wasm32"))]
     SetNesNetplayPaused(bool),
-    #[cfg(not(target_arch = "wasm32"))]
     SendNesNetplayChat(String),
     JoinTcpLink,
     DisconnectLink,

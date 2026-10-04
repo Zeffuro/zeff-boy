@@ -9,6 +9,8 @@ use winit::{
 
 #[cfg(not(target_arch = "wasm32"))]
 mod audio_explorer_window;
+#[cfg(target_arch = "wasm32")]
+mod browser_clipboard;
 #[cfg(not(target_arch = "wasm32"))]
 mod cheats_window;
 #[cfg(not(target_arch = "wasm32"))]

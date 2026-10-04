@@ -184,18 +184,16 @@ pub(crate) const MAX_NES_CARTRIDGE_BYTES: u64 = 64 * 1024 * 1024;
 const NES_GAMEPAD_CONFIGURATION: &[u8] = b"zeff-tas-device-config-v1\0nes-standard-controller\0";
 const NES_ZAPPER_CONFIGURATION: &[u8] =
     b"zeff-tas-device-config-v1\0nes-standard-or-zapper-controller\0";
-const NES_CARTRIDGE_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-cartridge\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0external-state=absent\0";
-const NES_BATTERY_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-cartridge\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0persistent-state=project-owned-sram\0rtc=absent\0sensors=absent\0";
 const NES_ZIP_MEMBER_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-zip-member\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0external-state=absent\0member=";
 const NES_ZIP_BATTERY_SYNC_CONFIGURATION: &[u8] = b"zeff-tas-sync-config-v1\0nes-zip-member\0mods=disabled\0initial-input=neutral\0sample-rate=core-default\0persistent-state=project-owned-sram\0rtc=absent\0sensors=absent\0member=";
 pub(crate) const MAX_NES_ZIP_BYTES: u64 = 128 * 1024 * 1024;
 
 pub(crate) fn direct_nes_tas_sync_config_sha256() -> TasDigest {
-    TasDigest::from_bytes(NES_CARTRIDGE_SYNC_CONFIGURATION)
+    TasDigest(super::nes_policy::direct(false))
 }
 
 pub(crate) fn direct_nes_battery_tas_sync_config_sha256() -> TasDigest {
-    TasDigest::from_bytes(NES_BATTERY_SYNC_CONFIGURATION)
+    TasDigest(super::nes_policy::direct(true))
 }
 
 pub(crate) fn zip_nes_tas_sync_config_sha256(member_name: &str) -> TasDigest {

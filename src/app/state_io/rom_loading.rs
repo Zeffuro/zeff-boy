@@ -18,6 +18,9 @@ use self::detection::detect_and_extract_archive_entry_path;
 use self::detection::detect_and_extract_archive_entry_path_with_zip_witness;
 use self::detection::{detect_and_extract_archive_entry, is_zip_path};
 
+#[cfg(target_arch = "wasm32")]
+#[path = "rom_loading/browser_netplay.rs"]
+mod browser_netplay;
 mod detection;
 mod lifecycle;
 #[cfg(not(target_arch = "wasm32"))]

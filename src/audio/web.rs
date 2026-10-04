@@ -73,8 +73,12 @@ pub(crate) struct AudioOutput {
 }
 
 impl AudioOutput {
-    pub(crate) fn new(_preferred_sample_rate: Option<u32>) -> anyhow::Result<Self> {
-        let ctx = AudioContext::new()
+    pub(crate) fn new(preferred_sample_rate: Option<u32>) -> anyhow::Result<Self> {
+        let options = web_sys::AudioContextOptions::new();
+        if let Some(rate) = preferred_sample_rate {
+            options.set_sample_rate(rate as f32);
+        }
+        let ctx = AudioContext::new_with_context_options(&options)
             .map_err(|e| anyhow::anyhow!("failed to create AudioContext: {e:?}"))?;
 
         let sample_rate = ctx.sample_rate() as u32;

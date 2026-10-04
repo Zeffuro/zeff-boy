@@ -422,7 +422,6 @@ impl App {
         }
 
         if key_code == bindings.get(ShortcutAction::SlowMotion) {
-            #[cfg(not(target_arch = "wasm32"))]
             if self.netplay.fenced() {
                 return true;
             }
@@ -825,7 +824,6 @@ impl App {
     }
 
     fn set_effective_frontend_hold(&mut self, action: HeldFrontendAction, held: bool) {
-        #[cfg(not(target_arch = "wasm32"))]
         let held = held && !self.netplay.fenced();
         match action {
             HeldFrontendAction::FastForward => self.speed.fast_forward_held = held,

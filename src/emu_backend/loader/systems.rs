@@ -7,6 +7,22 @@ use super::{BackendLoadConfig, EmuBackend};
 use crate::emu_backend::ActiveSystem;
 use crate::emu_core_trait::EmulatorCore;
 
+pub(super) fn source_media_digest(system: ActiveSystem, bytes: &[u8]) -> Option<[u8; 32]> {
+    matches!(
+        system,
+        ActiveSystem::GameBoy
+            | ActiveSystem::GameBoyAdvance
+            | ActiveSystem::Nes
+            | ActiveSystem::Coleco
+            | ActiveSystem::MasterSystem
+            | ActiveSystem::GameGear
+            | ActiveSystem::Sg1000
+            | ActiveSystem::Pce
+            | ActiveSystem::WonderSwan
+    )
+    .then(|| zeff_firmware::sha256_bytes(bytes))
+}
+
 pub(super) struct ModLoadOutcome {
     pub(super) original_crc32: u32,
     pub(super) any_enabled: bool,

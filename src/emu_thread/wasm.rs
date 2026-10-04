@@ -11,6 +11,7 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::{CoreCapabilities, EmuBackend};
 use zeff_emu_common::time::MachineTiming;
 
+mod netplay;
 mod storage;
 
 #[cfg(all(test, target_arch = "wasm32"))]
@@ -21,6 +22,8 @@ use storage::{BATTERY_FLUSH_INTERVAL, MAX_DEFERRED_STORAGE_COMMANDS, PendingStor
 
 struct Inner {
     backend: EmuBackend,
+    netplay: Option<crate::netplay::session::Session>,
+    netplay_restore_failed: bool,
     pending_frames: VecDeque<FrameResult>,
     pending_responses: VecDeque<EmuResponse>,
     uncapped_mode: bool,
@@ -68,6 +71,8 @@ impl EmuThread {
         Self {
             inner: RefCell::new(Inner {
                 backend,
+                netplay: None,
+                netplay_restore_failed: false,
                 pending_frames: VecDeque::new(),
                 pending_responses: VecDeque::new(),
                 uncapped_mode: false,
@@ -137,6 +142,10 @@ impl EmuThread {
     }
 
     pub(crate) fn send(&self, cmd: EmuCommand) {
+        let Some(cmd) = self.dispatch_netplay(cmd) else {
+            return;
+        };
+        self.poll_netplay();
         self.poll_storage();
         self.inner.borrow_mut().speculation.invalidate();
         if Self::is_storage_ordered_command(&cmd) && self.inner.borrow().pending_storage.is_some() {
@@ -200,6 +209,8 @@ impl EmuThread {
             speculation,
             save_recovery_on_shutdown,
             deferred_storage_commands: _,
+            netplay: _,
+            netplay_restore_failed: _,
         } = inner;
         let cmd = match (super::commands::CommonCommandContext {
             backend,
@@ -483,7 +494,12 @@ impl EmuThread {
                 speculation,
                 true,
             ),
-            EmuCommand::SetAudioRecordingCapture { .. }
+            EmuCommand::StartNetplay(_)
+            | EmuCommand::StepNetplay(_)
+            | EmuCommand::SetNetplayPaused(_)
+            | EmuCommand::SendNetplayChat(_)
+            | EmuCommand::StopNetplay
+            | EmuCommand::SetAudioRecordingCapture { .. }
             | EmuCommand::SetSampleRate(_)
             | EmuCommand::SetUncapped(_)
             | EmuCommand::ApplyMediaEvent(_)
@@ -503,16 +519,19 @@ impl EmuThread {
     }
 
     pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
+        self.poll_netplay();
         self.poll_storage();
         self.inner.borrow_mut().pending_frames.pop_front()
     }
 
     pub(crate) fn recv(&self) -> Option<EmuResponse> {
+        self.poll_netplay();
         self.poll_storage();
         self.inner.borrow_mut().pending_responses.pop_front()
     }
 
     pub(crate) fn try_recv_response(&self) -> Option<EmuResponse> {
+        self.poll_netplay();
         self.poll_storage();
         self.inner.borrow_mut().pending_responses.pop_front()
     }
@@ -522,6 +541,7 @@ impl EmuThread {
     }
 
     pub(crate) fn poll_persistence(&self) {
+        self.poll_netplay();
         self.poll_storage();
     }
 }

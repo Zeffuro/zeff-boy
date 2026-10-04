@@ -1,5 +1,5 @@
 use crate::{CHANNEL_PROTOCOL, CONTROL_LABEL, INPUT_LABEL};
-use js_sys::{Array, ArrayBuffer, Promise, Reflect, Uint8Array};
+use js_sys::{Array, ArrayBuffer, Reflect, Uint8Array};
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
@@ -10,6 +10,13 @@ use web_sys::{
 };
 use zeff_netplay_protocol::{IceServer, MAX_CANDIDATES, MAX_PEER_PACKET_BYTES, Signal};
 
+mod async_util;
+mod signaling;
+pub use signaling::{BrowserLobby, LobbyCancellation};
+
+#[cfg(all(test, feature = "browser-tests"))]
+mod tests;
+
 type Callback = Closure<dyn FnMut(JsValue)>;
 struct Inner {
     pc: RtcPeerConnection,
@@ -18,6 +25,7 @@ struct Inner {
     callbacks: RefCell<Vec<Callback>>,
     error: RefCell<Option<String>>,
     relay_allowed: bool,
+    cancellation: async_util::Cancellation,
 }
 
 #[wasm_bindgen]
@@ -36,7 +44,9 @@ impl BrowserPeer {
             serde_json::from_str(ice_json).map_err(|_| error("invalid ICE configuration"))?;
         if servers.len() > 8
             || servers.iter().any(|s| {
-                s.urls.len() > 4
+                s.username.as_ref().is_some_and(|v| v.len() > 128)
+                    || s.credential.as_ref().is_some_and(|v| v.len() > 256)
+                    || s.urls.len() > 4
                     || s.urls.is_empty()
                     || s.urls.iter().any(|u| {
                         u.len() > 256
@@ -72,6 +82,7 @@ impl BrowserPeer {
             callbacks: RefCell::new(Vec::new()),
             error: RefCell::new(None),
             relay_allowed,
+            cancellation: Default::default(),
         });
         let weak = Rc::downgrade(&inner);
         let callback = Closure::wrap(Box::new(move |value: JsValue| {
@@ -86,10 +97,30 @@ impl BrowserPeer {
             .pc
             .set_ondatachannel(Some(callback.as_ref().unchecked_ref()));
         inner.callbacks.borrow_mut().push(callback);
+        let weak = Rc::downgrade(&inner);
+        let state_changed = Closure::wrap(Box::new(move |_: JsValue| {
+            if let Some(inner) = weak.upgrade()
+                && matches!(
+                    inner.pc.connection_state(),
+                    web_sys::RtcPeerConnectionState::Failed
+                        | web_sys::RtcPeerConnectionState::Closed
+                )
+            {
+                fail(&inner, "peer connection failed");
+            }
+        }) as Box<dyn FnMut(JsValue)>);
+        inner
+            .pc
+            .set_onconnectionstatechange(Some(state_changed.as_ref().unchecked_ref()));
+        inner.callbacks.borrow_mut().push(state_changed);
         Ok(Self { inner })
     }
 
     pub fn create_channels(&self) -> Result<(), JsValue> {
+        self.ensure_alive()?;
+        if self.inner.channels.borrow().iter().any(Option::is_some) {
+            return Err(error("channels already created"));
+        }
         for (index, label) in [CONTROL_LABEL, INPUT_LABEL].iter().enumerate() {
             let options = RtcDataChannelInit::new();
             options.set_protocol(CHANNEL_PROTOCOL);
@@ -109,20 +140,25 @@ impl BrowserPeer {
     }
 
     pub async fn offer(&self) -> Result<String, JsValue> {
-        let offer = JsFuture::from(self.inner.pc.create_offer()).await?;
+        self.ensure_alive()?;
+        let offer = self.promise(self.inner.pc.create_offer()).await?;
         let desc: RtcSessionDescriptionInit = offer.unchecked_into();
-        JsFuture::from(self.inner.pc.set_local_description(&desc)).await?;
+        self.promise(self.inner.pc.set_local_description(&desc))
+            .await?;
         self.gathered().await
     }
 
     pub async fn answer(&self) -> Result<String, JsValue> {
-        let answer = JsFuture::from(self.inner.pc.create_answer()).await?;
+        self.ensure_alive()?;
+        let answer = self.promise(self.inner.pc.create_answer()).await?;
         let desc: RtcSessionDescriptionInit = answer.unchecked_into();
-        JsFuture::from(self.inner.pc.set_local_description(&desc)).await?;
+        self.promise(self.inner.pc.set_local_description(&desc))
+            .await?;
         self.gathered().await
     }
 
     pub async fn apply_remote(&self, sdp: &str, offer: bool) -> Result<(), JsValue> {
+        self.ensure_alive()?;
         validate_sdp(sdp, self.inner.relay_allowed)?;
         let desc = RtcSessionDescriptionInit::new(if offer {
             RtcSdpType::Offer
@@ -130,7 +166,8 @@ impl BrowserPeer {
             RtcSdpType::Answer
         });
         desc.set_sdp(sdp);
-        JsFuture::from(self.inner.pc.set_remote_description(&desc)).await?;
+        self.promise(self.inner.pc.set_remote_description(&desc))
+            .await?;
         Ok(())
     }
 
@@ -143,17 +180,12 @@ impl BrowserPeer {
     }
 
     pub fn send(&self, kind: u8, bytes: &[u8]) -> Result<(), JsValue> {
-        if kind > 1 || bytes.is_empty() || bytes.len() > MAX_PEER_PACKET_BYTES {
-            return Err(error("invalid peer packet"));
+        match kind {
+            0 => self.send_control(bytes),
+            1 if self.send_input(bytes)? => Ok(()),
+            1 => Err(error("input send buffer full")),
+            _ => Err(error("invalid peer packet")),
         }
-        let channels = self.inner.channels.borrow();
-        let channel = channels[kind as usize]
-            .as_ref()
-            .ok_or_else(|| error("channel unavailable"))?;
-        if !self.ready() || channel.buffered_amount() as usize + bytes.len() > 16 * 1024 {
-            return Err(error("peer closed or send buffer full"));
-        }
-        channel.send_with_u8_array(bytes)
     }
 
     pub fn take_packet(&self) -> Option<Vec<u8>> {
@@ -177,18 +209,19 @@ impl BrowserPeer {
     }
 
     async fn gathered(&self) -> Result<String, JsValue> {
-        let started = js_sys::Date::now();
+        let started = async_util::now()?;
+        self.ensure_alive()?;
         while self.inner.pc.ice_gathering_state() != RtcIceGatheringState::Complete {
-            if js_sys::Date::now() - started > 15000.0 {
+            self.ensure_alive()?;
+            if async_util::now()? - started > 15000.0 {
                 return Err(error("ICE gathering timed out"));
             }
-            JsFuture::from(Promise::new(&mut |resolve, _| {
-                let _ = web_sys::window()
-                    .unwrap()
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 10);
-            }))
-            .await?;
+            self.inner
+                .cancellation
+                .wait(async_util::Delay::new()?)
+                .await?;
         }
+        self.ensure_alive()?;
         let sdp = self
             .inner
             .pc
@@ -197,6 +230,100 @@ impl BrowserPeer {
             .sdp();
         validate_sdp(&sdp, self.inner.relay_allowed)?;
         Ok(sdp)
+    }
+}
+
+impl BrowserPeer {
+    pub fn try_receive(&self) -> Result<Option<(u8, Vec<u8>)>, JsValue> {
+        self.ensure_alive()?;
+        Ok(self.inner.packets.borrow_mut().pop_front())
+    }
+
+    pub fn send_control(&self, bytes: &[u8]) -> Result<(), JsValue> {
+        if self.send_packet(0, bytes)? {
+            Ok(())
+        } else {
+            Err(error("control send buffer full"))
+        }
+    }
+
+    pub fn send_input(&self, bytes: &[u8]) -> Result<bool, JsValue> {
+        self.send_packet(1, bytes)
+    }
+
+    fn send_packet(&self, kind: usize, bytes: &[u8]) -> Result<bool, JsValue> {
+        self.ensure_alive()?;
+        if bytes.is_empty() || bytes.len() > MAX_PEER_PACKET_BYTES {
+            return Err(error("invalid peer packet"));
+        }
+        let channel = self.inner.channels.borrow()[kind]
+            .clone()
+            .ok_or_else(|| error("channel unavailable"))?;
+        if !self.ready() {
+            return Err(error("peer not ready"));
+        }
+        if (channel.buffered_amount() as usize).saturating_add(bytes.len()) > 16 * 1024 {
+            return Ok(false);
+        }
+        match channel.send_with_u8_array(bytes) {
+            Ok(()) => Ok(true),
+            Err(value)
+                if Reflect::get(&value, &"name".into())
+                    .ok()
+                    .and_then(|name| name.as_string())
+                    .as_deref()
+                    == Some("OperationError")
+                    && self.ready() =>
+            {
+                Ok(false)
+            }
+            Err(_) => {
+                fail(&self.inner, "peer send failed");
+                Err(error("peer send failed"))
+            }
+        }
+    }
+
+    fn ensure_alive(&self) -> Result<(), JsValue> {
+        if self.inner.error.borrow().is_some() {
+            Err(error("peer closed"))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn promise(&self, promise: js_sys::Promise) -> Result<JsValue, JsValue> {
+        self.inner
+            .cancellation
+            .wait(async {
+                JsFuture::from(promise)
+                    .await
+                    .map_err(|_| error("RTC operation failed"))
+            })
+            .await
+    }
+
+    async fn candidate(&self, signal: &Signal) -> Result<(), JsValue> {
+        self.ensure_alive()?;
+        let Signal::Candidate {
+            candidate,
+            sdp_mid,
+            sdp_m_line_index,
+        } = signal
+        else {
+            return Err(error("expected ICE candidate"));
+        };
+        validate_candidate(candidate, self.inner.relay_allowed)?;
+        let init = web_sys::RtcIceCandidateInit::new(candidate);
+        init.set_sdp_mid(sdp_mid.as_deref());
+        init.set_sdp_m_line_index(*sdp_m_line_index);
+        self.promise(
+            self.inner
+                .pc
+                .add_ice_candidate_with_opt_rtc_ice_candidate_init(Some(&init)),
+        )
+        .await?;
+        Ok(())
     }
 }
 
@@ -225,6 +352,9 @@ fn attach(inner: &Rc<Inner>, channel: RtcDataChannel) -> Result<(), JsValue> {
         let Some(inner) = weak.upgrade() else {
             return;
         };
+        if inner.error.borrow().is_some() {
+            return;
+        }
         let event: MessageEvent = value.unchecked_into();
         let data = event.data();
         if !data.is_instance_of::<ArrayBuffer>() {
@@ -250,6 +380,7 @@ fn attach(inner: &Rc<Inner>, channel: RtcDataChannel) -> Result<(), JsValue> {
         }
     }) as Box<dyn FnMut(JsValue)>);
     channel.set_onclose(Some(closed.as_ref().unchecked_ref()));
+    channel.set_onerror(Some(closed.as_ref().unchecked_ref()));
     inner.channels.borrow_mut()[kind] = Some(channel);
     inner.callbacks.borrow_mut().extend([receive, closed]);
     Ok(())
@@ -258,9 +389,20 @@ fn attach(inner: &Rc<Inner>, channel: RtcDataChannel) -> Result<(), JsValue> {
 fn fail(inner: &Inner, reason: &str) {
     if inner.error.borrow().is_none() {
         *inner.error.borrow_mut() = Some(reason.into());
-        inner.pc.close();
     }
+    inner.cancellation.cancel();
+    inner.pc.set_ondatachannel(None);
+    inner.pc.set_onconnectionstatechange(None);
+    for channel in inner.channels.borrow().iter().flatten() {
+        channel.set_onmessage(None);
+        channel.set_onclose(None);
+        channel.set_onerror(None);
+        channel.close();
+    }
+    inner.packets.borrow_mut().clear();
+    inner.pc.close();
 }
+
 fn error(message: &str) -> JsValue {
     js_sys::Error::new(message).into()
 }
@@ -296,13 +438,23 @@ fn validate_sdp(sdp: &str, relay_allowed: bool) -> Result<(), JsValue> {
     Ok(())
 }
 
+fn validate_candidate(candidate: &str, relay_allowed: bool) -> Result<(), JsValue> {
+    if candidate.is_empty() {
+        return Ok(());
+    }
+    let fields: Vec<_> = candidate.split_ascii_whitespace().collect();
+    if fields.get(6) != Some(&"typ")
+        || !fields.get(7).is_some_and(|t| {
+            matches!(*t, "host" | "srflx" | "prflx") || relay_allowed && *t == "relay"
+        })
+    {
+        return Err(error("ICE candidate violates relay policy"));
+    }
+    Ok(())
+}
+
 impl Drop for BrowserPeer {
     fn drop(&mut self) {
-        self.inner.pc.set_ondatachannel(None);
-        for channel in self.inner.channels.borrow().iter().flatten() {
-            channel.set_onmessage(None);
-            channel.set_onclose(None);
-        }
-        self.inner.pc.close();
+        self.close();
     }
 }

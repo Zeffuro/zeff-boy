@@ -6,3 +6,12 @@ no_default_features = true
 [tools]
 wasm_bindgen = "0.2.126"
 wasm_opt = "version_129"
+
+[[hooks]]
+stage = "post_build"
+command = "python3"
+command_arguments = ["scripts/web_bundle.py"]
+
+[hooks.windows]
+command = "python"
+command_arguments = ["scripts/web_bundle.py"]

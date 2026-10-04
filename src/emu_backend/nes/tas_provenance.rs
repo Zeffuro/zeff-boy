@@ -23,6 +23,8 @@ pub(crate) struct NesTasLoadProvenance {
     pub(crate) initial_persistent_sha256: [u8; 32],
     pub(crate) initial_state_sha256: Option<[u8; 32]>,
     pub(crate) direct_nes_file: bool,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) direct_browser_nes: bool,
     pub(crate) sync_config_sha256: [u8; 32],
     pub(crate) any_mod_enabled: bool,
     pub(crate) any_mod_applied: bool,
@@ -37,6 +39,8 @@ pub(crate) struct NesTasLoadProvenanceSeed {
     raw_source_media_sha256: [u8; 32],
     raw_source_media_len: u64,
     direct_nes_file: bool,
+    #[cfg(target_arch = "wasm32")]
+    direct_browser_nes: bool,
     sync_config_sha256: [u8; 32],
     battery_sync_config_sha256: [u8; 32],
     any_mod_enabled: bool,
@@ -49,6 +53,8 @@ pub(crate) struct NesTasLoadProvenanceSeed {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NesTasLoadSetup {
     pub(crate) loaded_from_source_path: bool,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) loaded_from_browser_bytes: bool,
     pub(crate) any_mod_enabled: bool,
     pub(crate) any_mod_applied: bool,
     pub(crate) initial_input: Option<(u8, u8)>,
@@ -84,6 +90,9 @@ impl NesTasLoadProvenanceSeed {
             raw_source_media_len,
             direct_nes_file: setup.loaded_from_source_path
                 && direct_nes_file(source_path, rom_path),
+            #[cfg(target_arch = "wasm32")]
+            direct_browser_nes: setup.loaded_from_browser_bytes
+                && direct_nes_file(source_path, rom_path),
             sync_config_sha256: setup.tas_sync_config_sha256.unwrap_or([0; 32]),
             battery_sync_config_sha256: setup.tas_battery_sync_config_sha256.unwrap_or([0; 32]),
             any_mod_enabled: setup.any_mod_enabled,
@@ -105,6 +114,8 @@ impl NesTasLoadProvenanceSeed {
             initial_persistent_sha256: [0; 32],
             initial_state_sha256: None,
             direct_nes_file: self.direct_nes_file,
+            #[cfg(target_arch = "wasm32")]
+            direct_browser_nes: self.direct_browser_nes,
             sync_config_sha256: if battery_backed {
                 self.battery_sync_config_sha256
             } else {

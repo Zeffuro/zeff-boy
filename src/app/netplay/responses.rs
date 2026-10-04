@@ -28,12 +28,14 @@ impl App {
                 if self.netplay.phase == Phase::Stopping => {}
             Response::Ready if self.netplay.phase == Phase::Stopping => {
                 self.netplay.admitted = true;
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
                     proof.admitted = true;
                 }
             }
             Response::Ready if self.netplay.phase == Phase::Admission => {
                 self.netplay.admitted = true;
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
                     proof.admitted = true;
                 }
@@ -55,16 +57,17 @@ impl App {
                 && self.netplay.confirmed.checked_add(1) == Some(frame) =>
             {
                 self.netplay.confirmed = frame;
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
                     proof.frames += 1;
                     proof.record_pcm(&audio);
                     proof.last = Some((checkpoint.clone(), ports, audio.clone()));
                 }
-                #[cfg(test)]
+                #[cfg(all(test, not(target_arch = "wasm32")))]
                 self.netplay
                     .observed_frames
                     .push((checkpoint, ports, audio.clone()));
-                #[cfg(not(test))]
+                #[cfg(any(not(test), target_arch = "wasm32"))]
                 let _ = (checkpoint, ports);
                 if self.netplay.running() {
                     self.queue_netplay_audio(&audio);
@@ -75,6 +78,7 @@ impl App {
                     && self.netplay.confirmed.checked_add(1) == Some(frame) =>
             {
                 self.netplay.confirmed = frame;
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
                     proof.frames += 1;
                     proof.record_pcm(&audio);
@@ -108,6 +112,7 @@ impl App {
                     "Frame {frame} · prediction {prediction_depth}/8 · replay {rollback_frames} · payload {:.1} MiB",
                     retained_bytes as f64 / (1024.0 * 1024.0)
                 );
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
                     proof.depth_max = proof.depth_max.max(prediction_depth);
                     proof.rollback_frames += rollback_frames;
@@ -133,6 +138,7 @@ impl App {
                     && frame <= self.netplay.presented.saturating_add(1) =>
             {
                 self.netplay.paused = local || peer;
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
                     proof.pause_rounds += 1;
                     proof.last_pause = Some((frame, local, peer));

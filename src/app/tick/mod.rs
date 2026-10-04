@@ -103,7 +103,7 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         let mut gameplay_commands_allowed = self.worker_gameplay_commands_allowed();
         #[cfg(target_arch = "wasm32")]
-        let mut gameplay_commands_allowed = true;
+        let mut gameplay_commands_allowed = self.worker_gameplay_commands_allowed();
         if gameplay_commands_allowed {
             self.sync_speed_setting();
         }
@@ -208,7 +208,7 @@ impl App {
         let host_tilt = self.update_host_tilt_and_stick_mode();
 
         self.drain_emu_responses();
-        #[cfg(not(target_arch = "wasm32"))]
+
         self.pump_netplay();
         #[cfg(not(target_arch = "wasm32"))]
         self.pump_pending_tas_repair_activation();

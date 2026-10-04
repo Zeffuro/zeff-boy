@@ -12,6 +12,7 @@ use super::connect::HostOptions;
 
 mod chat;
 mod connections;
+#[cfg(not(target_arch = "wasm32"))]
 mod host_addresses;
 
 pub(crate) struct Ui {
@@ -42,6 +43,7 @@ pub(crate) struct Ui {
     last_host_render: Instant,
     joining: bool,
     join: String,
+    #[cfg(not(target_arch = "wasm32"))]
     host_addresses: host_addresses::HostAddresses,
 }
 
@@ -62,13 +64,16 @@ impl Ui {
             metrics: String::new(),
             invitation: String::new(),
             private_network: forwarded,
-            lobby: false,
+            lobby: cfg!(target_arch = "wasm32"),
             lobby_url: super::connect::lobby::DEFAULT_URL.into(),
             lobby_key: String::new(),
             linked_devices: false,
             link_active: false,
             link_status: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             link_address: crate::link::transport::native::DEFAULT_TCP_LINK_ADDR.into(),
+            #[cfg(target_arch = "wasm32")]
+            link_address: String::new(),
             host_address: if forwarded {
                 "127.0.0.1".into()
             } else {
@@ -90,6 +95,7 @@ impl Ui {
             last_host_render: Instant::now(),
             joining: false,
             join: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             host_addresses: host_addresses::HostAddresses::new(forwarded),
         }
     }
@@ -106,6 +112,7 @@ impl Ui {
 
     pub(crate) fn host_options(&self) -> Result<HostOptions> {
         let address = if self.private_network {
+            #[cfg(not(target_arch = "wasm32"))]
             self.host_addresses.validate(&self.host_address)?;
             ensure!(self.host_port != 0, "netplay host port must be nonzero");
             let ip: IpAddr = self
@@ -183,7 +190,7 @@ impl Ui {
     }
 
     fn draw_controls(&mut self, ui: &mut egui::Ui, system: ActiveSystem) -> Option<MenuAction> {
-        if !self.active && !self.link_active {
+        if !cfg!(target_arch = "wasm32") && !self.active && !self.link_active {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.linked_devices, false, "Shared console");
                 ui.selectable_value(&mut self.linked_devices, true, "Link cable");
@@ -239,20 +246,23 @@ impl Ui {
                 ui.selectable_value(&mut self.joining, false, "Host");
                 ui.selectable_value(&mut self.joining, true, "Join");
                 ui.separator();
-                if ui
-                    .selectable_label(!self.lobby && !self.private_network, "Same PC")
-                    .clicked()
+                if !cfg!(target_arch = "wasm32")
+                    && ui
+                        .selectable_label(!self.lobby && !self.private_network, "Same PC")
+                        .clicked()
                 {
                     self.lobby = false;
                     self.private_network = false;
                 }
-                if ui
-                    .selectable_label(!self.lobby && self.private_network, "LAN")
-                    .clicked()
+                if !cfg!(target_arch = "wasm32")
+                    && ui
+                        .selectable_label(!self.lobby && self.private_network, "LAN")
+                        .clicked()
                 {
                     self.lobby = false;
                     self.private_network = true;
                 }
+                #[cfg(not(target_arch = "wasm32"))]
                 ui.selectable_value(&mut self.lobby, true, "Lobby");
             });
             if self.lobby {
@@ -268,6 +278,7 @@ impl Ui {
                     ui.label(format!("Host delay: {} frames", input_delay.frames()));
                 }
             } else if self.private_network && !self.lobby {
+                #[cfg(not(target_arch = "wasm32"))]
                 self.host_addresses.draw(ui, &mut self.host_address);
             }
             if !self.joining {
@@ -377,10 +388,10 @@ impl Ui {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod window_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

@@ -38,7 +38,6 @@ mod keyboard;
 mod lifecycle;
 mod link;
 mod media;
-#[cfg(not(target_arch = "wasm32"))]
 mod netplay;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use netplay::proof::run_if_requested as run_netplay_proof_if_requested;
@@ -152,6 +151,8 @@ struct App {
     #[cfg(target_arch = "wasm32")]
     pending_wasm_rom_after_flush: Option<(String, Vec<u8>)>,
     #[cfg(target_arch = "wasm32")]
+    browser_netplay_media: Option<(std::path::PathBuf, std::rc::Rc<[u8]>)>,
+    #[cfg(target_arch = "wasm32")]
     pending_state_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]
     pending_nes_palette_load: crate::platform::FileDataSlot,
@@ -240,7 +241,6 @@ struct App {
     live_button_releases: Vec<crate::live_control::PendingButtonRelease>,
     #[cfg(not(target_arch = "wasm32"))]
     tcp_link_active: bool,
-    #[cfg(not(target_arch = "wasm32"))]
     netplay: netplay::Frontend,
     #[cfg(not(target_arch = "wasm32"))]
     tas_control: tas_control::TasControlCoordinator,
@@ -610,6 +610,11 @@ impl ApplicationHandler for App {
             self.sync_tas_editor(event_loop);
             self.sync_netplay_window(event_loop);
             self.redraw_netplay_status(Instant::now());
+        }
+        #[cfg(target_arch = "wasm32")]
+        if self.netplay.fenced() {
+            self.drain_emu_responses();
+            self.pump_netplay();
         }
         self.apply_focus_state();
         self.schedule_next_frame(event_loop);

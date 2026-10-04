@@ -5,6 +5,16 @@ use wasm_bindgen::prelude::*;
 use super::{AudioOutput, BUFFER_FRAMES, BrowserAudioDiagnostic};
 use crate::audio::AudioQueueConfig;
 
+#[cfg(test)]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn browser_netplay_audio_uses_requested_source_rate() {
+    for rate in [44_100, 48_000] {
+        let audio = AudioOutput::new(Some(rate)).unwrap();
+        assert_eq!(audio.emulator_sample_rate(), rate);
+        assert_eq!(audio.ctx.sample_rate(), rate as f32);
+    }
+}
+
 struct BrowserAudioTest {
     audio: Rc<RefCell<AudioOutput>>,
     button: web_sys::Element,

@@ -156,7 +156,6 @@ impl App {
 
 fn response_kind(response: &EmuResponse) -> &'static str {
     match response {
-        #[cfg(not(target_arch = "wasm32"))]
         EmuResponse::Netplay(_) => "Netplay",
         EmuResponse::SaveStateOk { .. } => "SaveStateOk",
         EmuResponse::SaveStateFailed(_) => "SaveStateFailed",

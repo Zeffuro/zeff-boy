@@ -1,4 +1,6 @@
-use std::net::{IpAddr, SocketAddr, TcpStream};
+#[cfg(not(target_arch = "wasm32"))]
+use std::net::TcpStream;
+use std::net::{IpAddr, SocketAddr};
 
 use anyhow::{Result, ensure};
 
@@ -18,6 +20,7 @@ impl ConnectionScope {
         self.validate(address, false)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn validate_connection(self, stream: &TcpStream) -> Result<()> {
         self.validate_destination(stream.local_addr()?)?;
         self.validate_destination(stream.peer_addr()?)

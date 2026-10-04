@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod endpoint;
 
 pub mod datagram;

@@ -526,6 +526,26 @@ impl Graphics {
         };
 
         let mut forwarded_actions = Vec::new();
+        #[cfg(target_arch = "wasm32")]
+        if ctx.debug_windows.netplay.is_open() {
+            let mut open = true;
+            egui::Window::new("Netplay")
+                .open(&mut open)
+                .default_width(360.0)
+                .max_width(420.0)
+                .show(self.egui.context(), |ui| {
+                    if let Some(action) = ctx.debug_windows.netplay.draw_contents(
+                        ui,
+                        ctx.active_system
+                            .unwrap_or(crate::emu_backend::ActiveSystem::Nes),
+                    ) {
+                        forwarded_actions.push(action);
+                    }
+                });
+            if !open {
+                ctx.debug_windows.netplay.close();
+            }
+        }
         for action in menu_actions.actions {
             match action {
                 MenuAction::SetAspectRatio(mode) => self.aspect_ratio_mode = mode,

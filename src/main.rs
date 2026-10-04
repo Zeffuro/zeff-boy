@@ -27,7 +27,6 @@ mod link;
 #[cfg(not(target_arch = "wasm32"))]
 mod live_control;
 mod mods;
-#[cfg(not(target_arch = "wasm32"))]
 mod netplay;
 mod patching;
 #[cfg(not(target_arch = "wasm32"))]

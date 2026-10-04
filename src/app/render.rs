@@ -233,7 +233,6 @@ impl App {
                 }
                 let mut settings_dirty = false;
                 for action in &result.actions {
-                    #[cfg(not(target_arch = "wasm32"))]
                     if self.netplay.fenced()
                         && !matches!(
                             action,
@@ -263,7 +262,7 @@ impl App {
                             }
                         }
                         MenuAction::ResetGame => self.reset_game(),
-                        #[cfg(not(target_arch = "wasm32"))]
+
                         action @ (MenuAction::HostNesNetplay
                         | MenuAction::JoinNesNetplay(_)
                         | MenuAction::StopNesNetplay

@@ -16,6 +16,7 @@ use zeff_netplay::rollback::InputDelay;
 use super::Start;
 
 pub(crate) mod lobby;
+mod lobby_options;
 
 const CONNECT_BUDGET: Duration = Duration::from_secs(30);
 const CONNECT_ATTEMPT: Duration = Duration::from_millis(100);

@@ -66,7 +66,6 @@ pub(super) fn draw(
         game_boy_serial_device,
         game_boy_serial_device_change_allowed,
     } = state;
-    #[cfg(not(target_arch = "wasm32"))]
     if ui.button("Netplay").clicked() {
         debug_windows.netplay.open_for_system(active_system);
         ui.close();

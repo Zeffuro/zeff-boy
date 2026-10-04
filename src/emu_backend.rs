@@ -16,7 +16,6 @@ pub(crate) use self::gba::GbaBackend;
 pub(crate) use self::gba::GbaTasLoadProvenanceView;
 pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
 pub(crate) use self::nes::NesBackend;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use self::nes::NesTasLoadProvenanceView;
 pub(crate) use self::pce::PceBackend;
 pub(crate) use self::runtime::BackendRuntimeConfig;
@@ -171,7 +170,6 @@ mod state_io;
 pub(crate) use state_io::canonicalize_state_bytes_for_replay_hash;
 
 impl EmuBackend {
-    #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
     pub(crate) fn nes_tas_load_provenance(&self) -> Option<NesTasLoadProvenanceView<'_>> {
         self.nes()?.tas_load_provenance()

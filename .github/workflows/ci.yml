@@ -404,6 +404,10 @@ jobs:
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1
 
+      - name: Test browser netplay transport and gameplay
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -Netplay
+
       - name: Test detached SMS App rendering
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_sms_browser_app_consumes_and_presents_detached_frame

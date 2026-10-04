@@ -1,6 +1,11 @@
 use super::*;
 
 impl Ui {
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn draw_link(&mut self, _: &mut egui::Ui, _: ActiveSystem) -> Option<MenuAction> {
+        None
+    }
+
     pub(crate) fn open_for_system(&mut self, system: ActiveSystem) {
         if !self.active && !self.link_active {
             self.linked_devices = super::super::capabilities::linked_devices(system);
@@ -34,6 +39,7 @@ impl Ui {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn draw_link(
         &mut self,
         ui: &mut egui::Ui,
@@ -76,7 +82,7 @@ impl Ui {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

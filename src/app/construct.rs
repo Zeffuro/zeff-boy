@@ -72,6 +72,8 @@ pub(super) fn create(
         #[cfg(target_arch = "wasm32")]
         pending_wasm_rom_after_flush: None,
         #[cfg(target_arch = "wasm32")]
+        browser_netplay_media: None,
+        #[cfg(target_arch = "wasm32")]
         pending_state_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
         #[cfg(target_arch = "wasm32")]
         pending_nes_palette_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -223,7 +225,6 @@ pub(super) fn create(
         live_button_releases: Vec::new(),
         #[cfg(not(target_arch = "wasm32"))]
         tcp_link_active: false,
-        #[cfg(not(target_arch = "wasm32"))]
         netplay: netplay::Frontend::default(),
         #[cfg(not(target_arch = "wasm32"))]
         tas_control: tas_control::TasControlCoordinator::new(),

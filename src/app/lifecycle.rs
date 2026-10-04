@@ -339,7 +339,10 @@ impl App {
             self.debug_windows.settings_ui.input_timing.pause();
             self.wasm_tab_was_visible = visible;
             self.handle_focus_change(visible);
-            if !visible && let Some(thread) = &self.emu_thread {
+            if !visible
+                && !self.netplay.fenced()
+                && let Some(thread) = &self.emu_thread
+            {
                 thread.send(crate::emu_thread::EmuCommand::FlushBatterySram);
             }
         }
@@ -379,7 +382,6 @@ impl App {
             return;
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
         if self.netplay.fenced() {
             let poll = Instant::now() + std::time::Duration::from_millis(5);
             let deadline = self

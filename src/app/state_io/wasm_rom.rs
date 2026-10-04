@@ -7,6 +7,13 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     pub(in crate::app) fn check_pending_rom(&mut self) {
         let data = self.pending_rom_load.borrow_mut().take();
+        if self.netplay.fenced() {
+            if data.is_some() {
+                self.toast_manager
+                    .info("Disconnect netplay before changing the game");
+            }
+            return;
+        }
         if let Some((name, bytes)) = data {
             if self.emu_thread.is_some() || !self.wasm_retired_threads.is_empty() {
                 self.pending_wasm_rom_after_flush = Some((name, bytes));
@@ -22,6 +29,13 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     pub(in crate::app) fn check_pending_nes_palette_load(&mut self) {
         let data = self.pending_nes_palette_load.borrow_mut().take();
+        if self.netplay.fenced() {
+            if data.is_some() {
+                self.toast_manager
+                    .info("Disconnect netplay before changing the game");
+            }
+            return;
+        }
         if let Some((name, bytes)) = data {
             match zeff_nes_core::hardware::ppu::parse_nes_palette_bytes(&bytes) {
                 Ok(_) => {
@@ -101,6 +115,10 @@ impl App {
             }
         };
 
+        let netplay_media = (!is_zip
+            && system == ActiveSystem::Nes
+            && (16..=64 * 1024 * 1024).contains(&rom_data.len()))
+        .then(|| (path.clone(), std::rc::Rc::<[u8]>::from(rom_data.clone())));
         let (backend, _original_crc) = match self.init_backend(
             system,
             &path,
@@ -130,6 +148,7 @@ impl App {
             backend.source_path().to_path_buf(),
         );
 
+        self.browser_netplay_media = netplay_media;
         self.spawn_emu_thread(backend);
 
         self.toast_manager.info(format!("Loaded {rom_name}"));

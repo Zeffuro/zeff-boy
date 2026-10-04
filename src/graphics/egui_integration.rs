@@ -12,6 +12,8 @@ pub(crate) struct EguiFrameOutput {
 pub(crate) struct EguiRenderer {
     ctx: egui::Context,
     state: egui_winit::State,
+    #[cfg(target_arch = "wasm32")]
+    clipboard: super::browser_clipboard::BrowserClipboard,
     renderer: egui_wgpu::Renderer,
     active_theme: UiThemePreset,
     active_density: UiDensity,
@@ -21,7 +23,7 @@ pub(crate) struct EguiRenderer {
 
 impl EguiRenderer {
     pub(crate) fn new(
-        window: &Window,
+        window: &std::sync::Arc<Window>,
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
     ) -> Result<Self> {
@@ -43,10 +45,14 @@ impl EguiRenderer {
 
         let renderer =
             egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
+        #[cfg(target_arch = "wasm32")]
+        let clipboard = super::browser_clipboard::BrowserClipboard::new(window, ctx.clone())?;
 
         Ok(Self {
             ctx,
             state,
+            #[cfg(target_arch = "wasm32")]
+            clipboard,
             renderer,
             active_theme: theme,
             active_density: density,
@@ -103,13 +109,26 @@ impl EguiRenderer {
 
     pub(crate) fn begin_frame(&mut self, window: &Window) {
         let raw_input = self.state.take_egui_input(window);
+        #[cfg(target_arch = "wasm32")]
+        let raw_input = self.clipboard.input(raw_input);
         self.ctx.begin_pass(raw_input);
+        #[cfg(target_arch = "wasm32")]
+        self.clipboard.show_notice();
     }
 
     pub(crate) fn end_frame(&mut self, window: &Window) -> EguiFrameOutput {
         let full_output = self.ctx.end_pass();
-        self.state
-            .handle_platform_output(window, full_output.platform_output.clone());
+        let platform_output = full_output.platform_output.clone();
+        #[cfg(target_arch = "wasm32")]
+        let platform_output = {
+            self.clipboard.output(&platform_output);
+            let mut output = platform_output;
+            output
+                .commands
+                .retain(|command| !matches!(command, egui::OutputCommand::CopyText(_)));
+            output
+        };
+        self.state.handle_platform_output(window, platform_output);
         EguiFrameOutput { full_output }
     }
 

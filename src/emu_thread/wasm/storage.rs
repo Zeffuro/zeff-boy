@@ -225,6 +225,9 @@ impl EmuThread {
         let mut next_command = None;
         {
             let mut inner = self.inner.borrow_mut();
+            if inner.netplay.is_some() || inner.netplay_restore_failed {
+                return;
+            }
             let completed = inner.pending_storage.as_ref().and_then(|pending| {
                 pending
                     .completion

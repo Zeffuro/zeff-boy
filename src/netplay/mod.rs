@@ -1,32 +1,53 @@
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod adapters;
 pub(crate) mod capabilities;
 pub(crate) mod chat;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod compatibility;
+#[cfg(target_arch = "wasm32")]
+#[path = "compatibility/browser.rs"]
+pub(crate) mod compatibility;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod connect;
+#[cfg(target_arch = "wasm32")]
+#[path = "connect/browser.rs"]
 pub(crate) mod connect;
 pub(crate) mod identity;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod network;
+#[cfg(target_arch = "wasm32")]
+#[path = "network/browser.rs"]
+pub(crate) mod network;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod proof;
 pub(crate) mod session;
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod test_lobby;
 pub(crate) mod ui;
 
 pub(crate) enum Transport {
+    #[cfg(not(target_arch = "wasm32"))]
     Tcp(std::net::TcpStream),
+    #[cfg(not(target_arch = "wasm32"))]
     Direct(Box<DirectPeer>),
+    #[cfg(target_arch = "wasm32")]
+    Browser(zeff_netplay_connect::browser::BrowserPeer),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct DirectPeer {
     pub(crate) connection: zeff_netplay_connect::DataConnection,
     pub(crate) runtime: tokio::runtime::Runtime,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<std::net::TcpStream> for Transport {
     fn from(stream: std::net::TcpStream) -> Self {
         Self::Tcp(stream)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Transport {
     pub(crate) fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         match self {

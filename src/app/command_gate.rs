@@ -8,7 +8,6 @@ pub(in crate::app) enum EmuCommandSendError {
     Denied(TasControlCommandKind),
     NoWorker,
     ChannelClosed,
-    #[cfg(not(target_arch = "wasm32"))]
     NetplayDenied,
 }
 
@@ -21,7 +20,6 @@ impl fmt::Display for EmuCommandSendError {
             ),
             Self::NoWorker => formatter.write_str("no emulator worker is available"),
             Self::ChannelClosed => formatter.write_str("emulator command channel is closed"),
-            #[cfg(not(target_arch = "wasm32"))]
             Self::NetplayDenied => {
                 formatter.write_str("disconnect netplay before changing the game")
             }
@@ -67,7 +65,6 @@ impl App {
         &self,
         command: &EmuCommand,
     ) -> Result<(), EmuCommandSendError> {
-        #[cfg(not(target_arch = "wasm32"))]
         if !self.netplay.permits(command) {
             return Err(EmuCommandSendError::NetplayDenied);
         }
@@ -90,7 +87,6 @@ impl App {
         &self,
         kind: TasControlCommandKind,
     ) -> Result<(), EmuCommandSendError> {
-        #[cfg(not(target_arch = "wasm32"))]
         if self.netplay.fenced() {
             return Err(EmuCommandSendError::NetplayDenied);
         }

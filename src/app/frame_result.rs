@@ -67,7 +67,7 @@ impl App {
                 Some(response) => response,
                 None => break,
             };
-            #[cfg(not(target_arch = "wasm32"))]
+
             let resp = match self.consume_netplay_response(resp) {
                 Some(resp) => resp,
                 None => continue,

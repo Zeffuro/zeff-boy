@@ -44,6 +44,8 @@ description = "A Game Boy, Game Boy Color, Game Boy Advance, NES, ColecoVision, 
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
+zeff-netplay = { path = "crates/zeff-netplay", default-features = false }
+url = "2"
 zeff-audio-discovery = { path = "crates/zeff-audio-discovery" }
 zeff-emu-common = { path = "crates/zeff-emu-common", features = ["serde"] }
 zeff-firmware = { path = "crates/zeff-firmware" }
@@ -89,7 +91,6 @@ features = ["links"]
 zeff-netplay = { path = "crates/zeff-netplay", default-features = false, features = ["test-support"] }
 zeff-netplay-connect = { path = "crates/zeff-netplay-connect", features = ["native"] }
 tokio = { version = "1.52.1", features = ["rt", "time", "sync"] }
-url = "2"
 getrandom = "0.4.3"
 netdev = { version = "0.46.3", default-features = false, features = ["gateway"] }
 ed25519-dalek = "3.0.0"
@@ -145,18 +146,20 @@ object = { version = "0.39.1", default-features = false, features = ["write", "e
 sevenz-rust2 = { version = "0.21.5", path = "third_party/sevenz-rust2", default-features = false, features = ["compress"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+zeff-netplay-connect = { path = "crates/zeff-netplay-connect" }
 wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4.76"
 web-sys = { version = "0.3.103", features = [
     "Window", "Document", "Node", "HtmlCanvasElement", "HtmlElement",
     "HtmlAnchorElement", "Element", "Storage", "console",
-    "AudioContext", "AudioDestinationNode", "AudioBuffer",
+    "AudioContext", "AudioContextOptions", "AudioDestinationNode", "AudioBuffer",
     "AudioBufferSourceNode", "GainNode", "ScriptProcessorNode",
     "AudioProcessingEvent",
     "Blob", "BlobPropertyBag", "File", "FileList", "FileReader",
     "HtmlInputElement", "EventTarget",
+    "Clipboard", "ClipboardEvent", "ClipboardEventInit", "Navigator",
     "DragEvent", "DragEventInit", "DataTransfer", "DataTransferItem", "DataTransferItemList",
-    "Url",
+    "Url", "Crypto",
 ] }
 js-sys = "0.3.103"
 console_log = "1.1.0"
@@ -164,6 +167,7 @@ console_error_panic_hook = "0.1"
 web-time = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+zeff-netplay = { path = "crates/zeff-netplay", default-features = false, features = ["test-support"] }
 wasm-bindgen-test = "=0.3.76"
 
 [profile.dev]

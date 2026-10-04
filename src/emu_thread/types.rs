@@ -282,15 +282,10 @@ pub(crate) enum EmuCommandAuthority {
 }
 
 pub(crate) enum EmuCommand {
-    #[cfg(not(target_arch = "wasm32"))]
     StartNetplay(Box<crate::netplay::Start>),
-    #[cfg(not(target_arch = "wasm32"))]
     StepNetplay(u8),
-    #[cfg(not(target_arch = "wasm32"))]
     SetNetplayPaused(bool),
-    #[cfg(not(target_arch = "wasm32"))]
     SendNetplayChat(String),
-    #[cfg(not(target_arch = "wasm32"))]
     StopNetplay,
     StepFrames(Box<FrameInput>),
     SetAudioRecordingCapture {
@@ -422,7 +417,6 @@ pub(crate) enum EmuCommand {
 impl EmuCommand {
     pub(crate) fn authority_classification(&self) -> EmuCommandAuthority {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
             Self::StartNetplay(_)
             | Self::StepNetplay(_)
             | Self::SetNetplayPaused(_)
@@ -519,7 +513,6 @@ impl LoadStateWarning {
 }
 
 pub(crate) enum EmuResponse {
-    #[cfg(not(target_arch = "wasm32"))]
     Netplay(crate::netplay::Response),
     SaveStateOk {
         path: PathBuf,
