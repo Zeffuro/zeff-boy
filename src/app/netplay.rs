@@ -16,6 +16,8 @@ mod window;
 #[derive(PartialEq, Eq)]
 enum Request {
     Host(HostOptions, bool),
+    LobbyHost(crate::netplay::connect::lobby::Options, bool),
+    LobbyJoin(crate::netplay::connect::lobby::Options, String, bool),
     Join {
         invitation: String,
         scope: ConnectionScope,
@@ -97,7 +99,19 @@ impl Frontend {
 
 impl App {
     pub(in crate::app) fn begin_netplay(&mut self, invitation: Option<String>) -> Result<()> {
-        let request = if let Some(invitation) = invitation {
+        let request = if self.debug_windows.netplay.lobby {
+            let mut options = self.debug_windows.netplay.lobby_options()?;
+            let consent = self.debug_windows.netplay.allow_different_versions;
+            if let Some(invitation) = invitation {
+                let (_, _, delay) =
+                    crate::netplay::connect::lobby::parse_invitation(&invitation, &options.url)?;
+                options.input_delay = delay;
+                self.debug_windows.netplay.input_delay = delay.frames();
+                Request::LobbyJoin(options, invitation, consent)
+            } else {
+                Request::LobbyHost(options, consent)
+            }
+        } else if let Some(invitation) = invitation {
             let scope = self.debug_windows.netplay.scope();
             crate::netplay::connect::validate_invitation(&invitation, scope)?;
             self.debug_windows.netplay.input_delay = self
@@ -121,7 +135,7 @@ impl App {
             "another execution owner is active"
         );
         ensure!(
-            self.active_system == crate::emu_backend::ActiveSystem::Nes
+            crate::netplay::capabilities::shared_console(self.active_system)
                 && self.emu_thread.is_some(),
             "load an NES cartridge first"
         );
@@ -200,19 +214,30 @@ impl App {
             };
             let consent = match &request {
                 Request::Host(_, allow)
+                | Request::LobbyHost(_, allow)
+                | Request::LobbyJoin(_, _, allow)
                 | Request::Join {
                     allow_different_versions: allow,
                     ..
                 } => *allow,
             };
-            let result = self.prepare_netplay_game().and_then(|()| match request {
-                Request::Join {
-                    invitation, scope, ..
-                } => {
-                    Connector::join(&invitation, scope).map(|connector| (connector, String::new()))
-                }
-                Request::Host(options, _) => Connector::host(options),
-            });
+            let delay =
+                zeff_netplay::rollback::InputDelay::new(self.debug_windows.netplay.input_delay);
+            let result = delay
+                .and_then(|delay| self.prepare_netplay_game(delay))
+                .and_then(|identity| match request {
+                    Request::LobbyHost(options, _) => Connector::lobby_host(options, identity)
+                        .map(|connector| (connector, String::new())),
+                    Request::LobbyJoin(options, invitation, _) => {
+                        Connector::lobby_join(options, &invitation, identity)
+                            .map(|connector| (connector, String::new()))
+                    }
+                    Request::Join {
+                        invitation, scope, ..
+                    } => Connector::join(&invitation, scope)
+                        .map(|connector| (connector, String::new())),
+                    Request::Host(options, _) => Connector::host(options),
+                });
             match result {
                 Ok((mut connector, invitation)) => {
                     connector.set_version_consent(consent);
@@ -228,6 +253,9 @@ impl App {
             }
         }
         if self.netplay.phase == Phase::Connecting {
+            if let Some(invitation) = self.netplay.connector.as_mut().unwrap().take_invitation() {
+                self.debug_windows.netplay.invitation = invitation;
+            }
             let result = self.netplay.connector.as_mut().unwrap().poll();
             match result {
                 Ok(Some(mut start)) => {
@@ -248,11 +276,12 @@ impl App {
                     }
                     #[cfg(test)]
                     {
-                        self.netplay.observed_connection = Some((
-                            start.stream.local_addr().unwrap(),
-                            start.stream.peer_addr().unwrap(),
-                            start.scope,
-                        ));
+                        self.netplay.observed_connection = start
+                            .stream
+                            .local_addr()
+                            .ok()
+                            .zip(start.stream.peer_addr().ok())
+                            .map(|(local, peer)| (local, peer, start.scope));
                     }
                     let sent =
                         self.send_emu_command_checked(EmuCommand::StartNetplay(Box::new(start)));
@@ -433,3 +462,6 @@ mod lan_tests;
 
 #[cfg(test)]
 mod compatibility_tests;
+
+#[cfg(test)]
+mod lobby_tests;

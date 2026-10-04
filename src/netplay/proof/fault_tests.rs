@@ -36,7 +36,12 @@ fn await_refusal(connection: &mut wire::Connection) {
     while connection.receive().is_ok() {}
 }
 
-fn peer(stream: TcpStream, mut backend: EmuBackend, fault: Fault) -> Result<()> {
+fn peer(
+    stream: TcpStream,
+    mut backend: EmuBackend,
+    fault: Fault,
+    completed: std::sync::mpsc::Sender<()>,
+) -> Result<()> {
     let admission = identity::identity(&backend, [9; 32])?;
     let mut connection = wire::admit(stream.try_clone()?, Player::Two, &admission, &[5; 32])?;
     let mut prior = Vec::new();
@@ -154,6 +159,7 @@ fn peer(stream: TcpStream, mut backend: EmuBackend, fault: Fault) -> Result<()> 
             }
         }
     }
+    completed.send(())?;
     let _ = connection.receive();
     Ok(())
 }
@@ -185,14 +191,15 @@ pub(super) fn run_fault(fault: Fault, media: &media::Media, check_restored_publi
     let pixels = backend.framebuffer().to_vec();
     let persistent = identity::identity(&backend, [9; 32]).unwrap().persistent;
     let (local, remote) = sockets().unwrap();
-    let peer = std::thread::spawn(move || peer(remote, reference, fault));
+    let (completed, completion) = std::sync::mpsc::channel();
+    let peer = std::thread::spawn(move || peer(remote, reference, fault, completed));
     let mut worker = EmuThread::spawn(backend, false);
     worker.send(EmuCommand::StartNetplay(Box::new(Start {
         allow_different_versions: false,
         verify_every_frame: true,
         input_delay: zeff_netplay::rollback::InputDelay::default(),
         scope: zeff_netplay::endpoint::ConnectionScope::Loopback,
-        stream: local,
+        stream: local.into(),
         player: Player::One,
         build: [9; 32],
         secret: [5; 32],
@@ -231,6 +238,9 @@ pub(super) fn run_fault(fault: Fault, media: &media::Media, check_restored_publi
         }
         if pending_step && confirmed == issued {
             if success && confirmed == 24 {
+                completion
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("peer must finish its supplied input writes before shutdown");
                 worker.send(EmuCommand::StopNetplay);
                 break stopped(&worker).unwrap();
             }
@@ -280,14 +290,7 @@ pub(super) fn run_fault(fault: Fault, media: &media::Media, check_restored_publi
         persistent
     );
     let peer_result = peer.join().unwrap();
-    if success && let Err(error) = peer_result {
-        let reason = format!("{error:#}").to_lowercase();
-        assert!(
-            reason.contains("aborted")
-                || reason.contains("closed")
-                || reason.contains("reset")
-                || reason.contains("broken"),
-            "{fault:?}: {reason}"
-        );
+    if success {
+        peer_result.unwrap_or_else(|error| panic!("{fault:?}: {error:#}"));
     }
 }

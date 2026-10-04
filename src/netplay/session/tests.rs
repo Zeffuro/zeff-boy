@@ -419,7 +419,7 @@ fn replay_case(timing: TimingMode, delay: zeff_netplay::rollback::InputDelay) {
     let mut session = Session::start(
         &mut backend,
         Start {
-            stream: local,
+            stream: local.into(),
             player: Player::One,
             build: [7; 32],
             secret: [5; 32],

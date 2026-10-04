@@ -164,18 +164,24 @@ fn host_and_join_return_matching_owned_streams_and_random_capability() {
     assert!(text.ends_with("/6"));
     assert!(one.stream.local_addr().unwrap().ip().is_loopback());
     assert!(two.stream.peer_addr().unwrap().ip().is_loopback());
-    one.stream
+    let crate::netplay::Transport::Tcp(ref mut one_stream) = one.stream else {
+        panic!("TCP connector returned another transport")
+    };
+    let crate::netplay::Transport::Tcp(ref mut two_stream) = two.stream else {
+        panic!("TCP connector returned another transport")
+    };
+    one_stream
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
-    two.stream
+    two_stream
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
-    one.stream.write_all(&[42]).unwrap();
+    one_stream.write_all(&[42]).unwrap();
     let mut byte = [0];
-    two.stream.read_exact(&mut byte).unwrap();
+    two_stream.read_exact(&mut byte).unwrap();
     assert_eq!(byte, [42]);
-    two.stream.write_all(&[19]).unwrap();
-    one.stream.read_exact(&mut byte).unwrap();
+    two_stream.write_all(&[19]).unwrap();
+    one_stream.read_exact(&mut byte).unwrap();
     assert_eq!(byte, [19]);
     assert!(host.poll().unwrap().is_none());
     assert!(join.poll().unwrap().is_none());

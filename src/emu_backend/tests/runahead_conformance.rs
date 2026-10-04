@@ -11,6 +11,9 @@ use super::fixtures::{
 };
 use crate::emu_backend::{ActiveSystem, EmuBackend};
 
+mod profiles;
+use profiles::core_cases;
+
 const REPEATED_CHECKPOINTS: usize = 8;
 const REPLAY_FRAMES: usize = 5;
 const SPECULATIVE_FRAMES: usize = 3;
@@ -111,7 +114,18 @@ struct ConformanceReport {
 #[test]
 fn every_core_family_has_a_disabled_local_conformance_result() {
     let cases = core_cases();
-    assert_eq!(cases.len(), 7);
+    assert_eq!(cases.len(), 9);
+    let systems = cases
+        .iter()
+        .map(|case| case.eligibility.fixture_system)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        systems,
+        crate::emu_backend::system_specs()
+            .iter()
+            .map(|spec| spec.system)
+            .collect()
+    );
     let reports = cases.iter().map(run_conformance).collect::<Vec<_>>();
 
     for (case, report) in cases.iter().zip(&reports) {
@@ -831,147 +845,4 @@ fn program_counter(backend: &EmuBackend) -> u64 {
         EmuBackend::Sega8(backend) => u64::from(backend.emu.cpu().regs().pc),
         EmuBackend::Ws(backend) => u64::from(backend.emu.cpu_pc()),
     }
-}
-
-fn core_cases() -> &'static [CoreCase] {
-    const PASS: &[FailureClass] = &[];
-    const AUDIO_CADENCE: &[FailureClass] = &[FailureClass::AudioCadence];
-    const GB: &[IneligibilityReason] = &[
-        IneligibilityReason::NoSpeculativeWorker,
-        IneligibilityReason::SramDiskWriteIsolationUnproven,
-        IneligibilityReason::RecoveryGenerationIsolationUnproven,
-        IneligibilityReason::UiPersistenceIsolationUnproven,
-        IneligibilityReason::ReplayIsolationUnproven,
-        IneligibilityReason::RemoteIsolationUnproven,
-        IneligibilityReason::LinkDevice,
-        IneligibilityReason::Rtc,
-        IneligibilityReason::LiveCamera,
-        IneligibilityReason::HostSensor,
-        IneligibilityReason::Printer,
-        IneligibilityReason::Rumble,
-        IneligibilityReason::ObservedAudioCadenceMismatch,
-    ];
-    const GBA: &[IneligibilityReason] = &[
-        IneligibilityReason::FeatureDisabled,
-        IneligibilityReason::DetachedPanicHangContainmentUnavailable,
-        IneligibilityReason::ObservedAudioCadenceMismatch,
-    ];
-    const NES: &[IneligibilityReason] = &[
-        IneligibilityReason::NoSpeculativeWorker,
-        IneligibilityReason::SramDiskWriteIsolationUnproven,
-        IneligibilityReason::RecoveryGenerationIsolationUnproven,
-        IneligibilityReason::UiPersistenceIsolationUnproven,
-        IneligibilityReason::ReplayIsolationUnproven,
-        IneligibilityReason::RemoteIsolationUnproven,
-        IneligibilityReason::LightGun,
-        IneligibilityReason::RemovableMedia,
-        IneligibilityReason::ObservedAudioCadenceMismatch,
-    ];
-    const PCE: &[IneligibilityReason] = &[
-        IneligibilityReason::NoSpeculativeWorker,
-        IneligibilityReason::SramDiskWriteIsolationUnproven,
-        IneligibilityReason::RecoveryGenerationIsolationUnproven,
-        IneligibilityReason::UiPersistenceIsolationUnproven,
-        IneligibilityReason::ReplayIsolationUnproven,
-        IneligibilityReason::RemoteIsolationUnproven,
-        IneligibilityReason::Mouse,
-        IneligibilityReason::RemovableMedia,
-        IneligibilityReason::CdMedia,
-    ];
-    const SEGA8: &[IneligibilityReason] = &[
-        IneligibilityReason::FeatureDisabled,
-        IneligibilityReason::DetachedPanicHangContainmentUnavailable,
-    ];
-    const COLECO: &[IneligibilityReason] = &[
-        IneligibilityReason::NoSpeculativeWorker,
-        IneligibilityReason::SramDiskWriteIsolationUnproven,
-        IneligibilityReason::RecoveryGenerationIsolationUnproven,
-        IneligibilityReason::UiPersistenceIsolationUnproven,
-        IneligibilityReason::ReplayIsolationUnproven,
-        IneligibilityReason::RemoteIsolationUnproven,
-        IneligibilityReason::ObservedAudioCadenceMismatch,
-    ];
-    const WS: &[IneligibilityReason] = &[
-        IneligibilityReason::NoSpeculativeWorker,
-        IneligibilityReason::SramDiskWriteIsolationUnproven,
-        IneligibilityReason::RecoveryGenerationIsolationUnproven,
-        IneligibilityReason::UiPersistenceIsolationUnproven,
-        IneligibilityReason::ReplayIsolationUnproven,
-        IneligibilityReason::RemoteIsolationUnproven,
-        IneligibilityReason::LinkDevice,
-        IneligibilityReason::ObservedAudioCadenceMismatch,
-    ];
-    const CASES: &[CoreCase] = &[
-        CoreCase {
-            eligibility: EligibilityResult {
-                core_family: CoreFamily::GameBoy,
-                fixture_system: ActiveSystem::GameBoy,
-                support: RunAheadSupport::Unsupported,
-                reasons: GB,
-            },
-            build: build_gb_backend,
-            expected_local_failures: [AUDIO_CADENCE, PASS, AUDIO_CADENCE],
-        },
-        CoreCase {
-            eligibility: EligibilityResult {
-                core_family: CoreFamily::GameBoyAdvance,
-                fixture_system: ActiveSystem::GameBoyAdvance,
-                support: RunAheadSupport::Unsupported,
-                reasons: GBA,
-            },
-            build: build_gba_backend,
-            expected_local_failures: [PASS, PASS, AUDIO_CADENCE],
-        },
-        CoreCase {
-            eligibility: EligibilityResult {
-                core_family: CoreFamily::Nes,
-                fixture_system: ActiveSystem::Nes,
-                support: RunAheadSupport::Unsupported,
-                reasons: NES,
-            },
-            build: build_nes_backend,
-            expected_local_failures: [AUDIO_CADENCE, PASS, AUDIO_CADENCE],
-        },
-        CoreCase {
-            eligibility: EligibilityResult {
-                core_family: CoreFamily::ColecoVision,
-                fixture_system: ActiveSystem::Coleco,
-                support: RunAheadSupport::Unsupported,
-                reasons: COLECO,
-            },
-            build: build_coleco_backend,
-            expected_local_failures: [AUDIO_CADENCE, PASS, AUDIO_CADENCE],
-        },
-        CoreCase {
-            eligibility: EligibilityResult {
-                core_family: CoreFamily::PcEngine,
-                fixture_system: ActiveSystem::Pce,
-                support: RunAheadSupport::Unsupported,
-                reasons: PCE,
-            },
-            build: build_pce_backend,
-            expected_local_failures: [PASS, PASS, PASS],
-        },
-        CoreCase {
-            eligibility: EligibilityResult {
-                core_family: CoreFamily::Sega8,
-                fixture_system: ActiveSystem::MasterSystem,
-                support: RunAheadSupport::Unsupported,
-                reasons: SEGA8,
-            },
-            build: build_sms_backend,
-            expected_local_failures: [PASS, PASS, PASS],
-        },
-        CoreCase {
-            eligibility: EligibilityResult {
-                core_family: CoreFamily::WonderSwan,
-                fixture_system: ActiveSystem::WonderSwan,
-                support: RunAheadSupport::Unsupported,
-                reasons: WS,
-            },
-            build: build_ws_backend,
-            expected_local_failures: [AUDIO_CADENCE, PASS, AUDIO_CADENCE],
-        },
-    ];
-    CASES
 }

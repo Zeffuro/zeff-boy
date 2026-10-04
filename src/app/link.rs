@@ -59,6 +59,7 @@ impl App {
     pub(super) fn handle_link_response(&mut self, response: &EmuResponse) -> bool {
         match response {
             EmuResponse::LinkPending(label) => {
+                self.debug_windows.netplay.link_status = format!("Waiting · {label}");
                 self.tcp_link_active = true;
                 self.resume_if_paused_by_unfocus_for_link();
                 self.toast_manager.info(format!("Link {label}"));
@@ -70,6 +71,7 @@ impl App {
                 game_boy_cpu_cycles,
                 game_boy_link_state,
             } => {
+                self.debug_windows.netplay.link_status = "Connected".into();
                 self.tcp_link_active = true;
                 self.resume_if_paused_by_unfocus_for_link();
                 self.record_game_boy_link_state_replay_event(
@@ -82,6 +84,7 @@ impl App {
                 true
             }
             EmuResponse::LinkFailed(message) => {
+                self.debug_windows.netplay.link_status = message.clone();
                 self.tcp_link_active = false;
                 self.pause_for_unfocus_if_needed_after_link_end();
                 self.toast_manager.error(format!("Link failed: {message}"));
@@ -92,6 +95,7 @@ impl App {
                 game_boy_cpu_cycles,
                 game_boy_link_state,
             } => {
+                self.debug_windows.netplay.link_status = "Disconnected".into();
                 let was_active = self.tcp_link_active;
                 self.tcp_link_active = false;
                 self.pause_for_unfocus_if_needed_after_link_end();

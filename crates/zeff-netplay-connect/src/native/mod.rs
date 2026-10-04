@@ -293,8 +293,7 @@ impl DataConnection {
 
     pub async fn try_send_input(&self, bytes: &[u8]) -> Result<()> {
         self.check_packet(bytes)?;
-        self.input.try_send(bytes::BytesMut::from(bytes)).await?;
-        Ok(())
+        input_send_result(self.input.try_send(bytes::BytesMut::from(bytes)).await)
     }
 
     pub async fn receive(&mut self, wait: Duration) -> Result<Packet> {
@@ -324,6 +323,13 @@ impl DataConnection {
             bail!("peer failed: {reason}");
         }
         Ok(())
+    }
+}
+
+fn input_send_result(result: webrtc::error::Result<()>) -> Result<()> {
+    match result {
+        Ok(()) | Err(webrtc::error::Error::ErrSendBufferFull) => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -509,6 +515,13 @@ async fn apply_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreliable_backpressure_drops_but_closed_channels_fail() {
+        assert!(input_send_result(Ok(())).is_ok());
+        assert!(input_send_result(Err(webrtc::error::Error::ErrSendBufferFull)).is_ok());
+        assert!(input_send_result(Err(webrtc::error::Error::ErrDataChannelClosed)).is_err());
+    }
 
     #[test]
     fn relay_policy_checks_embedded_and_trickled_candidates() {

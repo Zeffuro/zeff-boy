@@ -67,8 +67,8 @@ pub(super) fn draw(
         game_boy_serial_device_change_allowed,
     } = state;
     #[cfg(not(target_arch = "wasm32"))]
-    if ui.button("NES Netplay").clicked() {
-        debug_windows.netplay.open();
+    if ui.button("Netplay").clicked() {
+        debug_windows.netplay.open_for_system(active_system);
         ui.close();
     }
     if ui.button("Cheats").clicked() {
@@ -110,110 +110,84 @@ pub(super) fn draw(
         });
     }
     ui.separator();
-    ui.label("Game Boy Link Port");
-    let gb_enabled = active_system == ActiveSystem::GameBoy;
-    ui.add_enabled_ui(gb_enabled && game_boy_serial_device_change_allowed, |ui| {
-        ui.menu_button("Attached Device", |ui| {
-            for (device, label) in [
-                (
-                    zeff_gb_core::hardware::GameBoySerialDevice::Disconnected,
-                    "Disconnected",
-                ),
-                (
-                    zeff_gb_core::hardware::GameBoySerialDevice::Printer,
-                    "Game Boy Printer",
-                ),
-                (
-                    zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
-                    "Bardigun Barcode Reader",
-                ),
-                (
-                    zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy,
-                    "Barcode Boy",
-                ),
-            ] {
-                if ui.radio(game_boy_serial_device == device, label).clicked()
-                    && game_boy_serial_device != device
-                {
-                    actions.push(MenuAction::SetGameBoySerialDevice(device));
-                    ui.close();
+    ui.menu_button("Game Boy accessories", |ui| {
+        let gb_enabled = active_system == ActiveSystem::GameBoy;
+        ui.add_enabled_ui(gb_enabled && game_boy_serial_device_change_allowed, |ui| {
+            ui.menu_button("Attached Device", |ui| {
+                for (device, label) in [
+                    (
+                        zeff_gb_core::hardware::GameBoySerialDevice::Disconnected,
+                        "Disconnected",
+                    ),
+                    (
+                        zeff_gb_core::hardware::GameBoySerialDevice::Printer,
+                        "Game Boy Printer",
+                    ),
+                    (
+                        zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
+                        "Bardigun Barcode Reader",
+                    ),
+                    (
+                        zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy,
+                        "Barcode Boy",
+                    ),
+                ] {
+                    if ui.radio(game_boy_serial_device == device, label).clicked()
+                        && game_boy_serial_device != device
+                    {
+                        actions.push(MenuAction::SetGameBoySerialDevice(device));
+                        ui.close();
+                    }
                 }
-            }
+            });
         });
+        if !gb_enabled {
+            ui.label("Load GB/GBC content first");
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if ui
+            .add_enabled(
+                gb_enabled
+                    && game_boy_serial_device_change_allowed
+                    && game_boy_serial_device
+                        == zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
+                egui::Button::new("Scan Bardigun Card..."),
+            )
+            .clicked()
+        {
+            actions.push(MenuAction::ScanBardigunBarcodeFile);
+            ui.close();
+        }
+        #[cfg(target_arch = "wasm32")]
+        if game_boy_serial_device
+            == zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
+        {
+            ui.label("Card-file scanning is native-only");
+        }
+        if ui
+            .add_enabled(
+                gb_enabled
+                    && game_boy_serial_device_change_allowed
+                    && game_boy_serial_device
+                        == zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy,
+                egui::Button::new("Scan Barcode Boy..."),
+            )
+            .clicked()
+        {
+            actions.push(MenuAction::OpenBarcodeBoyScan);
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                gb_enabled || debug_windows.printer.len() != 0,
+                egui::Button::new("Printer Output"),
+            )
+            .clicked()
+        {
+            actions.push(MenuAction::OpenPrinterWindow);
+            ui.close();
+        }
     });
-    if !gb_enabled {
-        ui.label("Load GB/GBC content first");
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    if ui
-        .add_enabled(
-            gb_enabled
-                && game_boy_serial_device_change_allowed
-                && game_boy_serial_device
-                    == zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader,
-            egui::Button::new("Scan Bardigun Card..."),
-        )
-        .clicked()
-    {
-        actions.push(MenuAction::ScanBardigunBarcodeFile);
-        ui.close();
-    }
-    #[cfg(target_arch = "wasm32")]
-    if game_boy_serial_device == zeff_gb_core::hardware::GameBoySerialDevice::BardigunBarcodeReader
-    {
-        ui.label("Card-file scanning is native-only");
-    }
-    if ui
-        .add_enabled(
-            gb_enabled
-                && game_boy_serial_device_change_allowed
-                && game_boy_serial_device
-                    == zeff_gb_core::hardware::GameBoySerialDevice::BarcodeBoy,
-            egui::Button::new("Scan Barcode Boy..."),
-        )
-        .clicked()
-    {
-        actions.push(MenuAction::OpenBarcodeBoyScan);
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            gb_enabled || debug_windows.printer.len() != 0,
-            egui::Button::new("Printer Output"),
-        )
-        .clicked()
-    {
-        actions.push(MenuAction::OpenPrinterWindow);
-        ui.close();
-    }
-    ui.separator();
-    ui.label("Link Cable");
-    let remote_link_enabled = cfg!(not(target_arch = "wasm32"))
-        && crate::link::remote_link_system_for_active_system(active_system).is_some();
-    #[cfg(target_arch = "wasm32")]
-    ui.label("TCP link is native-only");
-    if ui
-        .add_enabled(remote_link_enabled, egui::Button::new("Host TCP Link"))
-        .on_hover_text(
-            "Open this after loading the first GB/GBC or WonderSwan/WSC ROM, then Join from another app instance",
-        )
-        .clicked()
-    {
-        actions.push(MenuAction::HostTcpLink);
-        ui.close();
-    }
-    if ui
-        .add_enabled(remote_link_enabled, egui::Button::new("Join TCP Link"))
-        .on_hover_text("Join a localhost link hosted by another app instance")
-        .clicked()
-    {
-        actions.push(MenuAction::JoinTcpLink);
-        ui.close();
-    }
-    if ui.button("Disconnect Link").clicked() {
-        actions.push(MenuAction::DisconnectLink);
-        ui.close();
-    }
     ui.separator();
     ui.label("PPU Layers");
     let layers_before = LayerControlState::capture(debug_windows);

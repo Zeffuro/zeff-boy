@@ -12,11 +12,11 @@ test-support = []
 
 [dependencies]
 sha2 = "0.11.0"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 anyhow = "1.0.104"
 getrandom = "0.4.3"
 hmac = "0.13.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 zeff-nes-core = { path = "../zeff-nes-core", optional = true }
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 serde_json = { version = "1.0.151", optional = true }
@@ -28,3 +28,6 @@ mio = { version = "1.2.3", features = ["os-poll", "net"] }
 name = "zeff-netplay-proof"
 path = "src/bin/proof.rs"
 required-features = ["native-proof"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4.3", features = ["wasm_js"] }

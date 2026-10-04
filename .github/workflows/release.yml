@@ -486,6 +486,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
 
+  refresh-pages:
+    name: Refresh published stable web app
+    needs: publish-release
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy-pages.yml
+    with:
+      flatpak_artifact: zeff-boy-flatpak
+
   publish-snap:
     name: Publish Snap
     needs: publish-release

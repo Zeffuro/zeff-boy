@@ -3,10 +3,12 @@ services:
     image: docker.io/zeffuro/zeff-boy-lobby:${LOBBY_VERSION:-0.1.0}
     environment:
       ZEFF_LOBBY_BIND: 0.0.0.0:8080
-      ZEFF_LOBBY_ACCESS_TOKEN: ${ZEFF_LOBBY_ACCESS_TOKEN:?Set a random 32..256 byte token}
+      ZEFF_LOBBY_PUBLIC: ${ZEFF_LOBBY_PUBLIC:-false}
+      ZEFF_LOBBY_ACCESS_TOKEN: ${ZEFF_LOBBY_ACCESS_TOKEN:-}
       ZEFF_LOBBY_ORIGINS: ${ZEFF_LOBBY_ORIGINS:-https://zeffuro.github.io}
-      ZEFF_LOBBY_MAX_ROOMS: "4"
-      ZEFF_LOBBY_MAX_CONNECTIONS: "16"
+      ZEFF_LOBBY_MAX_ROOMS: ${ZEFF_LOBBY_MAX_ROOMS:-4}
+      ZEFF_LOBBY_MAX_CONNECTIONS: ${ZEFF_LOBBY_MAX_CONNECTIONS:-16}
+      ZEFF_LOBBY_ROOM_TTL: ${ZEFF_LOBBY_ROOM_TTL:-120}
       ZEFF_LOBBY_ALLOW_TURN: "false"
     expose:
       - "8080"

@@ -112,7 +112,7 @@ impl Options {
                 .parse::<SocketAddr>()
                 .context("ADDRESS must be numeric-IP:port")?
         } else {
-            "127.0.0.1:0".parse().unwrap()
+            "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()
         };
         let invitation = (role == 1).then(|| variable("INVITATION")).transpose()?;
         if let Some(invitation) = &invitation {
@@ -328,7 +328,7 @@ mod tests {
             role: 0,
             frames: 24,
             input_delay: zeff_netplay::rollback::InputDelay::default(),
-            address: "127.0.0.1:0".parse().unwrap(),
+            address: "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
             invitation: None,
             reject_build: false,
             jitter_ms: 0,

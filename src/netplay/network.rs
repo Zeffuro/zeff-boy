@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail, ensure};
 use crossbeam_channel::{Receiver as EventReceiver, Sender as EventSender, TrySendError};
 use zeff_netplay::endpoint::ConnectionScope;
 use zeff_netplay::lockstep::Player;
+use zeff_netplay::rollback::InputDelay;
 use zeff_netplay::wire::{self, Identity, Message};
 
 const OUTBOUND_CAPACITY: usize = 64;
@@ -15,6 +16,7 @@ const INBOUND_CAPACITY: usize = 64;
 const IDLE_POLL: Duration = Duration::from_millis(10);
 
 mod failure;
+mod rtc;
 
 #[derive(Debug)]
 pub(crate) enum Event {
@@ -26,7 +28,7 @@ pub(crate) enum Event {
 pub(crate) struct Network {
     outbound: Option<EventSender<Message>>,
     inbound: EventReceiver<Event>,
-    socket: Arc<TcpStream>,
+    socket: Option<Arc<TcpStream>>,
     cancelled: Arc<AtomicBool>,
     owner_cancelled: Arc<AtomicBool>,
     failure: Arc<Mutex<Option<String>>>,
@@ -34,6 +36,20 @@ pub(crate) struct Network {
 }
 
 impl Network {
+    pub(crate) fn spawn_transport(
+        transport: super::Transport,
+        player: Player,
+        identity: Identity,
+        secret: [u8; 32],
+        scope: ConnectionScope,
+        delay: InputDelay,
+    ) -> Result<Self> {
+        match transport {
+            super::Transport::Tcp(stream) => Self::spawn(stream, player, identity, secret, scope),
+            super::Transport::Direct(peer) => rtc::spawn(*peer, player, identity, secret, delay),
+        }
+    }
+
     pub(crate) fn spawn(
         stream: TcpStream,
         player: Player,
@@ -80,7 +96,7 @@ impl Network {
         Ok(Self {
             outbound: Some(outbound),
             inbound,
-            socket,
+            socket: Some(socket),
             cancelled,
             owner_cancelled,
             failure,
@@ -105,7 +121,9 @@ impl Network {
                 };
                 record_failure(&self.failure, cause.to_owned());
                 self.cancelled.store(true, Ordering::Release);
-                let _ = self.socket.shutdown(Shutdown::Both);
+                if let Some(socket) = &self.socket {
+                    let _ = socket.shutdown(Shutdown::Both);
+                }
                 bail!("{cause}")
             }
         }
@@ -137,7 +155,9 @@ impl Network {
     pub(crate) fn cancel(&mut self) {
         self.owner_cancelled.store(true, Ordering::Release);
         self.cancelled.store(true, Ordering::Release);
-        let _ = self.socket.shutdown(Shutdown::Both);
+        if let Some(socket) = &self.socket {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
         self.outbound.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -266,330 +286,4 @@ impl Drop for JoinedReader {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::TcpListener;
-    use std::time::Instant;
-
-    fn identity() -> Identity {
-        Identity {
-            build: [1; 32],
-            build_info: Default::default(),
-            source: [2; 32],
-            effective: [2; 32],
-            media_len: 123,
-            config: [3; 32],
-            initial: [4; 32],
-            persistent: [5; 32],
-            state_format: 11,
-        }
-    }
-
-    fn streams() -> (TcpStream, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (host, _) = listener.accept().unwrap();
-        (host, client)
-    }
-
-    fn event(network: &Network) -> Event {
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            if let Some(event) = network.poll().unwrap() {
-                return event;
-            }
-            assert!(Instant::now() < deadline, "network event deadline");
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    fn input(player: Player, frame: u64) -> Message {
-        Message::Input {
-            player,
-            frame,
-            buttons: 0xa5,
-        }
-    }
-
-    #[test]
-    fn admission_and_ordered_input_checkpoint_exchange() {
-        let (host, client) = streams();
-        let one = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let two = Network::spawn(
-            client,
-            Player::Two,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        assert!(matches!(event(&one), Event::Ready));
-        assert!(matches!(event(&two), Event::Ready));
-        for frame in 2..5 {
-            one.send(input(Player::One, frame)).unwrap();
-            two.send(input(Player::Two, frame)).unwrap();
-            assert!(
-                matches!(event(&one), Event::Message(message) if message == input(Player::Two, frame))
-            );
-            assert!(
-                matches!(event(&two), Event::Message(message) if message == input(Player::One, frame))
-            );
-            let checkpoint = Message::Checkpoint {
-                frame,
-                logical: [1; 32],
-                video: [2; 32],
-                audio: [3; 32],
-                persistent: [4; 32],
-            };
-            one.send(checkpoint.clone()).unwrap();
-            two.send(checkpoint.clone()).unwrap();
-            assert!(matches!(event(&one), Event::Message(message) if message == checkpoint));
-            assert!(matches!(event(&two), Event::Message(message) if message == checkpoint));
-        }
-    }
-
-    #[test]
-    fn admission_failure_is_reported_and_disconnect_remains_observable() {
-        let (host, client) = streams();
-        let one = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let two = Network::spawn(
-            client,
-            Player::Two,
-            identity(),
-            [8; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        for network in [&one, &two] {
-            assert!(
-                matches!(event(network), Event::Failed(cause) if cause.contains("authentication"))
-            );
-            let deadline = Instant::now() + Duration::from_secs(1);
-            while network.poll().is_ok() {
-                assert!(Instant::now() < deadline);
-                thread::yield_now();
-            }
-        }
-    }
-
-    #[test]
-    fn cancellation_interrupts_pending_handshake_and_read() {
-        let (host, _silent_peer) = streams();
-        let mut pending = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let start = Instant::now();
-        pending.cancel();
-        assert!(start.elapsed() < Duration::from_secs(1));
-        assert!(pending.send(input(Player::One, 2)).is_err());
-
-        let (host, client) = streams();
-        let mut one = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let mut peer = wire::admit(client, Player::Two, &identity(), &[9; 32]).unwrap();
-        assert!(matches!(event(&one), Event::Ready));
-        one.send(input(Player::One, 2)).unwrap();
-        assert_eq!(peer.receive().unwrap(), input(Player::One, 2));
-        let start = Instant::now();
-        one.cancel();
-        assert!(start.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn outbound_pipeline_and_unsolicited_inbound_need_no_matching_reply() {
-        let (host, client) = streams();
-        let network = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let mut peer = wire::admit(client, Player::Two, &identity(), &[9; 32]).unwrap();
-        assert!(matches!(event(&network), Event::Ready));
-        for frame in 2..10 {
-            network.send(input(Player::One, frame)).unwrap();
-        }
-        for frame in 2..10 {
-            assert_eq!(peer.receive().unwrap(), input(Player::One, frame));
-        }
-        peer.send(&Message::Progress {
-            frame: 8,
-            confirmed: 6,
-        })
-        .unwrap();
-        assert!(matches!(
-            event(&network),
-            Event::Message(Message::Progress {
-                frame: 8,
-                confirmed: 6
-            })
-        ));
-        peer.send(&input(Player::Two, 19)).unwrap();
-        assert!(
-            matches!(event(&network), Event::Message(message) if message == input(Player::Two, 19))
-        );
-    }
-
-    #[test]
-    fn unsolicited_close_stops_both_workers_without_waiting_for_acknowledgement() {
-        let (host, client) = streams();
-        let mut network = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let mut peer = wire::admit(client, Player::Two, &identity(), &[9; 32]).unwrap();
-        assert!(matches!(event(&network), Event::Ready));
-        peer.send(&Message::Close { frame: 9 }).unwrap();
-        assert!(matches!(
-            event(&network),
-            Event::Message(Message::Close { frame: 9 })
-        ));
-        let start = Instant::now();
-        network.cancel();
-        assert!(start.elapsed() < Duration::from_secs(1));
-        assert!(network.failure.lock().unwrap().is_none());
-        assert!(network.poll().is_err());
-    }
-
-    #[test]
-    fn concurrent_close_cancel_and_socket_shutdown_join_without_spinning() {
-        for _ in 0..8 {
-            let (host, client) = streams();
-            let mut one = Network::spawn(
-                host,
-                Player::One,
-                identity(),
-                [9; 32],
-                ConnectionScope::Loopback,
-            )
-            .unwrap();
-            let mut two = Network::spawn(
-                client,
-                Player::Two,
-                identity(),
-                [9; 32],
-                ConnectionScope::Loopback,
-            )
-            .unwrap();
-            assert!(matches!(event(&one), Event::Ready));
-            assert!(matches!(event(&two), Event::Ready));
-            one.send(Message::Close { frame: 10 }).unwrap();
-            let start = Instant::now();
-            let peer = thread::spawn(move || two.cancel());
-            one.cancel();
-            peer.join().unwrap();
-            assert!(start.elapsed() < Duration::from_secs(1));
-        }
-    }
-
-    #[test]
-    fn silent_peer_expires_receive_deadline_without_network_generated_heartbeat() {
-        let (host, client) = streams();
-        let network = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let _peer = wire::admit(client, Player::Two, &identity(), &[9; 32]).unwrap();
-        assert!(matches!(event(&network), Event::Ready));
-        assert!(matches!(event(&network), Event::Failed(_)));
-    }
-
-    #[test]
-    fn outbound_overflow_cancels_without_blocking() {
-        let (host, _silent_peer) = streams();
-        let mut network = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        for frame in 0..OUTBOUND_CAPACITY {
-            network.send(input(Player::One, frame as u64)).unwrap();
-        }
-        let start = Instant::now();
-        assert!(
-            network
-                .send(input(Player::One, 4))
-                .unwrap_err()
-                .to_string()
-                .contains("overflow")
-        );
-        network.cancel();
-        assert!(start.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn inbound_overflow_preserves_cause_when_failed_event_cannot_fit() {
-        let (host, client) = streams();
-        let mut network = Network::spawn(
-            host,
-            Player::One,
-            identity(),
-            [9; 32],
-            ConnectionScope::Loopback,
-        )
-        .unwrap();
-        let mut peer = wire::admit(client, Player::Two, &identity(), &[9; 32]).unwrap();
-        assert!(matches!(event(&network), Event::Ready));
-        network.send(input(Player::One, 2)).unwrap();
-        assert_eq!(peer.receive().unwrap(), input(Player::One, 2));
-        for frame in 10..(10 + INBOUND_CAPACITY as u64 + 1) {
-            if peer.send(&input(Player::Two, frame)).is_err() {
-                break;
-            }
-        }
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while !network.worker.as_ref().unwrap().is_finished() {
-            assert!(Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(1));
-        }
-        for _ in 0..INBOUND_CAPACITY {
-            assert!(matches!(network.poll().unwrap(), Some(Event::Message(_))));
-        }
-        assert!(
-            network
-                .poll()
-                .unwrap_err()
-                .to_string()
-                .contains("inbound queue overflow")
-        );
-        network.cancel();
-    }
-}
+mod tests;

@@ -87,6 +87,7 @@ impl App {
     }
 
     pub(in crate::app) fn render_netplay_frame(&mut self) {
+        self.debug_windows.netplay.link_active = self.tcp_link_active;
         self.debug_windows.netplay.mark_host_rendered();
         let Some(gfx) = self.gfx.as_mut() else {
             return;
@@ -147,9 +148,19 @@ impl App {
                 }
                 Ok(())
             }
+            MenuAction::HostTcpLink => self
+                .host_tcp_link(Some(self.debug_windows.netplay.link_address.clone()))
+                .map_err(anyhow::Error::msg),
+            MenuAction::JoinTcpLink => self
+                .join_tcp_link(Some(self.debug_windows.netplay.link_address.clone()))
+                .map_err(anyhow::Error::msg),
+            MenuAction::DisconnectLink => self.disconnect_link().map_err(anyhow::Error::msg),
             _ => return,
         };
         if let Err(error) = result {
+            if self.debug_windows.netplay.linked_devices {
+                self.debug_windows.netplay.link_status = error.to_string();
+            }
             self.debug_windows.netplay.status = error.to_string();
             self.toast_manager.error(error.to_string());
         }

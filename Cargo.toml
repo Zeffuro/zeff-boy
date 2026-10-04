@@ -87,6 +87,9 @@ features = ["links"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 zeff-netplay = { path = "crates/zeff-netplay", default-features = false, features = ["test-support"] }
+zeff-netplay-connect = { path = "crates/zeff-netplay-connect", features = ["native"] }
+tokio = { version = "1.52.1", features = ["rt", "time", "sync"] }
+url = "2"
 getrandom = "0.4.3"
 netdev = { version = "0.46.3", default-features = false, features = ["gateway"] }
 ed25519-dalek = "3.0.0"
@@ -133,6 +136,8 @@ winres = "0.1.12"
 sha2 = "0.11.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+zeff-netplay-lobby = { path = "crates/zeff-netplay-lobby" }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 claxon = "0.4.3"
 lewton = "0.10.2"
 gimli = { version = "0.34.0", default-features = false, features = ["write", "std"] }

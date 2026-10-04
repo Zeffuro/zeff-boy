@@ -39,7 +39,6 @@ version = 1
 "src/emu_backend/firmware.rs" = 1007
 "src/emu_backend/pce_cd_chd.rs" = 1483
 "src/emu_backend/pce_cd_overlay.rs" = 1025
-"src/emu_backend/tests/runahead_conformance.rs" = 977
 "src/emu_thread/wasm/tests.rs" = 968
 "src/link/gb/tests.rs" = 1427
 "src/link/ws.rs" = 919

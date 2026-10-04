@@ -71,12 +71,13 @@ impl Session {
             snapshot.frame() == 0,
             "netplay rollback requires fresh frame zero"
         );
-        let network = Network::spawn(
+        let network = Network::spawn_transport(
             start.stream,
             start.player,
             admission.clone(),
             start.secret,
             start.scope,
+            start.input_delay,
         )?;
         nes.set_host_persistence_enabled(false);
         Ok(Self {

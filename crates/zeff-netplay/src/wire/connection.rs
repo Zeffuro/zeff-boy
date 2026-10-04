@@ -144,79 +144,7 @@ impl Connection {
         );
         verify(&self.secret, &[PACKET_DOMAIN, body], received_tag)?;
         let payload = &body[HEADER_LEN..];
-        let message = match body[47] {
-            1 => {
-                ensure!(payload.len() == 10, "invalid input length");
-                ensure!(
-                    payload[0] == role(other(self.player)),
-                    "input player does not own peer port"
-                );
-                Message::Input {
-                    player: other(self.player),
-                    frame: u64::from_be_bytes(payload[1..9].try_into()?),
-                    buttons: payload[9],
-                }
-            }
-            2 => {
-                ensure!(payload.len() == 136, "invalid checkpoint length");
-                Message::Checkpoint {
-                    frame: u64::from_be_bytes(payload[..8].try_into()?),
-                    logical: payload[8..40].try_into()?,
-                    video: payload[40..72].try_into()?,
-                    audio: payload[72..104].try_into()?,
-                    persistent: payload[104..136].try_into()?,
-                }
-            }
-            3 => {
-                ensure!(payload.len() == 8, "invalid close length");
-                Message::Close {
-                    frame: u64::from_be_bytes(payload.try_into()?),
-                }
-            }
-            4 => {
-                ensure!(payload.len() == 9, "invalid pause length");
-                ensure!(payload[8] <= 1, "invalid pause flag");
-                Message::Pause {
-                    frame: u64::from_be_bytes(payload[..8].try_into()?),
-                    paused: payload[8] == 1,
-                }
-            }
-            5 => {
-                ensure!(payload.len() == 16, "invalid progress length");
-                let frame = u64::from_be_bytes(payload[..8].try_into()?);
-                let confirmed = u64::from_be_bytes(payload[8..].try_into()?);
-                ensure!(
-                    confirmed <= frame,
-                    "confirmed progress exceeds simulated frame"
-                );
-                Message::Progress { frame, confirmed }
-            }
-            6 => {
-                ensure!(payload.len() == 17, "invalid pause change length");
-                let request = u64::from_be_bytes(payload[..8].try_into()?);
-                ensure!(request != 0, "invalid pause request ID");
-                ensure!(payload[16] <= 1, "invalid pause flag");
-                Message::PauseChange {
-                    request,
-                    frame: u64::from_be_bytes(payload[8..16].try_into()?),
-                    paused: payload[16] == 1,
-                }
-            }
-            7 => {
-                ensure!(payload.len() == 8, "invalid pause acknowledgment length");
-                let request = u64::from_be_bytes(payload.try_into()?);
-                ensure!(request != 0, "invalid pause request ID");
-                Message::PauseAck { request }
-            }
-            8 => {
-                let text = std::str::from_utf8(payload).context("invalid chat UTF-8")?;
-                validate_chat(text)?;
-                Message::Chat {
-                    text: text.to_owned(),
-                }
-            }
-            _ => anyhow::bail!("unknown packet kind"),
-        };
+        let message = messages::decode(body[47], payload, other(self.player))?;
         ensure!(
             !self.sent_close || matches!(message, Message::Close { .. }),
             "gameplay packet after local Close"
@@ -233,63 +161,7 @@ impl Connection {
         packet.extend_from_slice(&self.transcript);
         packet.push(role(self.player));
         packet.extend_from_slice(&self.send_sequence.to_be_bytes());
-        match message {
-            Message::Chat { text } => {
-                packet.push(8);
-                packet.extend_from_slice(text.as_bytes());
-            }
-            Message::Input {
-                player,
-                frame,
-                buttons,
-            } => {
-                packet.push(1);
-                packet.push(role(*player));
-                packet.extend_from_slice(&frame.to_be_bytes());
-                packet.push(*buttons);
-            }
-            Message::Checkpoint {
-                frame,
-                logical,
-                video,
-                audio,
-                persistent,
-            } => {
-                packet.push(2);
-                packet.extend_from_slice(&frame.to_be_bytes());
-                for digest in [logical, video, audio, persistent] {
-                    packet.extend_from_slice(digest);
-                }
-            }
-            Message::Close { frame } => {
-                packet.push(3);
-                packet.extend_from_slice(&frame.to_be_bytes());
-            }
-            Message::Pause { frame, paused } => {
-                packet.push(4);
-                packet.extend_from_slice(&frame.to_be_bytes());
-                packet.push(u8::from(*paused));
-            }
-            Message::Progress { frame, confirmed } => {
-                packet.push(5);
-                packet.extend_from_slice(&frame.to_be_bytes());
-                packet.extend_from_slice(&confirmed.to_be_bytes());
-            }
-            Message::PauseChange {
-                request,
-                frame,
-                paused,
-            } => {
-                packet.push(6);
-                packet.extend_from_slice(&request.to_be_bytes());
-                packet.extend_from_slice(&frame.to_be_bytes());
-                packet.push(u8::from(*paused));
-            }
-            Message::PauseAck { request } => {
-                packet.push(7);
-                packet.extend_from_slice(&request.to_be_bytes());
-            }
-        }
+        messages::encode(&mut packet, message);
         let signature = tag(&self.secret, &[PACKET_DOMAIN, &packet]);
         packet.extend_from_slice(&signature);
         packet

@@ -154,6 +154,7 @@ async fn authentication_version_compatibility_and_capacity_are_enforced() {
     config.max_rooms = 1;
     let server = Server::start(config).await;
     for (token, version, code) in [
+        ("", VERSION, ErrorCode::Unauthorized),
         ("wrong", VERSION, ErrorCode::Unauthorized),
         (TOKEN, VERSION + 1, ErrorCode::Version),
     ] {
@@ -217,6 +218,73 @@ async fn authentication_version_compatibility_and_capacity_are_enforced() {
 }
 
 #[tokio::test]
+async fn public_room_capacity_and_disconnect_cleanup_are_bounded() {
+    let mut config = Config::public();
+    config.max_rooms = 4;
+    let server = Server::start(config).await;
+    let public_create = || ClientMessage::Create {
+        version: VERSION,
+        access_token: String::new(),
+        identity: identity(),
+    };
+    let mut hosts = Vec::new();
+    let mut codes = Vec::new();
+    for _ in 0..4 {
+        let mut host = server.socket().await;
+        send(&mut host, public_create()).await;
+        codes.push(welcome(recv(&mut host).await, Role::Host));
+        hosts.push(host);
+    }
+    assert_eq!(server.lobby.room_count(), 4);
+    let mut overflow = server.socket().await;
+    send(&mut overflow, public_create()).await;
+    assert_eq!(
+        recv(&mut overflow).await,
+        ServerMessage::Error {
+            code: ErrorCode::Full
+        }
+    );
+    let mut guest = server.socket().await;
+    send(
+        &mut guest,
+        ClientMessage::Join {
+            version: VERSION,
+            access_token: String::new(),
+            identity: identity(),
+            room: codes[0].clone(),
+        },
+    )
+    .await;
+    welcome(recv(&mut guest).await, Role::Guest);
+    assert_eq!(recv(&mut hosts[0]).await, ServerMessage::PeerJoined);
+    hosts[0].close(None).await.unwrap();
+    assert_eq!(recv(&mut guest).await, ServerMessage::PeerLeft);
+    assert_eq!(server.lobby.room_count(), 3);
+    let mut replacement = server.socket().await;
+    send(&mut replacement, public_create()).await;
+    welcome(recv(&mut replacement).await, Role::Host);
+    assert_eq!(server.lobby.room_count(), 4);
+}
+
+#[tokio::test]
+async fn public_admission_rate_is_capped_before_room_creation() {
+    let mut config = Config::public();
+    config.max_connections = 256;
+    let server = Server::start(config).await;
+    for _ in 0..120 {
+        server.socket().await.close(None).await.unwrap();
+    }
+    let error = tokio_tungstenite::connect_async(&server.url)
+        .await
+        .unwrap_err();
+    let tokio_tungstenite::tungstenite::Error::Http(response) = error else {
+        panic!("expected HTTP admission rejection");
+    };
+    assert_eq!(response.status().as_u16(), 429);
+    assert_eq!(server.lobby.room_count(), 0);
+}
+
+#[tokio::test]
 async fn no_binary_or_arbitrary_gameplay_forwarding() {
     let server = Server::start(Config::local(TOKEN).unwrap()).await;
     for frame in [
@@ -246,7 +314,7 @@ async fn no_binary_or_arbitrary_gameplay_forwarding() {
 
 #[tokio::test]
 async fn origins_slots_and_room_deadline_are_bounded() {
-    let mut config = Config::local(TOKEN).unwrap();
+    let mut config = Config::public();
     config.max_connections = 1;
     config.room_ttl = Duration::from_millis(50);
     config.origins = vec!["https://example.org".into()];
@@ -286,7 +354,7 @@ async fn oversized_frame_is_closed_before_parsing() {
 
 #[tokio::test]
 async fn heartbeat_preserves_membership_and_cannot_carry_gameplay() {
-    let server = Server::start(Config::local(TOKEN).unwrap()).await;
+    let server = Server::start(Config::public()).await;
     let mut host = server.socket().await;
     send(&mut host, create()).await;
     welcome(recv(&mut host).await, Role::Host);

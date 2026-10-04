@@ -12,8 +12,8 @@ Oh and I like making cool shit.
 ## Audio discovery
 
 Audio Explorer finds supported music drivers, previews their tracks and exports
-WAV audio and source assets. Support depends on the driver and ROM version;
-some entries are sound effects or hardware presets.
+WAV audio and source assets. Support depends on the driver and ROM version.
+Some entries are sound effects or hardware presets.
 
 Scan a ROM or render a supported PSG VGM/VGZ capture:
 
@@ -31,7 +31,7 @@ zeff-boy --audio-huge music.zip music.gb
 
 See the [PSGlib](tests/fixtures/psglib) and [hUGEDriver](tests/fixtures/huge)
 fixtures for supported inputs. Choose 50 or 60 Hz for PSGlib. Captured VGM playback
-runs once; loop markers are not repeated.
+runs once. Loop markers are not repeated.
 
 Capture and check native audio, or try a few input sequences automatically:
 
@@ -42,7 +42,7 @@ zeff-boy --audio-capture-sweep captures game.gb
 ```
 
 Native captures support GB/GBC, base NES, Sega 8-bit/Coleco PSG, HuCard PSG and
-ordinary WonderSwan audio. Captures record executed audio; they do not discover
+ordinary WonderSwan audio. Captures record executed audio. They do not discover
 unplayed songs. Output files and directories must be new. Run `zeff-boy --help`
 for selection, duration, validation and corpus-report options.
 

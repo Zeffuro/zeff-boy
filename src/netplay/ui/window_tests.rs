@@ -168,6 +168,46 @@ fn host_and_join_are_clickable_without_an_open_menu_at_small_viewports() {
 }
 
 #[test]
+fn lobby_and_link_actions_remain_reachable_in_compact_window() {
+    for dpi in [1.0, 2.0] {
+        let mut harness = Harness::new(egui::vec2(320.0, 240.0), dpi);
+        let mut state = Ui {
+            lobby: true,
+            ..Ui::for_route(false)
+        };
+        state.open();
+        harness.reach(&mut state, "Server");
+        harness.reach(&mut state, "Key");
+        let host = harness.reach(&mut state, "Start hosting");
+        assert!(matches!(
+            harness.click(&mut state, host.center()).1,
+            Some(MenuAction::HostNesNetplay)
+        ));
+        for system in [ActiveSystem::GameBoy, ActiveSystem::WonderSwan] {
+            harness.system = system;
+            state.open_for_system(system);
+            let host = harness.reach(&mut state, "Host");
+            assert!(matches!(
+                harness.click(&mut state, host.center()).1,
+                Some(MenuAction::HostTcpLink)
+            ));
+            let join = harness.reach(&mut state, "Join");
+            assert!(matches!(
+                harness.click(&mut state, join.center()).1,
+                Some(MenuAction::JoinTcpLink)
+            ));
+            state.link_active = true;
+            let disconnect = harness.reach(&mut state, "Disconnect");
+            assert!(matches!(
+                harness.click(&mut state, disconnect.center()).1,
+                Some(MenuAction::DisconnectLink)
+            ));
+            state.link_active = false;
+        }
+    }
+}
+
+#[test]
 fn pending_and_connected_session_actions_stay_reachable() {
     let harness = Harness::new(egui::vec2(320.0, 240.0), 2.0);
     let mut state = Ui {
@@ -322,7 +362,10 @@ fn scopes_and_start_requirements_remain_interactive() {
     state.joining = false;
     let host = harness.reach(&mut state, "Start hosting");
     assert!(harness.click(&mut state, host.center()).1.is_none());
-    harness.reach(&mut state, "Load an NES cartridge first.");
+    harness.reach(
+        &mut state,
+        "Shared-console netplay is currently available for NES.",
+    );
 }
 
 #[test]

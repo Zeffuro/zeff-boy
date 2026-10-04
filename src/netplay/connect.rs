@@ -15,6 +15,8 @@ use zeff_netplay::rollback::InputDelay;
 
 use super::Start;
 
+pub(crate) mod lobby;
+
 const CONNECT_BUDGET: Duration = Duration::from_secs(30);
 const CONNECT_ATTEMPT: Duration = Duration::from_millis(100);
 const RETRY_INTERVAL: Duration = Duration::from_millis(10);
@@ -36,6 +38,7 @@ impl HostOptions {
 
 pub(crate) struct Connector {
     result: Option<Receiver<Result<Start>>>,
+    invitation: Option<Receiver<String>>,
     cancelled: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     allow_different_versions: bool,
@@ -183,6 +186,7 @@ impl Connector {
             .context("starting netplay connection worker")?;
         Ok(Self {
             result: Some(result),
+            invitation: None,
             cancelled,
             worker: Some(worker),
             allow_different_versions: false,
@@ -210,6 +214,10 @@ impl Connector {
 
     pub(crate) fn set_version_consent(&mut self, allow: bool) {
         self.allow_different_versions = allow;
+    }
+
+    pub(crate) fn take_invitation(&mut self) -> Option<String> {
+        self.invitation.as_ref()?.try_recv().ok()
     }
 
     pub(crate) fn cancel(&mut self) {
@@ -322,7 +330,7 @@ fn make_start(
     stream.set_nonblocking(false)?;
     stream.set_nodelay(true)?;
     Ok(Start {
-        stream,
+        stream: stream.into(),
         player,
         build,
         secret,

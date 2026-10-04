@@ -1,14 +1,21 @@
 name: Deploy to GitHub Pages
 
 on:
+  push:
+    branches: [master]
+  release:
+    types: [published]
+  workflow_dispatch:
   workflow_call:
     inputs:
       flatpak_artifact:
         description: Signed Flatpak repository artifact from the calling workflow
-        required: true
+        required: false
+        default: ""
         type: string
 
 permissions:
+  actions: read
   contents: read
   pages: write
   id-token: write
@@ -19,12 +26,29 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'release' || (!github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v'))
     runs-on: ubuntu-latest
     outputs:
       flatpak_summary_sha256: ${{ steps.flatpak.outputs.summary_sha256 }}
       flatpak_ref_sha256: ${{ steps.flatpak.outputs.ref_sha256 }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Resolve published channel sources
+        id: sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pages_sources.py --repository "$GITHUB_REPOSITORY"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.sources.outputs.nightly_sha }}
+          path: nightly-source
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.sources.outputs.stable_sha }}
+          path: stable-source
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -38,14 +62,41 @@ jobs:
         with:
           prefix-key: v3-pages
 
-      - name: Build
-        run: trunk build --release --public-url /zeff-boy/
+      - name: Build nightly at the root
+        working-directory: nightly-source
+        run: trunk build --release --locked --public-url /zeff-boy/ --dist "$GITHUB_WORKSPACE/site"
+
+      - name: Build stable alongside nightly
+        working-directory: stable-source
+        run: trunk build --release --locked --public-url /zeff-boy/stable/ --dist "$GITHUB_WORKSPACE/site/stable"
+
+      - name: Record channel source pins
+        env:
+          NIGHTLY_SHA: ${{ steps.sources.outputs.nightly_sha }}
+          STABLE_SHA: ${{ steps.sources.outputs.stable_sha }}
+          STABLE_TAG: ${{ steps.sources.outputs.stable_tag }}
+        run: |
+          test -s site/index.html
+          test -s site/stable/index.html
+          python3 -c 'import json,os,pathlib; pathlib.Path("site/channels.json").write_text(json.dumps({key:os.environ[key] for key in ("NIGHTLY_SHA","STABLE_SHA","STABLE_TAG")}) + "\n")'
 
       - name: Download current Flatpak repository
+        if: inputs.flatpak_artifact != ''
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.flatpak_artifact }}
           path: flatpak-release
+
+      - name: Download published signed Flatpak repository
+        if: inputs.flatpak_artifact == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: ${{ steps.sources.outputs.stable_tag }}
+        run: |
+          gh release download "$STABLE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern zeff-boy-flatpak-repo.tar.zst --pattern SHA256SUMS.txt \
+            --dir flatpak-release
+          python3 scripts/pages_sources.py --verify-flatpak flatpak-release
 
       - name: Add custom Flatpak repository
         id: flatpak
@@ -56,16 +107,18 @@ jobs:
             echo "::error::The release did not produce a signed Flatpak repository"
             exit 1
           fi
-          mkdir -p dist/flatpak
-          tar --zstd -xf "$ARCHIVE" -C dist/flatpak
-          test -s dist/flatpak/repo/summary
-          test -s dist/flatpak/com.github.zeffuro.zeff-boy.flatpakref
-          echo "summary_sha256=$(sha256sum dist/flatpak/repo/summary | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "ref_sha256=$(sha256sum dist/flatpak/com.github.zeffuro.zeff-boy.flatpakref | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          mkdir -p site/flatpak
+          tar --zstd -xf "$ARCHIVE" -C site/flatpak
+          test -s site/flatpak/repo/summary
+          test -s site/flatpak/repo/summary.sig
+          test -s site/flatpak/com.github.zeffuro.zeff-boy.flatpakref
+          grep -Eq '^GPGKey=.+' site/flatpak/com.github.zeffuro.zeff-boy.flatpakref
+          echo "summary_sha256=$(sha256sum site/flatpak/repo/summary | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "ref_sha256=$(sha256sum site/flatpak/com.github.zeffuro.zeff-boy.flatpakref | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build

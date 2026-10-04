@@ -1,4 +1,5 @@
 pub(crate) mod adapters;
+pub(crate) mod capabilities;
 pub(crate) mod chat;
 pub(crate) mod compatibility;
 pub(crate) mod connect;
@@ -6,10 +7,44 @@ pub(crate) mod identity;
 pub(crate) mod network;
 pub(crate) mod proof;
 pub(crate) mod session;
+#[cfg(test)]
+pub(crate) mod test_lobby;
 pub(crate) mod ui;
 
+pub(crate) enum Transport {
+    Tcp(std::net::TcpStream),
+    Direct(Box<DirectPeer>),
+}
+
+pub(crate) struct DirectPeer {
+    pub(crate) connection: zeff_netplay_connect::DataConnection,
+    pub(crate) runtime: tokio::runtime::Runtime,
+}
+
+impl From<std::net::TcpStream> for Transport {
+    fn from(stream: std::net::TcpStream) -> Self {
+        Self::Tcp(stream)
+    }
+}
+
+impl Transport {
+    pub(crate) fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match self {
+            Self::Tcp(stream) => stream.local_addr(),
+            Self::Direct(_) => Err(std::io::ErrorKind::Unsupported.into()),
+        }
+    }
+
+    pub(crate) fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match self {
+            Self::Tcp(stream) => stream.peer_addr(),
+            Self::Direct(_) => Err(std::io::ErrorKind::Unsupported.into()),
+        }
+    }
+}
+
 pub(crate) struct Start {
-    pub(crate) stream: std::net::TcpStream,
+    pub(crate) stream: Transport,
     pub(crate) player: zeff_netplay::lockstep::Player,
     pub(crate) build: [u8; 32],
     pub(crate) secret: [u8; 32],

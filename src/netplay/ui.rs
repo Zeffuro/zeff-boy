@@ -11,6 +11,7 @@ use crate::platform::Instant;
 use super::connect::HostOptions;
 
 mod chat;
+mod connections;
 mod host_addresses;
 
 pub(crate) struct Ui {
@@ -21,6 +22,13 @@ pub(crate) struct Ui {
     pub(crate) metrics: String,
     pub(crate) invitation: String,
     pub(crate) private_network: bool,
+    pub(crate) lobby: bool,
+    pub(crate) lobby_url: String,
+    pub(crate) lobby_key: String,
+    pub(crate) linked_devices: bool,
+    pub(crate) link_active: bool,
+    pub(crate) link_status: String,
+    pub(crate) link_address: String,
     pub(crate) host_address: String,
     pub(crate) host_port: u16,
     pub(crate) allow_different_versions: bool,
@@ -54,6 +62,13 @@ impl Ui {
             metrics: String::new(),
             invitation: String::new(),
             private_network: forwarded,
+            lobby: false,
+            lobby_url: super::connect::lobby::DEFAULT_URL.into(),
+            lobby_key: String::new(),
+            linked_devices: false,
+            link_active: false,
+            link_status: String::new(),
+            link_address: crate::link::transport::native::DEFAULT_TCP_LINK_ADDR.into(),
             host_address: if forwarded {
                 "127.0.0.1".into()
             } else {
@@ -112,7 +127,12 @@ impl Ui {
     }
 
     pub(crate) fn invitation_delay(&self, invitation: &str) -> Result<InputDelay> {
-        super::connect::invitation_delay(invitation, self.scope())
+        if self.lobby {
+            super::connect::lobby::parse_invitation(invitation, self.lobby_url.trim())
+                .map(|(_, _, delay)| delay)
+        } else {
+            super::connect::invitation_delay(invitation, self.scope())
+        }
     }
 
     pub(crate) fn open(&mut self) {
@@ -163,6 +183,17 @@ impl Ui {
     }
 
     fn draw_controls(&mut self, ui: &mut egui::Ui, system: ActiveSystem) -> Option<MenuAction> {
+        if !self.active && !self.link_active {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.linked_devices, false, "Shared console");
+                ui.selectable_value(&mut self.linked_devices, true, "Link cable");
+            });
+            ui.separator();
+        }
+        if self.linked_devices {
+            return self.draw_link(ui, system);
+        }
+        let idle = format!("{} · two players", system.code().to_uppercase());
         ui.label(if !self.status.is_empty() {
             &self.status
         } else if self.connected {
@@ -170,7 +201,7 @@ impl Ui {
         } else if self.active {
             "Connecting"
         } else {
-            "NES · two players"
+            &idle
         });
         if self.active {
             ui.label(format!("Delay: {} frames", self.input_delay));
@@ -208,9 +239,25 @@ impl Ui {
                 ui.selectable_value(&mut self.joining, false, "Host");
                 ui.selectable_value(&mut self.joining, true, "Join");
                 ui.separator();
-                ui.selectable_value(&mut self.private_network, false, "Same PC");
-                ui.selectable_value(&mut self.private_network, true, "LAN");
+                if ui
+                    .selectable_label(!self.lobby && !self.private_network, "Same PC")
+                    .clicked()
+                {
+                    self.lobby = false;
+                    self.private_network = false;
+                }
+                if ui
+                    .selectable_label(!self.lobby && self.private_network, "LAN")
+                    .clicked()
+                {
+                    self.lobby = false;
+                    self.private_network = true;
+                }
+                ui.selectable_value(&mut self.lobby, true, "Lobby");
             });
+            if self.lobby {
+                self.draw_lobby(ui);
+            }
             if self.joining {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.join)
@@ -220,7 +267,7 @@ impl Ui {
                 if let Ok(input_delay) = self.invitation_delay(self.join.trim()) {
                     ui.label(format!("Host delay: {} frames", input_delay.frames()));
                 }
-            } else if self.private_network {
+            } else if self.private_network && !self.lobby {
                 self.host_addresses.draw(ui, &mut self.host_address);
             }
             if !self.joining {
@@ -232,11 +279,15 @@ impl Ui {
             ui.small("Starts fresh. Session saves are discarded.");
             if ui
                 .add_enabled(
-                    system == ActiveSystem::Nes
+                    super::capabilities::shared_console(system)
                         && if self.joining {
                             !self.join.trim().is_empty()
                         } else {
-                            self.host_options().is_ok()
+                            if self.lobby {
+                                self.lobby_options().is_ok()
+                            } else {
+                                self.host_options().is_ok()
+                            }
                         },
                     egui::Button::new(if self.joining {
                         "Connect"
@@ -252,8 +303,8 @@ impl Ui {
                     MenuAction::HostNesNetplay
                 });
             }
-            if system != ActiveSystem::Nes {
-                ui.label("Load an NES cartridge first.");
+            if !super::capabilities::shared_console(system) {
+                ui.label("Shared-console netplay is currently available for NES.");
             }
         }
         if !self.active {
@@ -270,7 +321,7 @@ impl Ui {
 
     fn draw_options(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("Options", |ui| {
-            if !self.joining && self.private_network {
+            if !self.joining && self.private_network && !self.lobby {
                 ui.horizontal(|ui| {
                     ui.label("Port");
                     ui.add(egui::DragValue::new(&mut self.host_port).range(1..=u16::MAX));
@@ -316,7 +367,9 @@ impl Ui {
             ui.label("Player 1 controls on both devices. Click the game to play.");
             ui.label("Both players must resume to continue.");
             ui.label("Disconnect resets the game and pauses it.");
-            if self.private_network {
+            if self.lobby {
+                ui.small("Encrypted peer connection. Lobby carries setup only.");
+            } else if self.private_network {
                 ui.label("Use a trusted LAN. The host address must be reachable.");
                 ui.small("TCP is authenticated, not encrypted.");
             }
@@ -338,7 +391,10 @@ mod tests {
         assert_eq!(ui.host_port, 8766);
         let options = ui.host_options().unwrap();
         assert_eq!(options.scope, ConnectionScope::Loopback);
-        assert_eq!(options.address, "127.0.0.1:0".parse().unwrap());
+        assert_eq!(
+            options.address,
+            "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()
+        );
         assert_eq!(options.input_delay, InputDelay::default());
     }
 
@@ -347,7 +403,10 @@ mod tests {
         let ui = Ui::for_route(true);
         let options = ui.host_options().unwrap();
         assert_eq!(options.scope, ConnectionScope::TrustedPrivate);
-        assert_eq!(options.address, "127.0.0.1:8766".parse().unwrap());
+        assert_eq!(
+            options.address,
+            "127.0.0.1:8766".parse::<std::net::SocketAddr>().unwrap()
+        );
         assert_eq!(options.input_delay.frames(), 0);
     }
 
@@ -403,7 +462,7 @@ mod tests {
         assert_eq!(ui.scope(), ConnectionScope::Loopback);
         assert_eq!(
             ui.host_options().unwrap().address,
-            "127.0.0.1:0".parse().unwrap()
+            "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()
         );
     }
 

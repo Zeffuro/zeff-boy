@@ -293,22 +293,26 @@ fn resolved_registry(cargo_home: &Path) -> Result<PathBuf, String> {
 
 impl Paths<'_> {
     fn normalize(&self, value: &str) -> String {
-        let mut value = value.replace('\\', "/");
-        let registry = self.registry.to_string_lossy().replace('\\', "/");
-        // Replace the extended spelling before its embedded plain path.
-        value = value.replace(&registry, "$CARGO_REGISTRY");
-        if let Some(plain) = registry.strip_prefix("//?/UNC/") {
-            value = value.replace(&format!("//{plain}"), "$CARGO_REGISTRY");
-        } else if let Some(plain) = registry.strip_prefix("//?/") {
-            value = value.replace(plain, "$CARGO_REGISTRY");
-        }
+        let path = Path::new(value);
+        let canonical = path
+            .is_absolute()
+            .then(|| path.canonicalize().ok())
+            .flatten();
+        let value = canonical.as_ref().map_or_else(
+            || value.to_owned(),
+            |path| path.to_string_lossy().into_owned(),
+        );
+        let mut value = path_spelling(&value);
         for (path, label) in [
             (self.registry, "$CARGO_REGISTRY"),
             (self.target, "$TARGET"),
             (self.root, "$ROOT"),
             (self.sysroot, "$SYSROOT"),
         ] {
-            value = value.replace(&path.to_string_lossy().replace('\\', "/"), label);
+            if let Ok(canonical) = path.canonicalize() {
+                value = value.replace(&path_spelling(&canonical.to_string_lossy()), label);
+            }
+            value = value.replace(&path_spelling(&path.to_string_lossy()), label);
         }
         value
     }
@@ -346,6 +350,15 @@ impl Paths<'_> {
             ));
         }
         Ok(value)
+    }
+}
+
+fn path_spelling(value: &str) -> String {
+    let value = value.replace('\\', "/");
+    if let Some(unc) = value.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else {
+        value.strip_prefix("//?/").unwrap_or(&value).to_owned()
     }
 }
 
@@ -578,6 +591,12 @@ mod tests {
         assert!(
             paths
                 .normalize(&native.to_string_lossy())
+                .starts_with("$CARGO_REGISTRY/")
+        );
+        #[cfg(windows)]
+        assert!(
+            paths
+                .normalize(&native.to_string_lossy().to_uppercase())
                 .starts_with("$CARGO_REGISTRY/")
         );
         let original = artifacts[name].clone();

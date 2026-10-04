@@ -119,7 +119,7 @@ impl Fixture {
                     verify_every_frame: true,
                     input_delay: zeff_netplay::rollback::InputDelay::default(),
                     scope: zeff_netplay::endpoint::ConnectionScope::Loopback,
-                    stream: local,
+                    stream: local.into(),
                     player: Player::One,
                     build: [9; 32],
                     secret: [5; 32],
