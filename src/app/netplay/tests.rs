@@ -173,7 +173,13 @@ fn preparing_and_connecting_cancel_and_game_teardown_release_listener() {
         } else {
             app.request_netplay_stop();
         }
-        assert!(start.elapsed() < Duration::from_secs(1));
+        // Full game teardown also flushes saves and joins the emulator worker.
+        if !teardown {
+            assert!(
+                start.elapsed() < Duration::from_secs(1),
+                "canceling the pending connector exceeded its budget"
+            );
+        }
         assert!(app.netplay.phase == Phase::Idle);
         assert!(app.netplay.connector.is_none());
         assert!(TcpListener::bind(address).is_ok());

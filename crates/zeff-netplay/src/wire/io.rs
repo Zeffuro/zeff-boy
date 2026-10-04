@@ -343,6 +343,10 @@ mod tests {
                 buttons: 1,
             })
             .unwrap();
+        assert_eq!(
+            host.stream.read_timeout().unwrap(),
+            Some(Duration::from_secs(2))
+        );
         cancellation.store(true, Ordering::Release);
         assert!(
             host.receive()
@@ -351,9 +355,7 @@ mod tests {
                 .contains("cancelled")
         );
         assert!(host.receive().unwrap_err().to_string().contains("terminal"));
-        assert_eq!(
-            host.stream.read_timeout().unwrap(),
-            Some(Duration::from_secs(2))
-        );
+        assert!(host.terminal);
+        assert_eq!(host.receive_sequence, 0);
     }
 }
