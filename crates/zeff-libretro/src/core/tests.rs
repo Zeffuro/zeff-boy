@@ -6,6 +6,12 @@ use zeff_emu_common::system::{CoreFamily, System};
 #[path = "tests/pce_host.rs"]
 mod pce_host;
 
+#[path = "tests/nes_timing.rs"]
+mod nes_timing;
+
+#[path = "tests/nes_capacity.rs"]
+mod nes_capacity;
+
 fn load_sega8(ext: &str) -> CoreState {
     CoreState::from_rom(&[0x76], &format!("test.{ext}")).expect("Sega 8-bit ROM should load")
 }

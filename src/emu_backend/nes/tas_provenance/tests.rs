@@ -79,6 +79,7 @@ fn modded_effective_media_keeps_raw_identity_and_mod_facts() {
     let emu = zeff_nes_core::emulator::Emulator::new(&effective, 48_000.0).unwrap();
     let provenance = NesTasLoadProvenanceSeed::new(
         raw_sha256,
+        raw.len() as u64,
         Path::new("modded.nes"),
         Path::new("modded.nes"),
         NesTasLoadSetup {

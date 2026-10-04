@@ -1,4 +1,4 @@
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,6 +6,10 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread::{self, JoinHandle};
 
 use super::{LinkConnectionState, LinkTransport, LinkTransportError};
+
+mod connector;
+mod read;
+pub(crate) use connector::TcpLinkConnector;
 
 const MAX_TCP_PACKET_LEN: usize = u16::MAX as usize;
 const CONNECT_RETRY_ATTEMPTS: usize = 40;
@@ -18,26 +22,33 @@ pub(crate) struct TcpLinkTransport {
     inbound: Receiver<Vec<u8>>,
     connected: Arc<AtomicBool>,
     shutdown_stream: TcpStream,
+    reader: Option<JoinHandle<()>>,
+    #[cfg(test)]
+    reader_progress: Arc<read::ReaderProgress>,
 }
 
 impl TcpLinkTransport {
+    #[allow(dead_code)]
     pub(crate) fn connect(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let addrs = resolve_addrs(addr)?;
         Self::from_stream(connect_with_retries(&addrs)?)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn host_once(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let addrs = resolve_addrs(addr)?;
         let listener = bind_with_retries(&addrs)?;
         Self::accept_once(listener)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn accept_once(listener: TcpListener) -> io::Result<Self> {
         let (stream, _) = listener.accept()?;
         Self::from_stream(stream)
     }
 
     pub(crate) fn from_stream(stream: TcpStream) -> io::Result<Self> {
+        stream.set_nonblocking(false)?;
         stream.set_nodelay(true)?;
         let reader_stream = stream.try_clone()?;
         let writer_stream = stream.try_clone()?;
@@ -46,15 +57,30 @@ impl TcpLinkTransport {
         let connected = Arc::new(AtomicBool::new(true));
 
         let reader_connected = Arc::clone(&connected);
-        let _reader: JoinHandle<()> = thread::spawn(move || {
-            read_packets(reader_stream, inbound_tx, reader_connected);
-        });
+        #[cfg(test)]
+        let reader_progress = Arc::new(read::ReaderProgress::default());
+        #[cfg(test)]
+        let progress = Arc::clone(&reader_progress);
+        let reader = thread::Builder::new()
+            .name("tcp-link-reader".into())
+            .spawn(move || {
+                read_packets(
+                    reader_stream,
+                    inbound_tx,
+                    reader_connected,
+                    #[cfg(test)]
+                    progress,
+                );
+            })?;
 
         Ok(Self {
             writer_stream,
             inbound,
             connected,
             shutdown_stream,
+            reader: Some(reader),
+            #[cfg(test)]
+            reader_progress,
         })
     }
 }
@@ -189,6 +215,9 @@ impl LinkTransport for TcpLinkTransport {
     fn disconnect(&mut self) {
         self.connected.store(false, Ordering::Relaxed);
         let _ = self.shutdown_stream.shutdown(Shutdown::Both);
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
 }
 
@@ -198,22 +227,43 @@ impl Drop for TcpLinkTransport {
     }
 }
 
-fn read_packets(mut stream: TcpStream, inbound: Sender<Vec<u8>>, connected: Arc<AtomicBool>) {
+fn read_packets(
+    mut stream: TcpStream,
+    inbound: Sender<Vec<u8>>,
+    connected: Arc<AtomicBool>,
+    #[cfg(test)] progress: Arc<read::ReaderProgress>,
+) {
     while connected.load(Ordering::Relaxed) {
         let mut len_bytes = [0; 2];
-        if stream.read_exact(&mut len_bytes).is_err() {
+        if read::read_exact(
+            &mut stream,
+            &mut len_bytes,
+            &connected,
+            #[cfg(test)]
+            &progress,
+        )
+        .is_err()
+        {
             connected.store(false, Ordering::Relaxed);
             break;
         }
 
         let len = usize::from(u16::from_le_bytes(len_bytes));
         let mut packet = vec![0; len];
-        if stream.read_exact(&mut packet).is_err() {
+        if read::read_exact(
+            &mut stream,
+            &mut packet,
+            &connected,
+            #[cfg(test)]
+            &progress,
+        )
+        .is_err()
+        {
             connected.store(false, Ordering::Relaxed);
             break;
         }
 
-        if inbound.send(packet).is_err() {
+        if !connected.load(Ordering::Acquire) || inbound.send(packet).is_err() {
             connected.store(false, Ordering::Relaxed);
             break;
         }
@@ -221,37 +271,4 @@ fn read_packets(mut stream: TcpStream, inbound: Sender<Vec<u8>>, connected: Arc<
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    fn recv_with_timeout(link: &mut TcpLinkTransport) -> Vec<u8> {
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            if let Some(packet) = link.try_receive().unwrap() {
-                return packet;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for TCP link packet"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    #[test]
-    fn tcp_link_transport_moves_framed_packets_between_endpoints() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let host_thread = thread::spawn(move || TcpLinkTransport::accept_once(listener).unwrap());
-
-        let mut client = TcpLinkTransport::connect(addr).unwrap();
-        let mut host = host_thread.join().unwrap();
-
-        client.send(&[0x01, 0x02, 0x03]).unwrap();
-        host.send(&[0xA0]).unwrap();
-
-        assert_eq!(recv_with_timeout(&mut host), vec![0x01, 0x02, 0x03]);
-        assert_eq!(recv_with_timeout(&mut client), vec![0xA0]);
-    }
-}
+mod tests;

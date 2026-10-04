@@ -29,6 +29,8 @@ impl App {
                 self.handle_settings_window_event(event);
             } else if self.is_tas_editor_window(window_id) {
                 self.handle_tas_editor_window_event(event);
+            } else if self.is_netplay_window(window_id) {
+                self.handle_netplay_window_event(event);
             } else if self
                 .gfx
                 .as_ref()
@@ -1007,6 +1009,10 @@ impl App {
         let tas_editor_window_focused = self.debug_windows.tas_editor.host_window_focused();
         #[cfg(target_arch = "wasm32")]
         let tas_editor_window_focused = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let netplay_window_focused = self.debug_windows.netplay.host_window_focused();
+        #[cfg(target_arch = "wasm32")]
+        let netplay_window_focused = false;
         let focused = any_app_window_focused([
             self.game_window_focused,
             debugger_window_focused,
@@ -1016,6 +1022,7 @@ impl App {
             audio_explorer_window_focused,
             printer_window_focused,
             tas_editor_window_focused,
+            netplay_window_focused,
         ]);
 
         self.window_focused = focused;
@@ -1039,7 +1046,7 @@ impl App {
     }
 }
 
-fn any_app_window_focused(window_focus: [bool; 8]) -> bool {
+fn any_app_window_focused<const N: usize>(window_focus: [bool; N]) -> bool {
     window_focus.into_iter().any(std::convert::identity)
 }
 
@@ -1092,12 +1099,12 @@ mod tests {
 
     #[test]
     fn any_native_window_keeps_the_app_focused() {
-        for index in 0..8 {
-            let mut focused = [false; 8];
+        for index in 0..9 {
+            let mut focused = [false; 9];
             focused[index] = true;
             assert!(any_app_window_focused(focused));
         }
-        assert!(!any_app_window_focused([false; 8]));
+        assert!(!any_app_window_focused([false; 9]));
     }
 
     #[test]

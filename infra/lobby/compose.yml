@@ -1,0 +1,24 @@
+services:
+  lobby:
+    image: docker.io/zeffuro/zeff-boy-lobby:${LOBBY_VERSION:-0.1.0}
+    environment:
+      ZEFF_LOBBY_BIND: 0.0.0.0:8080
+      ZEFF_LOBBY_ACCESS_TOKEN: ${ZEFF_LOBBY_ACCESS_TOKEN:?Set a random 32..256 byte token}
+      ZEFF_LOBBY_ORIGINS: ${ZEFF_LOBBY_ORIGINS:-https://zeffuro.github.io}
+      ZEFF_LOBBY_MAX_ROOMS: "4"
+      ZEFF_LOBBY_MAX_CONNECTIONS: "16"
+      ZEFF_LOBBY_ALLOW_TURN: "false"
+    expose:
+      - "8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

@@ -13,7 +13,8 @@ impl EmuLoop {
         let link_timeout = self
             .pending_tcp_link
             .is_some()
-            .then_some(PENDING_LINK_POLL_INTERVAL);
+            .then_some(PENDING_LINK_POLL_INTERVAL)
+            .or_else(|| self.netplay.is_some().then_some(PENDING_LINK_POLL_INTERVAL));
         let save_timeout = if self.periodic_battery_flush_blocked() {
             None
         } else {
@@ -31,6 +32,8 @@ impl EmuLoop {
             || self.tas_repair.identity.is_some()
             || self.pending_tcp_link.is_some()
             || self.tcp_link.is_some()
+            || self.netplay.is_some()
+            || self.netplay_restore_failed
     }
 
     pub(in crate::emu_thread::emu_loop) fn prepare_tas_control_retirement(
@@ -60,6 +63,11 @@ impl EmuLoop {
     }
 
     pub(in crate::emu_thread::emu_loop) fn finish_shutdown(&mut self) {
+        self.stop_netplay("worker shutdown".into());
+        if self.netplay_restore_failed {
+            let _ = self.resp_tx.send(EmuResponse::ShutdownComplete);
+            return;
+        }
         self.disconnect_tcp_link();
         if let Err(error) = self.prepare_tas_control_retirement() {
             let _ = self

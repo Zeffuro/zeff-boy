@@ -1,0 +1,12 @@
+[package]
+name = "zeff-netplay-protocol"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Core-independent, browser-compatible netplay rendezvous protocol."
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"

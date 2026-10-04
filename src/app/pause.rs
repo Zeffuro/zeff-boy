@@ -68,6 +68,8 @@ impl App {
         let tas_fenced = false;
         let paused = self.pause_state.effective(tas_fenced);
         #[cfg(not(target_arch = "wasm32"))]
+        let paused = paused && !self.netplay.playing();
+        #[cfg(not(target_arch = "wasm32"))]
         let tas_recording = self.realtime_tas_recording_active();
         #[cfg(target_arch = "wasm32")]
         let tas_recording = false;
@@ -80,11 +82,21 @@ impl App {
     }
 
     pub(in crate::app) fn set_user_paused(&mut self, paused: bool) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.netplay.fenced() {
+            self.set_netplay_paused(paused);
+            return;
+        }
         self.pause_state.set_user_paused(paused);
         self.recompute_pause();
     }
 
     pub(in crate::app) fn toggle_user_paused(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.netplay.fenced() {
+            self.set_netplay_paused(!self.debug_windows.netplay.local_pause);
+            return;
+        }
         self.pause_state.toggle_user_paused();
         self.recompute_pause();
     }

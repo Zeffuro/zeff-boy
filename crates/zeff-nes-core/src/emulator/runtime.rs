@@ -10,11 +10,15 @@ use zeff_emu_common::debug::{
 
 impl Emulator {
     pub fn step_instruction(&mut self) -> (u16, u8, u64) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         let (pc, opcode, cycles, _) = self.step_instruction_inner(false);
         (pc, opcode, cycles)
     }
 
     pub fn step_instruction_with_bus_trace(&mut self) -> (u16, u8, u64, Vec<DebugTraceEvent>) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         self.step_instruction_inner(true)
     }
 
@@ -244,6 +248,8 @@ impl Emulator {
     }
 
     pub fn step_frame(&mut self) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         if self.cpu.state == CpuState::Suspended {
             return;
         }
@@ -284,6 +290,7 @@ impl Emulator {
         }
 
         self.bus.finish_vs_system_input_frame();
+        self.rollback_frame_boundary = self.bus.ppu.frame_ready;
     }
 
     fn tick_peripherals_after_cpu_step(&mut self, total_cycles: u64) {

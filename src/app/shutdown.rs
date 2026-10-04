@@ -9,6 +9,8 @@ impl App {
 
     fn retire_emu_thread(&mut self, notify_stop: bool) {
         #[cfg(not(target_arch = "wasm32"))]
+        self.retire_netplay_frontend();
+        #[cfg(not(target_arch = "wasm32"))]
         self.debug_windows.audio_discovery.bind_source(None);
         #[cfg(not(target_arch = "wasm32"))]
         let _ = notify_stop;

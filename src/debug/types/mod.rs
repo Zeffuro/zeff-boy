@@ -127,6 +127,8 @@ impl Default for FirmwareInventoryState {
 }
 
 pub(crate) struct DebugWindowState {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) netplay: crate::netplay::ui::Ui,
     pub(crate) audio_discovery: super::audio_discovery::AudioDiscoveryState,
     pub(crate) cpu_view: CpuDebugViewState,
     pub(crate) hardware_view: CpuDebugViewState,
@@ -179,6 +181,8 @@ pub(crate) struct DebugWindowState {
 impl DebugWindowState {
     pub(crate) fn new() -> Self {
         Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            netplay: crate::netplay::ui::Ui::default(),
             audio_discovery: super::audio_discovery::AudioDiscoveryState::default(),
             cpu_view: CpuDebugViewState::default(),
             hardware_view: CpuDebugViewState::default(),

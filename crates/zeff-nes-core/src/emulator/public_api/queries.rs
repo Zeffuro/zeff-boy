@@ -21,6 +21,8 @@ impl Emulator {
     }
 
     pub fn clear_frame_ready(&mut self) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         self.bus.ppu.frame_ready = false;
     }
 
@@ -113,6 +115,8 @@ impl Emulator {
     }
 
     pub fn bus_mut(&mut self) -> &mut Bus {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         self.invalidate_audio_trace(
             zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
         );
@@ -196,6 +200,7 @@ impl Emulator {
     }
 
     pub fn chr_ram_snapshot(&mut self) -> Vec<u8> {
+        self.invalidate_rollback_session();
         let mut buf = vec![0u8; 0x2000];
         for addr in 0..0x2000u16 {
             buf[addr as usize] = self.bus.cartridge.chr_read(addr);
@@ -204,6 +209,7 @@ impl Emulator {
     }
 
     pub fn video_ram_snapshot(&mut self) -> Vec<u8> {
+        self.invalidate_rollback_session();
         self.chr_ram_snapshot()
     }
 }

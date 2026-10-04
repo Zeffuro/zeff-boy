@@ -8,6 +8,8 @@ pub(in crate::app) enum EmuCommandSendError {
     Denied(TasControlCommandKind),
     NoWorker,
     ChannelClosed,
+    #[cfg(not(target_arch = "wasm32"))]
+    NetplayDenied,
 }
 
 impl fmt::Display for EmuCommandSendError {
@@ -19,6 +21,10 @@ impl fmt::Display for EmuCommandSendError {
             ),
             Self::NoWorker => formatter.write_str("no emulator worker is available"),
             Self::ChannelClosed => formatter.write_str("emulator command channel is closed"),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::NetplayDenied => {
+                formatter.write_str("disconnect netplay before changing the game")
+            }
         }
     }
 }
@@ -62,7 +68,19 @@ impl App {
         command: &EmuCommand,
     ) -> Result<(), EmuCommandSendError> {
         #[cfg(not(target_arch = "wasm32"))]
-        let gameplay_allowed = self.worker_gameplay_commands_allowed();
+        if !self.netplay.permits(command) {
+            return Err(EmuCommandSendError::NetplayDenied);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let gameplay_allowed = self.worker_gameplay_commands_allowed()
+            || matches!(
+                command,
+                EmuCommand::StartNetplay(_)
+                    | EmuCommand::StepNetplay(_)
+                    | EmuCommand::SetNetplayPaused(_)
+                    | EmuCommand::SendNetplayChat(_)
+                    | EmuCommand::StopNetplay
+            );
         #[cfg(target_arch = "wasm32")]
         let gameplay_allowed = true;
         preflight_authority(command.authority_classification(), gameplay_allowed)
@@ -72,6 +90,10 @@ impl App {
         &self,
         kind: TasControlCommandKind,
     ) -> Result<(), EmuCommandSendError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.netplay.fenced() {
+            return Err(EmuCommandSendError::NetplayDenied);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         let gameplay_allowed = self.worker_gameplay_commands_allowed();
         #[cfg(target_arch = "wasm32")]
@@ -83,11 +105,20 @@ impl App {
         &mut self,
         command: EmuCommand,
     ) -> Result<(), EmuCommandSendError> {
+        self.preflight_emu_command(&command)?;
         let authority = command.authority_classification();
         #[cfg(not(target_arch = "wasm32"))]
         let invalidates_readiness = invalidates_tas_readiness(&command);
         #[cfg(not(target_arch = "wasm32"))]
-        let gameplay_allowed = self.worker_gameplay_commands_allowed();
+        let gameplay_allowed = self.worker_gameplay_commands_allowed()
+            || matches!(
+                command,
+                EmuCommand::StartNetplay(_)
+                    | EmuCommand::StepNetplay(_)
+                    | EmuCommand::SetNetplayPaused(_)
+                    | EmuCommand::SendNetplayChat(_)
+                    | EmuCommand::StopNetplay
+            );
         #[cfg(target_arch = "wasm32")]
         let gameplay_allowed = true;
         let preflight = preflight_send(authority, gameplay_allowed, self.emu_thread.is_some());

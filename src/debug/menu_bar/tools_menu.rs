@@ -66,6 +66,11 @@ pub(super) fn draw(
         game_boy_serial_device,
         game_boy_serial_device_change_allowed,
     } = state;
+    #[cfg(not(target_arch = "wasm32"))]
+    if ui.button("NES Netplay").clicked() {
+        debug_windows.netplay.open();
+        ui.close();
+    }
     if ui.button("Cheats").clicked() {
         #[cfg(not(target_arch = "wasm32"))]
         actions.push(MenuAction::OpenCheats);

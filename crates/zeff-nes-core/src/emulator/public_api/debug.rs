@@ -4,7 +4,12 @@ use crate::hardware::cpu::CpuState;
 use zeff_emu_common::cheats::CheatByteTarget;
 
 impl Emulator {
+    pub fn has_debugger_stop_controls(&self) -> bool {
+        self.debug.any_active()
+    }
+
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         if self.opcode_log.enabled != enabled {
             self.call_stack.clear();
         }
@@ -16,14 +21,17 @@ impl Emulator {
     }
 
     pub fn set_instruction_trace_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.instruction_trace.set_enabled(enabled);
     }
 
     pub fn set_instruction_trace_capacity(&mut self, capacity: usize) {
+        self.invalidate_rollback_session();
         self.instruction_trace.set_capacity(capacity);
     }
 
     pub fn clear_instruction_trace(&mut self) {
+        self.invalidate_rollback_session();
         self.instruction_trace.clear();
     }
 
@@ -36,42 +44,51 @@ impl Emulator {
     }
 
     pub fn debug_continue(&mut self) {
+        self.invalidate_rollback_session();
         self.debug.clear_hits();
         self.debug.break_on_next = false;
         self.cpu.resume_from_debug();
     }
 
     pub fn debug_step(&mut self) {
+        self.invalidate_rollback_session();
         self.debug.clear_hits();
         self.debug.break_on_next = true;
         self.cpu.resume_from_debug();
     }
 
     pub fn debug_suspend(&mut self) {
+        self.invalidate_rollback_session();
         self.cpu.state = CpuState::Suspended;
     }
 
     pub fn add_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.add_breakpoint(addr);
     }
 
     pub fn add_one_shot_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.add_one_shot_breakpoint(addr);
     }
 
     pub fn add_breakpoint_after(&mut self, addr: u16, target_hits: u64) {
+        self.invalidate_rollback_session();
         self.debug.add_breakpoint_after(addr, target_hits);
     }
 
     pub fn remove_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.remove_breakpoint(addr);
     }
 
     pub fn toggle_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.toggle_breakpoint(addr);
     }
 
     pub fn add_watchpoint(&mut self, addr: u16, watch_type: crate::debug::WatchType) {
+        self.invalidate_rollback_session();
         self.debug.add_watchpoint(addr, watch_type);
     }
 
@@ -81,10 +98,12 @@ impl Emulator {
         end: u16,
         watch_type: crate::debug::WatchType,
     ) {
+        self.invalidate_rollback_session();
         self.debug.add_watchpoint_range(start, end, watch_type);
     }
 
     pub fn remove_watchpoint(&mut self, start: u16, end: u16, watch_type: crate::debug::WatchType) {
+        self.invalidate_rollback_session();
         self.debug.remove_watchpoint(start, end, watch_type);
     }
 
@@ -107,6 +126,7 @@ impl Emulator {
         event: zeff_emu_common::debug::DebugEvent,
         enabled: bool,
     ) {
+        self.invalidate_rollback_session();
         self.debug.set_event_breakpoint(event, enabled);
     }
 
@@ -133,6 +153,7 @@ impl Emulator {
     }
 
     pub fn cpu_write(&mut self, addr: u16, value: u8) {
+        self.invalidate_rollback_session();
         self.bus.cpu_write(addr, value);
     }
 
@@ -145,18 +166,21 @@ impl Emulator {
     }
 
     pub fn cpu_read8_debuggable(&mut self, addr: u16) -> u8 {
+        self.invalidate_rollback_session();
         let value = self.bus.cpu_peek(addr);
         self.debug.check_watch_read(addr, value);
         value
     }
 
     pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        self.invalidate_rollback_session();
         let old = self.bus.cpu_peek(addr);
         self.bus.cpu_write(addr, value);
         self.debug.check_watch_write(addr, old, value);
     }
 
     pub fn set_cpu_pc(&mut self, pc: u16) {
+        self.invalidate_rollback_session();
         self.invalidate_audio_trace(
             zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
         );
@@ -168,6 +192,7 @@ impl Emulator {
         target: u16,
         instruction_budget: u64,
     ) -> Result<u64, String> {
+        self.invalidate_rollback_session();
         if self.cpu.state != CpuState::Suspended {
             return Err("CPU must be suspended".to_owned());
         }

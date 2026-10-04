@@ -20,6 +20,8 @@ mod framebuffer;
 mod gpu;
 #[cfg(not(target_arch = "wasm32"))]
 mod mods_window;
+#[cfg(not(target_arch = "wasm32"))]
+mod netplay_window;
 mod pipeline;
 #[cfg(not(target_arch = "wasm32"))]
 mod printer_window;
@@ -46,6 +48,8 @@ pub(crate) use cheats_window::CheatsRenderContext;
 pub(crate) use debugger_window::{DebuggerRenderContext, DebuggerRenderResult};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use mods_window::ModsRenderContext;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use netplay_window::NetplayRenderContext;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use printer_window::PrinterRenderContext;
 #[cfg(not(target_arch = "wasm32"))]
@@ -83,6 +87,8 @@ pub(crate) struct Graphics {
     printer_window: Option<printer_window::PrinterWindow>,
     #[cfg(not(target_arch = "wasm32"))]
     tas_editor_window: Option<tas_editor_window::TasEditorWindow>,
+    #[cfg(not(target_arch = "wasm32"))]
+    netplay_window: Option<netplay_window::NetplayWindow>,
 }
 
 impl Graphics {
@@ -183,6 +189,8 @@ impl Graphics {
             printer_window: None,
             #[cfg(not(target_arch = "wasm32"))]
             tas_editor_window: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            netplay_window: None,
         })
     }
 

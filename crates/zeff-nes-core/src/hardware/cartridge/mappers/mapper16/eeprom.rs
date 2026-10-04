@@ -37,6 +37,29 @@ pub(super) struct Eeprom {
 }
 
 impl Eeprom {
+    pub(super) fn write_rollback_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_bool(self.read_clocked);
+        w.write_u8(match self.ack_phase {
+            EepromAckPhase::None => 0,
+            EepromAckPhase::Pending => 1,
+            EepromAckPhase::Clocked => 2,
+        });
+    }
+
+    pub(super) fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.read_clocked = r.read_bool()?;
+        self.ack_phase = match r.read_u8()? {
+            0 => EepromAckPhase::None,
+            1 => EepromAckPhase::Pending,
+            2 => EepromAckPhase::Clocked,
+            tag => anyhow::bail!("invalid EEPROM rollback ACK phase: {tag}"),
+        };
+        Ok(())
+    }
+
     pub(super) fn new() -> Self {
         Self {
             data: [0xFF; 256],

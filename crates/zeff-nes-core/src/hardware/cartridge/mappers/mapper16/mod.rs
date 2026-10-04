@@ -154,6 +154,17 @@ impl BandaiFcg16 {
 }
 
 impl Mapper for BandaiFcg16 {
+    fn write_rollback_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.eeprom.write_rollback_runtime_state(w);
+    }
+
+    fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.eeprom.read_rollback_runtime_state(r)
+    }
+
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {

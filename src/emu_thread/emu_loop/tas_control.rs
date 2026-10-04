@@ -87,6 +87,8 @@ impl EmuLoop {
             uncapped_execution: self.uncapped_mode,
             audio_recording_active: self.audio_recording_capture.active,
             link_activity: self.pending_tcp_link.is_some()
+                || self.netplay.is_some()
+                || self.netplay_restore_failed
                 || self.tcp_link.is_some()
                 || self.game_boy_replay_link.is_some()
                 || self.wonder_swan_replay_link.is_some(),

@@ -422,6 +422,10 @@ impl App {
         }
 
         if key_code == bindings.get(ShortcutAction::SlowMotion) {
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.netplay.fenced() {
+                return true;
+            }
             if pressed && !key_event.repeat {
                 self.settings.emulation.slow_motion_enabled =
                     !self.settings.emulation.slow_motion_enabled;
@@ -821,6 +825,8 @@ impl App {
     }
 
     fn set_effective_frontend_hold(&mut self, action: HeldFrontendAction, held: bool) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let held = held && !self.netplay.fenced();
         match action {
             HeldFrontendAction::FastForward => self.speed.fast_forward_held = held,
             HeldFrontendAction::Rewind => self.rewind.held = held,

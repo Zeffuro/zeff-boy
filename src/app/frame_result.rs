@@ -5,6 +5,10 @@ use crate::platform::Instant;
 
 impl App {
     pub(in crate::app) fn queue_emulator_audio(&mut self, samples: &[f32], playback_speed: usize) {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        if self.netplay.running() {
+            self.netplay.queued_audio = Some((samples.to_vec(), playback_speed));
+        }
         if let Some(audio) = &mut self.audio {
             audio.queue_samples(
                 samples,
@@ -49,6 +53,7 @@ impl App {
                 Some(crate::emu_thread::EmuResponsePoll::Response(response)) => *response,
                 Some(crate::emu_thread::EmuResponsePoll::Empty) | None => break,
                 Some(crate::emu_thread::EmuResponsePoll::Disconnected) => {
+                    self.netplay_worker_lost();
                     self.terminalize_tas_control_response_loss();
                     break;
                 }
@@ -61,6 +66,11 @@ impl App {
             {
                 Some(response) => response,
                 None => break,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let resp = match self.consume_netplay_response(resp) {
+                Some(resp) => resp,
+                None => continue,
             };
             #[cfg(not(target_arch = "wasm32"))]
             let resp = match self.consume_tas_control_response(resp) {

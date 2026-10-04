@@ -380,6 +380,18 @@ impl App {
         };
 
         #[cfg(not(target_arch = "wasm32"))]
+        if self.netplay.fenced() {
+            let poll = Instant::now() + std::time::Duration::from_millis(5);
+            let deadline = self
+                .netplay
+                .deadline()
+                .map_or(poll, |deadline| deadline.min(poll));
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            gfx.window().request_redraw();
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         let settings_input_deadline = self
             .live_input_settings_visible()
             .then_some(self.last_settings_render + UI_RENDER_INTERVAL);

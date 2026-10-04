@@ -110,11 +110,23 @@ impl ToolbarLayout {
 
 pub(super) struct ToolbarState<'a> {
     pub(super) is_paused: bool,
+    pub(super) netplay_pause: Option<bool>,
     pub(super) active_system: ActiveSystem,
     pub(super) ws_display_rotated: bool,
     pub(super) speed_mode_label: Option<&'a str>,
     pub(super) active_save_slot: u8,
     pub(super) reserved_width: f32,
+}
+
+impl ToolbarState<'_> {
+    fn pause_control(&self) -> (&'static str, &'static str) {
+        match self.netplay_pause {
+            Some(true) => ("▶", "Release my netplay pause (F9)"),
+            Some(false) => ("⏸", "Pause both players (F9)"),
+            None if self.is_paused => ("▶", "Resume (F9)"),
+            None => ("⏸", "Pause (F9)"),
+        }
+    }
 }
 
 pub(super) fn draw(
@@ -129,8 +141,10 @@ pub(super) fn draw(
         widths,
         &state,
     );
+    let (pause_icon, pause_tooltip) = state.pause_control();
     let ToolbarState {
-        is_paused,
+        is_paused: _,
+        netplay_pause: _,
         active_system,
         ws_display_rotated,
         speed_mode_label,
@@ -150,12 +164,6 @@ pub(super) fn draw(
     }
 
     if layout.pause {
-        let pause_icon = if is_paused { "▶" } else { "⏸" };
-        let pause_tooltip = if is_paused {
-            "Resume (F9)"
-        } else {
-            "Pause (F9)"
-        };
         if ui
             .small_button(pause_icon)
             .on_hover_text(pause_tooltip)
@@ -268,7 +276,7 @@ fn measure(ui: &egui::Ui, settings: &Settings, state: &ToolbarState<'_>) -> Tool
     };
     let button_width =
         |text: &str| text_width(text, button.clone()) + 2.0 * ui.spacing().button_padding.x;
-    let pause = button_width(if state.is_paused { "▶" } else { "⏸" });
+    let pause = button_width(state.pause_control().0);
     let mute = button_width(if settings.audio.volume <= 0.001 {
         "🔇"
     } else {
@@ -301,6 +309,7 @@ mod tests {
     fn state() -> ToolbarState<'static> {
         ToolbarState {
             is_paused: false,
+            netplay_pause: None,
             active_system: ActiveSystem::GameBoy,
             ws_display_rotated: false,
             speed_mode_label: Some("Normal"),
@@ -340,5 +349,26 @@ mod tests {
         let layout = ToolbarLayout::select(widths().pause, widths(), &state());
         assert!(layout.pause);
         assert!(!layout.slot && !layout.speed && !layout.mute && !layout.volume);
+    }
+
+    #[test]
+    fn netplay_pause_control_follows_own_request_instead_of_peer_pause() {
+        let mut state = state();
+        state.is_paused = true;
+        assert_eq!(state.pause_control(), ("▶", "Resume (F9)"));
+        state.netplay_pause = Some(false);
+        assert_eq!(state.pause_control(), ("⏸", "Pause both players (F9)"));
+        state.netplay_pause = Some(true);
+        assert_eq!(
+            state.pause_control(),
+            ("▶", "Release my netplay pause (F9)")
+        );
+        state.is_paused = false;
+        assert_eq!(
+            state.pause_control(),
+            ("▶", "Release my netplay pause (F9)")
+        );
+        state.netplay_pause = None;
+        assert_eq!(state.pause_control(), ("⏸", "Pause (F9)"));
     }
 }

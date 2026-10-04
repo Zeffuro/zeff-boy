@@ -132,6 +132,18 @@ impl Mmc1 {
 }
 
 impl Mapper for Mmc1 {
+    fn write_rollback_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_u8(self.write_suppression_cycles);
+    }
+
+    fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.write_suppression_cycles = r.read_u8()?;
+        Ok(())
+    }
+
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize],

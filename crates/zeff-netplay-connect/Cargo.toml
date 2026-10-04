@@ -1,0 +1,42 @@
+[package]
+name = "zeff-netplay-connect"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Direct WebRTC transport for native and browser netplay peers."
+
+[features]
+default = []
+native = ["dep:anyhow", "dep:async-trait", "dep:bytes", "dep:futures-util", "dep:rtc", "dep:serde_json", "dep:tokio", "dep:tokio-tungstenite", "dep:webrtc"]
+
+[dependencies]
+zeff-netplay-protocol = { path = "../zeff-netplay-protocol" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+serde_json = "1.0.151"
+wasm-bindgen = "0.2.126"
+wasm-bindgen-futures = "0.4.76"
+js-sys = "0.3.103"
+web-sys = { version = "0.3.103", features = ["Window", "RtcPeerConnection", "RtcConfiguration", "RtcSessionDescriptionInit", "RtcSessionDescription", "RtcSdpType", "RtcIceGatheringState", "RtcDataChannel", "RtcDataChannelInit", "RtcDataChannelState", "RtcDataChannelType", "RtcDataChannelEvent", "MessageEvent", "Event"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow = { version = "1", optional = true }
+async-trait = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
+futures-util = { version = "0.3", features = ["sink"], optional = true }
+rtc = { version = "0.21", default-features = false, optional = true }
+serde_json = { version = "1", optional = true }
+tokio = { version = "1", features = ["net", "time", "sync", "rt", "macros"], optional = true }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+webrtc = { version = "0.21", default-features = false, features = ["runtime-tokio", "crypto-ring"], optional = true }
+
+[[example]]
+name = "native-proof"
+required-features = ["native"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+zeff-netplay-lobby = { path = "../zeff-netplay-lobby" }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }

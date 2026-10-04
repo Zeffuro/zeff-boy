@@ -59,6 +59,16 @@ pub(crate) enum MenuAction {
     OpenBarcodeBoyScan,
     TriggerBarcodeBoyScan(String),
     HostTcpLink,
+    #[cfg(not(target_arch = "wasm32"))]
+    HostNesNetplay,
+    #[cfg(not(target_arch = "wasm32"))]
+    JoinNesNetplay(String),
+    #[cfg(not(target_arch = "wasm32"))]
+    StopNesNetplay,
+    #[cfg(not(target_arch = "wasm32"))]
+    SetNesNetplayPaused(bool),
+    #[cfg(not(target_arch = "wasm32"))]
+    SendNesNetplayChat(String),
     JoinTcpLink,
     DisconnectLink,
     ToggleWsRotation,
@@ -118,6 +128,13 @@ pub(crate) fn draw_menu_bar(
     debug_windows: &mut DebugWindowState,
 ) -> MenuBarResult {
     let mut actions = Vec::new();
+    #[cfg(not(target_arch = "wasm32"))]
+    let netplay_pause = debug_windows
+        .netplay
+        .connected
+        .then_some(debug_windows.netplay.local_pause);
+    #[cfg(target_arch = "wasm32")]
+    let netplay_pause = None;
     let menu_bar_height_points = egui::Panel::top("menu_bar")
         .frame(
             egui::Frame::new()
@@ -227,6 +244,7 @@ pub(crate) fn draw_menu_bar(
                                 settings,
                                 &toolbar::ToolbarState {
                                     is_paused: mb.is_paused,
+                                    netplay_pause,
                                     active_system: mb.active_system,
                                     ws_display_rotated: mb.ws_display_rotated,
                                     speed_mode_label: mb.speed_mode_label,
@@ -250,6 +268,7 @@ pub(crate) fn draw_menu_bar(
                         settings,
                         toolbar::ToolbarState {
                             is_paused: mb.is_paused,
+                            netplay_pause,
                             active_system: mb.active_system,
                             ws_display_rotated: mb.ws_display_rotated,
                             speed_mode_label: mb.speed_mode_label,

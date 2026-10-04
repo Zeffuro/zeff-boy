@@ -113,6 +113,12 @@ impl Apu {
         self.sample_generation_enabled = enabled;
     }
 
+    pub(crate) fn has_full_audio_output_at_rate(&self, rate: u32) -> bool {
+        self.sample_generation_enabled
+            && self.channel_mutes == [false; 5]
+            && self.output_sample_rate == f64::from(rate)
+    }
+
     pub fn set_output_sample_rate(&mut self, sample_rate: f64) {
         self.output_sample_rate = sample_rate;
         self.output_filter.configure(sample_rate);

@@ -96,7 +96,13 @@ impl CoreState {
         match &self.core {
             ActiveCore::Gb(_) => zeff_gb_core::hardware::types::constants::FRAME_RATE_HZ,
             ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::FPS,
-            ActiveCore::Nes(_) => zeff_nes_core::hardware::constants::NTSC_FRAME_RATE_HZ,
+            ActiveCore::Nes(emu) => {
+                if emu.has_ntsc_timing() {
+                    zeff_nes_core::hardware::constants::NTSC_FRAME_RATE_HZ
+                } else {
+                    1_000_000_000.0 / emu.nominal_frame_duration_ns() as f64
+                }
+            }
             ActiveCore::Pce(_) => zeff_emu_common::system::System::Pce.target_fps(),
             ActiveCore::Sega8(emu) => emu.video_standard().frame_rate_approx() as f64,
             ActiveCore::Ws(_) => zeff_ws_core::hardware::constants::FPS,
@@ -104,12 +110,13 @@ impl CoreState {
     }
 
     pub fn is_pal_region(&self) -> bool {
-        matches!(
-            &self.core,
-            ActiveCore::Sega8(emu)
-                if emu.video_standard()
-                    == zeff_sega8_core::hardware::timing::Sega8VideoStandard::Pal
-        )
+        match &self.core {
+            ActiveCore::Nes(emu) => !emu.has_ntsc_timing(),
+            ActiveCore::Sega8(emu) => {
+                emu.video_standard() == zeff_sega8_core::hardware::timing::Sega8VideoStandard::Pal
+            }
+            _ => false,
+        }
     }
 
     pub fn take_runtime_fault(&mut self) -> Option<String> {
@@ -153,11 +160,10 @@ impl CoreState {
     pub fn fixed_serialize_size(&self) -> Option<usize> {
         match &self.core {
             ActiveCore::Pce(host) => Some(host.max_encoded_state_bytes()),
-            ActiveCore::Gb(_)
-            | ActiveCore::Gba(_)
-            | ActiveCore::Nes(_)
-            | ActiveCore::Sega8(_)
-            | ActiveCore::Ws(_) => None,
+            ActiveCore::Nes(emu) => emu.max_encoded_state_bytes(),
+            ActiveCore::Gb(_) | ActiveCore::Gba(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => {
+                None
+            }
         }
     }
 }

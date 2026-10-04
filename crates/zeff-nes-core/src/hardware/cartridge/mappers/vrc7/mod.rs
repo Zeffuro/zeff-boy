@@ -89,6 +89,17 @@ impl Vrc7 {
 }
 
 impl Mapper for Vrc7 {
+    fn write_rollback_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.audio.write_rollback_runtime_state(w);
+    }
+
+    fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.audio.read_rollback_runtime_state(r)
+    }
+
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF if self.wram_enable && !self.prg_ram.is_empty() => {
@@ -238,7 +249,7 @@ impl Mapper for Vrc7 {
         self.irq_enabled_after_ack = r.read_bool()?;
         self.irq_cycle_mode = r.read_bool()?;
         self.irq_pending = r.read_bool()?;
-        let ram = r.read_vec(256 * 1024)?;
+        let ram = r.read_vec(self.prg_ram.len())?;
         if ram.len() != self.prg_ram.len() {
             anyhow::bail!(
                 "VRC7 PRG-RAM size mismatch: expected {}, got {}",

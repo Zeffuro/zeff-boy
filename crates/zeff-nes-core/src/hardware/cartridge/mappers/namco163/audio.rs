@@ -12,6 +12,18 @@ pub struct N163Audio {
 }
 
 impl N163Audio {
+    pub(super) fn write_rollback_runtime_state(&self, w: &mut StateWriter) {
+        w.write_u32(self.output.to_bits());
+    }
+
+    pub(super) fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut StateReader,
+    ) -> anyhow::Result<()> {
+        self.output = f32::from_bits(r.read_u32()?);
+        Ok(())
+    }
+
     pub fn new() -> Self {
         Self {
             ram: [0; SOUND_RAM_SIZE],

@@ -303,6 +303,7 @@ impl Ppu {
         let mut raise_nmi = false;
 
         if self.scanline == self.vblank_start_scanline && self.dot == 1 {
+            self.frame_ready = true;
             if self.suppress_vblank_edge {
                 self.suppress_vblank_edge = false;
                 self.in_vblank = false;
@@ -311,7 +312,6 @@ impl Ppu {
             } else {
                 self.in_vblank = true;
                 self.regs.set_vblank();
-                self.frame_ready = true;
                 let new_nmi_output = self.regs.nmi_enabled();
                 raise_nmi = !self.nmi_output && new_nmi_output;
                 self.nmi_output = new_nmi_output;

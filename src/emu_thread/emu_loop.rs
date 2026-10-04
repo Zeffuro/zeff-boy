@@ -20,6 +20,7 @@ use super::{
 use tas_control::TasControl;
 use tcp_link::PendingTcpLink;
 
+mod netplay;
 pub(in crate::emu_thread) mod tas_control;
 mod tas_repair;
 mod tcp_link;
@@ -52,6 +53,8 @@ pub(super) struct EmuLoop {
     save_recovery_on_shutdown: bool,
     tas_control: TasControl,
     tas_repair: tas_repair::TasRepairWorkerState,
+    netplay: Option<crate::netplay::session::Session>,
+    netplay_restore_failed: bool,
 }
 
 pub(super) struct EmuLoopConfig {
@@ -110,6 +113,8 @@ impl EmuLoop {
             save_recovery_on_shutdown: config.save_recovery_on_shutdown,
             tas_control: TasControl::new(),
             tas_repair: tas_repair::TasRepairWorkerState::default(),
+            netplay: None,
+            netplay_restore_failed: false,
         }
     }
 
@@ -120,6 +125,7 @@ impl EmuLoop {
 
     pub(super) fn run(&mut self) {
         loop {
+            self.poll_netplay();
             self.poll_tcp_link_connection();
             self.clear_disconnected_tcp_link();
             self.flush_battery_sram_if_due(std::time::Instant::now());
@@ -129,6 +135,14 @@ impl EmuLoop {
                     Ok(cmd) => Some(cmd),
                     Err(crossbeam_channel::TryRecvError::Empty) => None,
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        self.finish_shutdown();
+                        break;
+                    }
+                }
+            } else if self.netplay.is_some() {
+                match self.wait_netplay_command(PENDING_LINK_POLL_INTERVAL) {
+                    Ok(command) => command,
+                    Err(_) => {
                         self.finish_shutdown();
                         break;
                     }
@@ -187,6 +201,10 @@ impl EmuLoop {
     }
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
+        let command = match self.dispatch_netplay(command) {
+            std::ops::ControlFlow::Continue(command) => command,
+            std::ops::ControlFlow::Break(alive) => return alive,
+        };
         let command = match self.dispatch_tas_authority(command) {
             std::ops::ControlFlow::Continue(command) => command,
             std::ops::ControlFlow::Break(keep_running) => return keep_running,
@@ -600,6 +618,13 @@ impl EmuLoop {
             EmuCommand::Shutdown => {
                 self.finish_shutdown();
                 return false;
+            }
+            EmuCommand::StartNetplay(_)
+            | EmuCommand::StepNetplay(_)
+            | EmuCommand::SendNetplayChat(_)
+            | EmuCommand::SetNetplayPaused(_)
+            | EmuCommand::StopNetplay => {
+                unreachable!("netplay dispatch precedes gameplay dispatch")
             }
 
             EmuCommand::SuspendTasRepair { .. }

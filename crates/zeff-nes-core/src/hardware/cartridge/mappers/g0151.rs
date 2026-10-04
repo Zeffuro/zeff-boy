@@ -107,9 +107,6 @@ impl Mapper for G0151 {
         r.read_exact(&mut self.prg_ram)?;
         r.read_exact(&mut self.prg_banks)?;
         r.read_exact(&mut self.chr_banks)?;
-        for bank in &mut self.prg_banks {
-            *bank &= 0x3F;
-        }
         crate::save_state::read_chr_state(r, &mut self.chr, "G0151")?;
         Ok(())
     }

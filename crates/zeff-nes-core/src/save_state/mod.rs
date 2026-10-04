@@ -17,7 +17,6 @@ const FORMAT_VERSION_V8_COMPRESSED: u32 = 8;
 const FORMAT_VERSION_V9_COMPRESSED: u32 = 9;
 const FORMAT_VERSION_V10_COMPRESSED: u32 = 10;
 
-const CHR_MAX_SIZE: usize = 2 * 1024 * 1024;
 const OUTPUT_SUFFIX_LEN: usize = 1 + crate::hardware::constants::FRAMEBUFFER_LEN;
 const MAX_REPLAY_PROJECTION_PAYLOAD_LEN: usize = 32 * 1024 * 1024;
 
@@ -26,7 +25,7 @@ pub fn write_chr_state(w: &mut StateWriter, chr: &[u8]) {
 }
 
 pub fn read_chr_state(r: &mut StateReader, chr: &mut Vec<u8>, label: &str) -> Result<()> {
-    let loaded = r.read_vec(CHR_MAX_SIZE)?;
+    let loaded = r.read_vec(chr.len())?;
     if loaded.len() != chr.len() {
         bail!(
             "{label} CHR size mismatch: expected {}, got {}",
@@ -163,6 +162,7 @@ pub fn project_replay_state_bytes(bytes: &mut Vec<u8>) -> Result<()> {
 }
 
 pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result<()> {
+    emu.invalidate_rollback_execution();
     // Read and validate the outer header (magic + version)
     if bytes.len() < 12 {
         bail!("save-state data is too short for header");

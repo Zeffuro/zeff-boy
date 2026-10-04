@@ -162,6 +162,7 @@ pub(in crate::app) fn app_with_worker(
         live_control: crate::live_control::LiveControl::disabled_for_test(),
         live_button_releases: Vec::new(),
         tcp_link_active: false,
+        netplay: crate::app::netplay::Frontend::default(),
         tas_control: TasControlCoordinator::new(),
         tas_editor_live_validation_cache:
             crate::app::tas_editor::TasEditorLiveValidationCache::default(),

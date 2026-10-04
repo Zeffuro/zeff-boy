@@ -142,6 +142,21 @@ macro_rules! dispatch_mapper {
 }
 
 impl MapperImpl {
+    pub(super) fn has_portable_rollback_execution(&self) -> bool {
+        !matches!(self, Self::Vrc7(_))
+    }
+
+    pub(super) fn write_rollback_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        dispatch_mapper!(self, write_rollback_runtime_state, w)
+    }
+
+    pub(super) fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        dispatch_mapper!(self, read_rollback_runtime_state, r)
+    }
+
     #[inline]
     pub(super) fn cpu_peek(&self, addr: u16) -> u8 {
         dispatch_mapper!(self, cpu_peek, addr)

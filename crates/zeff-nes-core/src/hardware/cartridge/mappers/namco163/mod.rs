@@ -97,6 +97,17 @@ impl Namco163 {
 }
 
 impl Mapper for Namco163 {
+    fn write_rollback_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        self.audio.write_rollback_runtime_state(w);
+    }
+
+    fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.audio.read_rollback_runtime_state(r)
+    }
+
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x4800..=0x4FFF => self.audio.ram[self.audio.ram[0x7F].min(0x7F) as usize],
@@ -326,15 +337,7 @@ impl Mapper for Namco163 {
         self.irq_enable = r.read_bool()?;
         self.irq_pending = r.read_bool()?;
 
-        let ram = r.read_vec(128 * 1024)?;
-        if ram.len() != self.prg_ram.len() {
-            anyhow::bail!(
-                "N163 PRG-RAM size mismatch: expected {}, got {}",
-                self.prg_ram.len(),
-                ram.len()
-            );
-        }
-        self.prg_ram = ram;
+        r.read_exact(&mut self.prg_ram)?;
 
         self.audio.read_state(r)?;
 

@@ -7,6 +7,7 @@ use std::fmt;
 
 pub(crate) mod audio_trace;
 mod public_api;
+pub mod rollback;
 mod runtime;
 mod state_io;
 
@@ -19,6 +20,8 @@ pub const DEFAULT_SAMPLE_RATE: f64 =
     crate::hardware::constants::NES_DEFAULT_HOST_SAMPLE_RATE_HZ as f64;
 
 pub struct Emulator {
+    rollback_owner: std::sync::Weak<()>,
+    rollback_frame_boundary: bool,
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,
     pub(crate) rom_hash: [u8; 32],
@@ -67,6 +70,8 @@ impl Emulator {
         let bus = Bus::new_with_timing(cartridge, sample_rate, timing);
 
         let mut emu = Self {
+            rollback_owner: std::sync::Weak::new(),
+            rollback_frame_boundary: true,
             cpu: Cpu::new(),
             bus,
             rom_hash,
@@ -85,6 +90,8 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         self.invalidate_audio_trace(zeff_emu_common::audio_trace::AudioTraceInvalidation::Reset);
         self.bus.reset();
         self.cpu.reset(&mut self.bus);

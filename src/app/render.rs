@@ -233,6 +233,23 @@ impl App {
                 }
                 let mut settings_dirty = false;
                 for action in &result.actions {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if self.netplay.fenced()
+                        && !matches!(
+                            action,
+                            MenuAction::StopNesNetplay
+                                | MenuAction::SetNesNetplayPaused(_)
+                                | MenuAction::SendNesNetplayChat(_)
+                                | MenuAction::TogglePause
+                                | MenuAction::StopGame
+                                | MenuAction::ToggleFullscreen
+                                | MenuAction::SetAspectRatio(_)
+                        )
+                    {
+                        self.toast_manager
+                            .info("Disconnect netplay before changing the game");
+                        continue;
+                    }
                     match action {
                         MenuAction::OpenFile => self.open_file_dialog(),
                         MenuAction::LoadSymbolFile => {
@@ -246,6 +263,12 @@ impl App {
                             }
                         }
                         MenuAction::ResetGame => self.reset_game(),
+                        #[cfg(not(target_arch = "wasm32"))]
+                        action @ (MenuAction::HostNesNetplay
+                        | MenuAction::JoinNesNetplay(_)
+                        | MenuAction::StopNesNetplay
+                        | MenuAction::SetNesNetplayPaused(_)
+                        | MenuAction::SendNesNetplayChat(_)) => self.handle_netplay_action(action),
                         #[cfg(not(target_arch = "wasm32"))]
                         MenuAction::ReloadGame => self.reload_game(),
                         MenuAction::StopGame => self.stop_game(),

@@ -27,6 +27,8 @@ mod link;
 #[cfg(not(target_arch = "wasm32"))]
 mod live_control;
 mod mods;
+#[cfg(not(target_arch = "wasm32"))]
+mod netplay;
 mod patching;
 #[cfg(not(target_arch = "wasm32"))]
 mod pgo_training;
@@ -55,6 +57,18 @@ use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
     platform::init_logging();
+
+    if netplay::adapters::run_if_requested()? {
+        return Ok(());
+    }
+
+    if app::run_netplay_proof_if_requested()? {
+        return Ok(());
+    }
+
+    if netplay::proof::run_if_requested()? {
+        return Ok(());
+    }
 
     if cli::run_audio_discovery_if_requested()? {
         return Ok(());

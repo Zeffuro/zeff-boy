@@ -90,6 +90,11 @@ impl App {
     }
 
     pub(in crate::app) fn open_symbol_file_dialog(&mut self) {
+        if self.netplay.fenced() {
+            self.toast_manager
+                .info("Disconnect netplay before opening symbol files");
+            return;
+        }
         if !self.core_supports_debugger() {
             self.pending_symbol_load = None;
             self.symbols = crate::symbols::SymbolSession::default();

@@ -90,7 +90,7 @@ impl Callback {
         }
         if shared
             .cursor
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cursor| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |cursor| {
                 ((cursor >> 32) as u32 == generation)
                     .then_some((u64::from(generation) << 32) | (frame.position + 1) as u64)
             })

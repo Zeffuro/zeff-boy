@@ -301,8 +301,11 @@ pub(super) fn draw(
     );
     row(ui, Id::EmulationTcpLinkAddress, None, |ui| {
         ui.add(
-            egui::TextEdit::singleline(&mut settings.emulation.tcp_link_addr).desired_width(240.0),
+            egui::TextEdit::singleline(&mut settings.emulation.tcp_link_addr)
+                .hint_text("127.0.0.1:8765")
+                .desired_width(240.0),
         )
+        .on_hover_text("Use a numeric IP address and port, or localhost:port.")
     });
 
     ui.add_space(22.0);

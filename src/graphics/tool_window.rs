@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use winit::dpi::PhysicalSize;
+use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -56,15 +56,50 @@ impl ToolWindow {
         shared_gpu: &GpuContext,
         config: ToolWindowConfig,
     ) -> anyhow::Result<Self> {
+        Self::create(event_loop, shared_gpu, config, None)
+    }
+
+    pub(super) fn new_logical(
+        event_loop: &ActiveEventLoop,
+        shared_gpu: &GpuContext,
+        config: ToolWindowConfig,
+        ui_scale: f32,
+    ) -> anyhow::Result<Self> {
+        Self::create(
+            event_loop,
+            shared_gpu,
+            config,
+            Some(ui_scale.clamp(0.5, 3.0)),
+        )
+    }
+
+    fn create(
+        event_loop: &ActiveEventLoop,
+        shared_gpu: &GpuContext,
+        config: ToolWindowConfig,
+        logical_scale: Option<f32>,
+    ) -> anyhow::Result<Self> {
         let size = restored_size(config.saved_size, config.minimum, config.fallback);
-        let mut attrs = WindowAttributes::default()
-            .with_title(format!(
-                "zeff-boy {} v{}",
-                config.title,
-                env!("CARGO_PKG_VERSION")
-            ))
-            .with_inner_size(size)
-            .with_min_inner_size(PhysicalSize::new(config.minimum[0], config.minimum[1]));
+        let mut attrs = WindowAttributes::default().with_title(format!(
+            "zeff-boy {} v{}",
+            config.title,
+            env!("CARGO_PKG_VERSION")
+        ));
+        attrs = if let Some(scale) = logical_scale {
+            attrs
+                .with_inner_size(LogicalSize::new(
+                    size.width as f32 * scale,
+                    size.height as f32 * scale,
+                ))
+                .with_min_inner_size(LogicalSize::new(
+                    config.minimum[0] as f32 * scale,
+                    config.minimum[1] as f32 * scale,
+                ))
+        } else {
+            attrs
+                .with_inner_size(size)
+                .with_min_inner_size(PhysicalSize::new(config.minimum[0], config.minimum[1]))
+        };
         if let Some(position) = restored_position(event_loop, config.saved_position, size) {
             attrs = attrs.with_position(position);
         }

@@ -194,6 +194,10 @@ impl App {
     }
 
     pub(in crate::app) fn open_file_dialog(&mut self) {
+        if let Err(error) = self.preflight_emu_command(&EmuCommand::Reset) {
+            self.toast_manager.error(error.to_string());
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pause_for_dialog();

@@ -4,6 +4,28 @@ mod debug;
 mod queries;
 
 impl Emulator {
+    pub fn resolved_timing_mode(&self) -> crate::hardware::cartridge::TimingMode {
+        use crate::hardware::{cartridge::TimingMode, timing::NesTiming};
+        match self.bus.timing {
+            NesTiming::Ntsc => TimingMode::Ntsc,
+            NesTiming::Pal => TimingMode::Pal,
+            NesTiming::Dendy => TimingMode::Dendy,
+        }
+    }
+
+    pub fn has_ntsc_timing(&self) -> bool {
+        matches!(self.bus.timing, crate::hardware::timing::NesTiming::Ntsc)
+    }
+
+    pub fn has_full_audio_output_at_rate(&self, rate: u32) -> bool {
+        self.bus.apu.has_full_audio_output_at_rate(rate)
+    }
+
+    pub fn has_default_video_palette(&self) -> bool {
+        self.bus.palette_mode == crate::hardware::ppu::NesPaletteMode::Raw
+            && self.bus.custom_palette.is_none()
+    }
+
     pub fn has_standard_console_hardware(&self) -> bool {
         self.bus.cartridge.header().console_type == crate::hardware::cartridge::ConsoleType::Nes
             && !self.bus.is_vs_system_mapper()
@@ -29,38 +51,47 @@ impl Emulator {
     }
 
     pub fn drain_audio_samples(&mut self) -> Vec<f32> {
+        self.invalidate_rollback_session();
         self.bus.apu.drain_samples()
     }
 
     pub fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.invalidate_rollback_session();
         self.drain_audio_into_stereo(buf);
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) {
+        self.invalidate_rollback_session();
         self.bus.apu.set_output_sample_rate(rate as f64);
     }
 
     pub fn drain_audio_into_stereo(&mut self, buf: &mut Vec<f32>) {
+        self.invalidate_rollback_session();
         self.bus.apu.drain_samples_into_stereo(buf);
     }
 
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.bus.apu.set_sample_generation_enabled(enabled);
     }
 
     pub fn set_apu_channel_mutes(&mut self, mutes: [bool; 5]) {
+        self.invalidate_rollback_session();
         self.bus.apu.set_channel_mutes(mutes);
     }
 
     pub fn set_apu_debug_collection_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.bus.apu.set_debug_collection_enabled(enabled);
     }
 
     pub fn set_palette_mode(&mut self, mode: crate::hardware::ppu::NesPaletteMode) {
+        self.invalidate_rollback_session();
         self.bus.set_palette_mode(mode);
     }
 
     pub fn set_custom_palette(&mut self, palette: Option<crate::hardware::ppu::NesPalette>) {
+        self.invalidate_rollback_session();
         self.bus.set_custom_palette(palette);
     }
 
@@ -81,19 +112,23 @@ impl Emulator {
     }
 
     pub fn set_input_p1_raw(&mut self, buttons: u8) {
+        self.invalidate_rollback_session();
         self.bus.set_vs_system_credit_input(buttons & 0x04 != 0);
         self.bus.controller1.set_buttons(buttons);
     }
 
     pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.invalidate_rollback_session();
         self.set_input_p1_raw(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
     pub fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.invalidate_rollback_session();
         self.set_input_p2_raw(map_host_to_nes_byte(buttons_pressed, dpad_pressed));
     }
 
     pub fn set_input_p2_raw(&mut self, buttons: u8) {
+        self.invalidate_rollback_session();
         self.bus.controller2.set_buttons(buttons);
     }
 
@@ -104,6 +139,7 @@ impl Emulator {
         hit: bool,
         screen_pos: Option<(u16, u16)>,
     ) {
+        self.invalidate_rollback_session();
         use crate::hardware::cartridge::NesMapper;
         use crate::hardware::controller::ControllerType;
         self.bus.set_zapper_light_sensor(screen_pos, hit);
@@ -129,6 +165,7 @@ impl Emulator {
     }
 
     pub fn clear_game_genie(&mut self) {
+        self.invalidate_rollback_session();
         self.invalidate_audio_trace(
             zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
         );
@@ -136,6 +173,7 @@ impl Emulator {
     }
 
     pub fn add_game_genie_patch(&mut self, patch: crate::cheats::NesGameGeniePatch) {
+        self.invalidate_rollback_session();
         self.invalidate_audio_trace(
             zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation,
         );
@@ -143,6 +181,7 @@ impl Emulator {
     }
 
     pub fn set_fds_disk_side(&mut self, side: u8) -> anyhow::Result<()> {
+        self.invalidate_rollback_session();
         self.bus.cartridge.set_fds_disk_side(side)
     }
 
@@ -158,6 +197,7 @@ impl Emulator {
         &mut self,
         event: &zeff_emu_common::media::MediaEvent,
     ) -> anyhow::Result<()> {
+        self.invalidate_rollback_session();
         self.bus.cartridge.apply_media_event(event)
     }
 }

@@ -1,8 +1,5 @@
-use std::sync::mpsc::{self, Receiver as StdReceiver, TryRecvError};
-use std::thread;
-
 use crate::emu_thread::{EmuResponse, TcpLinkMode};
-use crate::link::transport::TcpLinkTransport;
+use crate::link::transport::native::TcpLinkConnector;
 use crate::link::{
     LinkConnectionState, LinkEndpointId, LinkSession, LinkSystemType, RemoteLink,
     remote_link_system_for_active_system,
@@ -14,7 +11,7 @@ pub(super) struct PendingTcpLink {
     label: String,
     endpoint: LinkEndpointId,
     system: LinkSystemType,
-    receiver: StdReceiver<Result<TcpLinkTransport, String>>,
+    connector: TcpLinkConnector,
 }
 
 impl EmuLoop {
@@ -27,28 +24,25 @@ impl EmuLoop {
         };
 
         self.disconnect_tcp_link();
-        self.pending_tcp_link = None;
-
-        let (label, endpoint, receiver) = match mode {
+        let (label, endpoint, connector) = match mode {
             TcpLinkMode::Host { bind_addr } => {
                 let label = format!("hosting on {bind_addr}");
-                let (sender, receiver) = mpsc::channel();
-                thread::spawn(move || {
-                    let result = TcpLinkTransport::host_once(bind_addr.as_str())
-                        .map_err(|err| format!("Host failed: {err}"));
-                    let _ = sender.send(result);
-                });
-                (label, LinkEndpointId(1), receiver)
+                (label, LinkEndpointId(1), TcpLinkConnector::host(&bind_addr))
             }
             TcpLinkMode::Join { connect_addr } => {
                 let label = format!("joining {connect_addr}");
-                let (sender, receiver) = mpsc::channel();
-                thread::spawn(move || {
-                    let result = TcpLinkTransport::connect(connect_addr.as_str())
-                        .map_err(|err| format!("Join failed: {err}"));
-                    let _ = sender.send(result);
-                });
-                (label, LinkEndpointId(2), receiver)
+                (
+                    label,
+                    LinkEndpointId(2),
+                    TcpLinkConnector::join(&connect_addr),
+                )
+            }
+        };
+        let connector = match connector {
+            Ok(connector) => connector,
+            Err(error) => {
+                let _ = self.send_resp(EmuResponse::LinkFailed(error.to_string()));
+                return;
             }
         };
 
@@ -56,20 +50,20 @@ impl EmuLoop {
             label: label.clone(),
             endpoint,
             system,
-            receiver,
+            connector,
         });
         let _ = self.send_resp(EmuResponse::LinkPending(label));
     }
 
     pub(super) fn poll_tcp_link_connection(&mut self) {
-        let Some(pending) = self.pending_tcp_link.as_ref() else {
+        let Some(pending) = self.pending_tcp_link.as_mut() else {
             return;
         };
 
-        let result = match pending.receiver.try_recv() {
-            Ok(result) => result,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err("link connection worker stopped".to_string()),
+        let result = match pending.connector.poll() {
+            Ok(Some(transport)) => Ok(transport),
+            Ok(None) => return,
+            Err(error) => Err(error.to_string()),
         };
 
         let pending = self
@@ -133,3 +127,6 @@ impl EmuLoop {
         self.backend.set_link_peer_present(false);
     }
 }
+
+#[cfg(test)]
+mod tests;

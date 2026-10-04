@@ -1,0 +1,14 @@
+FROM rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0 AS build
+WORKDIR /source
+COPY . .
+ENV CARGO_INCREMENTAL=0
+RUN cargo build --locked --release -p zeff-netplay-lobby
+
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+COPY --from=build /source/target/release/zeff-netplay-lobby /usr/local/bin/zeff-netplay-lobby
+USER 65532:65532
+ENV ZEFF_LOBBY_BIND=0.0.0.0:8080
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["/usr/local/bin/zeff-netplay-lobby", "--healthcheck"]
+ENTRYPOINT ["/usr/local/bin/zeff-netplay-lobby"]

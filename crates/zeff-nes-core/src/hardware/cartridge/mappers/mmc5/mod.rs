@@ -205,6 +205,18 @@ impl Mmc5 {
 }
 
 impl Mapper for Mmc5 {
+    fn write_rollback_runtime_state(&self, w: &mut crate::save_state::StateWriter) {
+        w.write_u8(self.consecutive_nt_reads);
+    }
+
+    fn read_rollback_runtime_state(
+        &mut self,
+        r: &mut crate::save_state::StateReader,
+    ) -> anyhow::Result<()> {
+        self.consecutive_nt_reads = r.read_u8()?;
+        Ok(())
+    }
+
     fn cpu_peek(&self, addr: u16) -> u8 {
         match addr {
             0x5C00..=0x5FFF if self.exram_mode >= 2 => self.ex_ram[(addr - 0x5C00) as usize],
@@ -469,7 +481,7 @@ impl Mapper for Mmc5 {
         self.current_scanline = r.read_u16()?;
         self.has_battery = r.read_bool()?;
 
-        let prg_ram = r.read_vec(512 * 1024)?;
+        let prg_ram = r.read_vec(self.prg_ram.len())?;
         if prg_ram.len() != self.prg_ram.len() {
             anyhow::bail!(
                 "MMC5 PRG RAM size mismatch: expected {}, got {}",

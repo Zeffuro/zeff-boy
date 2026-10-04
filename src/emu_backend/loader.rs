@@ -455,6 +455,7 @@ fn load_backend_from_rom_source_inner(
     let nes_provenance = (system == ActiveSystem::Nes).then(|| {
         super::nes::NesTasLoadProvenanceSeed::new(
             raw_source_media_sha256.expect("NES source hash must exist for NES"),
+            raw_source_media_len as u64,
             source_path,
             rom_path,
             super::nes::NesTasLoadSetup {

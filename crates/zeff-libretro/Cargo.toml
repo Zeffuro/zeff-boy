@@ -27,3 +27,6 @@ sha2 = "0.11.0"
 
 [build-dependencies]
 cc = "1.2"
+
+[dev-dependencies]
+lz4_flex = "0.14.0"

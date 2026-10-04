@@ -9,6 +9,9 @@ fn valid_facts() -> DirectNesProfileFacts {
         identity_metadata_matches: true,
         provenance: Some(NesTasLoadProvenance {
             raw_source_media_sha256: [7; 32],
+            raw_source_media_len: 16 + 0x4000 + 0x2000,
+            initial_persistent_sha256: zeff_firmware::sha256_bytes(&[]),
+            initial_state_sha256: None,
             direct_nes_file: true,
             sync_config_sha256: crate::emu_backend::loader::direct_nes_tas_sync_config_sha256().0,
             any_mod_enabled: false,

@@ -53,12 +53,16 @@ impl App {
     }
 
     pub(in crate::app) fn worker_gameplay_commands_allowed(&self) -> bool {
-        self.pending_tas_repair_activation.is_none()
+        !self.netplay.fenced()
+            && self.pending_tas_repair_activation.is_none()
             && !self.tas_repair.has_active_transaction()
             && self.tas_control.gameplay_commands_allowed()
     }
 
     pub(in crate::app) fn fence_tas_control_gameplay(&mut self) {
+        if self.netplay.fenced() {
+            return;
+        }
         if self.worker_gameplay_commands_allowed() {
             return;
         }

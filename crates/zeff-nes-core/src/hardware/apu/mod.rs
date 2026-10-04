@@ -69,6 +69,16 @@ pub struct Apu {
 }
 
 impl Apu {
+    pub(crate) fn retained_sample_bytes(&self) -> usize {
+        (self.sample_buffer.capacity()
+            + self.master_debug_samples.capacity()
+            + self.pulse1_debug_samples.capacity()
+            + self.pulse2_debug_samples.capacity()
+            + self.triangle_debug_samples.capacity()
+            + self.noise_debug_samples.capacity())
+            * std::mem::size_of::<f32>()
+    }
+
     pub fn new(output_sample_rate: f64) -> Self {
         Self::new_with_timing(output_sample_rate, NesTiming::Ntsc)
     }

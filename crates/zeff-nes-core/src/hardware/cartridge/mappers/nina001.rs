@@ -141,7 +141,7 @@ impl Mapper for Nina001 {
         self.chr_bank_1 = r.read_u8()? & 0x0F;
         self.has_battery = r.read_bool()?;
 
-        let prg_ram = r.read_vec(64 * 1024)?;
+        let prg_ram = r.read_vec(self.prg_ram.len())?;
         if prg_ram.len() != self.prg_ram.len() {
             bail!(
                 "NINA-001 PRG RAM size mismatch: expected {}, got {}",

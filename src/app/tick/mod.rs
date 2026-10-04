@@ -134,7 +134,7 @@ impl App {
                     self.settings.audio.buffer_policy,
                 );
             let retry = std::mem::take(&mut self.debug_windows.settings_ui.audio_retry_requested);
-            if host_changed || retry {
+            if (host_changed || retry) && !self.netplay.fenced() {
                 let previous_fallback = self
                     .debug_windows
                     .settings_ui
@@ -154,10 +154,11 @@ impl App {
                         .buffer_fallback = previous_fallback;
                 }
             }
-            if let Some(fallback) = self
-                .audio
-                .as_mut()
-                .and_then(crate::audio::AudioOutput::take_buffer_fallback_request)
+            if !self.netplay.fenced()
+                && let Some(fallback) = self
+                    .audio
+                    .as_mut()
+                    .and_then(crate::audio::AudioOutput::take_buffer_fallback_request)
             {
                 let previous_fallback = self
                     .debug_windows
@@ -207,6 +208,8 @@ impl App {
         let host_tilt = self.update_host_tilt_and_stick_mode();
 
         self.drain_emu_responses();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pump_netplay();
         #[cfg(not(target_arch = "wasm32"))]
         self.pump_pending_tas_repair_activation();
         #[cfg(not(target_arch = "wasm32"))]

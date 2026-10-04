@@ -21,6 +21,8 @@ use self::detection::{detect_and_extract_archive_entry, is_zip_path};
 mod detection;
 mod lifecycle;
 #[cfg(not(target_arch = "wasm32"))]
+mod netplay;
+#[cfg(not(target_arch = "wasm32"))]
 mod preparation;
 #[cfg(not(target_arch = "wasm32"))]
 mod symbols;
@@ -663,6 +665,10 @@ impl App {
     }
 
     pub(in crate::app) fn load_rom(&mut self, path: &Path) {
+        if let Err(error) = self.preflight_emu_command(&EmuCommand::Reset) {
+            self.toast_manager.error(error.to_string());
+            return;
+        }
         dismiss_archive_selection_for_new_load(&mut self.pending_archive_selection);
         #[cfg(not(target_arch = "wasm32"))]
         self.cancel_pending_rom_preparation(false);
