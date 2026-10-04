@@ -18,8 +18,12 @@ mod chat;
 mod fault;
 mod media;
 mod pause;
+mod route;
 mod timing;
 use media::Options;
+
+#[cfg(test)]
+mod lobby_tests;
 
 #[derive(Default)]
 pub(super) struct Observation {
@@ -57,7 +61,33 @@ pub(crate) fn run_if_requested() -> Result<bool> {
     let options = Options::parse(&arguments[1..])?;
     options.prepare_root()?;
     let path = options.copy_media()?;
-    let backend = media::load(&path)?;
+    let report = execute(&options, &path)?;
+    write_new(
+        &options.root.join("report.json"),
+        &serde_json::to_vec_pretty(&report)?,
+    )?;
+    println!("{}", json!({"report": report}));
+    Ok(true)
+}
+
+fn execute(options: &Options, path: &Path) -> Result<Value> {
+    let mut app = setup(path)?;
+    let result = run(&mut app, options, path);
+    if result.is_err() {
+        app.request_netplay_stop();
+        let _ = wait(&mut app, Duration::from_secs(5), |app| {
+            !app.netplay.fenced()
+        });
+    }
+    app.stop_emu_thread();
+    let mut report = result?;
+    options.check_save(path)?;
+    report["save_protection_after_shutdown"] = json!(true);
+    Ok(report)
+}
+
+fn setup(path: &Path) -> Result<App> {
+    let backend = media::load(path)?;
     let mut settings = crate::settings::Settings::default();
     settings.ui.check_for_updates = false;
     settings.audio.output_sample_rate = 48_000;
@@ -72,37 +102,29 @@ pub(crate) fn run_if_requested() -> Result<bool> {
         .initial_backend
         .take()
         .context("missing initial backend")?;
-    app.finalize_rom_load(&backend, ActiveSystem::Nes, path.clone(), path.clone());
+    app.finalize_rom_load(
+        &backend,
+        ActiveSystem::Nes,
+        path.to_path_buf(),
+        path.to_path_buf(),
+    );
     app.spawn_emu_thread(backend);
     app.set_user_paused(true);
-    app.netplay.proof = Some(Observation {
-        cadence: options.cadence,
-        ..Observation::default()
-    });
-    let result = run(&mut app, &options, &path);
-    if result.is_err() {
-        app.request_netplay_stop();
-        let _ = wait(&mut app, Duration::from_secs(5), |app| {
-            !app.netplay.fenced()
-        });
-    }
-    app.stop_emu_thread();
-    let mut report = result?;
-    options.check_save(&path)?;
-    report["save_protection_after_shutdown"] = json!(true);
-    write_new(
-        &options.root.join("report.json"),
-        &serde_json::to_vec_pretty(&report)?,
-    )?;
-    println!("{}", json!({"report": report}));
-    Ok(true)
+    app.netplay.proof = Some(Observation::default());
+    Ok(app)
 }
 
 fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
     let started = Instant::now();
     let build = executable_build()?;
     let initial = capture(app)?;
+    app.netplay
+        .proof
+        .as_mut()
+        .context("proof observer lost")?
+        .cadence = options.cadence;
     app.debug_windows.netplay.private_network = true;
+    options.route.configure(app);
     app.debug_windows.netplay.input_delay = options.input_delay.frames();
     let invitation = if options.role == 0 {
         app.debug_windows.netplay.host_address = options.address.ip().to_string();
@@ -122,6 +144,14 @@ fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
     let save = media::optional_save(path)?;
     options.record_save(&save)?;
     if options.role == 0 {
+        wait(app, Duration::from_secs(35), |app| {
+            !app.debug_windows.netplay.invitation.is_empty() || !app.netplay.fenced()
+        })?;
+        ensure!(app.netplay.fenced(), "{}", app.debug_windows.netplay.status);
+        ensure!(
+            !app.debug_windows.netplay.invitation.is_empty(),
+            "host invitation unavailable"
+        );
         write_new(
             &options.root.join("invitation.txt"),
             app.debug_windows.netplay.invitation.as_bytes(),
@@ -134,13 +164,7 @@ fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
     })?;
     hold(app);
     let observation = app.netplay.proof.as_ref().context("proof observer lost")?;
-    let (local, peer, scope) = observation
-        .connection
-        .context("connector returned no owned socket")?;
-    ensure!(
-        scope == ConnectionScope::TrustedPrivate,
-        "wrong proof connection scope"
-    );
+    let (local, peer, scope) = options.route.endpoints(observation.connection)?;
     let mut reference = media::load(path)?;
     ensure!(
         reference.encode_state_bytes()? == initial,
@@ -169,8 +193,9 @@ fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
             .map(|summary| json!(summary)).unwrap_or_else(|error| json!({"error": error.to_string()})),
         "source_sha256": const_hex::encode(reference_identity.source),
         "media_bytes": reference_identity.media_len,
-        "local_endpoint": local.to_string(), "peer_endpoint": peer.to_string(),
-        "scope": "trusted-private-plaintext", "frames": observation.frames,
+        "local_endpoint": local, "peer_endpoint": peer,
+        "scope": scope, "frames": observation.frames,
+        "transport": if options.route.is_lobby() { "webrtc-data-channel" } else { "tcp" },
         "admitted": observation.admitted, "reference_checked_frames": 0,
         "jitter_ms": options.jitter_ms, "requested_fault": options.fault,
         "input_delay": delay.frames(),

@@ -11,7 +11,7 @@ use crate::emu_backend::{
 };
 
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
-const USAGE: &str = "usage: --netplay-app-proof NEW_OUTPUT_DIRECTORY [--rom DIRECT_NES_FILE]; set ZEFF_NETPLAY_APP_LAN_ROLE=host|join, FRAMES=24..1000, ADDRESS=numeric-IP:port or INVITATION";
+const USAGE: &str = "usage: --netplay-app-proof NEW_OUTPUT_DIRECTORY [--rom DIRECT_NES_FILE]; set ZEFF_NETPLAY_APP_ROUTE=lan|lobby (default lan), ZEFF_NETPLAY_APP_LAN_ROLE=host|join, FRAMES=24..1000, ADDRESS=numeric-IP:port or INVITATION; lobby requires ZEFF_NETPLAY_APP_LOBBY_URL and ZEFF_NETPLAY_APP_LOBBY_TOKEN";
 
 pub(super) struct Options {
     pub(super) root: PathBuf,
@@ -19,6 +19,7 @@ pub(super) struct Options {
     pub(super) frames: u64,
     pub(super) input_delay: zeff_netplay::rollback::InputDelay,
     pub(super) address: SocketAddr,
+    pub(super) route: super::route::Route,
     pub(super) invitation: Option<String>,
     pub(super) reject_build: bool,
     pub(super) jitter_ms: u64,
@@ -26,12 +27,12 @@ pub(super) struct Options {
     pub(super) cadence: bool,
     pub(super) fault: Option<String>,
     pub(super) fault_role: usize,
-    cartridge: Option<PathBuf>,
+    pub(super) cartridge: Option<PathBuf>,
 }
 
 fn variable(name: &str) -> Result<String> {
-    std::env::var(format!("ZEFF_NETPLAY_APP_LAN_{name}"))
-        .with_context(|| format!("set ZEFF_NETPLAY_APP_LAN_{name}"))
+    let name = format!("ZEFF_NETPLAY_APP_LAN_{name}");
+    super::route::environment(&name)?.with_context(|| format!("set {name}"))
 }
 
 fn bounded(value: &str, min: u64, max: u64, name: &str) -> Result<u64> {
@@ -107,7 +108,12 @@ impl Options {
             !(reject_build && fault.is_some()),
             "cannot combine rejection and gameplay faults"
         );
-        let address = if role == 0 {
+        let route = super::route::Route::parse(input_delay, super::route::environment)?;
+        ensure!(
+            !route.is_lobby() || fault.as_deref().is_none_or(|value| value == "disconnect"),
+            "lobby proof supports only the disconnect fault"
+        );
+        let address = if role == 0 && !route.is_lobby() {
             variable("ADDRESS")?
                 .parse::<SocketAddr>()
                 .context("ADDRESS must be numeric-IP:port")?
@@ -116,10 +122,7 @@ impl Options {
         };
         let invitation = (role == 1).then(|| variable("INVITATION")).transpose()?;
         if let Some(invitation) = &invitation {
-            crate::netplay::connect::validate_invitation(
-                invitation,
-                zeff_netplay::endpoint::ConnectionScope::TrustedPrivate,
-            )?;
+            route.validate_invitation(invitation)?;
         }
         ensure!(
             std::env::var("ZEFF_MUTE_AUDIO").as_deref() == Ok("1"),
@@ -131,6 +134,7 @@ impl Options {
             frames,
             input_delay,
             address,
+            route,
             invitation,
             reject_build,
             jitter_ms,
@@ -329,6 +333,7 @@ mod tests {
             frames: 24,
             input_delay: zeff_netplay::rollback::InputDelay::default(),
             address: "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
+            route: super::super::route::Route::Lan,
             invitation: None,
             reject_build: false,
             jitter_ms: 0,
