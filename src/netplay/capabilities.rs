@@ -1,7 +1,10 @@
 use crate::emu_backend::ActiveSystem;
 
 pub(crate) fn shared_console(system: ActiveSystem) -> bool {
-    matches!(system, ActiveSystem::Nes)
+    matches!(
+        system,
+        ActiveSystem::Nes | ActiveSystem::MasterSystem | ActiveSystem::Sg1000
+    )
 }
 
 pub(crate) fn linked_devices(system: ActiveSystem) -> bool {
@@ -26,7 +29,10 @@ mod tests {
         for spec in specs {
             assert_eq!(
                 shared_console(spec.system),
-                spec.system == ActiveSystem::Nes
+                matches!(
+                    spec.system,
+                    ActiveSystem::Nes | ActiveSystem::MasterSystem | ActiveSystem::Sg1000
+                )
             );
             assert_eq!(
                 linked_devices(spec.system),

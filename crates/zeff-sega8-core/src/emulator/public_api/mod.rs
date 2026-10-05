@@ -9,6 +9,7 @@ mod queries;
 
 impl Emulator {
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        self.invalidate_rollback_session();
         self.sample_rate = if sample_rate == 0 {
             super::DEFAULT_SAMPLE_RATE
         } else {
@@ -26,6 +27,7 @@ impl Emulator {
     }
 
     pub fn set_video_standard(&mut self, video_standard: Sega8VideoStandard) {
+        self.invalidate_rollback_session();
         self.video_standard = video_standard;
         self.bus.set_video_standard(video_standard);
     }
@@ -35,25 +37,30 @@ impl Emulator {
     }
 
     pub fn set_console_region(&mut self, console_region: Sega8Region) {
+        self.invalidate_rollback_session();
         self.console_region = console_region;
         self.bus.set_console_region(console_region);
     }
 
     pub fn drain_audio_samples_into(&mut self, buf: &mut Vec<f32>) {
+        self.invalidate_rollback_session();
         self.bus.drain_audio_samples_into(buf);
     }
 
     pub fn drain_audio_samples(&mut self) -> Vec<f32> {
+        self.invalidate_rollback_session();
         let mut buf = Vec::new();
         self.drain_audio_samples_into(&mut buf);
         buf
     }
 
     pub fn clear_rom_patches(&mut self) {
+        self.invalidate_rollback_session();
         self.bus.clear_rom_patches();
     }
 
     pub fn add_rom_patch(&mut self, patch: zeff_emu_common::cheats::CheatPatch) {
+        self.invalidate_rollback_session();
         self.bus.add_rom_patch(patch);
     }
 
@@ -62,14 +69,17 @@ impl Emulator {
     }
 
     pub fn set_apu_sample_generation_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.bus.set_apu_sample_generation_enabled(enabled);
     }
 
     pub fn set_apu_channel_mutes(&mut self, mutes: [bool; PSG_CHANNEL_COUNT]) {
+        self.invalidate_rollback_session();
         self.bus.set_apu_channel_mutes(mutes);
     }
 
     pub fn set_input(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.invalidate_rollback_session();
         let raw = host_input_to_sms_raw(buttons_pressed, dpad_pressed);
         let game_gear_start_pressed = buttons_pressed & super::HOST_BUTTON_START != 0;
         self.bus
@@ -81,6 +91,7 @@ impl Emulator {
     }
 
     pub fn set_input_p2(&mut self, buttons_pressed: u8, dpad_pressed: u8) {
+        self.invalidate_rollback_session();
         let raw = host_input_to_sms_raw(buttons_pressed, dpad_pressed);
         self.bus
             .input_mut()
@@ -88,6 +99,7 @@ impl Emulator {
     }
 
     pub fn sync_game_gear_link_peer(&mut self, peer: &mut Self) {
+        self.invalidate_rollback_session();
         self.bus.sync_game_gear_link_peer(&mut peer.bus);
     }
 }

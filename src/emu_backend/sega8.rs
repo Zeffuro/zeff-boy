@@ -137,6 +137,9 @@ pub(crate) struct Sega8Backend {
     sms_tas_load_provenance: Option<tas_provenance::SmsTasLoadProvenance>,
     game_gear_tas_load_provenance: Option<game_gear_tas_provenance::GameGearTasLoadProvenance>,
     sg1000_tas_load_provenance: Option<sg1000_tas_provenance::Sg1000TasLoadProvenance>,
+    netplay_load_provenance: Option<netplay_provenance::Sega8NetplayLoadProvenance>,
+    pub(crate) netplay_persistent_load_known: bool,
+    host_persistence_enabled: bool,
 }
 
 impl Sega8Backend {
@@ -201,6 +204,9 @@ impl Sega8Backend {
             sms_tas_load_provenance: None,
             game_gear_tas_load_provenance: None,
             sg1000_tas_load_provenance: None,
+            netplay_load_provenance: None,
+            netplay_persistent_load_known: false,
+            host_persistence_enabled: true,
         }
     }
 
@@ -222,6 +228,9 @@ impl Sega8Backend {
             sms_tas_load_provenance: None,
             game_gear_tas_load_provenance: None,
             sg1000_tas_load_provenance: None,
+            netplay_load_provenance: None,
+            netplay_persistent_load_known: false,
+            host_persistence_enabled: true,
         }
     }
 
@@ -303,6 +312,9 @@ impl EmulatorCore for Sega8Backend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        if !self.host_persistence_enabled {
+            return Ok(None);
+        }
         let system_subdir = self.system().storage_subdir();
         let media_identity = self.emu.rom_hash();
         let sram = self.emu.dump_battery_sram();
@@ -605,6 +617,7 @@ mod tests {
 }
 mod game_gear_tas_provenance;
 mod game_gear_tas_runtime;
+pub(crate) mod netplay_provenance;
 mod sg1000_tas_provenance;
 pub(crate) mod tas_provenance;
 pub(crate) use game_gear_tas_provenance::{

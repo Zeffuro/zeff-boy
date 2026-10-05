@@ -331,12 +331,19 @@ impl Bus {
     }
 
     pub fn non_maskable_interrupt_pending(&self) -> bool {
-        self.cartridge.system() == Sega8System::GameGear && self.game_gear_serial.rx_nmi_pending()
+        match self.cartridge.system() {
+            Sega8System::MasterSystem => self.input.console_pause_pending(),
+            Sega8System::GameGear => self.game_gear_serial.rx_nmi_pending(),
+            Sega8System::Sg1000 => false,
+        }
     }
 
     pub fn acknowledge_non_maskable_interrupt(&mut self) -> bool {
-        self.cartridge.system() == Sega8System::GameGear
-            && self.game_gear_serial.take_rx_nmi_pending()
+        match self.cartridge.system() {
+            Sega8System::MasterSystem => self.input.take_console_pause_pending(),
+            Sega8System::GameGear => self.game_gear_serial.take_rx_nmi_pending(),
+            Sega8System::Sg1000 => false,
+        }
     }
 
     pub fn begin_cpu_access_trace(&mut self) {

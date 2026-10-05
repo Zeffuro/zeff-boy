@@ -470,7 +470,7 @@ fn replay_case(timing: TimingMode, delay: zeff_netplay::rollback::InputDelay) {
             >= session
                 .snapshots
                 .values()
-                .map(NesRollbackSnapshot::retained_bytes)
+                .map(Snapshot::retained_bytes)
                 .sum()
     );
     for (index, (checkpoint, ports, audio)) in published.into_iter().enumerate() {

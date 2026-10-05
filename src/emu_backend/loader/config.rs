@@ -22,6 +22,8 @@ pub(crate) struct BackendLoadConfig {
     pub(crate) gba_seed_rtc_from_host: bool,
     pub(crate) nes_load_battery_sram: bool,
     pub(crate) sega8_load_battery_sram: bool,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) sega8_browser_source: bool,
     pub(crate) ws_load_battery_sram: bool,
     pub(crate) game_gear_standard_mapper_ram_identity: Option<GameGearStandardMapperRamIdentity>,
     pub(crate) sega8_video_standard: Option<Sega8VideoStandard>,
@@ -76,6 +78,8 @@ impl Default for BackendLoadConfig {
             gba_seed_rtc_from_host: true,
             nes_load_battery_sram: true,
             sega8_load_battery_sram: true,
+            #[cfg(target_arch = "wasm32")]
+            sega8_browser_source: false,
             ws_load_battery_sram: true,
             game_gear_standard_mapper_ram_identity: None,
             sega8_video_standard: None,

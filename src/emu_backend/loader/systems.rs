@@ -484,8 +484,12 @@ pub(super) fn load_sega8_backend(
     };
     let sg1000_persistent_load =
         super::super::sega8::sg1000_persistent_load_outcome(&persistent_load);
+    let netplay_persistent_load_known = persistent_load.is_ok();
     log_sram_result(persistent_load);
     let mut backend = wrap_sega8_backend(emu, source_path, rom_path);
+    if let EmuBackend::Sega8(sega) = &mut backend {
+        sega.netplay_persistent_load_known = netplay_persistent_load_known;
+    }
     if let Some(provenance) = tas_provenance {
         backend = match provenance {
             super::super::sega8::Sega8TasLoadProvenanceSeed::MasterSystem(provenance) => {

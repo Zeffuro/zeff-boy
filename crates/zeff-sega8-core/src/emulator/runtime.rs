@@ -16,6 +16,8 @@ use zeff_emu_common::debug::{
 
 impl Emulator {
     pub fn step_frame(&mut self) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         if self.cpu.is_suspended() {
             return;
         }
@@ -42,8 +44,10 @@ impl Emulator {
     }
 
     pub fn finish_frame(&mut self) {
+        self.invalidate_rollback_session();
         self.render_frame();
         self.frame_count = self.frame_count.wrapping_add(1);
+        self.rollback_frame_boundary = true;
     }
 
     pub fn step_instruction(&mut self) -> Option<FetchedInstruction> {
@@ -61,6 +65,8 @@ impl Emulator {
         skip_breakpoint_check: bool,
         collect_bus_trace: bool,
     ) -> (Option<FetchedInstruction>, Vec<CpuAccessTraceEvent>) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         if self.cpu.is_suspended() {
             return (None, Vec::new());
         }

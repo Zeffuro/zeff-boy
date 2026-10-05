@@ -16,6 +16,7 @@ impl Emulator {
     }
 
     pub fn load_battery_sram(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.invalidate_rollback_session();
         if !self.has_battery() {
             anyhow::bail!(
                 "Sega 8-bit ROM does not declare known battery-backed SRAM; classified as {:?}",
@@ -32,6 +33,9 @@ impl Emulator {
     pub fn load_state(&mut self, data: &[u8]) -> anyhow::Result<()> {
         let mut candidate = self.clone();
         crate::save_state::decode_state(&mut candidate, data)?;
+        candidate.bus.input_mut().clear_console_pause();
+        candidate.invalidate_rollback_session();
+        candidate.rollback_frame_boundary = false;
         *self = candidate;
         Ok(())
     }

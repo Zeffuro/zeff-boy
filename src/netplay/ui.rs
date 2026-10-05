@@ -189,6 +189,30 @@ impl Ui {
             .inner
     }
 
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn draw_browser_window(
+        &mut self,
+        ctx: &egui::Context,
+        system: ActiveSystem,
+    ) -> Option<MenuAction> {
+        if !self.open {
+            return None;
+        }
+        let mut open = true;
+        let mut action = None;
+        let min_height = (ctx.viewport_rect().height() - 64.0).clamp(80.0, 240.0);
+        egui::Window::new("Netplay")
+            .open(&mut open)
+            .default_size([360.0, 300.0])
+            .min_height(min_height)
+            .max_width(420.0)
+            .show(ctx, |ui| action = self.draw_contents(ui, system));
+        if !open {
+            self.close();
+        }
+        action
+    }
+
     fn draw_controls(&mut self, ui: &mut egui::Ui, system: ActiveSystem) -> Option<MenuAction> {
         if !cfg!(target_arch = "wasm32") && !self.active && !self.link_active {
             ui.horizontal(|ui| {
@@ -229,6 +253,7 @@ impl Ui {
                     } else {
                         "Cancel"
                     })
+                    .on_hover_text("End the session. The game resets and pauses.")
                     .clicked()
                     .then_some(MenuAction::StopNesNetplay)
                 })
@@ -287,7 +312,7 @@ impl Ui {
                         .text("Delay (frames)"),
                 ).on_hover_text("0 adds no netplay input delay. Raise it if a slower connection stutters. Fixed for this session.");
             }
-            ui.small("Starts fresh. Session saves are discarded.");
+            ui.small("New game. Session saves are discarded.");
             if ui
                 .add_enabled(
                     super::capabilities::shared_console(system)
@@ -306,6 +331,7 @@ impl Ui {
                         "Start hosting"
                     }),
                 )
+                .on_hover_text("Use the same game and compatible builds on both devices.")
                 .clicked()
             {
                 return Some(if self.joining {
@@ -315,22 +341,30 @@ impl Ui {
                 });
             }
             if !super::capabilities::shared_console(system) {
-                ui.label("Shared-console netplay is currently available for NES.");
+                ui.label("No shared-console adapter for this system.");
             }
         }
         if !self.active {
-            self.draw_options(ui);
+            self.draw_options(ui, system);
             if self.chat.messages().next().is_some()
                 && let Some(action) = self.draw_chat(ui)
             {
                 return Some(action);
             }
         }
-        self.draw_details(ui);
+        if self.active {
+            ui.small("Player 1 controls on both devices.")
+                .on_hover_text("Click the game to play. Unfocused input is neutral.");
+            self.draw_stats(ui, system);
+        }
         None
     }
 
-    fn draw_options(&mut self, ui: &mut egui::Ui) {
+    fn draw_options(&mut self, ui: &mut egui::Ui, system: ActiveSystem) {
+        let compatible = system == ActiveSystem::Nes && super::compatibility::available();
+        if !compatible && (self.joining || !self.private_network || self.lobby) {
+            return;
+        }
         ui.collapsing("Options", |ui| {
             if !self.joining && self.private_network && !self.lobby {
                 ui.horizontal(|ui| {
@@ -338,7 +372,7 @@ impl Ui {
                     ui.add(egui::DragValue::new(&mut self.host_port).range(1..=u16::MAX));
                 });
             }
-            if super::compatibility::available() {
+            if compatible {
                 ui.checkbox(
                     &mut self.allow_different_versions,
                     "Allow compatible different versions",
@@ -348,41 +382,33 @@ impl Ui {
         });
     }
 
-    fn draw_details(&mut self, ui: &mut egui::Ui) {
-        let compatible_build = super::compatibility::available();
-        ui.collapsing("Details", |ui| {
-            if self.active {
-                if !self.metrics.is_empty() {
-                    ui.small(&self.metrics);
-                }
-                if !self.invitation.is_empty() {
-                    ui.label("Share this secret only with the other player:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.invitation)
-                            .desired_width(f32::INFINITY)
-                            .interactive(false),
-                    );
-                }
+    fn draw_stats(&mut self, ui: &mut egui::Ui, system: ActiveSystem) {
+        let compatible_build = system == ActiveSystem::Nes && super::compatibility::available();
+        ui.collapsing("Stats", |ui| {
+            if !self.metrics.is_empty() {
+                ui.small(&self.metrics);
             }
-            let signed_pair = super::compatibility::signed_pair_available();
+            let signed_pair =
+                system == ActiveSystem::Nes && super::compatibility::signed_pair_available();
             ui.label(if signed_pair {
-                "Use the same game and paired builds."
+                "Builds: paired"
             } else if compatible_build {
-                "Use the same game and matching or qualified builds."
+                "Builds: matching or qualified"
             } else {
-                "Use the same game and matching builds."
+                "Builds: matching"
             });
-            if let Err(error) = super::compatibility::certificate_status() {
-                ui.label(format!("Signed pair unavailable: {error}. Install the matching certificate beside this app."));
+            if system == ActiveSystem::Nes
+                && let Err(error) = super::compatibility::certificate_status()
+            {
+                ui.small("Pair certificate unavailable")
+                    .on_hover_text(error.to_string());
             }
-            ui.label("Player 1 controls on both devices. Click the game to play.");
-            ui.label("Both players must resume to continue.");
-            ui.label("Disconnect resets the game and pauses it.");
             if self.lobby {
-                ui.small("Encrypted peer connection. Lobby carries setup only.");
+                ui.small("Direct · encrypted")
+                    .on_hover_text("The lobby handles setup. Gameplay travels between players.");
             } else if self.private_network {
-                ui.label("Use a trusted LAN. The host address must be reachable.");
-                ui.small("TCP is authenticated, not encrypted.");
+                ui.small("LAN · authenticated TCP")
+                    .on_hover_text("Use a trusted network. TCP is not encrypted.");
             }
         });
     }

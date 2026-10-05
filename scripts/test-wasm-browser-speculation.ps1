@@ -136,6 +136,10 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "browser WASM speculation test failed with exit code $LASTEXITCODE"
         }
+        if ($Netplay) {
+            & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests native_wasm_nes_portability_receipts
+            if ($LASTEXITCODE -ne 0) { throw "Native/browser portability tests failed" }
+        }
     } finally {
         $env:CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER = $previousRunner
         $env:RUST_LOG = $previousRustLog

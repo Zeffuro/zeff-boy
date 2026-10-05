@@ -16,6 +16,8 @@ use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_
 use crate::netplay::{Start, Transport, identity};
 use crate::platform::Instant;
 
+mod sega8;
+
 #[wasm_bindgen::prelude::wasm_bindgen(
     inline_js = "export function netplay_test_yield() { return new Promise(resolve => setTimeout(resolve, 1)); }"
 )]
@@ -79,7 +81,7 @@ async fn seed(bytes: &[u8]) -> Vec<u8> {
 async fn peers(backend: &EmuBackend, delay: InputDelay) -> [Transport; 2] {
     let id = identity::identity_with_delay(backend, [7; 32], delay).unwrap();
     let session = SessionIdentity {
-        core: "nes".into(),
+        core: backend.system().code().into(),
         content_hash: const_hex::encode(id.effective),
         compatibility_hash: const_hex::encode(id.config),
         mode: SessionMode::SharedConsole,
@@ -131,6 +133,7 @@ struct Observation {
     ready: bool,
     pending: bool,
     presented: u64,
+    replayed: u64,
     frames: Vec<(zeff_netplay::wire::Message, [u8; 2], Vec<f32>)>,
     paused: bool,
     chat: usize,
@@ -147,9 +150,11 @@ impl Observation {
                 EmuResponse::Netplay(Response::Presented {
                     frame,
                     step_complete,
+                    rollback_frames,
                     ..
                 }) => {
                     self.presented = frame;
+                    self.replayed = self.replayed.max(rollback_frames);
                     if step_complete {
                         self.pending = false;
                     }
@@ -176,21 +181,40 @@ impl Observation {
     }
 }
 
-async fn case(timing: u8, frames_delay: u64, host_first: bool) {
-    let bytes = media(timing);
-    let persistent = seed(&bytes).await;
-    let first = backend(&bytes);
-    assert_eq!(
-        first.nes().unwrap().emu.dump_persistent_data().unwrap(),
-        persistent
-    );
+async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: bool) {
+    let bytes = if system == ActiveSystem::Nes {
+        media(timing)
+    } else {
+        sega8::media()
+    };
+    let persistent = if system == ActiveSystem::Nes {
+        Some(seed(&bytes).await)
+    } else {
+        None
+    };
+    let loaded = || {
+        if system == ActiveSystem::Nes {
+            backend(&bytes)
+        } else {
+            sega8::backend(system, timing, &bytes)
+        }
+    };
+    let first = loaded();
+    if let Some(persistent) = &persistent {
+        assert_eq!(
+            &first.nes().unwrap().emu.dump_persistent_data().unwrap(),
+            persistent
+        );
+    }
     let original = first.encode_state_bytes().unwrap();
+    let original_runtime = sega8::runtime(&first);
+    let original_persistent = sega8::persistent(&first);
     let delay = InputDelay::new(frames_delay).unwrap();
     let id = identity::identity_with_delay(&first, [7; 32], delay).unwrap();
     let [host, guest] = peers(&first, delay).await;
     let threads = [
         EmuThread::spawn(first, false),
-        EmuThread::spawn(backend(&bytes), false),
+        EmuThread::spawn(loaded(), false),
     ];
     let mut observed = [Observation::default(), Observation::default()];
     let mut starts = [
@@ -250,6 +274,22 @@ async fn case(timing: u8, frames_delay: u64, host_first: bool) {
         initial
     );
     assert!(threads[0].inner.borrow().pending_storage.is_none());
+    if system != ActiveSystem::Nes {
+        for frame in 0..6 {
+            threads[0].send(EmuCommand::StepNetplay(input(frame, 0)));
+            observed[0].pending = true;
+            let started = Instant::now();
+            while observed[0].pending {
+                for index in 0..2 {
+                    observed[index].drain(&threads[index]);
+                    assert!(!observed[index].stopped);
+                }
+                assert!(started.elapsed() < Duration::from_secs(3));
+                netplay_test_yield().await;
+            }
+            assert_eq!(observed[0].presented, frame + 1);
+        }
+    }
     let started = Instant::now();
     while !observed.iter().all(|peer| peer.frames.len() >= 72) {
         for index in 0..2 {
@@ -266,11 +306,8 @@ async fn case(timing: u8, frames_delay: u64, host_first: bool) {
         assert!(started.elapsed() < Duration::from_secs(15));
         netplay_test_yield().await;
     }
-    let mut reference = backend(&bytes);
-    let EmuBackend::Nes(nes) = &mut reference else {
-        unreachable!()
-    };
-    let lease = nes.emu.begin_rollback_session().unwrap();
+    let mut reference = loaded();
+    let lease = sega8::ReferenceLease::begin(&mut reference);
     for frame in 0..72u64 {
         let ports = if frame < frames_delay {
             [0, 0]
@@ -280,15 +317,32 @@ async fn case(timing: u8, frames_delay: u64, host_first: bool) {
                 input(frame - frames_delay, 1),
             ]
         };
-        let EmuBackend::Nes(nes) = &mut reference else {
-            unreachable!()
-        };
-        let audio = lease.advance_frame(&mut nes.emu, ports).unwrap();
+        let audio = lease.advance(&mut reference, ports);
         let expected = identity::checkpoint(&reference, frame + 1, &audio, id.config).unwrap();
         for peer in &observed {
             assert_eq!(peer.frames[frame as usize].0, expected);
             assert_eq!(peer.frames[frame as usize].1, ports);
             assert_eq!(peer.frames[frame as usize].2, audio);
+        }
+    }
+    if system != ActiveSystem::Nes {
+        assert!(
+            reference
+                .framebuffer()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[..3].iter().any(|byte| *byte != 0))
+        );
+        assert!(observed.iter().any(|peer| peer.replayed > 0));
+        assert!(
+            observed[0]
+                .frames
+                .iter()
+                .any(|(_, _, audio)| audio.iter().any(|sample| *sample != 0.0))
+        );
+        if system == ActiveSystem::MasterSystem {
+            assert_ne!(sega8::persistent(&reference), original_persistent);
         }
     }
     threads[0].send(EmuCommand::SetNetplayPaused(true));
@@ -344,30 +398,24 @@ async fn case(timing: u8, frames_delay: u64, host_first: bool) {
         assert!(observed[index].stopped);
         let inner = threads[index].inner.borrow();
         assert_eq!(inner.backend.encode_state_bytes().unwrap(), original);
+        assert_eq!(sega8::runtime(&inner.backend), original_runtime);
+        assert_eq!(sega8::persistent(&inner.backend), original_persistent);
+        assert!(inner.pending_storage.is_none());
+        assert!(sega8::persistence_enabled(&inner.backend));
+    }
+    if let Some(persistent) = persistent {
         assert_eq!(
-            inner
-                .backend
-                .nes()
-                .unwrap()
-                .emu
-                .dump_persistent_data()
-                .unwrap(),
+            crate::platform::read_sram_data(
+                Path::new("browser-netplay-proof.sav"),
+                "nes",
+                zeff_firmware::sha256_bytes(&bytes),
+                "sram"
+            )
+            .unwrap()
+            .unwrap(),
             persistent
         );
-        assert!(inner.pending_storage.is_none());
-        assert!(inner.backend.nes().unwrap().host_persistence_enabled());
     }
-    assert_eq!(
-        crate::platform::read_sram_data(
-            Path::new("browser-netplay-proof.sav"),
-            "nes",
-            zeff_firmware::sha256_bytes(&bytes),
-            "sram"
-        )
-        .unwrap()
-        .unwrap(),
-        persistent
-    );
 }
 
 #[wasm_bindgen_test(async)]
@@ -376,7 +424,7 @@ async fn browser_netplay_actual_worker_matches_reference_and_restores_sram() {
     for timing in [0, 1, 3] {
         for delay in [0, 2] {
             for host_first in [true, false] {
-                case(timing, delay, host_first).await;
+                case(ActiveSystem::Nes, timing, delay, host_first).await;
             }
         }
     }

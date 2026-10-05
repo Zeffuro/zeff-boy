@@ -91,6 +91,22 @@ impl Frontend {
         self.running() && !self.paused
     }
 
+    pub(super) fn permits_menu_action(&self, action: &crate::debug::MenuAction) -> bool {
+        use crate::debug::MenuAction;
+        !self.fenced()
+            || matches!(
+                action,
+                MenuAction::ToggleNetplayWindow
+                    | MenuAction::StopNesNetplay
+                    | MenuAction::SetNesNetplayPaused(_)
+                    | MenuAction::SendNesNetplayChat(_)
+                    | MenuAction::TogglePause
+                    | MenuAction::StopGame
+                    | MenuAction::ToggleFullscreen
+                    | MenuAction::SetAspectRatio(_)
+            )
+    }
+
     pub(super) fn deadline(&self) -> Option<Instant> {
         self.next_frame
             .filter(|_| self.running() && !self.in_flight)
@@ -158,7 +174,7 @@ impl App {
         ensure!(
             crate::netplay::capabilities::shared_console(self.active_system)
                 && self.emu_thread.is_some(),
-            "load an NES cartridge first"
+            "load a supported cartridge first"
         );
         ensure!(
             !self.recording.is_replay_active() && self.recording.audio_recorder.is_none(),
@@ -226,7 +242,7 @@ impl App {
         self.debug_windows.netplay.clear_chat();
         self.debug_windows.netplay.allow_different_versions = false;
         self.debug_windows.netplay.active = true;
-        self.debug_windows.netplay.status = "Preparing fresh cartridge load…".into();
+        self.debug_windows.netplay.status = "Preparing game…".into();
         self.recompute_pause();
         Ok(())
     }
@@ -351,8 +367,7 @@ impl App {
                     match sent {
                         Ok(()) => {
                             self.netplay.phase = Phase::Admission;
-                            self.debug_windows.netplay.status =
-                                "Checking cartridge, save and build identity…".into();
+                            self.debug_windows.netplay.status = "Checking game and build…".into();
                         }
                         Err(error) => self.finish_netplay(error.to_string(), false),
                     }

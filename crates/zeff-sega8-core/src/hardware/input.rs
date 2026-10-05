@@ -23,6 +23,8 @@ pub struct Input {
     controller_2: u8,
     game_gear_start_pressed: bool,
     io_control: u8,
+    console_pause_held: [bool; 2],
+    console_pause_pending: bool,
 }
 
 impl Input {
@@ -32,6 +34,8 @@ impl Input {
             controller_2: IO_OPEN_BUS_VALUE,
             game_gear_start_pressed: false,
             io_control: IO_CONTROL_DEFAULT,
+            console_pause_held: [false; 2],
+            console_pause_pending: false,
         }
     }
 
@@ -58,6 +62,37 @@ impl Input {
             ControllerPort::One => self.controller_1 = value,
             ControllerPort::Two => self.controller_2 = value,
         }
+    }
+
+    pub(crate) fn set_console_pause_pressed(&mut self, port: ControllerPort, pressed: bool) {
+        let was_pressed = self.console_pause_held.iter().any(|held| *held);
+        self.console_pause_held[match port {
+            ControllerPort::One => 0,
+            ControllerPort::Two => 1,
+        }] = pressed;
+        self.console_pause_pending |=
+            !was_pressed && self.console_pause_held.iter().any(|held| *held);
+    }
+
+    pub(crate) fn console_pause_pending(&self) -> bool {
+        self.console_pause_pending
+    }
+
+    pub(crate) fn take_console_pause_pending(&mut self) -> bool {
+        std::mem::take(&mut self.console_pause_pending)
+    }
+
+    pub(crate) fn console_pause_runtime(&self) -> [u8; 3] {
+        [
+            u8::from(self.console_pause_held[0]),
+            u8::from(self.console_pause_held[1]),
+            u8::from(self.console_pause_pending),
+        ]
+    }
+
+    pub(crate) fn clear_console_pause(&mut self) {
+        self.console_pause_held = [false; 2];
+        self.console_pause_pending = false;
     }
 
     pub fn read_game_gear_start(&self, region: Sega8Region) -> u8 {

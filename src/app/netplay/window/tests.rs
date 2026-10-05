@@ -9,6 +9,17 @@ fn closing_native_controls_keeps_the_worker_session_and_pause_vote() {
     let mut two = app(directory.path(), "two");
     one.debug_windows.netplay.input_delay = 8;
     let initial = connect_pair(&mut one, &mut two);
+    assert!(
+        one.netplay
+            .permits_menu_action(&MenuAction::ToggleNetplayWindow)
+    );
+    assert!(!one.netplay.permits_menu_action(&MenuAction::ResetGame));
+    one.handle_netplay_action(&MenuAction::ToggleNetplayWindow);
+    assert!(one.debug_windows.netplay.is_open());
+    one.handle_netplay_action(&MenuAction::ToggleNetplayWindow);
+    assert!(!one.debug_windows.netplay.is_open());
+    assert!(one.netplay.running());
+    assert!(one.debug_windows.netplay.active);
     one.debug_windows.netplay.open();
     one.game_window_focused = false;
     one.settings.emulation.pause_on_unfocus = true;

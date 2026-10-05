@@ -233,18 +233,7 @@ impl App {
                 }
                 let mut settings_dirty = false;
                 for action in &result.actions {
-                    if self.netplay.fenced()
-                        && !matches!(
-                            action,
-                            MenuAction::StopNesNetplay
-                                | MenuAction::SetNesNetplayPaused(_)
-                                | MenuAction::SendNesNetplayChat(_)
-                                | MenuAction::TogglePause
-                                | MenuAction::StopGame
-                                | MenuAction::ToggleFullscreen
-                                | MenuAction::SetAspectRatio(_)
-                        )
-                    {
+                    if !self.netplay.permits_menu_action(action) {
                         self.toast_manager
                             .info("Disconnect netplay before changing the game");
                         continue;
@@ -263,7 +252,8 @@ impl App {
                         }
                         MenuAction::ResetGame => self.reset_game(),
 
-                        action @ (MenuAction::HostNesNetplay
+                        action @ (MenuAction::ToggleNetplayWindow
+                        | MenuAction::HostNesNetplay
                         | MenuAction::JoinNesNetplay(_)
                         | MenuAction::StopNesNetplay
                         | MenuAction::SetNesNetplayPaused(_)

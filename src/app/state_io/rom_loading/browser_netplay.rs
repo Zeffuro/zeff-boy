@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use zeff_netplay::rollback::InputDelay;
 
-use super::{ActiveSystem, App, EmuBackend};
+use super::{App, EmuBackend};
 
 impl App {
     pub(in crate::app) fn browser_netplay_candidate(
@@ -11,18 +11,22 @@ impl App {
         let (path, bytes) = self
             .browser_netplay_media
             .as_ref()
-            .context("Load a direct .nes file first")?;
+            .context("Load a direct cartridge file first")?;
         ensure!(
             self.rom_info.source_path.as_ref() == Some(path)
                 && self.rom_info.rom_path.as_ref() == Some(path),
             "Cartridge source changed"
         );
         let build = crate::netplay::connect::executable_build()?;
-        let mut config = self.backend_load_config(ActiveSystem::Nes);
+        let system = self.active_system;
+        ensure!(
+            super::direct_netplay_media(system, path),
+            "Unsupported netplay cartridge"
+        );
+        let mut config = self.backend_load_config(system);
         config.initial_input = None;
         config.sample_rate = Some(48_000);
-        let (backend, _) =
-            self.init_backend(ActiveSystem::Nes, path, path, Some(bytes.to_vec()), config)?;
+        let (backend, _) = self.init_backend(system, path, path, Some(bytes.to_vec()), config)?;
         crate::netplay::identity::identity_with_delay(&backend, build, delay)?;
         Ok(backend)
     }
@@ -42,14 +46,14 @@ impl App {
             delay,
         )?;
         let lobby_identity = zeff_netplay_connect::protocol::SessionIdentity {
-            core: "nes".into(),
+            core: self.active_system.code().into(),
             content_hash: const_hex::encode(identity.effective),
             compatibility_hash: const_hex::encode(identity.config),
             mode: zeff_netplay_connect::protocol::SessionMode::SharedConsole,
         };
         self.finalize_rom_load(
             &backend,
-            ActiveSystem::Nes,
+            self.active_system,
             backend.rom_path().to_path_buf(),
             backend.source_path().to_path_buf(),
         );

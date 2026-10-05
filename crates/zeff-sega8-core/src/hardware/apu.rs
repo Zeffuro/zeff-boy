@@ -237,6 +237,21 @@ impl Psg {
         self.sample_buffer.len()
     }
 
+    pub(crate) fn rollback_sample_phase(&self) -> u32 {
+        self.sample_cycle_accumulator
+    }
+
+    pub(crate) fn rollback_allocation_bytes(&self) -> usize {
+        (self.sample_buffer.capacity()
+            + self.debug_master_samples.capacity()
+            + self
+                .debug_channel_samples
+                .iter()
+                .map(VecDeque::capacity)
+                .sum::<usize>())
+            * std::mem::size_of::<f32>()
+    }
+
     pub fn master_debug_samples_ordered(&self) -> Vec<f32> {
         self.debug_master_samples.iter().copied().collect()
     }

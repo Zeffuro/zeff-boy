@@ -286,30 +286,32 @@ async fn public_admission_rate_is_capped_before_room_creation() {
 
 #[tokio::test]
 async fn no_binary_or_arbitrary_gameplay_forwarding() {
-    let server = Server::start(Config::local(TOKEN).unwrap()).await;
-    for frame in [
-        Message::Binary(vec![0; 32].into()),
-        Message::Text(r#"{"type":"input","payload":"gameplay"}"#.into()),
-    ] {
-        let mut socket = server.socket().await;
-        socket.send(frame).await.unwrap();
+    for config in [Config::local(TOKEN).unwrap(), Config::public()] {
+        let server = Server::start(config).await;
+        for frame in [
+            Message::Binary(vec![0; 32].into()),
+            Message::Text(r#"{"type":"input","payload":"gameplay"}"#.into()),
+        ] {
+            let mut socket = server.socket().await;
+            socket.send(frame).await.unwrap();
+            assert_eq!(
+                recv(&mut socket).await,
+                ServerMessage::Error {
+                    code: ErrorCode::Invalid
+                }
+            );
+        }
+        let mut host = server.socket().await;
+        send(&mut host, create()).await;
+        welcome(recv(&mut host).await, Role::Host);
+        send(&mut host, ClientMessage::Finish {}).await;
         assert_eq!(
-            recv(&mut socket).await,
+            recv(&mut host).await,
             ServerMessage::Error {
-                code: ErrorCode::Invalid
+                code: ErrorCode::Unavailable
             }
         );
     }
-    let mut host = server.socket().await;
-    send(&mut host, create()).await;
-    welcome(recv(&mut host).await, Role::Host);
-    send(&mut host, ClientMessage::Finish {}).await;
-    assert_eq!(
-        recv(&mut host).await,
-        ServerMessage::Error {
-            code: ErrorCode::Unavailable
-        }
-    );
 }
 
 #[tokio::test]

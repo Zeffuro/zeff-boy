@@ -18,6 +18,7 @@ use crate::hardware::timing::Sega8VideoStandard;
 
 mod audio_trace;
 mod public_api;
+pub mod rollback;
 mod runtime;
 mod state_io;
 
@@ -120,7 +121,7 @@ impl Sega8LoadConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Emulator {
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,
@@ -133,6 +134,8 @@ pub struct Emulator {
     pub(crate) debug: AddressDebugController,
     pub(crate) opcode_log: OpcodeLog<(u16, u8, u32)>,
     pub(crate) instruction_trace: zeff_emu_common::debug::InstructionTraceStore,
+    pub(crate) rollback_owner: std::sync::Weak<()>,
+    pub(crate) rollback_frame_boundary: bool,
 }
 
 impl Emulator {
@@ -305,6 +308,8 @@ impl Emulator {
             debug: AddressDebugController::new(),
             opcode_log: OpcodeLog::new(),
             instruction_trace: zeff_emu_common::debug::InstructionTraceStore::default(),
+            rollback_owner: std::sync::Weak::new(),
+            rollback_frame_boundary: true,
         })
     }
 
@@ -313,6 +318,7 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
+        self.invalidate_rollback_session();
         self.cpu.reset();
         self.bus.reset();
         self.frame_count = 0;
@@ -320,6 +326,7 @@ impl Emulator {
         self.debug.clear_hits();
         self.opcode_log.clear();
         self.instruction_trace.clear();
+        self.rollback_frame_boundary = true;
     }
 }
 

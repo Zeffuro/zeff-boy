@@ -12,6 +12,7 @@ use crate::emu_backend::{ActiveSystem, EmuBackend};
 
 const CHECKPOINT_ABI: &[u8] = b"ZeffNetplay-NES-replay-v10/mapper-runtime-v1";
 const CONFIG_DOMAIN: &[u8] = b"ZeffNetplay-App-native-NES/two-standard-controllers/delay0to8-predict8/runtime-snapshot2/hash60/48000/stereo-f32LE/discard-and-restore/v7";
+mod sega8;
 
 fn session_config(
     timing: TimingMode,
@@ -44,6 +45,9 @@ pub(crate) fn identity_with_delay(
     build: [u8; 32],
     delay: InputDelay,
 ) -> Result<Identity> {
+    if backend.sega8().is_some() {
+        return sega8::identity(backend, build, delay);
+    }
     ensure!(
         backend.system() == ActiveSystem::Nes,
         "netplay requires NES"
@@ -151,10 +155,6 @@ pub(crate) fn checkpoint(
     audio: &[f32],
     config: [u8; 32],
 ) -> Result<Message> {
-    ensure!(
-        backend.system() == ActiveSystem::Nes,
-        "netplay requires NES"
-    );
     ensure!(backend.frame_count() == frame, "netplay core frame drift");
     let mut audio_hash = Sha256::new();
     for sample in audio {
@@ -171,23 +171,29 @@ pub(crate) fn checkpoint(
 
 fn logical_hash(backend: &EmuBackend, frame: u64, config: [u8; 32]) -> Result<[u8; 32]> {
     let mut digest = Sha256::new();
-    digest.update(CHECKPOINT_ABI);
+    digest.update(if backend.sega8().is_some() {
+        b"ZeffNetplay-Sega8-runtime-v1".as_slice()
+    } else {
+        CHECKPOINT_ABI
+    });
     digest.update(config);
     digest.update(frame.to_le_bytes());
     digest.update(backend.encode_replay_hash_state_bytes()?);
-    digest.update(
-        backend
-            .nes()
-            .context("netplay requires NES")?
-            .emu
-            .encode_rollback_runtime_state(),
-    );
+    digest.update(match backend {
+        EmuBackend::Nes(nes) => nes.emu.encode_rollback_runtime_state(),
+        EmuBackend::Sega8(sega) => sega.emu.encode_rollback_runtime_state(),
+        _ => anyhow::bail!("unsupported netplay core"),
+    });
     Ok(digest.finalize().into())
 }
 
-fn persistent_hash(backend: &EmuBackend) -> Result<[u8; 32]> {
-    let nes = backend.nes().context("netplay requires NES")?;
-    Ok(Sha256::digest(nes.emu.dump_persistent_data().unwrap_or_default()).into())
+pub(super) fn persistent_hash(backend: &EmuBackend) -> Result<[u8; 32]> {
+    let data = match backend {
+        EmuBackend::Nes(nes) => nes.emu.dump_persistent_data(),
+        EmuBackend::Sega8(sega) => Some(sega.emu.bus().cartridge_ram_visible().to_vec()),
+        _ => anyhow::bail!("unsupported netplay core"),
+    };
+    Ok(Sha256::digest(data.unwrap_or_default()).into())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

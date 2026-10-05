@@ -8,6 +8,10 @@ use super::{ActiveSystem, EmuBackend};
 mod audio_discovery_tests;
 mod config;
 mod nes_policy;
+mod netplay;
+mod source;
+pub(crate) use source::LoadedBackend;
+use source::{RomSource, has_extension};
 mod pce_cd;
 mod systems;
 #[cfg(not(target_arch = "wasm32"))]
@@ -123,27 +127,6 @@ fn zip_tas_source_media(
             let sync = sync(&selected.member_name);
             (selected.archive_sha256, selected.archive_len, sync)
         })
-}
-
-fn has_extension(path: &Path, extension: &str) -> bool {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
-}
-
-pub(crate) struct LoadedBackend {
-    pub(crate) backend: EmuBackend,
-    pub(crate) original_crc32: u32,
-}
-
-struct RomSource<'a> {
-    system: ActiveSystem,
-    source_path: &'a Path,
-    rom_path: &'a Path,
-    preloaded_data: Option<Vec<u8>>,
-    loaded_from_source_path: bool,
-    #[cfg(not(target_arch = "wasm32"))]
-    authenticated_gba_zip: bool,
 }
 
 pub(crate) fn load_backend_from_rom_source(
@@ -941,6 +924,16 @@ fn load_backend_from_rom_source_inner(
     if let Some((buttons, dpad)) = config.initial_input {
         backend.set_input(buttons, dpad);
     }
+    netplay::capture(
+        &mut backend,
+        source_path,
+        rom_path,
+        loaded_from_source_path,
+        &config,
+        raw_source_media_sha256,
+        raw_source_media_len,
+        !mod_load.any_enabled && !mod_load.any_applied,
+    )?;
     Ok(LoadedBackend {
         backend,
         original_crc32: mod_load.original_crc32,

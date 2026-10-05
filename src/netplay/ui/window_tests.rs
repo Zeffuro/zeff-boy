@@ -21,6 +21,7 @@ struct Harness {
     screen: egui::Rect,
     dpi: f32,
     system: ActiveSystem,
+    browser_window: bool,
 }
 
 impl Harness {
@@ -30,6 +31,7 @@ impl Harness {
             screen: egui::Rect::from_min_size(egui::Pos2::ZERO, size),
             dpi,
             system: ActiveSystem::Nes,
+            browser_window: false,
         }
     }
 
@@ -56,7 +58,11 @@ impl Harness {
         let mut action = None;
         let output = self.ctx.run_ui(input, |ui| {
             if state.is_open() {
-                action = state.draw_contents(ui, self.system);
+                action = if self.browser_window {
+                    state.draw_browser_window(ui.ctx(), self.system)
+                } else {
+                    state.draw_contents(ui, self.system)
+                };
             }
         });
         (output, action)
@@ -117,6 +123,9 @@ impl Harness {
         );
     }
 }
+
+#[path = "window_tests/browser_window.rs"]
+mod browser_window;
 
 fn visible_text(output: &egui::FullOutput, label: &str) -> Option<egui::Rect> {
     fn find(shape: &egui::Shape, clip: egui::Rect, label: &str) -> Option<egui::Rect> {
@@ -288,7 +297,7 @@ fn closing_and_reopening_keeps_session_and_form_state() {
 }
 
 #[test]
-fn failure_status_and_expanded_details_can_be_scrolled_into_view() {
+fn failure_status_and_compact_stats_can_be_scrolled_into_view() {
     let harness = Harness::new(egui::vec2(320.0, 240.0), 2.0);
     let mut state = Ui {
         private_network: true,
@@ -299,20 +308,38 @@ fn failure_status_and_expanded_details_can_be_scrolled_into_view() {
     state.open();
     let status = state.status.clone();
     harness.reach(&mut state, &status);
-    let details = harness.reach(&mut state, "Details");
-    harness.click(&mut state, details.center());
-    harness.reach(
-        &mut state,
-        "Player 1 controls on both devices. Click the game to play.",
-    );
-    harness.reach(&mut state, "Both players must resume to continue.");
-    harness.reach(&mut state, "Disconnect resets the game and pauses it.");
-    harness.reach(
-        &mut state,
-        "Use a trusted LAN. The host address must be reachable.",
-    );
     harness.reach(&mut state, "Start hosting");
+    assert!(visible_text(&harness.settle(&mut state), "Stats").is_none());
+    state.active = true;
+    state.connected = true;
+    state.status = "Connected".into();
+    state.metrics = "Frame 120 · predicted 2".into();
+    let stats = harness.reach(&mut state, "Stats");
+    harness.click(&mut state, stats.center());
+    harness.reach(&mut state, "Frame 120 · predicted 2");
+    harness.reach(&mut state, "LAN · authenticated TCP");
+    harness.reach(&mut state, "Player 1 controls on both devices.");
+    harness.reach(&mut state, "Disconnect");
     assert!(state.allow_different_versions);
+}
+
+#[test]
+fn quick_toggle_keeps_connected_session_and_private_fields() {
+    let mut state = Ui {
+        active: true,
+        connected: true,
+        lobby_key: "private test key".into(),
+        invitation: "private test invitation".into(),
+        ..Default::default()
+    };
+    state.toggle_for_system(ActiveSystem::Nes);
+    assert!(state.is_open() && state.take_focus_request());
+    state.toggle_for_system(ActiveSystem::Nes);
+    assert!(!state.is_open() && !state.take_focus_request());
+    state.toggle_for_system(ActiveSystem::Nes);
+    assert!(state.is_open() && state.connected && state.active);
+    assert_eq!(state.lobby_key, "private test key");
+    assert_eq!(state.invitation, "private test invitation");
 }
 
 #[test]
@@ -362,14 +389,11 @@ fn scopes_and_start_requirements_remain_interactive() {
     state.joining = false;
     let host = harness.reach(&mut state, "Start hosting");
     assert!(harness.click(&mut state, host.center()).1.is_none());
-    harness.reach(
-        &mut state,
-        "Shared-console netplay is currently available for NES.",
-    );
+    harness.reach(&mut state, "No shared-console adapter for this system.");
 }
 
 #[test]
-fn session_metrics_and_secret_are_hidden_until_details_open() {
+fn session_stats_are_optional_and_invitation_is_not_displayed() {
     let harness = Harness::new(egui::vec2(320.0, 240.0), 2.0);
     let mut state = Ui {
         active: true,
@@ -381,10 +405,10 @@ fn session_metrics_and_secret_are_hidden_until_details_open() {
     let output = harness.settle(&mut state);
     assert!(visible_text(&output, &state.metrics).is_none());
     assert!(visible_text(&output, &state.invitation).is_none());
-    let details = harness.reach(&mut state, "Details");
-    harness.click(&mut state, details.center());
+    let stats = harness.reach(&mut state, "Stats");
+    harness.click(&mut state, stats.center());
     harness.reach(&mut state, "Rollback statistics");
-    harness.reach(&mut state, "Share this secret only with the other player:");
+    assert!(visible_text(&harness.settle(&mut state), &state.invitation).is_none());
     assert_eq!(state.invitation, "secret invitation");
 }
 
@@ -543,8 +567,8 @@ fn chat_sends_trimmed_text_and_rejects_empty_or_oversize_messages() {
         state.chat.push(false, "Hi!".into());
         let output = harness.settle(&mut state);
         assert!(visible_text(&output, "Send").is_none());
-        harness.reach(&mut state, "Other player: Hi!");
-        harness.reach(&mut state, "Chat is available while connected.");
+        harness.reach(&mut state, "Peer: Hi!");
+        assert!(visible_text(&harness.settle(&mut state), "Message").is_none());
     }
 }
 

@@ -7,6 +7,18 @@ use zeff_emu_common::time::{
 };
 
 impl Emulator {
+    pub fn has_debugger_stop_controls(&self) -> bool {
+        self.debug.break_on_next
+            || self.debug.iter_breakpoints().next().is_some()
+            || self.debug.iter_one_shot_breakpoints().next().is_some()
+            || self.debug.iter_breakpoint_hit_conditions().next().is_some()
+            || self.debug.iter_event_breakpoints().next().is_some()
+            || !self.debug.watchpoints.is_empty()
+            || self.opcode_log.enabled
+            || self.instruction_trace.is_enabled()
+            || self.bus.audio_trace.is_enabled()
+    }
+
     pub fn framebuffer(&self) -> &[u8] {
         &self.framebuffer
     }
@@ -48,6 +60,7 @@ impl Emulator {
     }
 
     pub fn bus_mut(&mut self) -> &mut Bus {
+        self.invalidate_rollback_session();
         self.bus
             .audio_trace
             .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);

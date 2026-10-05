@@ -109,7 +109,7 @@ impl App {
                     self.netplay.in_flight = false;
                 }
                 self.debug_windows.netplay.metrics = format!(
-                    "Frame {frame} · prediction {prediction_depth}/8 · replay {rollback_frames} · payload {:.1} MiB",
+                    "Frame {frame} · predicted {prediction_depth}\nReplayed {rollback_frames} · state {:.1} MiB",
                     retained_bytes as f64 / (1024.0 * 1024.0)
                 );
                 #[cfg(not(target_arch = "wasm32"))]

@@ -1,6 +1,16 @@
 use super::*;
 
 impl Vdp {
+    pub(crate) fn rollback_allocation_bytes(&self) -> usize {
+        VDP_PRESENTED_FRAMEBUFFER_LEN
+    }
+
+    pub(crate) fn append_rollback_runtime_state(&self, state: &mut Vec<u8>) {
+        state.extend_from_slice(self.presented_framebuffer.as_slice());
+        state.extend(self.presented_scanline_valid.map(u8::from));
+        state.extend(self.scanline_start_registers);
+    }
+
     pub(crate) fn write_state(&self, w: &mut zeff_emu_common::save_state::StateWriter) {
         w.write_vec(&self.vram);
         w.write_vec(&self.cram);

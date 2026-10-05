@@ -116,8 +116,8 @@ impl App {
         };
 
         let netplay_media = (!is_zip
-            && system == ActiveSystem::Nes
-            && (16..=64 * 1024 * 1024).contains(&rom_data.len()))
+            && super::rom_loading::direct_netplay_media(system, &path)
+            && (1..=64 * 1024 * 1024).contains(&rom_data.len()))
         .then(|| (path.clone(), std::rc::Rc::<[u8]>::from(rom_data.clone())));
         let (backend, _original_crc) = match self.init_backend(
             system,

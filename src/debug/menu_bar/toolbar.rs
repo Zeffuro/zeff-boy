@@ -7,6 +7,7 @@ const SEPARATOR_WIDTH: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ToolbarLayout {
+    netplay: bool,
     slot: bool,
     pause: bool,
     speed: bool,
@@ -18,6 +19,7 @@ struct ToolbarLayout {
 
 #[derive(Clone, Copy, Default)]
 struct ToolbarWidths {
+    netplay: f32,
     slot: f32,
     pause: f32,
     speed: f32,
@@ -31,6 +33,7 @@ struct ToolbarWidths {
 impl ToolbarLayout {
     fn select(available_width: f32, widths: ToolbarWidths, state: &ToolbarState<'_>) -> Self {
         let mut layout = Self {
+            netplay: true,
             slot: true,
             pause: true,
             speed: true,
@@ -48,6 +51,7 @@ impl ToolbarLayout {
             |layout: &mut Self| layout.speed = false,
             |layout: &mut Self| layout.mute = false,
             |layout: &mut Self| layout.pause = false,
+            |layout: &mut Self| layout.netplay = false,
         ] {
             if layout.width(widths) <= available_width {
                 break;
@@ -60,6 +64,7 @@ impl ToolbarLayout {
 
     fn width(self, widths: ToolbarWidths) -> f32 {
         let groups = [
+            (self.netplay, widths.netplay, 1usize),
             (self.slot, widths.slot, 1usize),
             (self.pause, widths.pause, 1),
             (self.speed, widths.speed, 3),
@@ -111,6 +116,7 @@ impl ToolbarLayout {
 pub(super) struct ToolbarState<'a> {
     pub(super) is_paused: bool,
     pub(super) netplay_pause: Option<bool>,
+    pub(super) netplay_open: bool,
     pub(super) active_system: ActiveSystem,
     pub(super) ws_display_rotated: bool,
     pub(super) speed_mode_label: Option<&'a str>,
@@ -145,12 +151,30 @@ pub(super) fn draw(
     let ToolbarState {
         is_paused: _,
         netplay_pause: _,
+        netplay_open,
         active_system,
         ws_display_rotated,
         speed_mode_label,
         active_save_slot,
         reserved_width: _,
     } = state;
+
+    if layout.netplay {
+        if ui
+            .selectable_label(netplay_open, "Netplay")
+            .on_hover_text(if netplay_open {
+                "Hide Netplay"
+            } else {
+                "Open Netplay"
+            })
+            .clicked()
+        {
+            actions.push(MenuAction::ToggleNetplayWindow);
+        }
+        if layout.slot || layout.after_slot() {
+            ui.separator();
+        }
+    }
 
     if layout.slot {
         ui.label(
@@ -262,7 +286,8 @@ pub(super) fn draw(
 }
 
 pub(super) fn essential_width(ui: &egui::Ui, settings: &Settings, state: &ToolbarState<'_>) -> f32 {
-    measure(ui, settings, state).pause
+    let widths = measure(ui, settings, state);
+    widths.pause + widths.netplay + SEPARATOR_WIDTH + 2.0 * widths.item_spacing
 }
 
 fn measure(ui: &egui::Ui, settings: &Settings, state: &ToolbarState<'_>) -> ToolbarWidths {
@@ -285,6 +310,7 @@ fn measure(ui: &egui::Ui, settings: &Settings, state: &ToolbarState<'_>) -> Tool
     let mult = format!("{}×", settings.emulation.fast_forward_multiplier);
 
     ToolbarWidths {
+        netplay: button_width("Netplay"),
         slot: text_width(&format!("Slot {}", state.active_save_slot), small.clone()),
         pause,
         speed: button_width("+") + text_width(&mult, small) + button_width("−"),
@@ -310,6 +336,7 @@ mod tests {
         ToolbarState {
             is_paused: false,
             netplay_pause: None,
+            netplay_open: false,
             active_system: ActiveSystem::GameBoy,
             ws_display_rotated: false,
             speed_mode_label: Some("Normal"),
@@ -320,6 +347,7 @@ mod tests {
 
     fn widths() -> ToolbarWidths {
         ToolbarWidths {
+            netplay: 60.0,
             slot: 36.0,
             pause: 18.0,
             speed: 50.0,
@@ -346,8 +374,14 @@ mod tests {
 
     #[test]
     fn toolbar_keeps_pause_until_last() {
-        let layout = ToolbarLayout::select(widths().pause, widths(), &state());
+        let widths = widths();
+        let layout = ToolbarLayout::select(
+            widths.pause + widths.netplay + SEPARATOR_WIDTH + 2.0 * widths.item_spacing,
+            widths,
+            &state(),
+        );
         assert!(layout.pause);
+        assert!(layout.netplay);
         assert!(!layout.slot && !layout.speed && !layout.mute && !layout.volume);
     }
 

@@ -13,16 +13,19 @@ impl Emulator {
     }
 
     pub fn suspend(&mut self) {
+        self.invalidate_rollback_session();
         self.cpu.suspend();
     }
 
     pub fn debug_continue(&mut self) {
+        self.invalidate_rollback_session();
         self.debug.clear_hits();
         self.debug.break_on_next = false;
         self.cpu.resume();
     }
 
     pub fn debug_step(&mut self) {
+        self.invalidate_rollback_session();
         self.debug.clear_hits();
         self.debug.break_on_next = false;
         self.cpu.resume();
@@ -31,38 +34,47 @@ impl Emulator {
     }
 
     pub fn debug_suspend(&mut self) {
+        self.invalidate_rollback_session();
         self.suspend();
     }
 
     pub fn add_breakpoint(&mut self, addr: Address) {
+        self.invalidate_rollback_session();
         self.debug.add_breakpoint(addr);
     }
 
     pub fn add_one_shot_breakpoint(&mut self, addr: Address) {
+        self.invalidate_rollback_session();
         self.debug.add_one_shot_breakpoint(addr);
     }
 
     pub fn add_breakpoint_after(&mut self, addr: Address, target_hits: u64) {
+        self.invalidate_rollback_session();
         self.debug.add_breakpoint_after(addr, target_hits);
     }
 
     pub fn remove_breakpoint(&mut self, addr: Address) {
+        self.invalidate_rollback_session();
         self.debug.remove_breakpoint(addr);
     }
 
     pub fn toggle_breakpoint(&mut self, addr: Address) {
+        self.invalidate_rollback_session();
         self.debug.toggle_breakpoint(addr);
     }
 
     pub fn add_watchpoint(&mut self, addr: Address, watch_type: WatchType) {
+        self.invalidate_rollback_session();
         self.debug.add_watchpoint(addr, watch_type);
     }
 
     pub fn add_watchpoint_range(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        self.invalidate_rollback_session();
         self.debug.add_watchpoint_range(start, end, watch_type);
     }
 
     pub fn remove_watchpoint(&mut self, start: Address, end: Address, watch_type: WatchType) {
+        self.invalidate_rollback_session();
         self.debug.remove_watchpoint(start, end, watch_type);
     }
 
@@ -85,6 +97,7 @@ impl Emulator {
         event: zeff_emu_common::debug::DebugEvent,
         enabled: bool,
     ) {
+        self.invalidate_rollback_session();
         self.debug.set_event_breakpoint(event, enabled);
     }
 
@@ -115,12 +128,14 @@ impl Emulator {
     }
 
     pub fn cpu_read8_debuggable(&mut self, addr: u16) -> u8 {
+        self.invalidate_rollback_session();
         let value = self.bus.cpu_peek(addr);
         self.debug.check_watch_read(Address::from(addr), value);
         value
     }
 
     pub fn cpu_write8(&mut self, addr: u16, value: u8) {
+        self.invalidate_rollback_session();
         self.bus
             .audio_trace
             .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
@@ -131,6 +146,7 @@ impl Emulator {
     }
 
     pub fn debug_write(&mut self, addr: Address, val: u8) {
+        self.invalidate_rollback_session();
         self.bus
             .audio_trace
             .invalidate(zeff_emu_common::audio_trace::AudioTraceInvalidation::ExternalMutation);
@@ -145,6 +161,7 @@ impl Emulator {
     }
 
     pub fn set_opcode_log_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.opcode_log.set_enabled(enabled);
     }
 
@@ -153,14 +170,17 @@ impl Emulator {
     }
 
     pub fn set_instruction_trace_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.instruction_trace.set_enabled(enabled);
     }
 
     pub fn set_instruction_trace_capacity(&mut self, capacity: usize) {
+        self.invalidate_rollback_session();
         self.instruction_trace.set_capacity(capacity);
     }
 
     pub fn clear_instruction_trace(&mut self) {
+        self.invalidate_rollback_session();
         self.instruction_trace.clear();
     }
 
@@ -169,6 +189,7 @@ impl Emulator {
         target: u16,
         instruction_budget: u64,
     ) -> Result<u64, String> {
+        self.invalidate_rollback_session();
         if !self.cpu.is_suspended() {
             return Err("CPU must be suspended".to_owned());
         }

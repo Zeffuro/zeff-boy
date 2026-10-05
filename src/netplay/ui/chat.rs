@@ -32,13 +32,10 @@ impl Ui {
                     .stick_to_bottom(true)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        if self.chat.messages().next().is_none() {
-                            ui.weak("Say hello to the other player.");
-                        }
                         for message in self.chat.messages() {
                             ui.label(format!(
                                 "{}: {}",
-                                if message.local { "You" } else { "Other player" },
+                                if message.local { "You" } else { "Peer" },
                                 message.text
                             ));
                         }
@@ -47,7 +44,6 @@ impl Ui {
                     ui.small(&self.chat.error);
                 }
                 if !self.connected {
-                    ui.weak("Chat is available while connected.");
                     return None;
                 }
                 let mut send = false;

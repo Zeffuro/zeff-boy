@@ -13,6 +13,14 @@ impl Ui {
         self.open();
     }
 
+    pub(crate) fn toggle_for_system(&mut self, system: ActiveSystem) {
+        if self.is_open() {
+            self.close();
+        } else {
+            self.open_for_system(system);
+        }
+    }
+
     pub(crate) fn lobby_options(&self) -> Result<super::super::connect::lobby::Options> {
         let options = super::super::connect::lobby::Options {
             url: self.lobby_url.trim().to_owned(),

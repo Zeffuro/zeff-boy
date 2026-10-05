@@ -7,6 +7,7 @@ use zeff_emu_common::audio_trace::{
 
 impl Emulator {
     pub fn reset_and_begin_audio_trace(&mut self, max_events: usize) -> anyhow::Result<()> {
+        self.invalidate_rollback_session();
         let clock_hz = self.video_standard.clock_hz_approx();
         let chip = Sn76489TraceChip {
             clock_hz: self.bus.apu().clock_hz(),
@@ -42,6 +43,7 @@ impl Emulator {
     }
 
     pub fn finish_audio_trace(&mut self) -> Option<AudioTrace> {
+        self.invalidate_rollback_session();
         self.bus.audio_trace.finish(self.cpu.cycles())
     }
 }

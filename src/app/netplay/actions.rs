@@ -4,6 +4,13 @@ use crate::debug::MenuAction;
 impl App {
     pub(in crate::app) fn handle_netplay_action(&mut self, action: &MenuAction) {
         let result = match action {
+            MenuAction::ToggleNetplayWindow => {
+                self.debug_windows
+                    .netplay
+                    .toggle_for_system(self.active_system);
+                self.focus_state_dirty = true;
+                Ok(())
+            }
             MenuAction::HostNesNetplay => self.begin_netplay(None),
             MenuAction::JoinNesNetplay(invitation) => self.begin_netplay(Some(invitation.clone())),
             MenuAction::StopNesNetplay => {

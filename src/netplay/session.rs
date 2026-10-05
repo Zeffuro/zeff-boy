@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
-use sha2::{Digest, Sha256};
 use zeff_nes_core::emulator::rollback::{NesRollbackSession, NesRollbackSnapshot};
 use zeff_netplay::lockstep::Player;
 use zeff_netplay::rollback::{PREDICTION_WINDOW, Timeline};
@@ -16,6 +15,8 @@ use super::{
 use crate::emu_backend::EmuBackend;
 
 mod checks;
+mod core;
+use core::{Lease, Snapshot};
 mod execution;
 mod pause;
 use checks::Hashes;
@@ -31,8 +32,9 @@ pub(crate) struct Session {
     network: Network,
     player: Player,
     timeline: Timeline,
-    lease: NesRollbackSession,
-    snapshots: BTreeMap<u64, NesRollbackSnapshot>,
+    lease: Lease,
+    restore_snapshot: Snapshot,
+    snapshots: BTreeMap<u64, Snapshot>,
     outputs: BTreeMap<u64, FrameBucket>,
     committed: u64,
     responses: VecDeque<Response>,
@@ -74,10 +76,10 @@ impl Session {
             "browser netplay requires matching builds"
         );
         let checkpoint = backend.encode_state_bytes()?;
-        let nes = nes_mut(backend)?;
-        let publication = nes.host_persistence_enabled();
-        let lease = nes.emu.begin_rollback_session()?;
-        let snapshot = lease.capture(&nes.emu)?;
+        let publication = core::persistence(backend, None)?;
+        let lease = Lease::begin(backend)?;
+        let snapshot = lease.capture(backend)?;
+        let restore_snapshot = lease.capture(backend)?;
         ensure!(
             snapshot.frame() == 0,
             "netplay rollback requires fresh frame zero"
@@ -90,12 +92,13 @@ impl Session {
             start.scope,
             start.input_delay,
         )?;
-        nes.set_host_persistence_enabled(false);
+        core::persistence(backend, Some(false))?;
         Ok(Self {
             network,
             player: start.player,
             timeline: Timeline::with_delay(start.player, start.input_delay),
             lease,
+            restore_snapshot,
             snapshots: BTreeMap::from([(0, snapshot)]),
             outputs: BTreeMap::new(),
             committed: 0,
@@ -346,27 +349,22 @@ impl Session {
 
     pub(crate) fn restore(mut self, backend: &mut EmuBackend) -> Result<()> {
         self.network.cancel();
-        ensure!(
-            backend.load_state_from_bytes(self.checkpoint.clone())?
-                == zeff_emu_common::StateRestoreOutcome::Exact,
-            "inexact netplay restoration"
-        );
+        self.lease
+            .restore_checkpoint(backend, &self.restore_snapshot, self.checkpoint.clone())?;
         ensure!(
             backend.encode_state_bytes()? == self.checkpoint,
             "netplay restoration differs"
         );
-        let nes = nes_mut(backend)?;
         ensure!(
-            <[u8; 32]>::from(Sha256::digest(
-                nes.emu.dump_persistent_data().unwrap_or_default()
-            )) == self.persistent,
+            identity::persistent_hash(backend)? == self.persistent,
             "netplay persistent restoration differs"
         );
-        nes.set_host_persistence_enabled(self.publication);
+        core::persistence(backend, Some(self.publication))?;
         Ok(())
     }
 }
 
+#[cfg(test)]
 fn nes_mut(backend: &mut EmuBackend) -> Result<&mut crate::emu_backend::nes::NesBackend> {
     match backend {
         EmuBackend::Nes(nes) => Ok(nes),
@@ -374,5 +372,7 @@ fn nes_mut(backend: &mut EmuBackend) -> Result<&mut crate::emu_backend::nes::Nes
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sega8_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

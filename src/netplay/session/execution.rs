@@ -13,8 +13,7 @@ impl Session {
             backend.frame_count() == input.frame,
             "rollback core frame differs"
         );
-        let nes = nes_mut(backend)?;
-        let audio = self.lease.advance_frame(&mut nes.emu, input.ports)?;
+        let audio = self.lease.advance(backend, input.ports)?;
         let completed = input.frame.checked_add(1).context("frame overflow")?;
         let checkpoint = if self.verification || completed % checks::HASH_INTERVAL == 0 {
             Some(identity::checkpoint(
@@ -26,7 +25,7 @@ impl Session {
         } else {
             None
         };
-        let snapshot = self.lease.capture(&nes_mut(backend)?.emu)?;
+        let snapshot = self.lease.capture(backend)?;
         ensure!(
             snapshot.frame() == completed,
             "rollback snapshot frame differs"
@@ -53,7 +52,7 @@ impl Session {
             .snapshots
             .get(&frame)
             .context("rollback snapshot retired")?;
-        self.lease.restore(&mut nes_mut(backend)?.emu, snapshot)?;
+        self.lease.restore(backend, snapshot)?;
         self.snapshots.retain(|key, _| *key <= frame);
         self.outputs.retain(|key, _| *key <= frame);
         for &input in &plan {
@@ -144,10 +143,11 @@ impl Session {
     pub(super) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.checkpoint.capacity()
+            + self.restore_snapshot.retained_bytes()
             + self
                 .snapshots
                 .values()
-                .map(NesRollbackSnapshot::retained_bytes)
+                .map(Snapshot::retained_bytes)
                 .sum::<usize>()
             + self
                 .outputs

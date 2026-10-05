@@ -18,6 +18,8 @@ pub(crate) mod network;
 #[cfg(target_arch = "wasm32")]
 #[path = "network/browser.rs"]
 pub(crate) mod network;
+#[cfg(test)]
+mod portability_tests;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod proof;
 pub(crate) mod session;

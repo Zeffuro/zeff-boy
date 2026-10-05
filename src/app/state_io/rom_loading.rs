@@ -1,9 +1,7 @@
 use super::App;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::emu_backend::loader::is_direct_pce_cd_path;
-use crate::emu_backend::{
-    ActiveSystem, BackendLoadConfig, EmuBackend, load_backend_from_rom_source,
-};
+use crate::emu_backend::{ActiveSystem, BackendLoadConfig, EmuBackend};
 use crate::emu_thread::{EmuCommand, EmuResponse, TasControlCommandKind};
 use crate::rom_archive::PendingArchiveSelection;
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,15 +10,18 @@ use std::path::{Path, PathBuf};
 use zeff_emu_common::time::MachineTiming;
 use zeff_ws_core::hardware::cartridge::RomOrientation;
 
+pub(super) use self::backend::direct_netplay_media;
 #[cfg(target_arch = "wasm32")]
 use self::detection::detect_and_extract_archive_entry_path;
 #[cfg(not(target_arch = "wasm32"))]
 use self::detection::detect_and_extract_archive_entry_path_with_zip_witness;
 use self::detection::{detect_and_extract_archive_entry, is_zip_path};
+mod backend;
 
 #[cfg(target_arch = "wasm32")]
 #[path = "rom_loading/browser_netplay.rs"]
 mod browser_netplay;
+
 mod detection;
 mod lifecycle;
 #[cfg(not(target_arch = "wasm32"))]
@@ -133,6 +134,8 @@ impl App {
             gba_seed_rtc_from_host: true,
             nes_load_battery_sram: true,
             sega8_load_battery_sram: true,
+            #[cfg(target_arch = "wasm32")]
+            sega8_browser_source: false,
             ws_load_battery_sram: true,
             game_gear_standard_mapper_ram_identity: None,
             sega8_video_standard: self
@@ -186,18 +189,6 @@ impl App {
             #[cfg(test)]
             pce_cd_system_card_sha256_override: None,
         }
-    }
-
-    pub(super) fn init_backend(
-        &self,
-        system: ActiveSystem,
-        path: &Path,
-        rom_path: &Path,
-        preloaded_data: Option<Vec<u8>>,
-        config: BackendLoadConfig,
-    ) -> anyhow::Result<(EmuBackend, u32)> {
-        let loaded = load_backend_from_rom_source(system, path, rom_path, preloaded_data, config)?;
-        Ok((loaded.backend, loaded.original_crc32))
     }
 
     fn load_prepared_rom_with_options(
