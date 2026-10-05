@@ -321,3 +321,83 @@ fn inbound_overflow_preserves_cause_when_failed_event_cannot_fit() {
     );
     network.cancel();
 }
+
+fn admitted_pair() -> (wire::Connection, wire::Connection) {
+    let (host, client) = streams();
+    let admission =
+        thread::spawn(move || wire::admit(host, Player::One, &identity(), &[9; 32]).unwrap());
+    let peer = wire::admit(client, Player::Two, &identity(), &[9; 32]).unwrap();
+    (admission.join().unwrap(), peer)
+}
+
+#[test]
+fn reader_protocol_failure_survives_send_before_completion_publication() {
+    let (connection, mut peer) = admitted_pair();
+    let (mut sender, mut receiver) = connection.split().unwrap();
+    let (finished, completion) = crossbeam_channel::bounded(1);
+    peer.send_invalid_length_for_test().unwrap();
+    let reader_result = receiver
+        .receive()
+        .map(|_| ())
+        .context("receiving netplay message");
+    assert!(format!("{:#}", reader_result.as_ref().unwrap_err()).contains("invalid packet length"));
+    assert!(matches!(
+        completion.try_recv(),
+        Err(crossbeam_channel::TryRecvError::Empty)
+    ));
+    let result = sender
+        .send(&input(Player::One, 2))
+        .context("sending netplay message");
+    assert!(
+        result
+            .as_ref()
+            .unwrap_err()
+            .is::<wire::ConnectionTerminated>()
+    );
+    finished.send(reader_result).unwrap();
+    let error = finish_connection(result, completion.try_recv().ok(), false).unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "receiving netplay message: invalid packet length"
+    );
+}
+
+#[test]
+fn genuine_send_failure_survives_reader_shutdown_completion() {
+    let (connection, _peer) = admitted_pair();
+    let (mut sender, mut receiver) = connection.split().unwrap();
+    let result = sender
+        .send(&input(Player::Two, 2))
+        .context("sending netplay message");
+    assert!(
+        !result
+            .as_ref()
+            .unwrap_err()
+            .is::<wire::ConnectionTerminated>()
+    );
+    let reader_result = receiver
+        .receive()
+        .map(|_| ())
+        .context("receiving netplay message");
+    assert!(
+        reader_result
+            .as_ref()
+            .unwrap_err()
+            .is::<wire::ConnectionTerminated>()
+    );
+    let error = finish_connection(result, Some(reader_result), false).unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "sending netplay message: input player does not own this port"
+    );
+}
+
+#[test]
+fn intentional_stop_ignores_reader_shutdown_completion() {
+    let (connection, _peer) = admitted_pair();
+    let (sender, mut receiver) = connection.split().unwrap();
+    drop(sender);
+    let reader_result = receiver.receive().map(|_| ());
+    assert!(reader_result.is_err());
+    finish_connection(Ok(()), Some(reader_result), true).unwrap();
+}

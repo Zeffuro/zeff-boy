@@ -262,11 +262,23 @@ fn run(
     cancelled.store(true, Ordering::Release);
     drop(sender);
     drop(reader);
-    if result.is_ok()
-        && !intentional_stop
-        && let Ok(reader_result) = completion.try_recv()
+    finish_connection(result, completion.try_recv().ok(), intentional_stop)
+}
+
+fn finish_connection(
+    result: Result<()>,
+    reader_result: Option<Result<()>>,
+    intentional_stop: bool,
+) -> Result<()> {
+    let secondary = result
+        .as_ref()
+        .is_err_and(|error| error.is::<wire::ConnectionTerminated>());
+    // Receiver termination can reach the sender before its diagnostic reaches the supervisor.
+    if !intentional_stop
+        && (result.is_ok() || secondary)
+        && let Some(Err(error)) = reader_result
     {
-        reader_result?;
+        return Err(error);
     }
     result
 }

@@ -2,6 +2,17 @@ use std::sync::atomic::Ordering;
 
 use super::*;
 
+#[derive(Debug)]
+pub struct ConnectionTerminated;
+
+impl std::fmt::Display for ConnectionTerminated {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("connection is terminal")
+    }
+}
+
+impl std::error::Error for ConnectionTerminated {}
+
 struct State {
     terminal: Arc<AtomicBool>,
     sent_close: AtomicBool,
@@ -68,7 +79,7 @@ impl Sender {
     pub fn send(&mut self, message: &Message) -> Result<()> {
         ensure!(
             !self.state.terminal.load(Ordering::Acquire),
-            "connection is terminal"
+            ConnectionTerminated
         );
         self.connection.received_close = self.state.received_close.load(Ordering::Acquire);
         let result = self.connection.send(message);
@@ -94,7 +105,7 @@ impl Receiver {
     pub fn receive(&mut self) -> Result<Message> {
         ensure!(
             !self.state.terminal.load(Ordering::Acquire),
-            "connection is terminal"
+            ConnectionTerminated
         );
         self.connection.sent_close = self.state.sent_close.load(Ordering::Acquire);
         let result = self.connection.receive().and_then(|message| {

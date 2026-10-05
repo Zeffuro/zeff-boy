@@ -37,7 +37,7 @@ use io::{Driver, check_deadline};
 #[cfg(all(test, not(target_arch = "wasm32")))]
 use io::{read_deadline, write_deadline};
 #[cfg(not(target_arch = "wasm32"))]
-pub use split::{Receiver, Sender};
+pub use split::{ConnectionTerminated, Receiver, Sender};
 
 const MAGIC: &[u8; 4] = b"ZNPL";
 const VERSION: u16 = 6;
