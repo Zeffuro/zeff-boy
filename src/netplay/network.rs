@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use super::metrics::{Metrics, Stats};
 use anyhow::{Context, Result, bail, ensure};
 use crossbeam_channel::{Receiver as EventReceiver, Sender as EventSender, TrySendError};
 use zeff_netplay::endpoint::ConnectionScope;
@@ -32,6 +33,7 @@ pub(crate) struct Network {
     cancelled: Arc<AtomicBool>,
     owner_cancelled: Arc<AtomicBool>,
     failure: Arc<Mutex<Option<String>>>,
+    metrics: Arc<Mutex<Metrics>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -65,12 +67,14 @@ impl Network {
         let cancelled = Arc::new(AtomicBool::new(false));
         let owner_cancelled = Arc::new(AtomicBool::new(false));
         let failure = Arc::new(Mutex::new(None));
+        let metrics = Arc::new(Mutex::new(Metrics::default()));
         let (outbound, requests) = crossbeam_channel::bounded(OUTBOUND_CAPACITY);
         let (events, inbound) = crossbeam_channel::bounded(INBOUND_CAPACITY);
         let worker_socket = Arc::clone(&socket);
         let worker_cancelled = Arc::clone(&cancelled);
         let worker_owner_cancelled = Arc::clone(&owner_cancelled);
         let worker_failure = Arc::clone(&failure);
+        let worker_metrics = Arc::clone(&metrics);
         let worker = thread::Builder::new()
             .name("nes-netplay-wire".to_owned())
             .spawn(move || {
@@ -84,6 +88,7 @@ impl Network {
                     &events,
                     &worker_cancelled,
                     &worker_owner_cancelled,
+                    &worker_metrics,
                 );
                 if let Err(error) = result {
                     let cause = record_failure(&worker_failure, format!("{error:#}"));
@@ -100,6 +105,7 @@ impl Network {
             cancelled,
             owner_cancelled,
             failure,
+            metrics,
             worker: Some(worker),
         })
     }
@@ -152,6 +158,13 @@ impl Network {
         &self.inbound
     }
 
+    pub(crate) fn stats(&self) -> Stats {
+        self.metrics
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .snapshot(crate::platform::Instant::now())
+    }
+
     pub(crate) fn cancel(&mut self) {
         self.owner_cancelled.store(true, Ordering::Release);
         self.cancelled.store(true, Ordering::Release);
@@ -197,6 +210,7 @@ fn run(
     events: &EventSender<Event>,
     cancelled: &Arc<AtomicBool>,
     owner_cancelled: &Arc<AtomicBool>,
+    metrics: &Arc<Mutex<Metrics>>,
 ) -> Result<()> {
     let socket = Arc::new(
         stream
@@ -218,6 +232,7 @@ fn run(
     let (mut sender, mut receiver) = connection.split()?;
     publish(events, Event::Ready)?;
     let reader_events = events.clone();
+    let reader_metrics = metrics.clone();
     let (finished, completion) = crossbeam_channel::bounded(1);
     let worker = thread::Builder::new()
         .name("nes-netplay-read".into())
@@ -225,6 +240,10 @@ fn run(
             let result: Result<()> = (|| {
                 loop {
                     let message = receiver.receive().context("receiving netplay message")?;
+                    reader_metrics
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .received(0);
                     let close = matches!(message, Message::Close { .. });
                     publish(&reader_events, Event::Message(message))?;
                     if close {
@@ -251,6 +270,7 @@ fn run(
                     let Ok(message) = message else { intentional_stop = true; return Ok(()); };
                     if owner_cancelled.load(Ordering::Acquire) { intentional_stop = true; return Ok(()); }
                     sender.send(&message).context("sending netplay message")?;
+                    metrics.lock().unwrap_or_else(|poison| poison.into_inner()).sent(0);
                     if matches!(message, Message::Close { .. }) { intentional_stop = true; return Ok(()); }
                 }
                 default(IDLE_POLL) => {}

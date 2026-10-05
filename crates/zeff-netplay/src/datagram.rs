@@ -158,6 +158,14 @@ impl InputChannel {
     pub fn unacknowledged(&self) -> usize {
         self.pending.len()
     }
+
+    pub fn acknowledged(&self) -> u64 {
+        self.acknowledged
+    }
+
+    pub fn pending_batch(&self) -> impl Iterator<Item = u64> + '_ {
+        self.pending.keys().copied().take(BATCH)
+    }
 }
 
 fn role(player: Player) -> u8 {

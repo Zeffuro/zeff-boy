@@ -81,14 +81,14 @@ pub(crate) fn audit_repository() -> anyhow::Result<()> {
         "ROM tests",
         "Benchmarks",
         "WASM detached-frame proof (Node)",
-        "WASM browser proof (Edge)",
         "Fuzz compile check",
     ] {
         require_job_gate(&ci, job_name, slow_gate)?;
     }
-    if ci.matches(slow_gate).count() != 5 {
-        bail!("CI tier policy violation: exactly five slow jobs must be schedule/manual-only");
+    if ci.matches(slow_gate).count() != 4 {
+        bail!("CI tier policy violation: exactly four slow jobs must be schedule/manual-only");
     }
+    require_browser_tiers(&ci)?;
 
     Ok(())
 }
@@ -160,25 +160,87 @@ fn require_contains(contents: &str, needle: &str, surface: &str) -> anyhow::Resu
 }
 
 fn require_job_gate(ci: &str, name: &str, gate: &str) -> anyhow::Result<()> {
+    let job = job_section(ci, name)?;
+    if job.contains(gate) {
+        Ok(())
+    } else {
+        bail!("CI tier policy violation: '{name}' must be schedule/manual-only")
+    }
+}
+
+fn job_section(ci: &str, name: &str) -> anyhow::Result<String> {
     let name_line = format!("    name: {name}");
     let start = ci
         .find(&name_line)
         .with_context(|| format!("CI workflow is missing the '{name}' job"))?;
     let remainder = &ci[start + name_line.len()..];
-    let job = std::iter::once(name_line.as_str())
+    Ok(std::iter::once(name_line.as_str())
         .chain(
             remainder
                 .lines()
                 .take_while(|line| line.is_empty() || line.starts_with("    ")),
         )
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n"))
+}
 
-    if job.contains(gate) {
-        Ok(())
-    } else {
-        bail!("CI tier policy violation: '{name}' must be schedule/manual-only")
+fn require_browser_tiers(ci: &str) -> anyhow::Result<()> {
+    let selector = job_section(ci, "Select browser runtime proof")?;
+    for required in [
+        "suite: ${{ steps.browser.outputs.suite }}",
+        "fetch-depth: 0",
+        "id: browser",
+        "run: python scripts/browser_netplay_gate.py",
+    ] {
+        require_contains(&selector, required, "browser suite selector")?;
     }
+    let browser = job_section(ci, "WASM browser proof (Edge)")?;
+    for required in [
+        "needs: browser-netplay-gate",
+        "if: needs.browser-netplay-gate.outputs.suite != 'skip'",
+    ] {
+        require_contains(&browser, required, "browser proof job")?;
+    }
+    let script = "./scripts/test-wasm-browser-speculation.ps1";
+    let smoke_command = format!("{script} -NetplaySmoke");
+    let expected = [
+        script.to_string(),
+        format!("{script} -Netplay"),
+        smoke_command.clone(),
+        format!("{script} -TestFilter wasm_sms_browser_app_consumes_and_presents_detached_frame"),
+        format!("{script} -TestFilter wasm_gba_browser_app_consumes_and_presents_detached_frame"),
+        format!("{script} -TestFilter wasm_coleco_"),
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    let mut commands = BTreeSet::new();
+    for step in browser
+        .split("      - ")
+        .filter(|step| step.contains(script))
+    {
+        let command = step
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("run: "))
+            .context("browser proof runner must be an explicit single-command step")?;
+        let tier = if command == smoke_command {
+            "smoke"
+        } else {
+            "full"
+        };
+        let gate = format!("if: needs.browser-netplay-gate.outputs.suite == '{tier}'");
+        if !step.lines().any(|line| line.trim() == gate) {
+            bail!("CI tier policy violation: '{command}' requires its '{tier}' suite gate");
+        }
+        if !commands.insert(command.to_string()) {
+            bail!("CI tier policy violation: duplicate browser proof command '{command}'");
+        }
+    }
+    if commands != expected {
+        bail!(
+            "CI tier policy violation: browser proof must retain the full suite and one bounded smoke"
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -200,5 +262,48 @@ mod tests {
 
         assert!(require_job_gate(&workflow, "Benchmarks", gate).is_ok());
         assert!(require_job_gate(&workflow, "ROM tests", gate).is_err());
+    }
+
+    #[test]
+    fn browser_proof_keeps_full_work_behind_its_suite_gate() {
+        let workflow = include_str!("../../../.github/workflows/ci.yml").replace("\r\n", "\n");
+        assert!(require_browser_tiers(&workflow).is_ok());
+        let full_gate = "        if: needs.browser-netplay-gate.outputs.suite == 'full'\n";
+        assert!(require_browser_tiers(&workflow.replacen(full_gate, "", 1)).is_err());
+        assert!(
+            require_browser_tiers(&workflow.replacen(
+                full_gate,
+                "        if: needs.browser-netplay-gate.outputs.suite == 'smoke'\n",
+                1,
+            ))
+            .is_err()
+        );
+        assert!(
+            require_browser_tiers(&workflow.replace(
+                "run: ./scripts/test-wasm-browser-speculation.ps1 -Netplay\n",
+                "run: ./scripts/test-wasm-browser-speculation.ps1 -NetplaySmoke\n",
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn browser_proof_requires_detector_and_distinct_smoke_routing() {
+        let workflow = include_str!("../../../.github/workflows/ci.yml").replace("\r\n", "\n");
+        for required in [
+            "needs: browser-netplay-gate",
+            "suite: ${{ steps.browser.outputs.suite }}",
+            "run: python scripts/browser_netplay_gate.py",
+            "if: needs.browser-netplay-gate.outputs.suite == 'smoke'",
+        ] {
+            assert!(require_browser_tiers(&workflow.replace(required, "")).is_err());
+        }
+        assert!(
+            require_browser_tiers(&workflow.replace(
+                "run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_coleco_",
+                "run: echo skipped",
+            ))
+            .is_err()
+        );
     }
 }

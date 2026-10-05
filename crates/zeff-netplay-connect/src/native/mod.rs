@@ -16,7 +16,7 @@ use webrtc::peer_connection::{
 };
 use zeff_netplay_protocol::{
     ClientMessage, MAX_CANDIDATES, MAX_MESSAGE_BYTES, MAX_PEER_PACKET_BYTES, Role, ServerMessage,
-    Signal, VERSION, valid_hex,
+    Signal, VERSION, valid_hex, validate_ice_servers,
 };
 
 use crate::{CHANNEL_PROTOCOL, CONTROL_CHANNEL_ID, CONTROL_LABEL, INPUT_CHANNEL_ID, INPUT_LABEL};
@@ -370,38 +370,15 @@ fn ice_config(
     servers: &[zeff_netplay_protocol::IceServer],
     relay_allowed: bool,
 ) -> Result<Vec<RTCIceServer>> {
-    ensure!(servers.len() <= 8, "too many ICE servers");
-    servers
+    validate_ice_servers(servers, relay_allowed)?;
+    Ok(servers
         .iter()
-        .map(|server| {
-            ensure!(
-                !server.urls.is_empty() && server.urls.len() <= 8,
-                "invalid ICE URLs"
-            );
-            for url in &server.urls {
-                ensure!(url.len() <= 256, "ICE URL too long");
-                let scheme = url.split_once(':').map(|v| v.0).unwrap_or_default();
-                ensure!(
-                    matches!(scheme, "stun" | "stuns" | "turn" | "turns"),
-                    "unsupported ICE URL"
-                );
-                ensure!(
-                    relay_allowed || matches!(scheme, "stun" | "stuns"),
-                    "TURN forbidden by lobby policy"
-                );
-            }
-            ensure!(
-                server.username.as_ref().is_none_or(|v| v.len() <= 1024)
-                    && server.credential.as_ref().is_none_or(|v| v.len() <= 1024),
-                "ICE credentials exceed limit"
-            );
-            Ok(RTCIceServer {
-                urls: server.urls.clone(),
-                username: server.username.clone().unwrap_or_default(),
-                credential: server.credential.clone().unwrap_or_default(),
-            })
+        .map(|server| RTCIceServer {
+            urls: server.urls.clone(),
+            username: server.username.clone().unwrap_or_default(),
+            credential: server.credential.clone().unwrap_or_default(),
         })
-        .collect()
+        .collect())
 }
 
 async fn gathered(
@@ -541,5 +518,29 @@ mod tests {
         };
         assert!(ice_config(std::slice::from_ref(&turn), false).is_err());
         assert!(ice_config(&[turn], true).is_ok());
+    }
+
+    #[test]
+    fn ice_conversion_obeys_the_shared_browser_contract() {
+        use zeff_netplay_protocol::{IceServer, MAX_ICE_CREDENTIAL_BYTES, MAX_ICE_URLS};
+        let mut server = IceServer {
+            urls: vec!["stun:example.com:3478".into(); MAX_ICE_URLS],
+            username: Some("user".into()),
+            credential: Some("p".repeat(MAX_ICE_CREDENTIAL_BYTES)),
+        };
+        let converted = ice_config(std::slice::from_ref(&server), false).unwrap();
+        assert_eq!(converted[0].urls, server.urls);
+        assert_eq!(
+            converted[0].credential,
+            server.credential.as_deref().unwrap()
+        );
+        server.urls.push("stun:other.example".into());
+        assert!(ice_config(std::slice::from_ref(&server), false).is_err());
+        server.urls.pop();
+        server.credential.as_mut().unwrap().push('p');
+        assert!(ice_config(std::slice::from_ref(&server), false).is_err());
+        server.credential = None;
+        server.urls[0] = "stun:host\n".into();
+        assert!(ice_config(&[server], false).is_err());
     }
 }

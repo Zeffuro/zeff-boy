@@ -214,7 +214,9 @@ struct Observation {
     frames: Vec<(zeff_netplay::wire::Message, [u16; 2], Vec<f32>)>,
     paused: bool,
     chat: usize,
+    stats: Option<crate::netplay::metrics::Stats>,
     stopped: bool,
+    stop_reason: Option<String>,
     rejected: usize,
     shutdown: bool,
 }
@@ -245,9 +247,11 @@ impl Observation {
                     self.paused = local || peer
                 }
                 EmuResponse::Netplay(Response::Chat { .. }) => self.chat += 1,
+                EmuResponse::Netplay(Response::NetworkStats(stats)) => self.stats = Some(stats),
                 EmuResponse::Netplay(Response::Rejected(_)) => self.rejected += 1,
                 EmuResponse::Netplay(Response::Stopped { reason, restored }) => {
                     assert!(restored, "{reason}");
+                    self.stop_reason = Some(reason);
                     self.stopped = true;
                 }
                 EmuResponse::ShutdownComplete => self.shutdown = true,
@@ -414,6 +418,7 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
             assert_eq!(peer.frames[frame as usize].1, ports);
             assert_eq!(peer.frames[frame as usize].2, audio);
         }
+        reference::service_peers(&threads, &mut observed).await;
     }
     if system != ActiveSystem::Nes {
         assert!(
@@ -461,6 +466,26 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
         }
         assert!(started.elapsed() < Duration::from_secs(3));
         netplay_test_yield().await;
+    }
+    if system == ActiveSystem::Nes && timing == 0 && frames_delay == 0 && host_first {
+        let started = Instant::now();
+        while !observed
+            .iter()
+            .all(|peer| peer.stats.is_some_and(|s| s.ack_samples > 0))
+        {
+            for index in 0..2 {
+                observed[index].drain(&threads[index]);
+                assert!(!observed[index].stopped);
+            }
+            assert!(started.elapsed() < Duration::from_secs(3));
+            netplay_test_yield().await;
+        }
+        for peer in &observed {
+            let stats = peer.stats.unwrap();
+            assert!(stats.datagrams && stats.sent > 0 && stats.received > 0);
+            assert!(stats.sent_bytes > 0 && stats.received_bytes > 0);
+            assert!(stats.ack_wait.is_some() && stats.ack_age.is_some());
+        }
     }
     assert_eq!(
         observed.each_ref().map(|peer| peer.presented),

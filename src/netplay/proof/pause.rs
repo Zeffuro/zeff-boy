@@ -68,6 +68,7 @@ pub(super) fn hold(
                         Response::Paused { frame: actual, .. } => {
                             ensure!(actual == frame + lead, "pause boundary differs")
                         }
+                        Response::NetworkStats(_) => {}
                         _ => bail!("paused worker executed or committed output"),
                     }
                 }

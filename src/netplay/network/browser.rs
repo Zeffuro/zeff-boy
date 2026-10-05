@@ -10,6 +10,7 @@ use zeff_netplay::rollback::InputDelay;
 use zeff_netplay::wire::{Admission, Identity, Message, PacketCodec};
 use zeff_netplay_connect::browser::BrowserPeer;
 
+use super::metrics::{Metrics, Stats};
 use crate::platform::Instant;
 
 pub(crate) enum Event {
@@ -30,6 +31,7 @@ struct Pump {
     heard: Instant,
     retry: Instant,
     closed: bool,
+    metrics: Metrics,
 }
 
 pub(crate) struct Network(RefCell<Pump>);
@@ -71,6 +73,7 @@ impl Network {
             heard: now,
             retry: now,
             closed: false,
+            metrics: Metrics::direct(),
         })))
     }
 
@@ -94,6 +97,7 @@ impl Network {
                     .ok_or_else(|| anyhow::anyhow!("admission pending"))?
                     .encode(&message)?;
                 pump.peer.send_control(&bytes).map_err(js_error)?;
+                pump.metrics.sent(bytes.len());
             }
         }
         Ok(())
@@ -119,6 +123,10 @@ impl Network {
         pump.peer.close();
         pump.events.clear();
         pump.pending.clear();
+    }
+
+    pub(crate) fn stats(&self) -> Stats {
+        self.0.borrow().metrics.snapshot(Instant::now())
     }
 }
 
@@ -198,6 +206,8 @@ impl Pump {
             self.events.push_back(Event::Message(message));
         } else if kind == 1 {
             let messages = self.inputs.receive(codec, &bytes)?;
+            self.metrics
+                .acknowledge(self.inputs.acknowledged(), Instant::now());
             ensure!(
                 self.events.len() + messages.len() <= 64,
                 "netplay event queue overflow"
@@ -206,6 +216,7 @@ impl Pump {
         } else {
             bail!("Unknown peer channel");
         }
+        self.metrics.received(bytes.len());
         Ok(())
     }
 
@@ -213,7 +224,11 @@ impl Pump {
         if let Some(codec) = &self.codec
             && let Some(packet) = self.inputs.encode(codec)?
         {
+            let attempted_at = Instant::now();
             let _sent = self.peer.send_input(&packet).map_err(js_error)?;
+            self.metrics.sent(packet.len());
+            self.metrics
+                .input_attempt(self.inputs.pending_batch(), attempted_at);
         }
         Ok(())
     }

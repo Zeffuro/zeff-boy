@@ -49,6 +49,7 @@ pub(crate) struct Session {
     admission_since: Instant,
     stalled_since: Option<Instant>,
     heartbeat_at: Instant,
+    stats_at: Instant,
     sampled: Option<u64>,
     peer_progress: (u64, u64),
     chat_sent: super::chat::RateLimit,
@@ -114,6 +115,7 @@ impl Session {
             admission_since: Instant::now(),
             stalled_since: None,
             heartbeat_at: Instant::now(),
+            stats_at: Instant::now(),
             sampled: None,
             peer_progress: (0, 0),
             chat_sent: Default::default(),
@@ -232,7 +234,19 @@ impl Session {
         self.commit()?;
         self.report_pause()?;
         self.send_progress(false)?;
+        self.report_network_stats(Instant::now());
         Ok(rollback_frames)
+    }
+
+    fn report_network_stats(&mut self, now: Instant) {
+        if self.ready
+            && now.saturating_duration_since(self.stats_at) >= Duration::from_millis(500)
+            && self.responses.is_empty()
+        {
+            self.responses
+                .push_back(Response::NetworkStats(self.network.stats()));
+            self.stats_at = now;
+        }
     }
 
     fn handle_event(&mut self, event: Event) -> Result<()> {

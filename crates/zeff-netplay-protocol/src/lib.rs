@@ -8,6 +8,14 @@ pub const MAX_SDP_BYTES: usize = 32 * 1024;
 pub const MAX_CANDIDATE_BYTES: usize = 2048;
 pub const MAX_CANDIDATES: usize = 64;
 pub const MAX_PEER_PACKET_BYTES: usize = 1024;
+pub const CONTROL_LABEL: &str = "zeff-control";
+pub const INPUT_LABEL: &str = "zeff-input";
+pub const CHANNEL_PROTOCOL: &str = "zeff-netplay-v1";
+pub const CONTROL_CHANNEL_ID: u16 = 0;
+pub const INPUT_CHANNEL_ID: u16 = 1;
+
+mod ice;
+pub use ice::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

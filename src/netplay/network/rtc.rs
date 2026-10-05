@@ -62,6 +62,7 @@ fn spawn_peer(
     let cancelled = Arc::new(AtomicBool::new(false));
     let owner_cancelled = Arc::new(AtomicBool::new(false));
     let failure = Arc::new(Mutex::new(None));
+    let metrics = Arc::new(Mutex::new(Metrics::direct()));
     let (outbound, requests) = crossbeam_channel::bounded(OUTBOUND_CAPACITY);
     let (events, inbound) = crossbeam_channel::bounded(INBOUND_CAPACITY);
     let state = Worker {
@@ -73,6 +74,7 @@ fn spawn_peer(
         events,
         cancelled: cancelled.clone(),
         owner_cancelled: owner_cancelled.clone(),
+        metrics: metrics.clone(),
     };
     let worker_failure = failure.clone();
     let worker_cancelled = cancelled.clone();
@@ -102,6 +104,7 @@ fn spawn_peer(
         cancelled,
         owner_cancelled,
         failure,
+        metrics,
         worker: Some(worker),
     })
 }
@@ -115,6 +118,7 @@ struct Worker {
     events: EventSender<Event>,
     cancelled: Arc<AtomicBool>,
     owner_cancelled: Arc<AtomicBool>,
+    metrics: Arc<Mutex<Metrics>>,
 }
 
 impl Worker {
@@ -178,6 +182,10 @@ impl Worker {
                     message => {
                         let packet = codec.encode(&message)?;
                         cancellable(&self.cancelled, connection.send_control(&packet)).await?;
+                        self.metrics
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner())
+                            .sent(packet.len());
                     }
                 }
                 if close {
@@ -208,6 +216,7 @@ impl Worker {
         inputs: &mut InputChannel,
         packet: Packet,
     ) -> Result<bool> {
+        let packet_bytes = packet.bytes.len();
         match packet.kind {
             PacketKind::Control => {
                 let message = codec.decode(&packet.bytes)?;
@@ -223,9 +232,19 @@ impl Worker {
                 for message in inputs.receive(codec, &packet.bytes)? {
                     publish(&self.events, Event::Message(message))?;
                 }
+                self.metrics
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .acknowledge(inputs.acknowledged(), crate::platform::Instant::now());
                 Ok(false)
             }
         }
+        .inspect(|_| {
+            self.metrics
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .received(packet_bytes)
+        })
     }
 
     async fn send_inputs(
@@ -235,7 +254,14 @@ impl Worker {
         inputs: &mut InputChannel,
     ) -> Result<()> {
         if let Some(packet) = inputs.encode(codec)? {
+            let attempted_at = crate::platform::Instant::now();
             cancellable(&self.cancelled, connection.send_input(&packet)).await?;
+            let mut metrics = self
+                .metrics
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            metrics.sent(packet.len());
+            metrics.input_attempt(inputs.pending_batch(), attempted_at);
         }
         Ok(())
     }

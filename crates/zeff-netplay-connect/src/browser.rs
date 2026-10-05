@@ -1,4 +1,4 @@
-use crate::{CHANNEL_PROTOCOL, CONTROL_LABEL, INPUT_LABEL};
+use crate::{CHANNEL_PROTOCOL, CONTROL_CHANNEL_ID, CONTROL_LABEL, INPUT_CHANNEL_ID, INPUT_LABEL};
 use js_sys::{Array, ArrayBuffer, Reflect, Uint8Array};
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use wasm_bindgen::{JsCast, prelude::*};
@@ -8,7 +8,10 @@ use web_sys::{
     RtcDataChannelState, RtcDataChannelType, RtcIceGatheringState, RtcPeerConnection, RtcSdpType,
     RtcSessionDescriptionInit,
 };
-use zeff_netplay_protocol::{IceServer, MAX_CANDIDATES, MAX_PEER_PACKET_BYTES, Signal};
+use zeff_netplay_protocol::{
+    IceServer, MAX_CANDIDATES, MAX_ICE_CONFIG_BYTES, MAX_PEER_PACKET_BYTES, Signal,
+    validate_ice_servers,
+};
 
 mod async_util;
 mod signaling;
@@ -37,28 +40,13 @@ pub struct BrowserPeer {
 impl BrowserPeer {
     #[wasm_bindgen(constructor)]
     pub fn new(ice_json: &str, relay_allowed: bool) -> Result<BrowserPeer, JsValue> {
-        if ice_json.len() > 8192 {
+        if ice_json.len() > MAX_ICE_CONFIG_BYTES {
             return Err(error("ICE configuration too large"));
         }
         let servers: Vec<IceServer> =
             serde_json::from_str(ice_json).map_err(|_| error("invalid ICE configuration"))?;
-        if servers.len() > 8
-            || servers.iter().any(|s| {
-                s.username.as_ref().is_some_and(|v| v.len() > 128)
-                    || s.credential.as_ref().is_some_and(|v| v.len() > 256)
-                    || s.urls.len() > 4
-                    || s.urls.is_empty()
-                    || s.urls.iter().any(|u| {
-                        u.len() > 256
-                            || !(u.starts_with("stun:")
-                                || u.starts_with("stuns:")
-                                || relay_allowed
-                                    && (u.starts_with("turn:") || u.starts_with("turns:")))
-                    })
-            })
-        {
-            return Err(error("ICE URLs violate relay policy"));
-        }
+        validate_ice_servers(&servers, relay_allowed)
+            .map_err(|reason| error(&reason.to_string()))?;
         let ice = Array::new();
         for server in servers {
             let object = js_sys::Object::new();
@@ -121,13 +109,16 @@ impl BrowserPeer {
         if self.inner.channels.borrow().iter().any(Option::is_some) {
             return Err(error("channels already created"));
         }
-        for (index, label) in [CONTROL_LABEL, INPUT_LABEL].iter().enumerate() {
+        for (id, label) in [
+            (CONTROL_CHANNEL_ID, CONTROL_LABEL),
+            (INPUT_CHANNEL_ID, INPUT_LABEL),
+        ] {
             let options = RtcDataChannelInit::new();
             options.set_protocol(CHANNEL_PROTOCOL);
-            options.set_ordered(index == 0);
+            options.set_ordered(id == CONTROL_CHANNEL_ID);
             options.set_negotiated(true);
-            options.set_id(index as u16);
-            if index == 1 {
+            options.set_id(id);
+            if id == INPUT_CHANNEL_ID {
                 options.set_max_retransmits(0);
             }
             let channel = self
@@ -328,9 +319,9 @@ impl BrowserPeer {
 }
 
 fn attach(inner: &Rc<Inner>, channel: RtcDataChannel) -> Result<(), JsValue> {
-    let kind = match channel.label().as_str() {
-        CONTROL_LABEL => 0,
-        INPUT_LABEL => 1,
+    let (kind, id) = match channel.label().as_str() {
+        CONTROL_LABEL => (0, CONTROL_CHANNEL_ID),
+        INPUT_LABEL => (1, INPUT_CHANNEL_ID),
         _ => return Err(error("unknown channel")),
     };
     if Reflect::get(&channel, &"protocol".into())?
@@ -339,7 +330,7 @@ fn attach(inner: &Rc<Inner>, channel: RtcDataChannel) -> Result<(), JsValue> {
         != Some(CHANNEL_PROTOCOL)
         || Reflect::get(&channel, &"ordered".into())?.as_bool() != Some(kind == 0)
         || Reflect::get(&channel, &"negotiated".into())?.as_bool() != Some(true)
-        || channel.id() != Some(kind as u16)
+        || channel.id() != Some(id)
         || channel.max_retransmits() != if kind == 0 { None } else { Some(0) }
         || channel.max_packet_life_time().is_some()
         || inner.channels.borrow()[kind].is_some()

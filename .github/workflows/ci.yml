@@ -17,6 +17,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  browser-netplay-gate:
+    name: Select browser runtime proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      suite: ${{ steps.browser.outputs.suite }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Select browser suite from event diff
+        id: browser
+        run: python scripts/browser_netplay_gate.py
+
   optimized-build-helper:
     name: Optimized build helper (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -365,7 +382,8 @@ jobs:
 
   wasm-browser:
     name: WASM browser proof (Edge)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: browser-netplay-gate
+    if: needs.browser-netplay-gate.outputs.suite != 'skip'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -401,22 +419,32 @@ jobs:
           key: wasm-browser-tools-0.2.126-edge-${{ steps.edge.outputs.version }}-${{ runner.os }}
 
       - name: Test detached GBA and SMS IndexedDB transactions
+        if: needs.browser-netplay-gate.outputs.suite == 'full'
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1
 
       - name: Test browser netplay transport and gameplay
+        if: needs.browser-netplay-gate.outputs.suite == 'full'
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1 -Netplay
 
+      - name: Test browser netplay runtime smoke
+        if: needs.browser-netplay-gate.outputs.suite == 'smoke'
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -NetplaySmoke
+
       - name: Test detached SMS App rendering
+        if: needs.browser-netplay-gate.outputs.suite == 'full'
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_sms_browser_app_consumes_and_presents_detached_frame
 
       - name: Test detached GBA App rendering
+        if: needs.browser-netplay-gate.outputs.suite == 'full'
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_gba_browser_app_consumes_and_presents_detached_frame
 
       - name: Test ColecoVision browser firmware and backend lifecycle
+        if: needs.browser-netplay-gate.outputs.suite == 'full'
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_coleco_
 

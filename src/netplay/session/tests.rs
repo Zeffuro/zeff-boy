@@ -436,6 +436,25 @@ fn replay_case(timing: TimingMode, delay: zeff_netplay::rollback::InputDelay) {
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
+    let sampled_at = Instant::now();
+    session.stats_at = sampled_at;
+    session.report_network_stats(sampled_at + Duration::from_millis(499));
+    assert!(
+        !session
+            .responses
+            .iter()
+            .any(|response| matches!(response, Response::NetworkStats(_)))
+    );
+    session.report_network_stats(sampled_at + Duration::from_millis(500));
+    session.report_network_stats(sampled_at + Duration::from_millis(1500));
+    assert_eq!(
+        session
+            .responses
+            .iter()
+            .filter(|response| matches!(response, Response::NetworkStats(_)))
+            .count(),
+        1
+    );
     let mut published = Vec::new();
     for frame in 0..count {
         session.step(&mut backend, local_buttons(frame)).unwrap();

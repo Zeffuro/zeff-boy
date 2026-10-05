@@ -13,6 +13,7 @@ pub(crate) mod connect;
 #[path = "connect/browser.rs"]
 pub(crate) mod connect;
 pub(crate) mod identity;
+pub(crate) mod metrics;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod network;
 #[cfg(target_arch = "wasm32")]
@@ -79,6 +80,7 @@ pub(crate) struct Start {
 
 pub(crate) enum Response {
     Ready,
+    NetworkStats(metrics::Stats),
     Chat {
         local: bool,
         text: String,

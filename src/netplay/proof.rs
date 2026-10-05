@@ -88,7 +88,10 @@ fn next_any(worker: &EmuThread) -> Result<Response> {
 fn next(worker: &EmuThread) -> Result<Response> {
     loop {
         let response = next_any(worker)?;
-        if !matches!(response, Response::Presented { .. }) {
+        if !matches!(
+            response,
+            Response::Presented { .. } | Response::NetworkStats(_)
+        ) {
             return Ok(response);
         }
     }
@@ -108,6 +111,7 @@ fn stepped_frame(worker: &EmuThread) -> Result<Response> {
                 ..
             } => complete = true,
             Response::Presented { .. } => {}
+            Response::NetworkStats(_) => {}
             Response::Paused { .. } => {}
             response => bail!("unexpected proof step: {}", response_summary(&Ok(response))),
         }
@@ -130,6 +134,7 @@ fn response_summary(response: &Result<Response>) -> String {
         Ok(Response::Frame { .. }) => "confirmed frame".into(),
         Ok(Response::Audio { .. }) => "confirmed audio".into(),
         Ok(Response::Presented { .. }) => "presented frame".into(),
+        Ok(Response::NetworkStats(_)) => "network stats".into(),
         Ok(Response::Paused { frame, local, peer }) => {
             format!("paused at {frame}, local={local}, peer={peer}")
         }

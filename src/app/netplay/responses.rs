@@ -15,6 +15,11 @@ impl App {
             return None;
         }
         match response {
+            Response::NetworkStats(stats)
+                if matches!(self.netplay.phase, Phase::Running | Phase::Stopping) =>
+            {
+                self.debug_windows.netplay.network_metrics = Some(stats);
+            }
             Response::Chat { local, text } if self.netplay.running() => {
                 if local {
                     self.debug_windows.netplay.chat_sent(&text);

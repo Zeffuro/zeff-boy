@@ -21,6 +21,7 @@ pub(crate) struct Ui {
     pub(crate) local_pause: bool,
     pub(crate) status: String,
     pub(crate) metrics: String,
+    pub(crate) network_metrics: Option<super::metrics::Stats>,
     pub(crate) invitation: String,
     pub(crate) private_network: bool,
     pub(crate) lobby: bool,
@@ -62,6 +63,7 @@ impl Ui {
             local_pause: false,
             status: String::new(),
             metrics: String::new(),
+            network_metrics: None,
             invitation: String::new(),
             private_network: forwarded,
             lobby: cfg!(target_arch = "wasm32"),
@@ -397,6 +399,9 @@ impl Ui {
             if !self.metrics.is_empty() {
                 ui.small(&self.metrics);
             }
+            if let Some(stats) = self.network_metrics {
+                draw_network_stats(ui, stats);
+            }
             let signed_pair =
                 system == ActiveSystem::Nes && super::compatibility::signed_pair_available();
             ui.label(if signed_pair {
@@ -420,6 +425,39 @@ impl Ui {
                     .on_hover_text("Use a trusted network. TCP is not encrypted.");
             }
         });
+    }
+}
+
+fn draw_network_stats(ui: &mut egui::Ui, stats: super::metrics::Stats) {
+    if stats.datagrams {
+        let latency = match (stats.ack_wait, stats.ack_age) {
+            (Some(latency), Some(age)) => format!(
+                "ACK wait {:.0} ms · age {:.1} s",
+                latency.as_secs_f64() * 1000.0,
+                age.as_secs_f64()
+            ),
+            _ => "ACK wait: awaiting input acknowledgment".into(),
+        };
+        ui.small(latency).on_hover_text(format!(
+            "{} samples. From first input send attempt to acknowledgement, including processing and retries.",
+            stats.ack_samples
+        ));
+        ui.small(format!(
+            "Packets: attempted ↑{} · received ↓{}",
+            stats.sent, stats.received
+        ));
+        ui.small(format!(
+            "Payload KiB: attempted ↑{:.1} · received ↓{:.1}",
+            stats.sent_bytes as f64 / 1024.0,
+            stats.received_bytes as f64 / 1024.0
+        )).on_hover_text("Application payload only, excluding setup and transport overhead. Attempts may be skipped by a full send buffer.");
+        ui.small(format!("Repeated input batches {}", stats.repeated_batches))
+            .on_hover_text("Redundancy and retries, not measured loss.");
+    } else {
+        ui.small(format!(
+            "Messages: sent ↑{} · received ↓{}",
+            stats.sent, stats.received
+        ));
     }
 }
 

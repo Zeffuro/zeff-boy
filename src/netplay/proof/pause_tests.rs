@@ -29,7 +29,7 @@ fn cycle(
                         step_complete: true,
                         ..
                     } => complete[index] = true,
-                    Response::Presented { .. } => {}
+                    Response::Presented { .. } | Response::NetworkStats(_) => {}
                     Response::Paused { local, peer, .. } => observed[index].paused = (local, peer),
                     Response::Frame {
                         checkpoint,

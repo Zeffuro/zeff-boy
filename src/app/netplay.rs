@@ -480,6 +480,7 @@ impl App {
         self.debug_windows.netplay.chat_failed(String::new());
         self.debug_windows.netplay.local_pause = false;
         self.debug_windows.netplay.metrics.clear();
+        self.debug_windows.netplay.network_metrics = None;
         self.clear_all_frontend_holds();
         self.debug_windows.netplay.invitation.clear();
         self.debug_windows.netplay.status = if restored {

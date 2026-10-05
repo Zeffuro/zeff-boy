@@ -101,6 +101,16 @@ fn retransmits_last_dropped_input_during_pause_without_new_commands() {
     })
     .unwrap();
     assert!(matches!(event(&a), Event::Message(Message::Chat { text }) if text == "paused"));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while a.stats().received < 2 {
+        assert!(Instant::now() < deadline);
+        thread::yield_now();
+    }
+    let stats = a.stats();
+    assert!(stats.sent >= 3 && stats.sent_bytes >= 3 * 86);
+    assert!(stats.repeated_batches >= 2);
+    assert_eq!(stats.ack_samples, 1);
+    assert!(stats.ack_wait.unwrap() >= RETRY);
     a.cancel();
     b.cancel();
     assert!(a_closed.load(Ordering::Acquire));

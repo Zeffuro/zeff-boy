@@ -3,6 +3,19 @@ use crate::emu_backend::pce::PceBackendRollbackSession;
 use zeff_nes_core::emulator::rollback::NesRollbackSession;
 use zeff_sega8_core::emulator::rollback::Sega8RollbackSession;
 
+pub(super) async fn service_peers(threads: &[EmuThread; 2], observed: &mut [Observation; 2]) {
+    // Reference work must not starve the active peers' packet callbacks and heartbeat.
+    netplay_test_yield().await;
+    for index in 0..2 {
+        observed[index].drain(&threads[index]);
+        assert!(
+            !observed[index].stopped,
+            "{:?}",
+            observed[index].stop_reason
+        );
+    }
+}
+
 pub(super) enum ReferenceLease {
     Nes(NesRollbackSession),
     Sega8(Sega8RollbackSession),

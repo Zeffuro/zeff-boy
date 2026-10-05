@@ -8,7 +8,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
-use zeff_netplay_protocol::IceServer;
+use zeff_netplay_protocol::{IceServer, MAX_ICE_URLS, valid_ice_url, validate_ice_servers};
 
 pub struct Config {
     pub bind: SocketAddr,
@@ -97,7 +97,7 @@ impl Config {
             "stun:stun.cloudflare.com:3478",
         )?);
         ensure!(
-            urls.len() <= 4 && urls.iter().all(|s| ice_url(s, false)),
+            urls.len() <= MAX_ICE_URLS && urls.iter().all(|s| ice_url(s, false)),
             "invalid STUN URLs"
         );
         c.ice_servers = if urls.is_empty() {
@@ -123,7 +123,7 @@ impl Config {
                 let secret = env("ZEFF_LOBBY_TURN_SECRET", "")?;
                 ensure!(
                     !urls.is_empty()
-                        && urls.len() <= 4
+                        && urls.len() <= MAX_ICE_URLS
                         && urls.iter().all(|s| ice_url(s, true))
                         && (32..=256).contains(&secret.len()),
                     "invalid external TURN configuration"
@@ -131,6 +131,7 @@ impl Config {
                 c.turn = Some(Turn { urls, secret });
             }
         }
+        validate_ice_servers(&c.ice_servers, c.turn.is_some())?;
         Ok(c)
     }
 
@@ -162,6 +163,7 @@ impl Config {
                 credential: Some(STANDARD.encode(mac.finalize().into_bytes())),
             });
         }
+        validate_ice_servers(&servers, self.turn.is_some())?;
         Ok(servers)
     }
 }
@@ -193,18 +195,7 @@ fn number(
     Ok(value)
 }
 fn ice_url(url: &str, turn: bool) -> bool {
-    let schemes: &[&str] = if turn {
-        &["turn:", "turns:"]
-    } else {
-        &["stun:", "stuns:"]
-    };
-    url.len() <= 256
-        && schemes
-            .iter()
-            .any(|s| url.strip_prefix(s).is_some_and(|r| !r.is_empty()))
-        && !url
-            .bytes()
-            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b == b'@')
+    valid_ice_url(url, turn) && (!turn || url.starts_with("turn:") || url.starts_with("turns:"))
 }
 
 #[cfg(test)]
@@ -217,6 +208,31 @@ mod tests {
                 .find(|(key, _)| *key == name)
                 .map(|(_, value)| (*value).into()))
         })
+    }
+
+    #[test]
+    fn generated_ice_respects_client_limits_and_keeps_turn_opt_in() {
+        let mut config = Config::public();
+        assert!(validate_ice_servers(&config.ice("room", false).unwrap(), false).is_ok());
+        config.ice_servers[0].urls.push("turn:example.com".into());
+        assert!(config.ice("room", false).is_err());
+        config.ice_servers[0].urls = vec!["stun:example.com".into(); MAX_ICE_URLS + 1];
+        assert!(config.ice("room", false).is_err());
+        let token = "a".repeat(32);
+        let private = configured(&[
+            ("ZEFF_LOBBY_ACCESS_TOKEN", &token),
+            ("ZEFF_LOBBY_ALLOW_TURN", "true"),
+            (
+                "ZEFF_LOBBY_TURN_URLS",
+                "turn:example.com:3478?transport=udp",
+            ),
+            ("ZEFF_LOBBY_TURN_SECRET", &token),
+        ])
+        .unwrap();
+        let servers = private.ice(&"0".repeat(24), false).unwrap();
+        assert!(validate_ice_servers(&servers, true).is_ok());
+        assert!(validate_ice_servers(&servers, false).is_err());
+        assert!(private.ice(&"x".repeat(128), false).is_err());
     }
     #[test]
     fn public_access_requires_explicit_valid_configuration() {

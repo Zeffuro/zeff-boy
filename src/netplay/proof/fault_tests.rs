@@ -227,7 +227,7 @@ pub(super) fn run_fault(fault: Fault, media: &media::Media, check_restored_publi
                 step_complete: true,
                 ..
             } => pending_step = true,
-            Response::Presented { .. } => {}
+            Response::Presented { .. } | Response::NetworkStats(_) => {}
             Response::Stopped {
                 reason,
                 restored: true,

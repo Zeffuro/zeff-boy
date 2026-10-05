@@ -84,6 +84,15 @@ fn admission_and_ordered_input_checkpoint_exchange() {
         assert!(matches!(event(&one), Event::Message(message) if message == checkpoint));
         assert!(matches!(event(&two), Event::Message(message) if message == checkpoint));
     }
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while one.stats().sent < 6 {
+        assert!(std::time::Instant::now() < deadline);
+        thread::yield_now();
+    }
+    let stats = one.stats();
+    assert!(!stats.datagrams);
+    assert_eq!((stats.sent, stats.received), (6, 6));
+    assert_eq!(stats.ack_wait, None);
 }
 
 #[test]

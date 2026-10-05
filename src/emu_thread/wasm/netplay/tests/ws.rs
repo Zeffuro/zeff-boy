@@ -54,7 +54,11 @@ fn input(frame: u64, endpoint: usize) -> u16 {
 fn step(threads: &[EmuThread; 2], observed: &mut [Observation; 2], roles: [usize; 2]) {
     for index in 0..2 {
         observed[index].drain(&threads[index]);
-        assert!(!observed[index].stopped);
+        assert!(
+            !observed[index].stopped,
+            "{:?}",
+            observed[index].stop_reason
+        );
         if !observed[index].pending {
             threads[index].send(EmuCommand::StepNetplay(input(
                 observed[index].presented,
@@ -206,6 +210,7 @@ async fn case(color: bool, frames_delay: u64, host_is_zero: bool) {
             observed[1].frames[frame as usize].0
         );
         different_audio |= audio[0] != audio[1];
+        reference::service_peers(&threads, &mut observed).await;
     }
     assert!(different_audio);
     assert!(observed.iter().any(|peer| peer.replayed > 0));

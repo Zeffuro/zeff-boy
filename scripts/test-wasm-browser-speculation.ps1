@@ -8,10 +8,15 @@ param(
         "wasm_coleco_"
     )]
     [string]$TestFilter = "browser_indexeddb_transaction_matches_detached_control",
-    [switch]$Netplay
+    [switch]$Netplay,
+    [switch]$NetplaySmoke
 )
 
 $ErrorActionPreference = "Stop"
+$runNetplay = $Netplay -or $NetplaySmoke
+if ($Netplay -and $NetplaySmoke) {
+    throw "Select either -Netplay or -NetplaySmoke"
+}
 
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $targetRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "target"))
@@ -121,9 +126,9 @@ try {
         $env:RUST_LOG = "warn"
         $env:MSEDGEDRIVER = $driver
         $env:WASM_BINDGEN_TEST_WEBDRIVER_JSON = $webdriverConfig
-        $env:WASM_BINDGEN_TEST_TIMEOUT = if ($Netplay) { "180" } else { "60" }
+        $env:WASM_BINDGEN_TEST_TIMEOUT = if ($runNetplay) { "180" } else { "60" }
         $env:Path = "$(Split-Path -Parent $driver);$previousPath"
-        if ($Netplay) {
+        if ($runNetplay) {
             & cargo build --locked -p zeff-netplay-connect --features native --example browser-test-lobby
             if ($LASTEXITCODE -ne 0) { throw "Netplay lobby fixture build failed" }
             $netplayLobby = Start-Process -FilePath (Join-Path $targetRoot "debug\examples\browser-test-lobby.exe") -ArgumentList @("127.0.0.1:47180", "http://127.0.0.1:47181") -WindowStyle Hidden -PassThru
@@ -131,8 +136,17 @@ try {
             & cargo test --locked -p zeff-netplay-connect --target wasm32-unknown-unknown --features browser-tests browser_
             if ($LASTEXITCODE -ne 0) { throw "Browser transport tests failed" }
         }
-        $effectiveTestFilter = if ($Netplay) { "browser_netplay_" } else { $TestFilter }
-        if ($Netplay) {
+        $effectiveTestFilter = if ($runNetplay) { "browser_netplay_" } else { $TestFilter }
+        if ($NetplaySmoke) {
+            foreach ($smokeFilter in @(
+                "browser_netplay_actual_worker_matches_reference_and_restores_sram",
+                "browser_netplay_ws_worker_replicates_link_and_restores",
+                "browser_netplay_build_mismatch_and_suspended_peer_restore_before_saving"
+            )) {
+                & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $smokeFilter
+                if ($LASTEXITCODE -ne 0) { throw "Browser netplay smoke failed: $smokeFilter" }
+            }
+        } elseif ($Netplay) {
             & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $effectiveTestFilter -- --skip browser_netplay_pce_ --skip browser_netplay_ws_ --skip browser_netplay_wsc_
             if ($LASTEXITCODE -ne 0) { throw "Browser netplay tests failed" }
             foreach ($coreFilter in @("browser_netplay_pce_base_", "browser_netplay_pce_supergrafx_", "browser_netplay_ws_", "browser_netplay_wsc_")) {

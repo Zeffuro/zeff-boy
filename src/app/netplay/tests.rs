@@ -314,6 +314,37 @@ fn failed_restore_response_poison_prevents_resume_until_game_teardown() {
 }
 
 #[test]
+fn network_stats_survive_presentations_and_clear_on_stop() {
+    let directory = crate::test_support::test_directory("app-netplay-stats").unwrap();
+    let mut app = app(directory.path(), "one");
+    app.netplay.phase = Phase::Running;
+    let stats = crate::netplay::metrics::Stats {
+        datagrams: true,
+        sent: 12,
+        ..Default::default()
+    };
+    app.consume_netplay_response(EmuResponse::Netplay(Response::NetworkStats(stats)));
+    app.consume_netplay_response(EmuResponse::Netplay(Response::Presented {
+        frame: 0,
+        confirmed: 0,
+        changed: false,
+        step_complete: false,
+        prediction_depth: 0,
+        rollback_frames: 0,
+        retained_bytes: 1024,
+    }));
+    assert!(app.netplay.phase == Phase::Running);
+    assert_eq!(app.debug_windows.netplay.network_metrics.unwrap().sent, 12);
+    app.consume_netplay_response(EmuResponse::Netplay(Response::Stopped {
+        reason: "closed".into(),
+        restored: true,
+    }));
+    assert!(app.netplay.phase == Phase::Idle);
+    assert!(app.debug_windows.netplay.network_metrics.is_none());
+    app.stop_emu_thread();
+}
+
+#[test]
 fn malformed_join_is_rejected_before_reload_pause_or_save_changes() {
     let directory = crate::test_support::test_directory("app-netplay-join-failure").unwrap();
     let mut app = app(directory.path(), "one");

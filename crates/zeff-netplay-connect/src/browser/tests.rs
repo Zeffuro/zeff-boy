@@ -6,6 +6,29 @@ use zeff_netplay_protocol::{ClientMessage, SessionIdentity, SessionMode, VERSION
 
 wasm_bindgen_test_configure!(run_in_browser);
 
+#[wasm_bindgen_test]
+fn browser_ice_config_uses_shared_bounds_before_creating_a_peer() {
+    use zeff_netplay_protocol::{IceServer, MAX_ICE_CREDENTIAL_BYTES, MAX_ICE_URLS};
+    let mut server = IceServer {
+        urls: vec!["stun:example.com:3478".into(); MAX_ICE_URLS],
+        username: None,
+        credential: Some("p".repeat(MAX_ICE_CREDENTIAL_BYTES)),
+    };
+    let json = |server: &IceServer| serde_json::to_string(&[server]).unwrap();
+    let peer = BrowserPeer::new(&json(&server), false).unwrap();
+    peer.close();
+    server.urls.push("stun:other.example".into());
+    assert!(BrowserPeer::new(&json(&server), false).is_err());
+    server.urls.pop();
+    server.credential.as_mut().unwrap().push('p');
+    assert!(BrowserPeer::new(&json(&server), false).is_err());
+    server.credential = None;
+    for url in ["turn:example.com", "stun:", "stun:host\n"] {
+        server.urls = vec![url.into()];
+        assert!(BrowserPeer::new(&json(&server), false).is_err());
+    }
+}
+
 fn auth(room: Option<String>) -> ClientMessage {
     let identity = SessionIdentity {
         core: "nes".into(),

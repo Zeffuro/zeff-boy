@@ -321,9 +321,20 @@ fn failure_status_and_compact_stats_can_be_scrolled_into_view() {
     state.connected = true;
     state.status = "Connected".into();
     state.metrics = "Frame 120 · predicted 2".into();
+    state.network_metrics = Some(super::super::metrics::Stats {
+        datagrams: true,
+        sent: 120,
+        received: 110,
+        ack_wait: Some(std::time::Duration::from_millis(90)),
+        ack_age: Some(std::time::Duration::from_millis(500)),
+        ..Default::default()
+    });
     let stats = harness.reach(&mut state, "Stats");
     harness.click(&mut state, stats.center());
     harness.reach(&mut state, "Frame 120 · predicted 2");
+    harness.reach(&mut state, "ACK wait 90 ms · age 0.5 s");
+    harness.reach(&mut state, "Packets: attempted ↑120 · received ↓110");
+    harness.reach(&mut state, "Repeated input batches 0");
     harness.reach(&mut state, "LAN · authenticated TCP");
     harness.reach(&mut state, "Player 1 controls on both devices.");
     harness.reach(&mut state, "Disconnect");

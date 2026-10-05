@@ -142,6 +142,40 @@ fn unacked_window_and_sequence_never_allocate_without_bounds() {
 }
 
 #[test]
+fn metric_ack_and_batch_accessors_follow_only_complete_valid_packets() {
+    let (mut a, ac, mut b, bc) = pair(2);
+    for frame in 2..42 {
+        a.push(frame, frame as u16).unwrap();
+    }
+    assert_eq!(
+        a.pending_batch().collect::<Vec<_>>(),
+        (2..34).collect::<Vec<_>>()
+    );
+    b.receive(&bc, &a.encode(&ac).unwrap().unwrap()).unwrap();
+    let old_ack = b.encode(&bc).unwrap().unwrap();
+    let mut malformed = old_ack[..old_ack.len() - SIGNATURE].to_vec();
+    malformed[53] = 1;
+    malformed.extend_from_slice(&bc.authenticate_datagram(&malformed));
+    assert!(a.receive(&ac, &malformed).is_err());
+    assert_eq!(a.acknowledged(), 2);
+    let mut unauthenticated = old_ack.clone();
+    unauthenticated[37] ^= 1;
+    assert!(a.receive(&ac, &unauthenticated).is_err());
+    assert_eq!(a.acknowledged(), 2);
+    a.receive(&ac, &old_ack).unwrap();
+    assert_eq!(a.acknowledged(), 34);
+    assert_eq!(
+        a.pending_batch().collect::<Vec<_>>(),
+        (34..42).collect::<Vec<_>>()
+    );
+    b.receive(&bc, &a.encode(&ac).unwrap().unwrap()).unwrap();
+    a.receive(&ac, &b.encode(&bc).unwrap().unwrap()).unwrap();
+    a.receive(&ac, &old_ack).unwrap();
+    assert_eq!(a.acknowledged(), 42);
+    assert_eq!(a.pending_batch().count(), 0);
+}
+
+#[test]
 fn wider_batches_reject_old_version_truncation_and_bad_counts_atomically() {
     let (mut a, ac, mut b, bc) = pair(0);
     a.push(0, 0x07a5).unwrap();
