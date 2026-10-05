@@ -130,9 +130,9 @@ try {
             $env:WASM_BINDGEN_TEST_ADDRESS = "127.0.0.1:47181"
             & cargo test --locked -p zeff-netplay-connect --target wasm32-unknown-unknown --features browser-tests browser_
             if ($LASTEXITCODE -ne 0) { throw "Browser transport tests failed" }
-            $TestFilter = "browser_netplay_"
         }
-        & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $TestFilter
+        $effectiveTestFilter = if ($Netplay) { "browser_netplay_" } else { $TestFilter }
+        & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $effectiveTestFilter
         if ($LASTEXITCODE -ne 0) {
             throw "browser WASM speculation test failed with exit code $LASTEXITCODE"
         }
