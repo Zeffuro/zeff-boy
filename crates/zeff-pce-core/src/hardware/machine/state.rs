@@ -145,23 +145,64 @@ impl PceMachine {
             runtime_audio.3,
         );
 
+        if let Some((rate, enabled)) = runtime_cd_audio {
+            let cd = restored
+                .bus
+                .devices_mut()
+                .cdrom2_mut()
+                .expect("CD state target");
+            cd.set_sample_rate(rate);
+            cd.set_sample_generation_enabled(enabled);
+        }
+        restored.read_owned_rollback_payload(
+            data,
+            topology,
+            is_cd,
+            has_arcade_card,
+            state_version,
+        )?;
+        restored.opcode_history.enabled = history_enabled;
+        restored.opcode_history.clear();
+        restored.instruction_trace.set_capacity(trace_capacity);
+        restored.instruction_trace.set_enabled(trace_enabled);
+        restored.instruction_trace.clear();
+        restored.audio_trace = std::mem::take(&mut self.audio_trace);
+        restored
+            .audio_trace
+            .invalidate(AudioTraceInvalidation::StateRestore);
+        restored.rollback_machine = self.rollback_machine.clone();
+        restored.rollback_frame_boundary = false;
+        *self = restored;
+        Ok(())
+    }
+    pub(super) fn read_owned_rollback_payload(
+        &mut self,
+        data: &[u8],
+        topology: PceHardwareTopology,
+        is_cd: bool,
+        has_arcade_card: bool,
+        state_version: u32,
+    ) -> anyhow::Result<()> {
+        let runtime_cd_audio = self
+            .devices()
+            .cdrom2()
+            .map(super::super::cdrom2::CdRom2::runtime_audio_config);
         let mut reader = StateReader::new(data);
         read_section(&mut reader, 256, "CPU", |section| {
-            restored.cpu.read_state(section, state_version)
+            self.cpu.read_state(section, state_version)
         })?;
-        if !restored.cpu.at_action_boundary() {
+        if !self.cpu.at_action_boundary() {
             bail!("PC Engine save-state is not at a CPU action boundary");
         }
         read_section(&mut reader, 256 * 1024, "bus", |section| {
-            restored.bus.read_state(section)
+            self.bus.read_state(section)
         })?;
         read_section(&mut reader, 80 * 1024, "VDC", |section| {
-            restored.bus.devices_mut().vdc_mut().read_state(section)
+            self.bus.devices_mut().vdc_mut().read_state(section)
         })?;
         if topology == PceHardwareTopology::SuperGrafx {
             read_section(&mut reader, 80 * 1024, "VDC2", |section| {
-                restored
-                    .bus
+                self.bus
                     .devices_mut()
                     .supergrafx_video_mut()
                     .expect("SuperGrafx state target has SuperGrafx devices")
@@ -169,8 +210,7 @@ impl PceMachine {
                     .read_state(section)
             })?;
             read_section(&mut reader, 64, "VPC", |section| {
-                restored
-                    .bus
+                self.bus
                     .devices_mut()
                     .supergrafx_video_mut()
                     .expect("SuperGrafx state target has SuperGrafx devices")
@@ -179,27 +219,21 @@ impl PceMachine {
             })?;
         }
         read_section(&mut reader, 2 * 1024, "VCE", |section| {
-            restored.bus.devices_mut().vce_mut().read_state(section)
+            self.bus.devices_mut().vce_mut().read_state(section)
         })?;
         read_section(&mut reader, MAX_PSG_STATE_SECTION_BYTES, "PSG", |section| {
-            restored.bus.devices_mut().psg_mut().read_state(section)
+            self.bus.devices_mut().psg_mut().read_state(section)
         })?;
         read_section(
             &mut reader,
             MAX_CONTROLLER_STATE_SECTION_BYTES,
             "controller",
-            |section| {
-                restored
-                    .bus
-                    .devices_mut()
-                    .controller_mut()
-                    .read_state(section)
-            },
+            |section| self.bus.devices_mut().controller_mut().read_state(section),
         )?;
         if is_cd {
             let (sample_rate, generation_enabled) =
                 runtime_cd_audio.expect("CD state target has a retained CD audio configuration");
-            let cdrom2 = restored
+            let cdrom2 = self
                 .bus
                 .devices_mut()
                 .cdrom2_mut()
@@ -219,8 +253,7 @@ impl PceMachine {
                 super::super::arcade_card::MAX_ARCADE_CARD_STATE_SECTION_BYTES,
                 "Arcade Card",
                 |section| {
-                    restored
-                        .bus
+                    self.bus
                         .devices_mut()
                         .arcade_card_mut()
                         .expect("Arcade Card state target has Arcade Card hardware")
@@ -229,46 +262,46 @@ impl PceMachine {
             )?;
         }
         read_section(&mut reader, 64, "machine timing", |section| {
-            restored.master_ticks = section.read_u64()?;
-            restored.vce_line_accumulator = section.read_u64()?;
-            if restored.vce_line_accumulator >= PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE {
+            self.master_ticks = section.read_u64()?;
+            self.vce_line_accumulator = section.read_u64()?;
+            if self.vce_line_accumulator >= PROVISIONAL_PCE_MASTER_TICKS_PER_VCE_LINE {
                 bail!(
                     "invalid machine VCE-line accumulator in save-state: {}",
-                    restored.vce_line_accumulator
+                    self.vce_line_accumulator
                 );
             }
-            restored.vdc_pixel_clock_remainder = section.read_u8()?;
-            let pixel_divisor = restored.bus.devices().vce().pixel_clock().divisor();
-            if restored.vdc_pixel_clock_remainder >= pixel_divisor {
+            self.vdc_pixel_clock_remainder = section.read_u8()?;
+            let pixel_divisor = self.bus.devices().vce().pixel_clock().divisor();
+            if self.vdc_pixel_clock_remainder >= pixel_divisor {
                 bail!(
                     "invalid machine VDC pixel-clock remainder in save-state: {}",
-                    restored.vdc_pixel_clock_remainder
+                    self.vdc_pixel_clock_remainder
                 );
             }
-            restored.vce_line_index = section.read_u16()?;
-            restored.vce_frame_length = match section.read_u8()? {
+            self.vce_line_index = section.read_u16()?;
+            self.vce_frame_length = match section.read_u8()? {
                 0 => VceFrameLength::Lines262,
                 1 => VceFrameLength::Lines263,
                 tag => bail!("invalid VCE frame-length tag in save-state: {tag}"),
             };
-            if restored.vce_line_index >= restored.vce_frame_length.scanlines() {
+            if self.vce_line_index >= self.vce_frame_length.scanlines() {
                 bail!(
                     "invalid machine VCE line index in save-state: {}",
-                    restored.vce_line_index
+                    self.vce_line_index
                 );
             }
-            restored.execution_state = match section.read_u8()? {
+            self.execution_state = match section.read_u8()? {
                 0 => PceExecutionState::Running,
                 1 => PceExecutionState::Suspended,
                 tag => bail!("invalid machine execution-state tag in save-state: {tag}"),
             };
-            restored.suspend_after_instruction = section.read_bool()?;
-            if restored.execution_state == PceExecutionState::Suspended
-                && restored.suspend_after_instruction
+            self.suspend_after_instruction = section.read_bool()?;
+            if self.execution_state == PceExecutionState::Suspended
+                && self.suspend_after_instruction
             {
                 bail!("suspended PC Engine save-state has a pending debug step");
             }
-            restored.trace_frame = if state_version >= 3 {
+            self.trace_frame = if state_version >= 3 {
                 section.read_u64()?
             } else {
                 0
@@ -279,28 +312,18 @@ impl PceMachine {
             &mut reader,
             super::super::vdc_video::PCE_ACTIVE_FRAME_RGBA_BYTES + 5 * 512,
             "front video frame",
-            |section| restored.front_video.read_state(section),
+            |section| self.front_video.read_state(section),
         )?;
         read_section(
             &mut reader,
             super::super::vdc_video::PCE_ACTIVE_FRAME_RGBA_BYTES + 5 * 512,
             "back video frame",
-            |section| restored.back_video.read_state(section),
+            |section| self.back_video.read_state(section),
         )?;
         if !reader.is_exhausted() {
             bail!("PC Engine save-state payload has unexpected trailing data");
         }
-        restored.validate_v1_encode_state()?;
-        restored.opcode_history.enabled = history_enabled;
-        restored.opcode_history.clear();
-        restored.instruction_trace.set_capacity(trace_capacity);
-        restored.instruction_trace.set_enabled(trace_enabled);
-        restored.instruction_trace.clear();
-        restored.audio_trace = std::mem::take(&mut self.audio_trace);
-        restored
-            .audio_trace
-            .invalidate(AudioTraceInvalidation::StateRestore);
-        *self = restored;
+        self.validate_v1_encode_state()?;
         Ok(())
     }
 }

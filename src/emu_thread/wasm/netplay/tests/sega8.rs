@@ -1,6 +1,4 @@
 use super::*;
-use zeff_nes_core::emulator::rollback::NesRollbackSession;
-use zeff_sega8_core::emulator::rollback::Sega8RollbackSession;
 
 pub(super) fn media() -> Vec<u8> {
     let mut rom = vec![0; 32768];
@@ -41,55 +39,6 @@ pub(super) fn backend(system: ActiveSystem, timing: u8, bytes: &[u8]) -> EmuBack
     )
     .unwrap()
     .backend
-}
-
-pub(super) enum ReferenceLease {
-    Nes(NesRollbackSession),
-    Sega8(Sega8RollbackSession),
-}
-
-impl ReferenceLease {
-    pub(super) fn begin(backend: &mut EmuBackend) -> Self {
-        match backend {
-            EmuBackend::Nes(nes) => Self::Nes(nes.emu.begin_rollback_session().unwrap()),
-            EmuBackend::Sega8(sega) => Self::Sega8(sega.emu.begin_rollback_session().unwrap()),
-            _ => unreachable!(),
-        }
-    }
-
-    pub(super) fn advance(&self, backend: &mut EmuBackend, ports: [u8; 2]) -> Vec<f32> {
-        match (self, backend) {
-            (Self::Nes(lease), EmuBackend::Nes(nes)) => {
-                lease.advance_frame(&mut nes.emu, ports).unwrap()
-            }
-            (Self::Sega8(lease), EmuBackend::Sega8(sega)) => {
-                lease.advance_frame(&mut sega.emu, ports).unwrap()
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
-pub(super) fn runtime(backend: &EmuBackend) -> Option<Vec<u8>> {
-    backend
-        .sega8()
-        .map(|sega| sega.emu.encode_rollback_runtime_state())
-}
-
-pub(super) fn persistent(backend: &EmuBackend) -> Vec<u8> {
-    match backend {
-        EmuBackend::Nes(nes) => nes.emu.dump_persistent_data().unwrap_or_default(),
-        EmuBackend::Sega8(sega) => sega.emu.bus().cartridge_ram_visible().to_vec(),
-        _ => unreachable!(),
-    }
-}
-
-pub(super) fn persistence_enabled(backend: &EmuBackend) -> bool {
-    match backend {
-        EmuBackend::Nes(nes) => nes.host_persistence_enabled(),
-        EmuBackend::Sega8(sega) => sega.host_persistence_enabled(),
-        _ => unreachable!(),
-    }
 }
 
 #[wasm_bindgen_test(async)]

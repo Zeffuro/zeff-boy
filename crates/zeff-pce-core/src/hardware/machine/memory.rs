@@ -37,6 +37,7 @@ impl PceMachine {
     pub(in super::super) fn system_card_ram_mut_for_test(
         &mut self,
     ) -> Option<&mut [u8; super::super::cartridge::SUPER_SYSTEM_CARD_RAM_LEN]> {
+        self.invalidate_rollback_session();
         self.bus.system_card_ram_mut()
     }
 
@@ -52,6 +53,7 @@ impl PceMachine {
 
     #[inline]
     pub fn mapped_work_ram_mut(&mut self) -> &mut [u8] {
+        self.invalidate_rollback_session();
         self.audio_trace
             .invalidate(AudioTraceInvalidation::ExternalMutation);
         self.bus.mapped_work_ram_mut()
@@ -83,6 +85,7 @@ impl PceMachine {
     }
 
     pub(crate) fn cheat_write_physical_ram(&mut self, address: u32, value: u8) {
+        self.invalidate_rollback_session();
         self.audio_trace
             .invalidate(AudioTraceInvalidation::ExternalMutation);
         match address {

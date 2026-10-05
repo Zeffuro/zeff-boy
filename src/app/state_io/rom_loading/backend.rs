@@ -6,6 +6,7 @@ pub(in crate::app::state_io) fn direct_netplay_media(system: ActiveSystem, path:
         ActiveSystem::Nes => "nes",
         ActiveSystem::MasterSystem => "sms",
         ActiveSystem::Sg1000 => "sg",
+        ActiveSystem::Pce => "pce",
         _ => return false,
     };
     path.extension()
@@ -27,6 +28,12 @@ impl App {
         {
             config.sega8_browser_source = path == rom_path
                 && matches!(system, ActiveSystem::MasterSystem | ActiveSystem::Sg1000)
+                && preloaded_data
+                    .as_ref()
+                    .is_some_and(|data| (1..=64 * 1024 * 1024).contains(&data.len()))
+                && direct_netplay_media(system, path);
+            config.pce_browser_source = path == rom_path
+                && system == ActiveSystem::Pce
                 && preloaded_data
                     .as_ref()
                     .is_some_and(|data| (1..=64 * 1024 * 1024).contains(&data.len()))

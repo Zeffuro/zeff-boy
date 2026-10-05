@@ -530,6 +530,10 @@ impl HuC6280Psg {
         }
     }
 
+    pub(in super::super) fn rollback_audio_is_drained(&self) -> bool {
+        self.audio_samples.is_empty()
+    }
+
     pub fn reset(&mut self) {
         let revision = self.revision;
         let sample_rate = self.sample_rate;

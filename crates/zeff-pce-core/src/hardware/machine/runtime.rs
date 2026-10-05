@@ -2,15 +2,21 @@ use super::*;
 
 impl PceMachine {
     pub fn step_boundary(&mut self) -> Result<PceMachineStep, PceMachineError> {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
         self.step_boundary_faulting()
     }
 
     pub fn run_until_frame(&mut self) -> Result<PceFrameRun, PceMachineError> {
-        if self.frame_plain_memory_lane_eligible() {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = false;
+        let result = if self.frame_plain_memory_lane_eligible() {
             self.run_until_frame_with_lane::<true>()
         } else {
             self.run_until_frame_with_lane::<false>()
-        }
+        };
+        self.rollback_frame_boundary = result.as_ref().is_ok_and(|run| run.frames_published() == 1);
+        result
     }
 
     fn run_until_frame_with_lane<const PLAIN_MEMORY: bool>(
@@ -94,6 +100,7 @@ impl PceMachine {
 
     #[inline]
     pub fn cpu_mut(&mut self) -> &mut HuC6280 {
+        self.invalidate_rollback_session();
         self.audio_trace
             .invalidate(AudioTraceInvalidation::ExternalMutation);
         &mut self.cpu
@@ -106,6 +113,7 @@ impl PceMachine {
 
     #[inline]
     pub fn devices_mut(&mut self) -> &mut PceDevices {
+        self.invalidate_rollback_session();
         self.audio_trace
             .invalidate(AudioTraceInvalidation::ExternalMutation);
         self.bus.devices_mut()
@@ -113,24 +121,29 @@ impl PceMachine {
 
     /// Input peripheral updates do not alter the captured PSG state or clock.
     pub fn controller_input_mut(&mut self) -> &mut ControllerPort {
+        self.invalidate_rollback_session();
         self.bus.devices_mut().controller_mut()
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        self.invalidate_rollback_session();
         self.bus.devices_mut().set_sample_rate(sample_rate);
     }
 
     pub fn set_sample_generation_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.bus
             .devices_mut()
             .set_sample_generation_enabled(enabled);
     }
 
     pub fn set_channel_mutes(&mut self, mutes: &[bool]) {
+        self.invalidate_rollback_session();
         self.bus.devices_mut().set_channel_mutes(mutes);
     }
 
     pub fn drain_audio_samples_into(&mut self, output: &mut Vec<f32>) {
+        self.invalidate_rollback_session();
         self.bus.devices_mut().drain_audio_samples_into(output);
     }
 
@@ -141,6 +154,7 @@ impl PceMachine {
 
     #[cfg(feature = "profiling")]
     pub fn reset_profiling(&mut self) {
+        self.invalidate_rollback_session();
         self.profiling = PceProfiling::default();
     }
 
@@ -189,6 +203,7 @@ impl PceMachine {
     }
 
     pub(super) fn step_boundary_faulting(&mut self) -> Result<PceMachineStep, PceMachineError> {
+        self.invalidate_rollback_session();
         self.step_boundary_faulting_with_plain_memory_lane::<false>()
     }
 
@@ -215,6 +230,7 @@ impl PceMachine {
         &mut self,
         execute: impl FnOnce(&mut HuC6280, &mut TimedMachineBus<'_>) -> Result<PceCpuAction, CpuTrap>,
     ) -> Result<PceMachineStep, PceMachineError> {
+        self.invalidate_rollback_session();
         self.step_boundary_faulting_with_lane(execute)
     }
 
@@ -439,6 +455,7 @@ impl PceMachine {
     pub(in super::super) fn force_unsupported_opcode_trap_after_fetch(
         &mut self,
     ) -> Result<PceMachineStep, PceMachineError> {
+        self.invalidate_rollback_session();
         self.step_boundary_faulting_with(|cpu, bus| {
             let pc = cpu.cpu().registers().pc;
             let opcode = bus.read(cpu.cpu().logical_to_physical(pc));
@@ -452,6 +469,7 @@ impl PceMachine {
         &mut self,
         master_ticks: u64,
     ) -> Result<(u64, u64), PceMachineError> {
+        self.invalidate_rollback_session();
         let (error, elapsed, lines, frames) = {
             let mut bus = TimedMachineBus::new(
                 &mut self.bus,
@@ -488,11 +506,13 @@ impl PceMachine {
 
     #[inline]
     pub(super) fn refresh_vdc_irq1(&mut self) {
+        self.invalidate_rollback_session();
         self.cpu.set_irq1_line(self.bus.devices().vdc_irq_level());
     }
 
     #[inline]
     pub(super) fn refresh_cdrom2_irq2(&mut self) {
+        self.invalidate_rollback_session();
         self.cpu
             .set_irq2_line(self.bus.devices().cdrom2_irq_level());
     }

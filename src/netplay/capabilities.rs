@@ -3,7 +3,7 @@ use crate::emu_backend::ActiveSystem;
 pub(crate) fn shared_console(system: ActiveSystem) -> bool {
     matches!(
         system,
-        ActiveSystem::Nes | ActiveSystem::MasterSystem | ActiveSystem::Sg1000
+        ActiveSystem::Nes | ActiveSystem::MasterSystem | ActiveSystem::Sg1000 | ActiveSystem::Pce
     )
 }
 
@@ -31,7 +31,10 @@ mod tests {
                 shared_console(spec.system),
                 matches!(
                     spec.system,
-                    ActiveSystem::Nes | ActiveSystem::MasterSystem | ActiveSystem::Sg1000
+                    ActiveSystem::Nes
+                        | ActiveSystem::MasterSystem
+                        | ActiveSystem::Sg1000
+                        | ActiveSystem::Pce
                 )
             );
             assert_eq!(

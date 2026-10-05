@@ -373,6 +373,8 @@ fn nes_mut(backend: &mut EmuBackend) -> Result<&mut crate::emu_backend::nes::Nes
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod pce_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod sega8_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

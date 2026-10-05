@@ -59,6 +59,7 @@ pub(super) fn synthetic_supergrafx_backend() -> PceBackend {
         memory_base_force_flush: false,
         host_persistence_enabled: true,
         tas_load_provenance: None,
+        netplay_load_provenance: None,
     };
     backend.invalidate_frame_output();
     backend

@@ -158,6 +158,7 @@ pub(crate) struct PceBackend {
     memory_base_force_flush: bool,
     host_persistence_enabled: bool,
     tas_load_provenance: Option<tas_provenance::PceTasLoadProvenance>,
+    netplay_load_provenance: Option<netplay::PceNetplayLoadProvenance>,
 }
 
 pub(crate) struct PceCdBackendConfig {
@@ -825,6 +826,10 @@ fn map_six_button_extra_buttons(buttons: u8) -> SixButtonExtraButtons {
     mapped
 }
 
+#[cfg(test)]
+pub(crate) use netplay::tests::netplay_fixture_hucard;
+pub(crate) mod netplay;
+pub(crate) use netplay::{PceBackendRollbackSession, PceBackendRollbackSnapshot};
 mod audio_trace;
 mod construction;
 mod controller;

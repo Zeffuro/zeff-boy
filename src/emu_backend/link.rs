@@ -192,9 +192,9 @@ impl EmuBackend {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn step_wonder_swan_frame_with_remote_link(
+    pub(crate) fn step_wonder_swan_frame_with_remote_link<T: crate::link::LinkTransport>(
         &mut self,
-        link: &mut crate::link::ws::WonderSwanRemoteLink<crate::link::transport::TcpLinkTransport>,
+        link: &mut crate::link::ws::WonderSwanRemoteLink<T>,
     ) -> Result<(), crate::link::LinkSessionError> {
         let Self::Ws(ws) = self else {
             return Err(crate::link::LinkSessionError::IncompatibleSystems);
@@ -218,11 +218,14 @@ impl EmuBackend {
             .cpu_cycles()
             .wrapping_add(u64::from(zeff_ws_core::hardware::constants::CYCLES_PER_FRAME) * 2);
         while !ws.emu.frame_ready() && ws.emu.cpu_cycles() < guard {
+            // Stop at the first instruction boundary beyond the peer's lead allowance.
+            if !link.can_advance(&ws.emu)
+                && !wait_for_wonder_swan_remote_link_window(&mut ws.emu, link)?
+            {
+                return Ok(());
+            }
             if ws.emu.cpu_cycles() >= next_link_poll_cycle {
                 link.poll_emulator(&mut ws.emu)?;
-                if !wait_for_wonder_swan_remote_link_window(&mut ws.emu, link)? {
-                    return Ok(());
-                }
                 next_link_poll_cycle = ws
                     .emu
                     .cpu_cycles()
@@ -240,7 +243,7 @@ impl EmuBackend {
                 ws.emu.step_instruction()
             };
             if fetched.is_none() && ws.emu.is_cpu_suspended() {
-                break;
+                return Ok(());
             }
         }
         ws.emu.finish_frame();
@@ -294,13 +297,16 @@ impl EmuBackend {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn wait_for_wonder_swan_remote_link_window(
+fn wait_for_wonder_swan_remote_link_window<T: crate::link::LinkTransport>(
     emu: &mut zeff_ws_core::emulator::Emulator,
-    link: &mut crate::link::ws::WonderSwanRemoteLink<crate::link::transport::TcpLinkTransport>,
+    link: &mut crate::link::ws::WonderSwanRemoteLink<T>,
 ) -> Result<bool, crate::link::LinkSessionError> {
     for _ in 0..WONDER_SWAN_REMOTE_LINK_WAIT_SPINS {
         link.poll_emulator(emu)?;
-        if !emu.is_cpu_suspended() {
+        if emu.is_cpu_suspended() {
+            return Ok(false);
+        }
+        if link.can_advance(emu) {
             return Ok(true);
         }
     }

@@ -80,6 +80,7 @@ impl PceBackend {
             memory_base_force_flush: false,
             host_persistence_enabled,
             tas_load_provenance: None,
+            netplay_load_provenance: None,
         };
         backend.invalidate_frame_output();
         backend.update_controller_mode(PceControllerMode::Automatic);
@@ -234,6 +235,7 @@ impl PceBackend {
             memory_base_force_flush: false,
             host_persistence_enabled,
             tas_load_provenance: None,
+            netplay_load_provenance: None,
         };
         backend.invalidate_frame_output();
         backend.update_controller_mode(PceControllerMode::Automatic);

@@ -12,6 +12,7 @@ use crate::emu_backend::{ActiveSystem, EmuBackend};
 
 const CHECKPOINT_ABI: &[u8] = b"ZeffNetplay-NES-replay-v10/mapper-runtime-v1";
 const CONFIG_DOMAIN: &[u8] = b"ZeffNetplay-App-native-NES/two-standard-controllers/delay0to8-predict8/runtime-snapshot2/hash60/48000/stereo-f32LE/discard-and-restore/v7";
+mod pce;
 mod sega8;
 
 fn session_config(
@@ -45,6 +46,9 @@ pub(crate) fn identity_with_delay(
     build: [u8; 32],
     delay: InputDelay,
 ) -> Result<Identity> {
+    if backend.pce().is_some() {
+        return pce::identity(backend, build, delay);
+    }
     if backend.sega8().is_some() {
         return sega8::identity(backend, build, delay);
     }
@@ -149,11 +153,22 @@ pub(crate) fn identity_with_delay(
     })
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub(crate) fn checkpoint(
     backend: &EmuBackend,
     frame: u64,
     audio: &[f32],
     config: [u8; 32],
+) -> Result<Message> {
+    checkpoint_with_snapshot(backend, frame, audio, config, None)
+}
+
+pub(super) fn checkpoint_with_snapshot(
+    backend: &EmuBackend,
+    frame: u64,
+    audio: &[f32],
+    config: [u8; 32],
+    snapshot: Option<&crate::emu_backend::pce::PceBackendRollbackSnapshot>,
 ) -> Result<Message> {
     ensure!(backend.frame_count() == frame, "netplay core frame drift");
     let mut audio_hash = Sha256::new();
@@ -162,7 +177,7 @@ pub(crate) fn checkpoint(
     }
     Ok(Message::Checkpoint {
         frame,
-        logical: logical_hash(backend, frame, config)?,
+        logical: logical_hash_with_snapshot(backend, frame, config, snapshot)?,
         video: Sha256::digest(backend.framebuffer()).into(),
         audio: audio_hash.finalize().into(),
         persistent: persistent_hash(backend)?,
@@ -170,18 +185,38 @@ pub(crate) fn checkpoint(
 }
 
 fn logical_hash(backend: &EmuBackend, frame: u64, config: [u8; 32]) -> Result<[u8; 32]> {
+    logical_hash_with_snapshot(backend, frame, config, None)
+}
+
+fn logical_hash_with_snapshot(
+    backend: &EmuBackend,
+    frame: u64,
+    config: [u8; 32],
+    snapshot: Option<&crate::emu_backend::pce::PceBackendRollbackSnapshot>,
+) -> Result<[u8; 32]> {
     let mut digest = Sha256::new();
-    digest.update(if backend.sega8().is_some() {
-        b"ZeffNetplay-Sega8-runtime-v1".as_slice()
-    } else {
-        CHECKPOINT_ABI
+    digest.update(match backend {
+        EmuBackend::Sega8(_) => b"ZeffNetplay-Sega8-runtime-v1".as_slice(),
+        EmuBackend::Pce(_) => b"ZeffNetplay-PCE-runtime-v1".as_slice(),
+        _ => CHECKPOINT_ABI,
     });
     digest.update(config);
     digest.update(frame.to_le_bytes());
-    digest.update(backend.encode_replay_hash_state_bytes()?);
+    if let Some(snapshot) = snapshot {
+        ensure!(
+            backend.pce().is_some() && snapshot.frame() == frame,
+            "checkpoint snapshot differs"
+        );
+        let (header, state) = snapshot.native_state_parts();
+        digest.update(header);
+        digest.update(state);
+    } else {
+        digest.update(backend.encode_replay_hash_state_bytes()?);
+    }
     digest.update(match backend {
         EmuBackend::Nes(nes) => nes.emu.encode_rollback_runtime_state(),
         EmuBackend::Sega8(sega) => sega.emu.encode_rollback_runtime_state(),
+        EmuBackend::Pce(pce) => pce.netplay_runtime_state_bytes(),
         _ => anyhow::bail!("unsupported netplay core"),
     });
     Ok(digest.finalize().into())
@@ -191,6 +226,7 @@ pub(super) fn persistent_hash(backend: &EmuBackend) -> Result<[u8; 32]> {
     let data = match backend {
         EmuBackend::Nes(nes) => nes.emu.dump_persistent_data(),
         EmuBackend::Sega8(sega) => Some(sega.emu.bus().cartridge_ram_visible().to_vec()),
+        EmuBackend::Pce(pce) => Some(pce.netplay_persistent_state_bytes()),
         _ => anyhow::bail!("unsupported netplay core"),
     };
     Ok(Sha256::digest(data.unwrap_or_default()).into())

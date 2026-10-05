@@ -36,6 +36,7 @@ mod audio_trace;
 mod construction;
 mod debug;
 mod memory;
+pub mod rollback;
 mod runtime;
 mod state;
 mod timed_bus;
@@ -404,6 +405,9 @@ impl Error for PceMachineError {}
 
 #[derive(Debug)]
 pub struct PceMachine {
+    rollback_owner: std::sync::Weak<rollback::RollbackOwner>,
+    rollback_machine: std::sync::Arc<()>,
+    rollback_frame_boundary: bool,
     cpu: HuC6280,
     bus: BaseBus<PceDevices>,
     front_video: PceActiveOnlyVideoFrame,
@@ -437,6 +441,7 @@ impl CheatByteTarget<u16> for PceMachine {
     }
 
     fn cheat_write8(&mut self, address: u16, value: u8) {
+        self.invalidate_rollback_session();
         self.audio_trace
             .invalidate(AudioTraceInvalidation::ExternalMutation);
         self.cpu.debug_write_logical(&mut self.bus, address, value);

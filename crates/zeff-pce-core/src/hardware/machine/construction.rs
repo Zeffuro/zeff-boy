@@ -167,6 +167,9 @@ impl PceMachine {
 
     fn finish_new(bus: BaseBus<PceDevices>) -> Self {
         let mut machine = Self {
+            rollback_owner: std::sync::Weak::new(),
+            rollback_machine: std::sync::Arc::new(()),
+            rollback_frame_boundary: true,
             cpu: HuC6280::new(),
             bus,
             front_video: PceActiveOnlyVideoFrame::new(),
@@ -221,6 +224,8 @@ impl PceMachine {
     }
 
     pub fn reset(&mut self) {
+        self.invalidate_rollback_session();
+        self.rollback_frame_boundary = true;
         self.audio_trace.invalidate(AudioTraceInvalidation::Reset);
         self.bus.reset_hucard();
         self.bus.devices_mut().reset();

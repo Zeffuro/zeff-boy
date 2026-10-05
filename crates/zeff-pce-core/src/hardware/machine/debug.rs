@@ -35,6 +35,7 @@ impl PceMachine {
     }
 
     pub fn debug_continue(&mut self) {
+        self.invalidate_rollback_session();
         self.skip_breakpoint_once = self.debug.hit_breakpoint.is_some();
         self.debug.clear_hits();
         self.execution_state = PceExecutionState::Running;
@@ -42,6 +43,7 @@ impl PceMachine {
     }
 
     pub fn debug_step(&mut self) {
+        self.invalidate_rollback_session();
         self.debug.clear_hits();
         self.execution_state = PceExecutionState::Running;
         self.suspend_after_instruction = true;
@@ -49,6 +51,7 @@ impl PceMachine {
     }
 
     pub fn debug_suspend(&mut self) {
+        self.invalidate_rollback_session();
         self.execution_state = PceExecutionState::Suspended;
         self.suspend_after_instruction = false;
         self.skip_breakpoint_once = false;
@@ -59,6 +62,7 @@ impl PceMachine {
         target: u16,
         instruction_budget: u64,
     ) -> Result<u64, String> {
+        self.invalidate_rollback_session();
         if !self.is_cpu_suspended() {
             return Err("CPU must be suspended".to_owned());
         }
@@ -124,6 +128,7 @@ impl PceMachine {
     }
 
     pub fn set_opcode_history_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.opcode_history.enabled = enabled;
     }
 
@@ -136,18 +141,22 @@ impl PceMachine {
     }
 
     pub fn set_instruction_trace_enabled(&mut self, enabled: bool) {
+        self.invalidate_rollback_session();
         self.instruction_trace.set_enabled(enabled);
     }
 
     pub fn set_instruction_trace_capacity(&mut self, capacity: usize) {
+        self.invalidate_rollback_session();
         self.instruction_trace.set_capacity(capacity);
     }
 
     pub fn clear_instruction_trace(&mut self) {
+        self.invalidate_rollback_session();
         self.instruction_trace.clear();
     }
 
     pub fn set_event_breakpoint(&mut self, event: DebugEvent, enabled: bool) {
+        self.invalidate_rollback_session();
         if matches!(event, DebugEvent::Interrupt | DebugEvent::Dma) {
             self.debug.set_event_breakpoint(event, enabled);
         }
@@ -162,23 +171,28 @@ impl PceMachine {
     }
 
     pub fn add_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.add_breakpoint(Address::from(addr));
     }
 
     pub fn add_one_shot_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.add_one_shot_breakpoint(Address::from(addr));
     }
 
     pub fn add_breakpoint_after(&mut self, addr: u16, target_hits: u64) {
+        self.invalidate_rollback_session();
         self.debug
             .add_breakpoint_after(Address::from(addr), target_hits);
     }
 
     pub fn remove_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.remove_breakpoint(Address::from(addr));
     }
 
     pub fn toggle_breakpoint(&mut self, addr: u16) {
+        self.invalidate_rollback_session();
         self.debug.toggle_breakpoint(Address::from(addr));
     }
 
@@ -197,11 +211,13 @@ impl PceMachine {
     }
 
     pub fn add_watchpoint_range(&mut self, start: u16, end: u16, watch_type: WatchType) {
+        self.invalidate_rollback_session();
         self.debug
             .add_watchpoint_range(Address::from(start), Address::from(end), watch_type);
     }
 
     pub fn remove_watchpoint(&mut self, start: u16, end: u16, watch_type: WatchType) {
+        self.invalidate_rollback_session();
         self.debug
             .remove_watchpoint(Address::from(start), Address::from(end), watch_type);
     }
@@ -230,6 +246,7 @@ impl PceMachine {
     }
 
     pub fn debug_write_cpu8(&mut self, logical_addr: u16, value: u8) {
+        self.invalidate_rollback_session();
         self.audio_trace
             .invalidate(AudioTraceInvalidation::ExternalMutation);
         let old_value = self.debug_peek_cpu8(logical_addr);

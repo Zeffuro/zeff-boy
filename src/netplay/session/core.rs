@@ -1,26 +1,37 @@
 use super::*;
+use crate::emu_backend::pce::{PceBackendRollbackSession, PceBackendRollbackSnapshot};
 use zeff_sega8_core::emulator::rollback::{Sega8RollbackSession, Sega8RollbackSnapshot};
 
 pub(super) enum Lease {
     Nes(NesRollbackSession),
     Sega8(Sega8RollbackSession),
+    Pce(PceBackendRollbackSession),
 }
 pub(super) enum Snapshot {
     Nes(Box<NesRollbackSnapshot>),
     Sega8(Box<Sega8RollbackSnapshot>),
+    Pce(Box<PceBackendRollbackSnapshot>),
 }
 
 impl Snapshot {
+    pub(super) fn pce(&self) -> Option<&PceBackendRollbackSnapshot> {
+        match self {
+            Self::Pce(state) => Some(state),
+            _ => None,
+        }
+    }
     pub(super) fn frame(&self) -> u64 {
         match self {
             Self::Nes(state) => state.frame(),
             Self::Sega8(state) => state.frame(),
+            Self::Pce(state) => state.frame(),
         }
     }
     pub(super) fn retained_bytes(&self) -> usize {
         match self {
             Self::Nes(state) => state.retained_bytes(),
             Self::Sega8(state) => state.retained_bytes(),
+            Self::Pce(state) => state.retained_bytes(),
         }
     }
 }
@@ -30,11 +41,15 @@ impl Lease {
         match backend {
             EmuBackend::Nes(nes) => Ok(Self::Nes(nes.emu.begin_rollback_session()?)),
             EmuBackend::Sega8(sega) => Ok(Self::Sega8(sega.emu.begin_rollback_session()?)),
+            EmuBackend::Pce(pce) => Ok(Self::Pce(pce.begin_netplay_rollback()?)),
             _ => anyhow::bail!("unsupported netplay core"),
         }
     }
     pub(super) fn capture(&self, backend: &EmuBackend) -> Result<Snapshot> {
         match (self, backend) {
+            (Self::Pce(lease), EmuBackend::Pce(pce)) => {
+                Ok(Snapshot::Pce(Box::new(lease.capture(pce)?)))
+            }
             (Self::Nes(lease), EmuBackend::Nes(nes)) => {
                 Ok(Snapshot::Nes(Box::new(lease.capture(&nes.emu)?)))
             }
@@ -46,6 +61,7 @@ impl Lease {
     }
     pub(super) fn advance(&self, backend: &mut EmuBackend, ports: [u8; 2]) -> Result<Vec<f32>> {
         match (self, backend) {
+            (Self::Pce(lease), EmuBackend::Pce(pce)) => lease.advance_frame(pce, ports),
             (Self::Nes(lease), EmuBackend::Nes(nes)) => lease.advance_frame(&mut nes.emu, ports),
             (Self::Sega8(lease), EmuBackend::Sega8(sega)) => {
                 lease.advance_frame(&mut sega.emu, ports)
@@ -55,6 +71,9 @@ impl Lease {
     }
     pub(super) fn restore(&self, backend: &mut EmuBackend, state: &Snapshot) -> Result<()> {
         match (self, backend, state) {
+            (Self::Pce(lease), EmuBackend::Pce(pce), Snapshot::Pce(state)) => {
+                lease.restore(pce, state)
+            }
             (Self::Nes(lease), EmuBackend::Nes(nes), Snapshot::Nes(state)) => {
                 lease.restore(&mut nes.emu, state)
             }
@@ -71,6 +90,9 @@ impl Lease {
         bytes: Vec<u8>,
     ) -> Result<()> {
         match (self, &mut *backend, state) {
+            (Self::Pce(lease), EmuBackend::Pce(pce), Snapshot::Pce(state)) => {
+                lease.restore_after_session(pce, state, &bytes)
+            }
             (Self::Sega8(lease), EmuBackend::Sega8(sega), Snapshot::Sega8(state)) => {
                 lease.restore_after_session(&mut sega.emu, state, &bytes)
             }
@@ -89,6 +111,13 @@ impl Lease {
 
 pub(super) fn persistence(backend: &mut EmuBackend, enabled: Option<bool>) -> Result<bool> {
     match backend {
+        EmuBackend::Pce(pce) => {
+            let previous = pce.host_persistence_enabled();
+            if let Some(enabled) = enabled {
+                pce.set_host_persistence_enabled(enabled);
+            }
+            Ok(previous)
+        }
         EmuBackend::Nes(nes) => {
             let previous = nes.host_persistence_enabled();
             if let Some(enabled) = enabled {

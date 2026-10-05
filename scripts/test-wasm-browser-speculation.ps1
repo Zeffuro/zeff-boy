@@ -132,13 +132,18 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "Browser transport tests failed" }
         }
         $effectiveTestFilter = if ($Netplay) { "browser_netplay_" } else { $TestFilter }
-        & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $effectiveTestFilter
-        if ($LASTEXITCODE -ne 0) {
-            throw "browser WASM speculation test failed with exit code $LASTEXITCODE"
-        }
         if ($Netplay) {
+            & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $effectiveTestFilter -- --skip browser_netplay_pce_
+            if ($LASTEXITCODE -ne 0) { throw "Browser netplay tests failed" }
+            foreach ($coreFilter in @("browser_netplay_pce_base_", "browser_netplay_pce_supergrafx_")) {
+                & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $coreFilter
+                if ($LASTEXITCODE -ne 0) { throw "Browser PC Engine tests failed" }
+            }
             & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests native_wasm_nes_portability_receipts
             if ($LASTEXITCODE -ne 0) { throw "Native/browser portability tests failed" }
+        } else {
+            & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $effectiveTestFilter
+            if ($LASTEXITCODE -ne 0) { throw "Browser WASM speculation tests failed" }
         }
     } finally {
         $env:CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER = $previousRunner

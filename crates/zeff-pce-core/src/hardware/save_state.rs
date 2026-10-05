@@ -63,6 +63,7 @@ pub fn encode_state_into(machine: &PceMachine, output: &mut Vec<u8>) -> anyhow::
 }
 
 pub fn decode_state(machine: &mut PceMachine, data: &[u8]) -> anyhow::Result<()> {
+    machine.invalidate_rollback_session();
     machine.validate_v1_state_target()?;
 
     let mut reader = StateReader::new(data);

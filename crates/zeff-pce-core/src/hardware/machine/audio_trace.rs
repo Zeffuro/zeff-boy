@@ -17,6 +17,7 @@ use zeff_emu_common::time::ClockRate;
 
 impl PceMachine {
     pub fn reset_and_begin_audio_trace(&mut self, max_events: usize) -> anyhow::Result<()> {
+        self.invalidate_rollback_session();
         anyhow::ensure!(
             self.devices().cdrom2().is_none() && self.devices().arcade_card().is_none(),
             "PC Engine audio tracing requires HuCard media without CD hardware"
@@ -36,6 +37,7 @@ impl PceMachine {
     }
 
     pub fn finish_audio_trace(&mut self) -> Option<Huc6280AudioTrace> {
+        self.invalidate_rollback_session();
         if self.faulted {
             self.audio_trace
                 .invalidate(AudioTraceInvalidation::ExecutionFault);

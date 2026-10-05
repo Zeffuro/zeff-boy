@@ -16,6 +16,8 @@ use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_
 use crate::netplay::{Start, Transport, identity};
 use crate::platform::Instant;
 
+mod pce;
+mod reference;
 mod sega8;
 
 #[wasm_bindgen::prelude::wasm_bindgen(
@@ -182,22 +184,20 @@ impl Observation {
 }
 
 async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: bool) {
-    let bytes = if system == ActiveSystem::Nes {
-        media(timing)
-    } else {
-        sega8::media()
+    let bytes = match system {
+        ActiveSystem::Nes => media(timing),
+        ActiveSystem::Pce => pce::media(),
+        _ => sega8::media(),
     };
     let persistent = if system == ActiveSystem::Nes {
         Some(seed(&bytes).await)
     } else {
         None
     };
-    let loaded = || {
-        if system == ActiveSystem::Nes {
-            backend(&bytes)
-        } else {
-            sega8::backend(system, timing, &bytes)
-        }
+    let loaded = || match system {
+        ActiveSystem::Nes => backend(&bytes),
+        ActiveSystem::Pce => pce::backend(timing, &bytes),
+        _ => sega8::backend(system, timing, &bytes),
     };
     let first = loaded();
     if let Some(persistent) = &persistent {
@@ -207,8 +207,9 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
         );
     }
     let original = first.encode_state_bytes().unwrap();
-    let original_runtime = sega8::runtime(&first);
-    let original_persistent = sega8::persistent(&first);
+    let original_runtime = reference::runtime(&first);
+    let original_persistent = reference::persistent(&first);
+    let original_publication = reference::persistence_enabled(&first);
     let delay = InputDelay::new(frames_delay).unwrap();
     let id = identity::identity_with_delay(&first, [7; 32], delay).unwrap();
     let [host, guest] = peers(&first, delay).await;
@@ -303,11 +304,18 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
                 observed[index].pending = true;
             }
         }
-        assert!(started.elapsed() < Duration::from_secs(15));
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "{system:?}/{timing}/delay{frames_delay}/host-first{host_first}: presented={:?}, confirmed={:?}, pending={:?}, elapsed={:?}",
+            observed.each_ref().map(|peer| peer.presented),
+            observed.each_ref().map(|peer| peer.frames.len()),
+            observed.each_ref().map(|peer| peer.pending),
+            started.elapsed()
+        );
         netplay_test_yield().await;
     }
     let mut reference = loaded();
-    let lease = sega8::ReferenceLease::begin(&mut reference);
+    let lease = reference::ReferenceLease::begin(&mut reference);
     for frame in 0..72u64 {
         let ports = if frame < frames_delay {
             [0, 0]
@@ -342,7 +350,7 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
                 .any(|(_, _, audio)| audio.iter().any(|sample| *sample != 0.0))
         );
         if system == ActiveSystem::MasterSystem {
-            assert_ne!(sega8::persistent(&reference), original_persistent);
+            assert_ne!(reference::persistent(&reference), original_persistent);
         }
     }
     threads[0].send(EmuCommand::SetNetplayPaused(true));
@@ -398,10 +406,13 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
         assert!(observed[index].stopped);
         let inner = threads[index].inner.borrow();
         assert_eq!(inner.backend.encode_state_bytes().unwrap(), original);
-        assert_eq!(sega8::runtime(&inner.backend), original_runtime);
-        assert_eq!(sega8::persistent(&inner.backend), original_persistent);
+        assert_eq!(reference::runtime(&inner.backend), original_runtime);
+        assert_eq!(reference::persistent(&inner.backend), original_persistent);
         assert!(inner.pending_storage.is_none());
-        assert!(sega8::persistence_enabled(&inner.backend));
+        assert_eq!(
+            reference::persistence_enabled(&inner.backend),
+            original_publication
+        );
     }
     if let Some(persistent) = persistent {
         assert_eq!(

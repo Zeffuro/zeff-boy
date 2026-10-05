@@ -26,6 +26,7 @@ impl App {
         let mut config = self.backend_load_config(system);
         config.initial_input = None;
         config.sample_rate = Some(48_000);
+        config.pce_netplay = system == crate::emu_backend::ActiveSystem::Pce;
         let (backend, _) = self.init_backend(system, path, path, Some(bytes.to_vec()), config)?;
         crate::netplay::identity::identity_with_delay(&backend, build, delay)?;
         Ok(backend)

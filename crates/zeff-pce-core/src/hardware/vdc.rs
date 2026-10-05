@@ -143,7 +143,7 @@ impl VdcRegister {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct HuC6270 {
     vram: Box<[u16; VDC_VRAM_WORDS]>,
     satb: [u16; VDC_SATB_WORDS],

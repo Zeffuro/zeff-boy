@@ -15,21 +15,22 @@ impl Session {
         );
         let audio = self.lease.advance(backend, input.ports)?;
         let completed = input.frame.checked_add(1).context("frame overflow")?;
-        let checkpoint = if self.verification || completed % checks::HASH_INTERVAL == 0 {
-            Some(identity::checkpoint(
-                backend,
-                completed,
-                &audio,
-                self.config,
-            )?)
-        } else {
-            None
-        };
         let snapshot = self.lease.capture(backend)?;
         ensure!(
             snapshot.frame() == completed,
             "rollback snapshot frame differs"
         );
+        let checkpoint = if self.verification || completed % checks::HASH_INTERVAL == 0 {
+            Some(identity::checkpoint_with_snapshot(
+                backend,
+                completed,
+                &audio,
+                self.config,
+                snapshot.pce(),
+            )?)
+        } else {
+            None
+        };
         self.snapshots.insert(completed, snapshot);
         self.outputs.insert(
             completed,

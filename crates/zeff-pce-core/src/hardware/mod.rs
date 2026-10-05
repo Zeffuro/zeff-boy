@@ -11,6 +11,7 @@ pub mod cpu;
 mod host_video;
 mod hucard_host;
 mod machine;
+pub use machine::rollback::{PceRollbackSession, PceRollbackSnapshot};
 mod pce_devices;
 #[cfg(feature = "profiling")]
 mod profiling;
