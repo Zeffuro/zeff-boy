@@ -1,7 +1,7 @@
 # Netplay lobby
 
 Two-player signaling only. Gameplay goes directly between peers.
-Native app: **Tools > Netplay > Lobby**. Browser gameplay is pending.
+Open **Netplay** on the quickbar and choose **Lobby**. Native and browser gameplay are supported.
 
 Deploy `Zeffuro/zeff-boy` branch `master` in Coolify using Docker Compose
 and `/infra/lobby/compose.yml`. Route your HTTPS domain to port `8080`.

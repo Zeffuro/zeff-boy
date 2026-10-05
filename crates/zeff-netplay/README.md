@@ -1,9 +1,9 @@
 # Netplay
 
-Open **Netplay** on the quickbar. NES, Master System and SG-1000 use a shared console with rollback.
-Game Boy and WonderSwan use separate devices connected by a TCP link.
+Open **Netplay** on the quickbar. NES, Master System, SG-1000 and PC Engine use a shared console.
+WonderSwan uses two linked machines with rollback. Game Boy has a direct TCP cable connection.
 
-Load the same unmodified `.nes`, `.sms` or `.sg` cartridge on both devices.
+Load the same unmodified `.nes`, `.sms`, `.sg`, `.pce`, `.ws` or `.wsc` ROM, directly or from a ZIP.
 Use matching builds and 48 kHz audio. NES also accepts qualified pairs.
 Host, copy the invitation, then join from the other device.
 Both players use their local Player 1 controls.
