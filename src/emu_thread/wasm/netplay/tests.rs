@@ -20,6 +20,32 @@ mod pce;
 mod reference;
 mod sega8;
 
+fn source(
+    bytes: &[u8],
+    name: &str,
+    zipped: bool,
+) -> (std::path::PathBuf, std::path::PathBuf, Vec<u8>) {
+    let path = std::path::PathBuf::from(name);
+    if !zipped {
+        return (path.clone(), path, bytes.to_vec());
+    }
+    use std::io::Write as _;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    writer
+        .start_file(
+            format!("different-folder/{name}"),
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    writer.write_all(bytes).unwrap();
+    let archive = writer.finish().unwrap().into_inner();
+    let source = path.with_extension("zip");
+    let (rom, extracted) =
+        crate::app::extract_rom_from_zip_bytes(&archive, source.to_str().unwrap()).unwrap();
+    assert_eq!(extracted, bytes);
+    (source, rom, extracted)
+}
+
 #[wasm_bindgen::prelude::wasm_bindgen(
     inline_js = "export function netplay_test_yield() { return new Promise(resolve => setTimeout(resolve, 1)); }"
 )]
@@ -43,20 +69,63 @@ fn media(timing: u8) -> Vec<u8> {
 }
 
 fn backend(bytes: &[u8]) -> EmuBackend {
-    let path = Path::new("browser-netplay-proof.nes");
+    nes_backend(bytes, false)
+}
+
+fn nes_backend(bytes: &[u8], zipped: bool) -> EmuBackend {
+    let (path, rom, bytes) = source(bytes, "browser-netplay-proof.nes", zipped);
     load_backend_from_rom_source(
         ActiveSystem::Nes,
-        path,
-        path,
-        Some(bytes.to_vec()),
+        &path,
+        &rom,
+        Some(bytes.clone()),
         BackendLoadConfig {
             sample_rate: Some(48_000),
             initial_input: None,
+            netplay_browser_media: crate::emu_backend::loader::NetplayRomMedia::browser(&bytes),
             ..Default::default()
         },
     )
     .unwrap()
     .backend
+}
+
+#[wasm_bindgen_test]
+fn browser_netplay_rejects_missing_or_mismatched_owned_media_witness() {
+    for system in [
+        ActiveSystem::Nes,
+        ActiveSystem::MasterSystem,
+        ActiveSystem::Sg1000,
+        ActiveSystem::Pce,
+    ] {
+        let (name, bytes) = match system {
+            ActiveSystem::Nes => ("proof.nes", media(0)),
+            ActiveSystem::Pce => ("proof.pce", pce::media()),
+            ActiveSystem::MasterSystem => ("proof.sms", sega8::media()),
+            _ => ("proof.sg", sega8::media()),
+        };
+        let (source, rom, bytes) = source(&bytes, name, true);
+        for witness in [
+            None,
+            crate::emu_backend::loader::NetplayRomMedia::browser(&[1]),
+        ] {
+            let backend = load_backend_from_rom_source(
+                system,
+                &source,
+                &rom,
+                Some(bytes.clone()),
+                BackendLoadConfig {
+                    sample_rate: Some(48_000),
+                    pce_netplay: system == ActiveSystem::Pce,
+                    netplay_browser_media: witness,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .backend;
+            assert!(identity::identity(&backend, [7; 32]).is_err());
+        }
+    }
 }
 
 async fn seed(bytes: &[u8]) -> Vec<u8> {
@@ -215,7 +284,14 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
     let [host, guest] = peers(&first, delay).await;
     let threads = [
         EmuThread::spawn(first, false),
-        EmuThread::spawn(loaded(), false),
+        EmuThread::spawn(
+            match system {
+                ActiveSystem::Nes => nes_backend(&bytes, true),
+                ActiveSystem::Pce => pce::zip_backend(timing, &bytes),
+                _ => sega8::zip_backend(system, timing, &bytes),
+            },
+            false,
+        ),
     ];
     let mut observed = [Observation::default(), Observation::default()];
     let mut starts = [

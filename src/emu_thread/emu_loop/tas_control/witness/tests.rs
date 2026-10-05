@@ -8,6 +8,7 @@ fn valid_facts() -> DirectNesProfileFacts {
         system: ActiveSystem::Nes,
         identity_metadata_matches: true,
         provenance: Some(NesTasLoadProvenance {
+            netplay_media: None,
             raw_source_media_sha256: [7; 32],
             raw_source_media_len: 16 + 0x4000 + 0x2000,
             initial_persistent_sha256: zeff_firmware::sha256_bytes(&[]),

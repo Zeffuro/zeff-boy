@@ -61,25 +61,18 @@ pub(crate) fn identity_with_delay(
         .nes_tas_load_provenance()
         .context("netplay requires loader-owned media provenance")?;
     let load = provenance.load;
-    #[cfg(not(target_arch = "wasm32"))]
-    ensure!(load.direct_nes_file, "netplay requires a direct .nes file");
-    #[cfg(target_arch = "wasm32")]
-    ensure!(
-        load.direct_browser_nes,
-        "load a direct .nes file for browser netplay"
-    );
+    let media = load
+        .netplay_media
+        .context("netplay requires authenticated ROM media")?;
     ensure!(
         !load.any_mod_enabled && !load.any_mod_applied,
         "netplay does not support ROM modifications"
     );
     ensure!(
-        load.raw_source_media_sha256 == backend.rom_hash(),
+        media.hash == backend.rom_hash(),
         "netplay source and effective media differ"
     );
-    ensure!(
-        load.raw_source_media_len >= 16,
-        "invalid netplay media length"
-    );
+    ensure!(media.len >= 16, "invalid netplay media length");
     ensure!(
         load.persistent_load != NesPersistentLoadOutcome::Unknown,
         "netplay persistent load outcome is unknown"
@@ -110,11 +103,7 @@ pub(crate) fn identity_with_delay(
         nes.has_standard_console_hardware(),
         "unsupported NES console"
     );
-    let config = session_config(
-        nes.emu.resolved_timing_mode(),
-        load.sync_config_sha256,
-        delay,
-    )?;
+    let config = session_config(nes.emu.resolved_timing_mode(), media.policy, delay)?;
     ensure!(
         nes.emu.has_full_audio_output_at_rate(48_000),
         "netplay requires full 48000 Hz audio generation"
@@ -143,9 +132,9 @@ pub(crate) fn identity_with_delay(
     Ok(Identity {
         build,
         build_info: super::compatibility::describe(backend, false),
-        source: load.raw_source_media_sha256,
+        source: media.hash,
         effective: backend.rom_hash(),
-        media_len: load.raw_source_media_len,
+        media_len: media.len,
         config,
         initial: logical_hash(backend, 0, config)?,
         persistent,
@@ -234,3 +223,5 @@ pub(super) fn persistent_hash(backend: &EmuBackend) -> Result<[u8; 32]> {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod zip_tests;

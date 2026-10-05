@@ -8,26 +8,30 @@ impl App {
         &self,
         delay: InputDelay,
     ) -> Result<EmuBackend> {
-        let (path, bytes) = self
+        let (path, rom, bytes) = self
             .browser_netplay_media
             .as_ref()
-            .context("Load a direct cartridge file first")?;
+            .context("Load a supported cartridge file or ZIP first")?;
         ensure!(
             self.rom_info.source_path.as_ref() == Some(path)
-                && self.rom_info.rom_path.as_ref() == Some(path),
+                && self.rom_info.rom_path.as_ref() == Some(rom),
             "Cartridge source changed"
         );
         let build = crate::netplay::connect::executable_build()?;
         let system = self.active_system;
         ensure!(
-            super::direct_netplay_media(system, path),
+            super::direct_netplay_media(system, rom),
             "Unsupported netplay cartridge"
         );
         let mut config = self.backend_load_config(system);
         config.initial_input = None;
         config.sample_rate = Some(48_000);
         config.pce_netplay = system == crate::emu_backend::ActiveSystem::Pce;
-        let (backend, _) = self.init_backend(system, path, path, Some(bytes.to_vec()), config)?;
+        let (backend, _) = self.init_backend(system, path, rom, Some(bytes.to_vec()), config)?;
+        ensure!(
+            Some(backend.rom_hash()) == self.rom_info.rom_hash,
+            "Cartridge contents changed"
+        );
         crate::netplay::identity::identity_with_delay(&backend, build, delay)?;
         Ok(backend)
     }

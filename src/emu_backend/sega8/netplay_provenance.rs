@@ -4,7 +4,7 @@ use super::Sega8Backend;
 pub(crate) struct Sega8NetplayLoadProvenance {
     pub(crate) source: [u8; 32],
     pub(crate) source_len: u64,
-    pub(crate) direct_source: bool,
+    pub(crate) authenticated_source: bool,
     pub(crate) unmodified: bool,
     pub(crate) neutral_input: bool,
     pub(crate) state: [u8; 32],
@@ -18,7 +18,7 @@ impl Sega8Backend {
         &mut self,
         source: [u8; 32],
         source_len: u64,
-        direct_source: bool,
+        authenticated_source: bool,
         unmodified: bool,
         neutral_input: bool,
     ) -> anyhow::Result<()> {
@@ -35,7 +35,7 @@ impl Sega8Backend {
         self.netplay_load_provenance = Some(Sega8NetplayLoadProvenance {
             source,
             source_len,
-            direct_source: direct_source
+            authenticated_source: authenticated_source
                 && extension.is_some_and(|ext| ext.eq_ignore_ascii_case(expected)),
             unmodified,
             neutral_input,

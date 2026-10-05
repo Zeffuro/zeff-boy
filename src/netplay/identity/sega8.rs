@@ -20,8 +20,8 @@ pub(super) fn identity(
         .netplay_load_provenance()
         .context("netplay requires loader-owned media provenance")?;
     ensure!(
-        load.direct_source && load.unmodified,
-        "netplay requires a direct unmodified Sega ROM"
+        load.authenticated_source && load.unmodified,
+        "netplay requires an authenticated unmodified Sega ROM"
     );
     ensure!(
         load.source == backend.rom_hash() && load.source_len != 0,

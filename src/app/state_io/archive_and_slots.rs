@@ -53,10 +53,60 @@ pub(crate) fn extract_rom_from_zip_bytes(
     data: &[u8],
     source_name: &str,
 ) -> anyhow::Result<(PathBuf, Vec<u8>)> {
+    anyhow::ensure!(
+        data.len() <= 128 * 1024 * 1024,
+        "ZIP exceeds the 128 MiB limit"
+    );
+    crate::rom_archive::preflight_bounded_zip_directory(data)?;
     let cursor = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(cursor).context("Failed to read ZIP archive")?;
+    crate::rom_archive::validate_bounded_zip_directory(
+        data,
+        archive.central_directory_start(),
+        archive.len(),
+    )?;
+    anyhow::ensure!(archive.len() <= 4096, "ZIP contains too many entries");
+    let mut names = std::collections::BTreeSet::new();
+    let mut selected = Vec::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .context("Failed to inspect ZIP member")?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name();
+        anyhow::ensure!(name.len() <= 4096, "ZIP member name is too long");
+        anyhow::ensure!(
+            names.insert(name.to_owned()),
+            "ZIP contains duplicate member {name:?}"
+        );
+        if ActiveSystem::from_path(Path::new(name)).is_some() {
+            anyhow::ensure!(entry.enclosed_name().is_some(), "ZIP member path is unsafe");
+            anyhow::ensure!(
+                entry.size() <= 64 * 1024 * 1024,
+                "ZIP member exceeds the 64 MiB limit"
+            );
+            selected.push(index);
+        }
+    }
+    if selected.len() != 1 {
+        return extract_rom_entries(&mut archive, Path::new(source_name));
+    }
+    let mut entry = archive.by_index(selected[0])?;
     let virtual_root = PathBuf::from(source_name);
-    extract_rom_entries(&mut archive, &virtual_root)
+    let virtual_path =
+        virtual_root.join(entry.enclosed_name().context("ZIP member path is unsafe")?);
+    let mut bytes = Vec::with_capacity(usize::try_from(entry.size())?);
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(&mut entry, 64 * 1024 * 1024 + 1),
+        &mut bytes,
+    )?;
+    anyhow::ensure!(
+        bytes.len() <= 64 * 1024 * 1024,
+        "ZIP member exceeds the 64 MiB limit"
+    );
+    Ok((virtual_path, bytes))
 }
 
 fn extract_rom_entries<R: std::io::Read + std::io::Seek>(
@@ -215,6 +265,36 @@ mod tests {
 
     fn zip_with_file(name: &str, bytes: &[u8]) -> Vec<u8> {
         zip_with_files(&[(name, bytes)])
+    }
+
+    #[test]
+    fn browser_zip_rejects_unsafe_ambiguous_duplicate_and_oversized_members() {
+        for files in [
+            vec![("../game.nes", &[0][..])],
+            vec![("one.nes", &[0][..]), ("two.nes", &[1][..])],
+        ] {
+            assert!(extract_rom_from_zip_bytes(&zip_with_files(&files), "game.zip").is_err());
+        }
+        let mut duplicate = zip_with_files(&[("one.nes", &[0]), ("two.nes", &[1])]);
+        for index in 0..duplicate.len().saturating_sub(6) {
+            if &duplicate[index..index + 7] == b"two.nes" {
+                duplicate[index..index + 7].copy_from_slice(b"one.nes");
+            }
+        }
+        assert!(extract_rom_from_zip_bytes(&duplicate, "game.zip").is_err());
+        let mut oversized = zip_with_file("game.nes", &[0]);
+        let central = oversized
+            .windows(4)
+            .position(|bytes| bytes == b"PK\x01\x02")
+            .unwrap();
+        oversized[central + 24..central + 28]
+            .copy_from_slice(&(64u32 * 1024 * 1024 + 1).to_le_bytes());
+        assert!(
+            extract_rom_from_zip_bytes(&oversized, "game.zip")
+                .unwrap_err()
+                .to_string()
+                .contains("64 MiB")
+        );
     }
 
     #[test]

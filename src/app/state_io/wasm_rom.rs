@@ -115,10 +115,15 @@ impl App {
             }
         };
 
-        let netplay_media = (!is_zip
-            && super::rom_loading::direct_netplay_media(system, &path)
+        let netplay_media = (super::rom_loading::direct_netplay_media(system, &rom_path)
             && (1..=64 * 1024 * 1024).contains(&rom_data.len()))
-        .then(|| (path.clone(), std::rc::Rc::<[u8]>::from(rom_data.clone())));
+        .then(|| {
+            (
+                path.clone(),
+                rom_path.clone(),
+                std::rc::Rc::<[u8]>::from(rom_data.clone()),
+            )
+        });
         let (backend, _original_crc) = match self.init_backend(
             system,
             &path,

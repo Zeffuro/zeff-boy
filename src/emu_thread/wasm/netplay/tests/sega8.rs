@@ -14,20 +14,32 @@ pub(super) fn media() -> Vec<u8> {
 }
 
 pub(super) fn backend(system: ActiveSystem, timing: u8, bytes: &[u8]) -> EmuBackend {
-    let path = Path::new(if system == ActiveSystem::MasterSystem {
-        "browser-netplay-proof.sms"
-    } else {
-        "browser-netplay-proof.sg"
-    });
+    load(system, timing, bytes, false)
+}
+
+pub(super) fn zip_backend(system: ActiveSystem, timing: u8, bytes: &[u8]) -> EmuBackend {
+    load(system, timing, bytes, true)
+}
+
+fn load(system: ActiveSystem, timing: u8, bytes: &[u8], zipped: bool) -> EmuBackend {
+    let (path, rom, bytes) = source(
+        bytes,
+        if system == ActiveSystem::MasterSystem {
+            "browser-netplay-proof.sms"
+        } else {
+            "browser-netplay-proof.sg"
+        },
+        zipped,
+    );
     load_backend_from_rom_source(
         system,
-        path,
-        path,
-        Some(bytes.to_vec()),
+        &path,
+        &rom,
+        Some(bytes.clone()),
         BackendLoadConfig {
             sample_rate: Some(48_000),
             initial_input: None,
-            sega8_browser_source: true,
+            netplay_browser_media: crate::emu_backend::loader::NetplayRomMedia::browser(&bytes),
             sega8_load_battery_sram: false,
             sega8_video_standard: Some(if timing == 0 {
                 zeff_sega8_core::hardware::timing::Sega8VideoStandard::Ntsc

@@ -233,11 +233,11 @@ fn assert_timing_refusal(local_timing: TimingMode, remote_timing: TimingMode) {
 #[test]
 fn unsupported_loader_facts_are_rejected() {
     let changes: &[fn(&mut NesTasLoadProvenance)] = &[
-        |load| load.direct_nes_file = false,
+        |load| load.netplay_media = None,
         |load| load.any_mod_enabled = true,
         |load| load.any_mod_applied = true,
-        |load| load.raw_source_media_sha256[0] ^= 1,
-        |load| load.raw_source_media_len = 0,
+        |load| load.netplay_media.as_mut().unwrap().hash[0] ^= 1,
+        |load| load.netplay_media.as_mut().unwrap().len = 0,
         |load| load.persistent_load = NesPersistentLoadOutcome::Unknown,
         |load| load.initial_input.buttons = 1,
         |load| load.initial_input.dpad = 1,

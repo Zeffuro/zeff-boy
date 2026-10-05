@@ -26,18 +26,11 @@ impl App {
         let mut config = config;
         #[cfg(target_arch = "wasm32")]
         {
-            config.sega8_browser_source = path == rom_path
-                && matches!(system, ActiveSystem::MasterSystem | ActiveSystem::Sg1000)
-                && preloaded_data
-                    .as_ref()
-                    .is_some_and(|data| (1..=64 * 1024 * 1024).contains(&data.len()))
-                && direct_netplay_media(system, path);
-            config.pce_browser_source = path == rom_path
-                && system == ActiveSystem::Pce
-                && preloaded_data
-                    .as_ref()
-                    .is_some_and(|data| (1..=64 * 1024 * 1024).contains(&data.len()))
-                && direct_netplay_media(system, path);
+            config.netplay_browser_media = preloaded_data.as_ref().and_then(|bytes| {
+                direct_netplay_media(system, rom_path)
+                    .then(|| crate::emu_backend::loader::NetplayRomMedia::browser(bytes))
+                    .flatten()
+            });
         }
         let loaded = load_backend_from_rom_source(system, path, rom_path, preloaded_data, config)?;
         Ok((loaded.backend, loaded.original_crc32))

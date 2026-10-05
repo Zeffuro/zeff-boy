@@ -17,7 +17,7 @@ mod systems;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas;
 
-pub(crate) use config::BackendLoadConfig;
+pub(crate) use config::{BackendLoadConfig, NetplayRomMedia};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use pce_cd::{PreparedNativeArchiveBackend, prepare_native_archive_backend};

@@ -10,8 +10,8 @@ pub(super) fn identity(
         .netplay_load_provenance()
         .context("netplay requires loader-owned media provenance")?;
     ensure!(
-        load.direct_source && load.unmodified,
-        "netplay requires a direct unmodified HuCard"
+        load.authenticated_source && load.unmodified,
+        "netplay requires an authenticated unmodified HuCard"
     );
     ensure!(
         load.source == backend.rom_hash() && load.source_len != 0,

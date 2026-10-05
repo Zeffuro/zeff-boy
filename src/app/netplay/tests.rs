@@ -43,8 +43,12 @@ pub(super) fn app_with_timing(
     let path = root.join(format!("{name}.nes"));
     let rom = crate::netplay::proof::fixture_rom(timing);
     std::fs::write(&path, rom).unwrap();
-    let worker = EmuThread::spawn(load(&path), false);
-    app_with_worker(worker, 11, ActiveSystem::Nes, path)
+    let backend = load(&path);
+    let hash = backend.rom_hash();
+    let worker = EmuThread::spawn(backend, false);
+    let mut app = app_with_worker(worker, 11, ActiveSystem::Nes, path);
+    app.rom_info.rom_hash = Some(hash);
+    app
 }
 
 pub(super) fn wait(app: &mut App, predicate: impl Fn(&App) -> bool) {
@@ -398,8 +402,10 @@ fn start_rejection_then_immediate_cancel_finishes_after_both_worker_rejections()
     let mut backend = load(&path);
     backend.step_frame();
     let expected = backend.encode_state_bytes().unwrap();
+    let hash = backend.rom_hash();
     let worker = EmuThread::spawn(backend, false);
     let mut app = app_with_worker(worker, 11, ActiveSystem::Nes, path);
+    app.rom_info.rom_hash = Some(hash);
     let (mut connector, invitation) = Connector::host(HostOptions {
         input_delay: zeff_netplay::rollback::InputDelay::default(),
         address: "127.0.0.1:0".parse().unwrap(),

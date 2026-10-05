@@ -13,7 +13,7 @@ use crate::settings::{PceOverscanMode, PcePaletteMode};
 pub(crate) struct PceNetplayLoadProvenance {
     pub(crate) source: [u8; 32],
     pub(crate) source_len: u64,
-    pub(crate) direct_source: bool,
+    pub(crate) authenticated_source: bool,
     pub(crate) unmodified: bool,
     pub(crate) neutral_input: bool,
     pub(crate) state: [u8; 32],
@@ -143,7 +143,7 @@ impl PceBackend {
         &mut self,
         source: [u8; 32],
         source_len: usize,
-        direct_source: bool,
+        authenticated_source: bool,
         unmodified: bool,
         neutral_input: bool,
     ) -> Result<()> {
@@ -158,7 +158,7 @@ impl PceBackend {
         self.netplay_load_provenance = Some(PceNetplayLoadProvenance {
             source,
             source_len: source_len as u64,
-            direct_source: direct_source
+            authenticated_source: authenticated_source
                 && extension.is_some_and(|ext| {
                     ext.eq_ignore_ascii_case("pce") || ext.eq_ignore_ascii_case("sgx")
                 }),

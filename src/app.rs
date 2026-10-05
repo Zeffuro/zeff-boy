@@ -48,6 +48,8 @@ mod render;
 mod serial_devices;
 mod shutdown;
 mod state_io;
+#[cfg(all(test, target_arch = "wasm32"))]
+pub(crate) use state_io::extract_rom_from_zip_bytes;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas_control;
 mod tas_editor;
@@ -151,7 +153,7 @@ struct App {
     #[cfg(target_arch = "wasm32")]
     pending_wasm_rom_after_flush: Option<(String, Vec<u8>)>,
     #[cfg(target_arch = "wasm32")]
-    browser_netplay_media: Option<(std::path::PathBuf, std::rc::Rc<[u8]>)>,
+    browser_netplay_media: Option<(std::path::PathBuf, std::path::PathBuf, std::rc::Rc<[u8]>)>,
     #[cfg(target_arch = "wasm32")]
     pending_state_load: crate::platform::FileDataSlot,
     #[cfg(target_arch = "wasm32")]

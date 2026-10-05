@@ -5,16 +5,24 @@ pub(super) fn media() -> Vec<u8> {
 }
 
 pub(super) fn backend(topology: u8, bytes: &[u8]) -> EmuBackend {
-    let path = Path::new("browser-netplay-proof.pce");
+    load(topology, bytes, false)
+}
+
+pub(super) fn zip_backend(topology: u8, bytes: &[u8]) -> EmuBackend {
+    load(topology, bytes, true)
+}
+
+fn load(topology: u8, bytes: &[u8], zipped: bool) -> EmuBackend {
+    let (path, rom, bytes) = source(bytes, "browser-netplay-proof.pce", zipped);
     load_backend_from_rom_source(
         ActiveSystem::Pce,
-        path,
-        path,
-        Some(bytes.to_vec()),
+        &path,
+        &rom,
+        Some(bytes.clone()),
         BackendLoadConfig {
             sample_rate: Some(48_000),
             pce_netplay: true,
-            pce_browser_source: true,
+            netplay_browser_media: crate::emu_backend::loader::NetplayRomMedia::browser(&bytes),
             pce_load_battery_bram: false,
             pce_cartridge_hardware: Some(if topology == 0 {
                 zeff_pce_core::hardware::PceCartridgeHardware::Base

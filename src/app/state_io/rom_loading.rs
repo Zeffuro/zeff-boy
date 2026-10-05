@@ -135,10 +135,8 @@ impl App {
             nes_load_battery_sram: true,
             sega8_load_battery_sram: true,
             #[cfg(target_arch = "wasm32")]
-            sega8_browser_source: false,
+            netplay_browser_media: None,
             pce_netplay: false,
-            #[cfg(target_arch = "wasm32")]
-            pce_browser_source: false,
             ws_load_battery_sram: true,
             game_gear_standard_mapper_ram_identity: None,
             sega8_video_standard: self

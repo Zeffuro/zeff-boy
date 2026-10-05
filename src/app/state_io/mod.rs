@@ -12,7 +12,7 @@ pub(crate) use archive_and_slots::SlotInfo;
 pub(super) use archive_and_slots::build_slot_info;
 pub(crate) use archive_and_slots::extract_rom_from_zip;
 #[cfg_attr(not(target_arch = "wasm32"), allow(unused_imports))]
-pub(super) use archive_and_slots::extract_rom_from_zip_bytes;
+pub(crate) use archive_and_slots::extract_rom_from_zip_bytes;
 pub(super) use archive_and_slots::{
     extract_rom_entry_from_zip, extract_rom_entry_path_from_zip, list_rom_entries_in_zip,
 };

@@ -6,6 +6,8 @@ use anyhow::{Context, Result, ensure};
 use std::io::Read as _;
 
 use crate::emu_backend::ActiveSystem;
+mod zip_directory;
+pub(crate) use zip_directory::{preflight_bounded_zip_directory, validate_bounded_zip_directory};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ArchiveRomEntry {
@@ -80,9 +82,15 @@ pub(crate) fn inspect_bounded_zip_members(
     member_limit: u64,
 ) -> Result<BoundedZipInspection> {
     let archive_bytes = read_file_bounded(archive_path, archive_limit)?;
+    preflight_bounded_zip_directory(&archive_bytes)?;
     let archive_sha256 = zeff_firmware::sha256_bytes(&archive_bytes);
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(archive_bytes))
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&archive_bytes))
         .context("failed to read ZIP archive")?;
+    validate_bounded_zip_directory(
+        &archive_bytes,
+        archive.central_directory_start(),
+        archive.len(),
+    )?;
     ensure!(archive.len() <= 4096, "ZIP contains too many entries");
     let mut entries = Vec::new();
     let mut names = std::collections::BTreeSet::new();
@@ -153,10 +161,16 @@ fn extract_bounded_zip_member_inner(
     require_single_supported_rom: bool,
 ) -> Result<BoundedZipMember> {
     let archive_bytes = read_file_bounded(archive_path, archive_limit)?;
+    preflight_bounded_zip_directory(&archive_bytes)?;
     let archive_sha256 = zeff_firmware::sha256_bytes(&archive_bytes);
     let archive_len = archive_bytes.len();
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(archive_bytes))
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&archive_bytes))
         .context("failed to read ZIP archive")?;
+    validate_bounded_zip_directory(
+        &archive_bytes,
+        archive.central_directory_start(),
+        archive.len(),
+    )?;
     ensure!(archive.len() <= 4096, "ZIP contains too many entries");
 
     let expected_name = expected_rom_path

@@ -18,6 +18,7 @@ pub(crate) struct NesTasInitialInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NesTasLoadProvenance {
+    pub(crate) netplay_media: Option<crate::emu_backend::loader::NetplayRomMedia>,
     pub(crate) raw_source_media_sha256: [u8; 32],
     pub(crate) raw_source_media_len: u64,
     pub(crate) initial_persistent_sha256: [u8; 32],
@@ -109,6 +110,7 @@ impl NesTasLoadProvenanceSeed {
         battery_backed: bool,
     ) -> NesTasLoadProvenance {
         NesTasLoadProvenance {
+            netplay_media: None,
             raw_source_media_sha256: self.raw_source_media_sha256,
             raw_source_media_len: self.raw_source_media_len,
             initial_persistent_sha256: [0; 32],
@@ -132,6 +134,15 @@ impl NesTasLoadProvenanceSeed {
 }
 
 impl NesBackend {
+    pub(crate) fn set_netplay_media(
+        &mut self,
+        media: Option<crate::emu_backend::loader::NetplayRomMedia>,
+    ) {
+        if let Some(load) = &mut self.tas_load_provenance {
+            load.netplay_media = media;
+        }
+    }
+
     pub(crate) fn with_load_provenance(
         emu: NesEmulator,
         rom_path: PathBuf,
