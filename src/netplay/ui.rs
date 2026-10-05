@@ -200,7 +200,8 @@ impl Ui {
         }
         let mut open = true;
         let mut action = None;
-        let min_height = (ctx.viewport_rect().height() - 64.0).clamp(80.0, 240.0);
+        let minimum = if self.active { 240.0 } else { 300.0 };
+        let min_height = (ctx.viewport_rect().height() - 64.0).clamp(80.0, minimum);
         egui::Window::new("Netplay")
             .open(&mut open)
             .default_size([360.0, 300.0])
