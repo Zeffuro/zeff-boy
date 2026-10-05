@@ -40,7 +40,7 @@ const NATIVE_RECEIPTS: [&str; 18] = [
 
 #[derive(Debug, PartialEq, Eq)]
 struct Record {
-    ports: [u8; 2],
+    ports: [u16; 2],
     logical: [u8; 32],
     video: [u8; 32],
     pcm: [u8; 32],
@@ -81,9 +81,9 @@ fn core(backend: &mut EmuBackend) -> &mut Emulator {
     &mut nes.emu
 }
 
-fn buttons(sample: u64, player: usize) -> u8 {
+fn buttons(sample: u64, player: usize) -> u16 {
     let shift = ((sample / 3 + player as u64 * 3) % 8) as u32;
-    (1u8 << shift) ^ (sample.is_multiple_of(5) as u8 * 0x18)
+    u16::from((1u8 << shift) ^ (sample.is_multiple_of(5) as u8 * 0x18))
 }
 
 fn ram(backend: &EmuBackend) -> Vec<u8> {
@@ -93,7 +93,7 @@ fn ram(backend: &EmuBackend) -> Vec<u8> {
         .collect()
 }
 
-fn ports(frame: u64, delay: u64) -> [u8; 2] {
+fn ports(frame: u64, delay: u64) -> [u16; 2] {
     if frame < delay {
         [0; 2]
     } else {
@@ -101,7 +101,7 @@ fn ports(frame: u64, delay: u64) -> [u8; 2] {
     }
 }
 
-fn observe(backend: &EmuBackend, input: [u8; 2], audio: Vec<f32>) -> Record {
+fn observe(backend: &EmuBackend, input: [u16; 2], audio: Vec<f32>) -> Record {
     let checkpoint =
         super::identity::checkpoint(backend, backend.frame_count(), &audio, CONFIG).unwrap();
     let Message::Checkpoint {
@@ -126,13 +126,14 @@ fn observe(backend: &EmuBackend, input: [u8; 2], audio: Vec<f32>) -> Record {
 
 fn advance(backend: &mut EmuBackend, lease: &NesRollbackSession, input: FrameInput) -> Record {
     assert_eq!(backend.frame_count(), input.frame);
-    let audio = lease.advance_frame(core(backend), input.ports).unwrap();
+    let ports = input.ports.map(|buttons| u8::try_from(buttons).unwrap());
+    let audio = lease.advance_frame(core(backend), ports).unwrap();
     observe(backend, input.ports, audio)
 }
 
 fn hash_record(digest: &mut Sha256, frame: u64, record: &Record) {
     digest.update(frame.to_le_bytes());
-    digest.update(record.ports);
+    digest.update(record.ports.map(|buttons| u8::try_from(buttons).unwrap()));
     for hash in [record.logical, record.video, record.pcm, record.persistent] {
         digest.update(hash);
     }

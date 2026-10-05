@@ -54,7 +54,7 @@ impl App {
             core: self.active_system.code().into(),
             content_hash: const_hex::encode(identity.effective),
             compatibility_hash: const_hex::encode(identity.config),
-            mode: zeff_netplay_connect::protocol::SessionMode::SharedConsole,
+            mode: crate::netplay::capabilities::session_mode(self.active_system),
         };
         self.finalize_rom_load(
             &backend,

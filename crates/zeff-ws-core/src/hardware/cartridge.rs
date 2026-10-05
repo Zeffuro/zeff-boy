@@ -174,7 +174,7 @@ impl RomFooter {
 
 #[derive(Clone, Debug)]
 pub struct Cartridge {
-    rom: Vec<u8>,
+    rom: std::sync::Arc<[u8]>,
     footer: RomFooter,
     save_data: Vec<u8>,
     bank0: u16,
@@ -189,7 +189,7 @@ impl Cartridge {
         let footer = RomFooter::parse(rom_data).context("failed to parse WonderSwan ROM footer")?;
         let save_data = vec![0xFF; footer.save_kind.size()];
         let mut cart = Self {
-            rom: rom_data.to_vec(),
+            rom: std::sync::Arc::from(rom_data),
             footer,
             save_data,
             bank0: 0,
@@ -216,6 +216,10 @@ impl Cartridge {
 
     pub fn rom(&self) -> &[u8] {
         &self.rom
+    }
+
+    pub(crate) fn shared_rom(&self) -> std::sync::Arc<[u8]> {
+        self.rom.clone()
     }
 
     pub fn has_battery(&self) -> bool {

@@ -115,11 +115,11 @@ fn stepped_frame(worker: &EmuThread) -> Result<Response> {
     Ok(frame.unwrap())
 }
 
-fn sample(frame: u64, player: Player) -> u8 {
-    match player {
+fn sample(frame: u64, player: Player) -> u16 {
+    u16::from(match player {
         Player::One => ((frame * 17 + 3) ^ (frame >> 2)) as u8,
         Player::Two => ((frame * 29 + 11) ^ (frame >> 1)) as u8,
-    }
+    })
 }
 
 fn response_summary(response: &Result<Response>) -> String {
@@ -143,14 +143,14 @@ fn response_summary(response: &Result<Response>) -> String {
 
 fn reference_frame(
     backend: &mut EmuBackend,
-    ports: [u8; 2],
+    ports: [u16; 2],
     config: [u8; 32],
 ) -> Result<(Message, Vec<f32>)> {
     let EmuBackend::Nes(nes) = backend else {
         bail!("lost NES")
     };
-    nes.emu.set_input_p1_raw(ports[0]);
-    nes.emu.set_input_p2_raw(ports[1]);
+    nes.emu.set_input_p1_raw(u8::try_from(ports[0])?);
+    nes.emu.set_input_p2_raw(u8::try_from(ports[1])?);
     backend.step_frame();
     let mut audio = Vec::new();
     backend.drain_audio_samples_into(&mut audio);

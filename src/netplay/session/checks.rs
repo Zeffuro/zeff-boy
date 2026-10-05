@@ -11,6 +11,10 @@ pub(super) struct Hashes {
 }
 
 impl Hashes {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn matched_frame(&self) -> Option<u64> {
+        self.matched.as_ref().map(frame_of)
+    }
     pub(super) fn local(&mut self, message: Message) -> Result<()> {
         let frame = periodic_frame(&message)?;
         ensure!(

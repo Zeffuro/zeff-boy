@@ -211,7 +211,7 @@ fn private_network_app_process_matches_reference_and_restores() {
             let expected = identity::checkpoint(&reference, frame + 1, &audio, config).unwrap();
             let (actual, actual_ports, actual_audio) = app.netplay.observed_frames.last().unwrap();
             assert_eq!(actual, &expected);
-            assert_eq!(*actual_ports, ports);
+            assert_eq!(*actual_ports, ports.map(u16::from));
             assert_eq!(
                 actual_audio.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
                 audio.iter().map(|x| x.to_bits()).collect::<Vec<_>>()

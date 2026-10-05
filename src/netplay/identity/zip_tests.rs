@@ -8,6 +8,7 @@ fn fixture(system: ActiveSystem) -> (&'static str, Vec<u8>) {
     match system {
         ActiveSystem::Nes => ("nes", crate::test_support::build_nes_test_rom()),
         ActiveSystem::Pce => ("pce", crate::emu_backend::pce::netplay_fixture_hucard()),
+        ActiveSystem::WonderSwan => ("wsc", crate::emu_backend::ws::netplay_fixture_rom(true)),
         ActiveSystem::MasterSystem | ActiveSystem::Sg1000 => {
             let mut rom = vec![0; 32768];
             rom[..3].copy_from_slice(&[0xc3, 0x00, 0x00]);
@@ -46,6 +47,7 @@ fn load(system: ActiveSystem, source: &Path, rom: &Path, bytes: Option<Vec<u8>>)
             sample_rate: Some(48_000),
             nes_load_battery_sram: false,
             sega8_load_battery_sram: false,
+            ws_load_battery_sram: false,
             pce_load_battery_bram: false,
             pce_netplay: system == ActiveSystem::Pce,
             ..Default::default()
@@ -82,6 +84,7 @@ fn selected_zip_and_direct_roms_admit_equally_for_every_supported_console() {
         ActiveSystem::MasterSystem,
         ActiveSystem::Sg1000,
         ActiveSystem::Pce,
+        ActiveSystem::WonderSwan,
     ] {
         let directory = crate::test_support::test_directory("netplay-zip-identity").unwrap();
         let (extension, bytes) = fixture(system);

@@ -116,7 +116,7 @@ fn play(lobby: &TestLobby, timing: TimingMode, delay: u64) {
                 *checkpoint, expected,
                 "{timing:?} delay{delay} frame{frame}"
             );
-            assert_eq!(*actual_ports, ports);
+            assert_eq!(*actual_ports, ports.map(u16::from));
             assert_eq!(audio_bits(actual_audio), audio_bits(&audio));
         }
     }

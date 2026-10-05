@@ -482,8 +482,8 @@ fn replay_case(timing: TimingMode, delay: zeff_netplay::rollback::InputDelay) {
         };
         assert_eq!(ports, expected_ports);
         let nes = nes_mut(&mut reference).unwrap();
-        nes.emu.set_input_p1_raw(ports[0]);
-        nes.emu.set_input_p2_raw(ports[1]);
+        nes.emu.set_input_p1_raw(u8::try_from(ports[0]).unwrap());
+        nes.emu.set_input_p2_raw(u8::try_from(ports[1]).unwrap());
         reference.step_frame();
         let mut expected_audio = Vec::new();
         reference.drain_audio_samples_into(&mut expected_audio);
@@ -510,7 +510,7 @@ fn replay_case(timing: TimingMode, delay: zeff_netplay::rollback::InputDelay) {
     assert!(backend.nes().unwrap().host_persistence_enabled());
 }
 
-fn collect_frames(session: &mut Session, frames: &mut Vec<(Message, [u8; 2], Vec<f32>)>) {
+fn collect_frames(session: &mut Session, frames: &mut Vec<(Message, [u16; 2], Vec<f32>)>) {
     while let Some(response) = session.responses.pop_front() {
         if let Response::Frame {
             checkpoint,
@@ -523,9 +523,9 @@ fn collect_frames(session: &mut Session, frames: &mut Vec<(Message, [u8; 2], Vec
     }
 }
 
-fn local_buttons(frame: u64) -> u8 {
-    (frame * 17 + 3) as u8
+fn local_buttons(frame: u64) -> u16 {
+    u16::from((frame * 17 + 3) as u8)
 }
-fn remote_buttons(frame: u64) -> u8 {
-    (frame * 29 + 11) as u8
+fn remote_buttons(frame: u64) -> u16 {
+    u16::from((frame * 29 + 11) as u8)
 }

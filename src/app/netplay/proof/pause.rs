@@ -32,7 +32,7 @@ pub(super) fn after_play(
             .as_ref()
             .context("missing pause approach frame")?;
         ensure!(
-            *actual == expected && *used == ports,
+            *actual == expected && *used == ports.map(u16::from),
             "pause approach checkpoint differs"
         );
         ensure!(

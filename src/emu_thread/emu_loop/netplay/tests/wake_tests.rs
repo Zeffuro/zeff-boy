@@ -310,8 +310,8 @@ fn selected_correction(prequeued: bool) {
         let EmuBackend::Nes(nes) = &mut fixture.reference else {
             unreachable!()
         };
-        nes.emu.set_input_p1_raw(ports[0]);
-        nes.emu.set_input_p2_raw(ports[1]);
+        nes.emu.set_input_p1_raw(u8::try_from(ports[0]).unwrap());
+        nes.emu.set_input_p2_raw(u8::try_from(ports[1]).unwrap());
         fixture.reference.step_frame();
         let mut expected_audio = Vec::new();
         fixture

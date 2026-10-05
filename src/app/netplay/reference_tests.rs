@@ -115,7 +115,11 @@ fn delayed_reference(timing: TimingMode) {
         for app in [&one, &two] {
             let (checkpoint, actual_ports, audio) = app.netplay.observed_frames.last().unwrap();
             assert_eq!(checkpoint, &expected, "checkpoint frame {frame}");
-            assert_eq!(*actual_ports, ports, "owned input frame {frame}");
+            assert_eq!(
+                *actual_ports,
+                ports.map(u16::from),
+                "owned input frame {frame}"
+            );
             assert_eq!(audio_bits(audio), audio_bits(&expected_audio));
             if frame < 2 {
                 assert!(app.netplay.queued_audio.is_none());

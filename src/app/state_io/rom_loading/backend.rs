@@ -7,6 +7,11 @@ pub(in crate::app::state_io) fn direct_netplay_media(system: ActiveSystem, path:
         ActiveSystem::MasterSystem => "sms",
         ActiveSystem::Sg1000 => "sg",
         ActiveSystem::Pce => "pce",
+        ActiveSystem::WonderSwan => {
+            return path.extension().is_some_and(|value| {
+                value.eq_ignore_ascii_case("ws") || value.eq_ignore_ascii_case("wsc")
+            });
+        }
         _ => return false,
     };
     path.extension()

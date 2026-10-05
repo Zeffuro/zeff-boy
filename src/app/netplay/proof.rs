@@ -27,7 +27,7 @@ mod lobby_tests;
 
 #[derive(Default)]
 pub(super) struct Observation {
-    pub(super) last: Option<(Message, [u8; 2], Vec<f32>)>,
+    pub(super) last: Option<(Message, [u16; 2], Vec<f32>)>,
     pub(super) frames: u64,
     pub(super) admitted: bool,
     pub(super) connection: Option<(SocketAddr, SocketAddr, ConnectionScope)>,
@@ -382,7 +382,7 @@ fn play(
             .as_ref()
             .context("confirmed frame observation missing")?;
         ensure!(
-            actual == &expected && *actual_ports == ports,
+            actual == &expected && *actual_ports == ports.map(u16::from),
             "checkpoint or delayed ports differ at {frame}"
         );
         ensure!(

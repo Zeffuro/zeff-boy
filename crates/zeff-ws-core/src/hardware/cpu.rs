@@ -7,6 +7,7 @@ mod conformance_tests;
 mod execute;
 mod instructions;
 mod memory;
+mod rollback;
 mod shifts;
 mod strings;
 #[cfg(test)]

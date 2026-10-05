@@ -45,7 +45,7 @@ impl Default for InputDelay {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameInput {
     pub frame: u64,
-    pub ports: [u8; 2],
+    pub ports: [u16; 2],
 }
 
 pub struct Timeline {
@@ -53,9 +53,9 @@ pub struct Timeline {
     input_delay: InputDelay,
     frame: u64,
     confirmed: u64,
-    inputs: BTreeMap<u64, [Option<u8>; 2]>,
+    inputs: BTreeMap<u64, [Option<u16>; 2]>,
     executed: VecDeque<FrameInput>,
-    base_ports: [u8; 2],
+    base_ports: [u16; 2],
     dirty: Option<u64>,
 }
 
@@ -106,7 +106,7 @@ impl Timeline {
         self.inputs.len()
     }
 
-    pub fn sample_local(&mut self, buttons: u8) -> Result<(u64, u8)> {
+    pub fn sample_local(&mut self, buttons: u16) -> Result<(u64, u16)> {
         let frame = self
             .frame
             .checked_add(self.input_delay.frames())
@@ -117,7 +117,7 @@ impl Timeline {
         Ok((frame, value))
     }
 
-    pub fn receive_remote(&mut self, frame: u64, buttons: u8) -> Result<bool> {
+    pub fn receive_remote(&mut self, frame: u64, buttons: u16) -> Result<bool> {
         let upper = self
             .frame
             .checked_add(self.input_delay.lookahead())
@@ -217,7 +217,7 @@ impl Timeline {
         Ok(())
     }
 
-    fn ports_at(&self, frame: u64) -> [u8; 2] {
+    fn ports_at(&self, frame: u64) -> [u16; 2] {
         let mut ports = self.base_ports;
         for index in 0..2 {
             if let Some(value) = self

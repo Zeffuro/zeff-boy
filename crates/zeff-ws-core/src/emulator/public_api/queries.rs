@@ -107,6 +107,10 @@ impl Emulator {
         self.cpu.cycles
     }
 
+    pub fn bus_cycles(&self) -> u64 {
+        self.bus.cycles
+    }
+
     pub fn timing_snapshot(&self) -> TimingSnapshot {
         <Self as MachineTiming>::timing_snapshot(self)
     }

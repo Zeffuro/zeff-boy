@@ -133,11 +133,11 @@ try {
         }
         $effectiveTestFilter = if ($Netplay) { "browser_netplay_" } else { $TestFilter }
         if ($Netplay) {
-            & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $effectiveTestFilter -- --skip browser_netplay_pce_
+            & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $effectiveTestFilter -- --skip browser_netplay_pce_ --skip browser_netplay_ws_ --skip browser_netplay_wsc_
             if ($LASTEXITCODE -ne 0) { throw "Browser netplay tests failed" }
-            foreach ($coreFilter in @("browser_netplay_pce_base_", "browser_netplay_pce_supergrafx_")) {
+            foreach ($coreFilter in @("browser_netplay_pce_base_", "browser_netplay_pce_supergrafx_", "browser_netplay_ws_", "browser_netplay_wsc_")) {
                 & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests $coreFilter
-                if ($LASTEXITCODE -ne 0) { throw "Browser PC Engine tests failed" }
+                if ($LASTEXITCODE -ne 0) { throw "Browser core tests failed: $coreFilter" }
             }
             & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests native_wasm_nes_portability_receipts
             if ($LASTEXITCODE -ne 0) { throw "Native/browser portability tests failed" }

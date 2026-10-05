@@ -5,14 +5,14 @@ use crate::netplay::session::Session;
 struct Observation {
     confirmed: u64,
     paused: (bool, bool),
-    frames: Vec<(Message, [u8; 2], Vec<f32>)>,
+    frames: Vec<(Message, [u16; 2], Vec<f32>)>,
 }
 
 fn cycle(
     sessions: &mut [Session; 2],
     backends: [&mut EmuBackend; 2],
     observed: &mut [Observation; 2],
-    buttons: [u8; 2],
+    buttons: [u16; 2],
 ) {
     for index in 0..2 {
         sessions[index]

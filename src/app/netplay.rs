@@ -64,7 +64,7 @@ pub(super) struct Frontend {
     #[cfg(not(target_arch = "wasm32"))]
     proof: Option<proof::Observation>,
     #[cfg(all(test, not(target_arch = "wasm32")))]
-    observed_frames: Vec<(Message, [u8; 2], Vec<f32>)>,
+    observed_frames: Vec<(Message, [u16; 2], Vec<f32>)>,
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(in crate::app) queued_audio: Option<(Vec<f32>, usize)>,
     #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -172,7 +172,7 @@ impl App {
             "another execution owner is active"
         );
         ensure!(
-            crate::netplay::capabilities::shared_console(self.active_system)
+            crate::netplay::capabilities::rollback_session(self.active_system)
                 && self.emu_thread.is_some(),
             "load a supported cartridge first"
         );
@@ -400,7 +400,11 @@ impl App {
             } else {
                 (0, 0)
             };
-            let raw = host_to_nes(buttons, dpad);
+            let raw = if self.active_system == crate::emu_backend::ActiveSystem::WonderSwan {
+                host_to_ws(buttons, dpad)
+            } else {
+                u16::from(host_to_nes(buttons, dpad))
+            };
             match self.send_emu_command_checked(EmuCommand::StepNetplay(raw)) {
                 Ok(()) => {
                     self.netplay.in_flight = true;
@@ -533,6 +537,13 @@ impl App {
 
 fn host_to_nes(buttons: u8, dpad: u8) -> u8 {
     (buttons & 0x0f) | ((dpad & 4) << 2) | ((dpad & 8) << 2) | ((dpad & 2) << 5) | ((dpad & 1) << 7)
+}
+
+fn host_to_ws(buttons: u8, dpad: u8) -> u16 {
+    u16::from(dpad & 0x0f)
+        | u16::from(buttons & 0xf0)
+        | (u16::from(buttons & 3) << 8)
+        | (u16::from(buttons & 8) << 7)
 }
 
 mod actions;

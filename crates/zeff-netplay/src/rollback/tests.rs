@@ -1,4 +1,40 @@
 use super::*;
+
+#[test]
+fn high_bits_survive_prediction_correction_and_retirement() {
+    for player in [Player::One, Player::Two] {
+        let mut timeline = Timeline::with_delay(player, InputDelay::new(0).unwrap());
+        timeline.sample_local(0x8001).unwrap();
+        timeline.receive_remote(0, 0x0401).unwrap();
+        timeline
+            .advance(timeline.next_frame().unwrap().unwrap())
+            .unwrap();
+        timeline.sample_local(0x8002).unwrap();
+        let predicted = timeline.next_frame().unwrap().unwrap();
+        assert_eq!(predicted.ports[1 - port(player)], 0x0401);
+        timeline.advance(predicted).unwrap();
+        timeline.receive_remote(1, 0x0601).unwrap();
+        let corrected = timeline.correction().unwrap();
+        assert_eq!(corrected.len(), 1);
+        assert_eq!(corrected[0].ports[port(player)], 0x8002);
+        assert_eq!(corrected[0].ports[1 - port(player)], 0x0601);
+        timeline.corrected(&corrected).unwrap();
+        assert_eq!(timeline.confirmed_frame(), 2);
+        assert!(timeline.receive_remote(1, 0x0401).is_err());
+        for frame in 2..70 {
+            timeline.sample_local(0x8002).unwrap();
+            timeline.receive_remote(frame, 0x0601).unwrap();
+            timeline
+                .advance(timeline.next_frame().unwrap().unwrap())
+                .unwrap();
+        }
+        assert_eq!(
+            timeline.next_frame().unwrap().unwrap().ports[1 - port(player)],
+            0x0601
+        );
+        assert_eq!(timeline.base_ports[1 - port(player)], 0x0601);
+    }
+}
 use crate::lockstep::INPUT_DELAY;
 
 #[test]
@@ -29,7 +65,7 @@ fn local_buttons_reach_the_first_simulated_frame_at_zero_delay() {
         for frames in 0..=2 {
             let mut timeline = Timeline::with_delay(player, InputDelay::new(frames).unwrap());
             for frame in 0..=frames {
-                let buttons = 17 + frame as u8;
+                let buttons = 17 + frame as u16;
                 assert_eq!(
                     timeline.sample_local(buttons).unwrap(),
                     (frame + frames, buttons)
@@ -64,7 +100,7 @@ fn low_delay_corrects_late_remote_changes_without_rewriting_owned_inputs() {
             let mut timeline = Timeline::with_delay(player, delay);
             let end = frames + PREDICTION_WINDOW;
             for frame in 0..end {
-                timeline.sample_local(17 + frame as u8).unwrap();
+                timeline.sample_local(17 + frame as u16).unwrap();
                 timeline
                     .advance(timeline.next_frame().unwrap().unwrap())
                     .unwrap();
@@ -76,7 +112,10 @@ fn low_delay_corrects_late_remote_changes_without_rewriting_owned_inputs() {
             let replay = timeline.correction().unwrap();
             assert_eq!(replay.len(), PREDICTION_WINDOW as usize);
             for input in &replay {
-                assert_eq!(input.ports[port(player)], 17 + (input.frame - frames) as u8);
+                assert_eq!(
+                    input.ports[port(player)],
+                    17 + (input.frame - frames) as u16
+                );
                 assert_eq!(
                     input.ports[1 - port(player)],
                     if input.frame < frames + 3 { 23 } else { 41 }
@@ -148,7 +187,7 @@ fn every_delay_primes_neutral_frames_and_preserves_prediction_and_lookahead_boun
 fn inputs_stream_ahead_and_missing_inputs_are_predicted_with_a_bound() {
     let mut timeline = Timeline::new(Player::One);
     for frame in 0..INPUT_DELAY + PREDICTION_WINDOW {
-        let scheduled = timeline.sample_local(frame as u8).unwrap();
+        let scheduled = timeline.sample_local(frame as u16).unwrap();
         assert_eq!(scheduled.0, frame + INPUT_DELAY);
         let input = timeline.next_frame().unwrap().unwrap();
         assert_eq!(input.ports[1], 0);
@@ -223,7 +262,7 @@ fn thousands_of_frames_retire_history_without_losing_prediction_seed() {
         for frames in InputDelay::MIN..=InputDelay::MAX {
             let mut timeline = Timeline::with_delay(player, InputDelay::new(frames).unwrap());
             for frame in 0..10_000 {
-                let (scheduled, _) = timeline.sample_local(frame as u8).unwrap();
+                let (scheduled, _) = timeline.sample_local(frame as u16).unwrap();
                 timeline.receive_remote(scheduled, 81).unwrap();
                 let input = timeline.next_frame().unwrap().unwrap();
                 if frame >= frames {
@@ -308,7 +347,7 @@ fn virtual_pair(
     let mut sampled = [BTreeMap::new(), BTreeMap::new()];
     let mut simulated = [BTreeMap::new(), BTreeMap::new()];
     let mut checked = [0, 0];
-    let mut packets: Vec<(u64, usize, u64, u8)> = Vec::new();
+    let mut packets: Vec<(u64, usize, u64, u16)> = Vec::new();
     let mut corrections = 0;
     let mut stalls = 0;
     let mut terminal = None;
@@ -339,7 +378,7 @@ fn virtual_pair(
             peer.corrected(&correction).unwrap();
             if terminal.is_none_or(|frame| peer.frame() < frame) {
                 let buttons =
-                    ((peer.frame() * (17 + player as u64 * 12) + 3) ^ (peer.frame() >> 1)) as u8;
+                    ((peer.frame() * (17 + player as u64 * 12) + 3) ^ (peer.frame() >> 1)) as u16;
                 let (frame, buttons) = peer.sample_local(buttons).unwrap();
                 if sampled[player].insert(frame, buttons).is_none() {
                     let seed = frame * 31 + player as u64 * 47;

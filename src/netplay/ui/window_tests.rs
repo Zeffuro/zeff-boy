@@ -195,6 +195,13 @@ fn lobby_and_link_actions_remain_reachable_in_compact_window() {
         for system in [ActiveSystem::GameBoy, ActiveSystem::WonderSwan] {
             harness.system = system;
             state.open_for_system(system);
+            if system == ActiveSystem::WonderSwan {
+                assert!(!state.linked_devices);
+                harness.reach(&mut state, "Start hosting");
+                let cable = harness.reach(&mut state, "Direct cable");
+                harness.click(&mut state, cable.center());
+                assert!(state.linked_devices);
+            }
             let host = harness.reach(&mut state, "Host");
             assert!(matches!(
                 harness.click(&mut state, host.center()).1,
@@ -389,7 +396,7 @@ fn scopes_and_start_requirements_remain_interactive() {
     state.joining = false;
     let host = harness.reach(&mut state, "Start hosting");
     assert!(harness.click(&mut state, host.center()).1.is_none());
-    harness.reach(&mut state, "No shared-console adapter for this system.");
+    harness.reach(&mut state, "Netplay is not available for this system.");
 }
 
 #[test]

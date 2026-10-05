@@ -9,7 +9,7 @@ use zeff_netplay::endpoint::ConnectionScope;
 use zeff_netplay::lockstep::Player;
 use zeff_netplay::rollback::InputDelay;
 use zeff_netplay_connect::browser::BrowserLobby;
-use zeff_netplay_connect::protocol::{ClientMessage, SessionIdentity, SessionMode, VERSION};
+use zeff_netplay_connect::protocol::{ClientMessage, SessionIdentity, VERSION};
 
 use super::*;
 use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_source};
@@ -19,6 +19,7 @@ use crate::platform::Instant;
 mod pce;
 mod reference;
 mod sega8;
+mod ws;
 
 fn source(
     bytes: &[u8],
@@ -97,11 +98,16 @@ fn browser_netplay_rejects_missing_or_mismatched_owned_media_witness() {
         ActiveSystem::MasterSystem,
         ActiveSystem::Sg1000,
         ActiveSystem::Pce,
+        ActiveSystem::WonderSwan,
     ] {
         let (name, bytes) = match system {
             ActiveSystem::Nes => ("proof.nes", media(0)),
             ActiveSystem::Pce => ("proof.pce", pce::media()),
             ActiveSystem::MasterSystem => ("proof.sms", sega8::media()),
+            ActiveSystem::WonderSwan => (
+                "proof.wsc",
+                crate::emu_backend::ws::netplay_fixture_rom(true),
+            ),
             _ => ("proof.sg", sega8::media()),
         };
         let (source, rom, bytes) = source(&bytes, name, true);
@@ -155,7 +161,7 @@ async fn peers(backend: &EmuBackend, delay: InputDelay) -> [Transport; 2] {
         core: backend.system().code().into(),
         content_hash: const_hex::encode(id.effective),
         compatibility_hash: const_hex::encode(id.config),
-        mode: SessionMode::SharedConsole,
+        mode: crate::netplay::capabilities::session_mode(backend.system()),
     };
     let url = option_env!("ZEFF_BROWSER_TEST_LOBBY_URL").unwrap_or("ws://127.0.0.1:47180/v1/ws");
     let mut host = BrowserLobby::new(
@@ -194,9 +200,9 @@ async fn peers(backend: &EmuBackend, delay: InputDelay) -> [Transport; 2] {
     [Transport::Browser(host), Transport::Browser(guest)]
 }
 
-fn input(frame: u64, player: usize) -> u8 {
+fn input(frame: u64, player: usize) -> u16 {
     let shift = ((frame / 3 + player as u64 * 3) % 8) as u32;
-    (1u8 << shift) ^ (frame.is_multiple_of(5) as u8 * 0x18)
+    u16::from((1u8 << shift) ^ (frame.is_multiple_of(5) as u8 * 0x18))
 }
 
 #[derive(Default)]
@@ -205,7 +211,7 @@ struct Observation {
     pending: bool,
     presented: u64,
     replayed: u64,
-    frames: Vec<(zeff_netplay::wire::Message, [u8; 2], Vec<f32>)>,
+    frames: Vec<(zeff_netplay::wire::Message, [u16; 2], Vec<f32>)>,
     paused: bool,
     chat: usize,
     stopped: bool,

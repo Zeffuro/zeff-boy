@@ -283,7 +283,7 @@ pub(crate) enum EmuCommandAuthority {
 
 pub(crate) enum EmuCommand {
     StartNetplay(Box<crate::netplay::Start>),
-    StepNetplay(u8),
+    StepNetplay(u16),
     SetNetplayPaused(bool),
     SendNetplayChat(String),
     StopNetplay,

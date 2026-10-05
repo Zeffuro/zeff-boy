@@ -1,9 +1,13 @@
 use crate::emu_backend::ActiveSystem;
 
-pub(crate) fn shared_console(system: ActiveSystem) -> bool {
+pub(crate) fn rollback_session(system: ActiveSystem) -> bool {
     matches!(
         system,
-        ActiveSystem::Nes | ActiveSystem::MasterSystem | ActiveSystem::Sg1000 | ActiveSystem::Pce
+        ActiveSystem::Nes
+            | ActiveSystem::MasterSystem
+            | ActiveSystem::Sg1000
+            | ActiveSystem::Pce
+            | ActiveSystem::WonderSwan
     )
 }
 
@@ -18,6 +22,15 @@ pub(crate) fn linked_devices(system: ActiveSystem) -> bool {
     }
 }
 
+pub(crate) fn session_mode(system: ActiveSystem) -> zeff_netplay_connect::protocol::SessionMode {
+    use zeff_netplay_connect::protocol::SessionMode;
+    if system == ActiveSystem::WonderSwan {
+        SessionMode::LinkedDevices
+    } else {
+        SessionMode::SharedConsole
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -28,13 +41,14 @@ mod tests {
         assert_eq!(specs.len(), 9);
         for spec in specs {
             assert_eq!(
-                shared_console(spec.system),
+                rollback_session(spec.system),
                 matches!(
                     spec.system,
                     ActiveSystem::Nes
                         | ActiveSystem::MasterSystem
                         | ActiveSystem::Sg1000
                         | ActiveSystem::Pce
+                        | ActiveSystem::WonderSwan
                 )
             );
             assert_eq!(

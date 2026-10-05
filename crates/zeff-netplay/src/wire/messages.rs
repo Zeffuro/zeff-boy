@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn decode(kind: u8, payload: &[u8], sender: Player) -> Result<Message> {
     let message = match kind {
         1 => {
-            ensure!(payload.len() == 10, "invalid input length");
+            ensure!(payload.len() == 11, "invalid input length");
             ensure!(
                 payload[0] == role(sender),
                 "input player does not own peer port"
@@ -11,7 +11,7 @@ pub(super) fn decode(kind: u8, payload: &[u8], sender: Player) -> Result<Message
             Message::Input {
                 player: sender,
                 frame: u64::from_be_bytes(payload[1..9].try_into()?),
-                buttons: payload[9],
+                buttons: u16::from_be_bytes(payload[9..11].try_into()?),
             }
         }
         2 => {
@@ -91,7 +91,7 @@ pub(super) fn encode(packet: &mut Vec<u8>, message: &Message) {
             packet.push(1);
             packet.push(role(*player));
             packet.extend_from_slice(&frame.to_be_bytes());
-            packet.push(*buttons);
+            packet.extend_from_slice(&buttons.to_be_bytes());
         }
         Message::Checkpoint {
             frame,

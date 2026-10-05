@@ -14,6 +14,7 @@ const CHECKPOINT_ABI: &[u8] = b"ZeffNetplay-NES-replay-v10/mapper-runtime-v1";
 const CONFIG_DOMAIN: &[u8] = b"ZeffNetplay-App-native-NES/two-standard-controllers/delay0to8-predict8/runtime-snapshot2/hash60/48000/stereo-f32LE/discard-and-restore/v7";
 mod pce;
 mod sega8;
+mod ws;
 
 fn session_config(
     timing: TimingMode,
@@ -46,6 +47,9 @@ pub(crate) fn identity_with_delay(
     build: [u8; 32],
     delay: InputDelay,
 ) -> Result<Identity> {
+    if matches!(backend, EmuBackend::Ws(_)) {
+        return ws::identity(backend, build, delay);
+    }
     if backend.pce().is_some() {
         return pce::identity(backend, build, delay);
     }
@@ -149,17 +153,29 @@ pub(crate) fn checkpoint(
     audio: &[f32],
     config: [u8; 32],
 ) -> Result<Message> {
-    checkpoint_with_snapshot(backend, frame, audio, config, None)
+    checkpoint_with_snapshot(backend, frame, audio, config, None, None)
 }
 
-pub(super) fn checkpoint_with_snapshot(
+pub(crate) fn checkpoint_with_snapshot(
     backend: &EmuBackend,
     frame: u64,
     audio: &[f32],
     config: [u8; 32],
     snapshot: Option<&crate::emu_backend::pce::PceBackendRollbackSnapshot>,
+    ws_snapshot: Option<&crate::emu_backend::ws::WsBackendRollbackSnapshot>,
 ) -> Result<Message> {
     ensure!(backend.frame_count() == frame, "netplay core frame drift");
+    if matches!(backend, EmuBackend::Ws(_)) {
+        let state = ws_snapshot.context("paired checkpoint snapshot is unavailable")?;
+        ensure!(state.frame() == frame, "checkpoint snapshot differs");
+        return Ok(Message::Checkpoint {
+            frame,
+            logical: ws::logical_hash(state.checksum(), frame, config),
+            video: state.video_checksum(),
+            audio: state.audio_checksum(),
+            persistent: state.persistent_checksum(),
+        });
+    }
     let mut audio_hash = Sha256::new();
     for sample in audio {
         audio_hash.update(sample.to_bits().to_le_bytes());
@@ -212,6 +228,9 @@ fn logical_hash_with_snapshot(
 }
 
 pub(super) fn persistent_hash(backend: &EmuBackend) -> Result<[u8; 32]> {
+    if let EmuBackend::Ws(ws) = backend {
+        return Ok(ws.netplay_initial_persistent_checksum());
+    }
     let data = match backend {
         EmuBackend::Nes(nes) => nes.emu.dump_persistent_data(),
         EmuBackend::Sega8(sega) => Some(sega.emu.bus().cartridge_ram_visible().to_vec()),

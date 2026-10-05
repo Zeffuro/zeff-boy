@@ -3,7 +3,7 @@ use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_
 use crate::test_support::{TestDirectory, test_directory};
 use std::net::{TcpListener, TcpStream};
 
-fn loaded(supergrafx: bool) -> (TestDirectory, EmuBackend) {
+pub(super) fn loaded(supergrafx: bool) -> (TestDirectory, EmuBackend) {
     let directory = test_directory("netplay-pce").unwrap();
     let path = directory.path().join("game.pce");
     std::fs::write(&path, crate::emu_backend::pce::netplay_fixture_hucard()).unwrap();
@@ -46,7 +46,7 @@ fn start(stream: TcpStream, player: Player, delay: u64) -> Start {
     }
 }
 
-fn frames(session: &mut Session, output: &mut Vec<(Message, [u8; 2], Vec<u32>)>) {
+fn frames(session: &mut Session, output: &mut Vec<(Message, [u16; 2], Vec<u32>)>) {
     while let Some(response) = session.responses.pop_front() {
         if let Response::Frame {
             checkpoint,
@@ -110,7 +110,7 @@ fn pce_peers_correct_late_inputs_and_restore_exact_baselines() {
             }
             assert_eq!(outputs[0], outputs[1]);
             assert_eq!(outputs[0].len(), 6);
-            let lease = Lease::begin(&mut reference).unwrap();
+            let mut lease = Lease::begin(&mut reference, Player::One).unwrap();
             for (frame, (checkpoint, ports, audio)) in outputs[0].iter().enumerate() {
                 let expected_ports = if frame < delay as usize {
                     [0, 0]

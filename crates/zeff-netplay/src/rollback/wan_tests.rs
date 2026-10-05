@@ -14,11 +14,11 @@ fn simulated_200ms_rtt_corrects_inputs_and_bounds_jitter_stalls() {
                 let mut stalls = 0;
                 let mut corrections = 0;
                 for tick in 0..360u64 {
-                    let value = (tick.wrapping_mul(17) + 1) as u8;
+                    let value = (tick.wrapping_mul(17) + 1) as u16;
                     let arrival = tick + travel + if tick % 31 == 0 { jitter } else { 0 };
                     remote.insert(tick + delay, value);
                     packets.push_back((arrival, tick + delay, value));
-                    let (scheduled, buttons) = timeline.sample_local((tick * 7) as u8).unwrap();
+                    let (scheduled, buttons) = timeline.sample_local((tick * 7) as u16).unwrap();
                     owned.entry(scheduled).or_insert(buttons);
                     let mut pending = VecDeque::new();
                     while let Some((arrival, frame, buttons)) = packets.pop_front() {

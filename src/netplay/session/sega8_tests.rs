@@ -3,7 +3,7 @@ use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_
 use crate::test_support::{TestDirectory, test_directory};
 use std::net::{TcpListener, TcpStream};
 
-fn loaded(system: ActiveSystem, pal: bool) -> (TestDirectory, EmuBackend) {
+pub(super) fn loaded(system: ActiveSystem, pal: bool) -> (TestDirectory, EmuBackend) {
     let directory = test_directory("netplay-sega8").unwrap();
     let path = directory
         .path()
@@ -44,7 +44,7 @@ fn loaded(system: ActiveSystem, pal: bool) -> (TestDirectory, EmuBackend) {
     (directory, backend)
 }
 
-fn collect(session: &mut Session, frames: &mut Vec<(Message, [u8; 2], Vec<u32>)>) {
+fn collect(session: &mut Session, frames: &mut Vec<(Message, [u16; 2], Vec<u32>)>) {
     while let Some(response) = session.responses.pop_front() {
         if let Response::Frame {
             checkpoint,
@@ -126,7 +126,7 @@ fn sega_two_peers_correct_predictions_and_restore_exact_console_baselines() {
             }
             assert_eq!(a_frames, b_frames);
             assert_eq!(a_frames.len(), 6);
-            let lease = Lease::begin(&mut reference).unwrap();
+            let mut lease = Lease::begin(&mut reference, Player::One).unwrap();
             for (index, (checkpoint, ports, audio)) in a_frames.into_iter().enumerate() {
                 assert_eq!(ports, [one[index], two[index]]);
                 let expected = lease.advance(&mut reference, ports).unwrap();

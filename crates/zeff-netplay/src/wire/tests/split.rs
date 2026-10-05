@@ -93,7 +93,7 @@ fn independent_sender_pipelines_inputs_before_any_reply() {
             .send(&Message::Input {
                 player: Player::One,
                 frame,
-                buttons: frame as u8,
+                buttons: 0x8000 | frame as u16,
             })
             .unwrap();
     }
@@ -103,7 +103,7 @@ fn independent_sender_pipelines_inputs_before_any_reply() {
             Message::Input {
                 player: Player::One,
                 frame,
-                buttons: frame as u8
+                buttons: 0x8000 | frame as u16
             }
         );
     }

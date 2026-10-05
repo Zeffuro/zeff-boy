@@ -18,7 +18,7 @@ pub(super) enum Fault {
     PauseMismatch,
 }
 
-fn owned_input(connection: &mut wire::Connection) -> Result<(u64, u8)> {
+fn owned_input(connection: &mut wire::Connection) -> Result<(u64, u16)> {
     loop {
         match connection.receive()? {
             Message::Input {

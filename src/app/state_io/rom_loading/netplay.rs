@@ -50,7 +50,7 @@ impl App {
             core: system.code().into(),
             content_hash: const_hex::encode(identity.effective),
             compatibility_hash: const_hex::encode(identity.config),
-            mode: zeff_netplay_connect::protocol::SessionMode::SharedConsole,
+            mode: crate::netplay::capabilities::session_mode(self.active_system),
         };
         self.commit_prepared_rom(PreparedRomLoad {
             source_path: path.clone(),

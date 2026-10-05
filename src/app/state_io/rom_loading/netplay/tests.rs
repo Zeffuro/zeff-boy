@@ -91,11 +91,16 @@ fn native_netplay_reopens_selected_zip_and_rejects_replacement_before_stopping()
         (ActiveSystem::MasterSystem, "sms"),
         (ActiveSystem::Sg1000, "sg"),
         (ActiveSystem::Pce, "pce"),
+        (ActiveSystem::WonderSwan, "ws"),
+        (ActiveSystem::WonderSwan, "wsc"),
     ] {
         let directory = crate::test_support::test_directory("app-netplay-selected-zip").unwrap();
         let bytes = match system {
             ActiveSystem::Nes => crate::test_support::build_nes_test_rom(),
             ActiveSystem::Pce => crate::emu_backend::pce::netplay_fixture_hucard(),
+            ActiveSystem::WonderSwan => {
+                crate::emu_backend::ws::netplay_fixture_rom(extension == "wsc")
+            }
             _ => {
                 let mut bytes = vec![0; 32768];
                 bytes[..3].copy_from_slice(&[0xc3, 0, 0]);
@@ -145,6 +150,47 @@ fn native_netplay_reopens_selected_zip_and_rejects_replacement_before_stopping()
         assert_eq!(app.rom_info.source_path.as_ref(), Some(&source));
         assert_eq!(app.rom_info.rom_path.as_ref(), Some(&rom));
         assert_eq!(app.rom_info.rom_hash, Some(hash));
+        app.stop_emu_thread();
+    }
+}
+
+#[test]
+fn ws_invalid_battery_load_rejects_before_stopping_worker() {
+    for color in [false, true] {
+        let directory = crate::test_support::test_directory("app-netplay-ws-invalid-save").unwrap();
+        let path = directory
+            .path()
+            .join(if color { "game.wsc" } else { "game.ws" });
+        std::fs::write(&path, crate::emu_backend::ws::netplay_fixture_rom(color)).unwrap();
+        let backend = load_backend_from_rom_source(
+            ActiveSystem::WonderSwan,
+            &path,
+            &path,
+            None,
+            BackendLoadConfig {
+                sample_rate: Some(48_000),
+                ws_load_battery_sram: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .backend;
+        let hash = backend.rom_hash();
+        let mut app = app_with_worker(
+            EmuThread::spawn(backend, false),
+            11,
+            ActiveSystem::WonderSwan,
+            path.clone(),
+        );
+        app.rom_info.rom_hash = Some(hash);
+        std::fs::write(crate::save_paths::sram_path_for_rom(&path), [0]).unwrap();
+        assert!(
+            app.prepare_netplay_game(zeff_netplay::rollback::InputDelay::default())
+                .unwrap_err()
+                .to_string()
+                .contains("persistent load outcome")
+        );
+        assert!(app.emu_thread.is_some());
         app.stop_emu_thread();
     }
 }

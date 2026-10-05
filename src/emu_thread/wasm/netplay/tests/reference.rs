@@ -19,7 +19,8 @@ impl ReferenceLease {
         }
     }
 
-    pub(super) fn advance(&self, backend: &mut EmuBackend, ports: [u8; 2]) -> Vec<f32> {
+    pub(super) fn advance(&self, backend: &mut EmuBackend, ports: [u16; 2]) -> Vec<f32> {
+        let ports = ports.map(|buttons| u8::try_from(buttons).unwrap());
         match (self, backend) {
             (Self::Nes(lease), EmuBackend::Nes(nes)) => {
                 lease.advance_frame(&mut nes.emu, ports).unwrap()

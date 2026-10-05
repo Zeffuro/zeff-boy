@@ -107,7 +107,7 @@ fn late_changing_inputs_correct_display_and_pcm_without_waiting_for_peer_steps()
                 for app in [&one, &two] {
                     let (checkpoint, used, pcm) = &app.netplay.observed_frames[frame];
                     assert_eq!(*checkpoint, expected);
-                    assert_eq!(*used, ports);
+                    assert_eq!(*used, ports.map(u16::from));
                     assert_eq!(audio_bits(pcm), audio_bits(&audio));
                 }
             }

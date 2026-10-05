@@ -6,6 +6,7 @@ mod chat;
 mod compatibility;
 mod pause;
 mod split;
+mod wider_input;
 
 #[test]
 fn explicit_private_scope_keeps_authenticated_loopback_interoperability() {
@@ -99,7 +100,7 @@ fn input(player: Player) -> Message {
     Message::Input {
         player,
         frame: 17,
-        buttons: 0xa5,
+        buttons: 0x07a5,
     }
 }
 

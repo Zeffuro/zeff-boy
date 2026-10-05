@@ -215,10 +215,14 @@ impl Ui {
     }
 
     fn draw_controls(&mut self, ui: &mut egui::Ui, system: ActiveSystem) -> Option<MenuAction> {
-        if !cfg!(target_arch = "wasm32") && !self.active && !self.link_active {
+        if !cfg!(target_arch = "wasm32")
+            && !self.active
+            && !self.link_active
+            && super::capabilities::linked_devices(system)
+        {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.linked_devices, false, "Shared console");
-                ui.selectable_value(&mut self.linked_devices, true, "Link cable");
+                ui.selectable_value(&mut self.linked_devices, false, "Netplay");
+                ui.selectable_value(&mut self.linked_devices, true, "Direct cable");
             });
             ui.separator();
         }
@@ -316,7 +320,7 @@ impl Ui {
             ui.small("New game. Session saves are discarded.");
             if ui
                 .add_enabled(
-                    super::capabilities::shared_console(system)
+                    super::capabilities::rollback_session(system)
                         && if self.joining {
                             !self.join.trim().is_empty()
                         } else {
@@ -341,8 +345,8 @@ impl Ui {
                     MenuAction::HostNesNetplay
                 });
             }
-            if !super::capabilities::shared_console(system) {
-                ui.label("No shared-console adapter for this system.");
+            if !super::capabilities::rollback_session(system) {
+                ui.label("Netplay is not available for this system.");
             }
         }
         if !self.active {
@@ -354,8 +358,12 @@ impl Ui {
             }
         }
         if self.active {
-            ui.small("Player 1 controls on both devices.")
-                .on_hover_text("Click the game to play. Unfocused input is neutral.");
+            ui.small(if system == ActiveSystem::WonderSwan {
+                "Your controls play your linked machine."
+            } else {
+                "Player 1 controls on both devices."
+            })
+            .on_hover_text("Click the game to play. Unfocused input is neutral.");
             self.draw_stats(ui, system);
         }
         None

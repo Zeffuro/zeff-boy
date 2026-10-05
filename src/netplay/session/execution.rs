@@ -2,7 +2,7 @@ use super::*;
 use zeff_netplay::rollback::FrameInput;
 
 pub(super) struct FrameBucket {
-    ports: [u8; 2],
+    ports: [u16; 2],
     audio: Vec<f32>,
     checkpoint: Option<Message>,
 }
@@ -27,6 +27,7 @@ impl Session {
                 &audio,
                 self.config,
                 snapshot.pce(),
+                snapshot.ws(),
             )?)
         } else {
             None
@@ -148,7 +149,11 @@ impl Session {
             + self
                 .snapshots
                 .values()
-                .map(Snapshot::retained_bytes)
+                .map(|state| {
+                    state
+                        .retained_bytes()
+                        .saturating_sub(state.shared_media_bytes())
+                })
                 .sum::<usize>()
             + self
                 .outputs

@@ -31,6 +31,8 @@ fn authenticated_media(
         ActiveSystem::MasterSystem => "sms",
         ActiveSystem::Sg1000 => "sg",
         ActiveSystem::Pce => "pce",
+        ActiveSystem::WonderSwan if has_extension(rom, "wsc") => "wsc",
+        ActiveSystem::WonderSwan => "ws",
         _ => return false,
     };
     if !(1..=64 * 1024 * 1024).contains(&len) || !has_extension(rom, extension) {
@@ -109,6 +111,15 @@ pub(super) fn capture(
         sega.capture_netplay_load_provenance(
             hash.expect("Sega source hash must exist"),
             len as u64,
+            authenticated,
+            unmodified,
+            config.initial_input.unwrap_or_default() == (0, 0),
+        )?;
+    }
+    if let EmuBackend::Ws(ws) = backend {
+        ws.capture_netplay_load_provenance(
+            hash.expect("WonderSwan source hash must exist"),
+            len,
             authenticated,
             unmodified,
             config.initial_input.unwrap_or_default() == (0, 0),

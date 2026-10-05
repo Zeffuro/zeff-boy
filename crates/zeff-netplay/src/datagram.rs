@@ -10,6 +10,8 @@ const WINDOW: usize = 64;
 const BATCH: usize = 32;
 const HEADER: usize = 54;
 const SIGNATURE: usize = 32;
+const MAGIC: &[u8; 4] = b"ZND2";
+const INPUT_BYTES: usize = 2;
 
 pub struct InputChannel {
     player: Player,
@@ -17,9 +19,9 @@ pub struct InputChannel {
     sent: u64,
     acknowledged: u64,
     received: u64,
-    pending: BTreeMap<u64, u8>,
-    waiting: BTreeMap<u64, u8>,
-    history: BTreeMap<u64, u8>,
+    pending: BTreeMap<u64, u16>,
+    waiting: BTreeMap<u64, u16>,
+    history: BTreeMap<u64, u16>,
     ack_dirty: bool,
 }
 
@@ -38,7 +40,7 @@ impl InputChannel {
         }
     }
 
-    pub fn push(&mut self, frame: u64, buttons: u8) -> Result<()> {
+    pub fn push(&mut self, frame: u64, buttons: u16) -> Result<()> {
         ensure!(frame == self.sent, "local input is not contiguous");
         ensure!(
             self.pending.len() < WINDOW,
@@ -59,14 +61,16 @@ impl InputChannel {
             .pending
             .first_key_value()
             .map_or(0, |(frame, _)| *frame);
-        let mut bytes = Vec::with_capacity(HEADER + count + SIGNATURE);
-        bytes.extend_from_slice(b"ZNDI");
+        let mut bytes = Vec::with_capacity(HEADER + count * INPUT_BYTES + SIGNATURE);
+        bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&codec.transcript());
         bytes.push(role(self.player));
         bytes.extend_from_slice(&self.received.to_be_bytes());
         bytes.extend_from_slice(&first.to_be_bytes());
         bytes.push(count as u8);
-        bytes.extend(self.pending.values().take(count));
+        for buttons in self.pending.values().take(count) {
+            bytes.extend_from_slice(&buttons.to_be_bytes());
+        }
         let signature = codec.authenticate_datagram(&bytes);
         bytes.extend_from_slice(&signature);
         self.ack_dirty = false;
@@ -75,12 +79,12 @@ impl InputChannel {
 
     pub fn receive(&mut self, codec: &PacketCodec, bytes: &[u8]) -> Result<Vec<Message>> {
         ensure!(
-            (HEADER + SIGNATURE..=HEADER + BATCH + SIGNATURE).contains(&bytes.len()),
+            (HEADER + SIGNATURE..=HEADER + BATCH * INPUT_BYTES + SIGNATURE).contains(&bytes.len()),
             "invalid input packet length"
         );
         let (body, signature) = bytes.split_at(bytes.len() - SIGNATURE);
         ensure!(
-            &body[..4] == b"ZNDI" && body[4..36] == codec.transcript(),
+            &body[..4] == MAGIC && body[4..36] == codec.transcript(),
             "input session mismatch"
         );
         ensure!(
@@ -92,7 +96,7 @@ impl InputChannel {
         let first = u64::from_be_bytes(body[45..53].try_into()?);
         let count = usize::from(body[53]);
         ensure!(
-            count <= BATCH && body.len() == HEADER + count,
+            count <= BATCH && body.len() == HEADER + count * INPUT_BYTES,
             "invalid input batch length"
         );
         ensure!(
@@ -114,7 +118,13 @@ impl InputChannel {
             );
         }
         let mut waiting = self.waiting.clone();
-        for (offset, &buttons) in body[HEADER..].iter().enumerate() {
+        for (offset, bytes) in body[HEADER..]
+            .as_chunks::<INPUT_BYTES>()
+            .0
+            .iter()
+            .enumerate()
+        {
+            let buttons = u16::from_be_bytes(*bytes);
             let frame = first + offset as u64;
             if let Some(&previous) = self.history.get(&frame).or_else(|| waiting.get(&frame)) {
                 ensure!(buttons == previous, "remote input was rewritten");

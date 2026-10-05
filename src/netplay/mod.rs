@@ -91,7 +91,7 @@ pub(crate) enum Response {
     },
     Frame {
         checkpoint: zeff_netplay::wire::Message,
-        ports: [u8; 2],
+        ports: [u16; 2],
         audio: Vec<f32>,
     },
     Audio {

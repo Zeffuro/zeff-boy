@@ -15,9 +15,15 @@ use crate::cheats::CheatPatch;
 use crate::emu_backend::paths::BackendPaths;
 use crate::emu_core_trait::{EmulatorCore, copy_optional_region_to_vec, copy_slice_to_vec};
 
+mod netplay;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas_persistence;
 mod tas_provenance;
+#[cfg(test)]
+pub(crate) use netplay::tests::netplay_fixture_rom;
+pub(crate) use netplay::{
+    WsBackendRollbackSession, WsBackendRollbackSnapshot, WsNetplayLoadProvenance,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use tas_persistence::{
     WsRtcPersistenceWitness, ws_rtc_persistence_witness, ws_tas_persistent_identity,
@@ -152,6 +158,8 @@ pub(crate) struct WsBackend {
     paths: BackendPaths,
     sram_recovery: crate::save_paths::SramRecoverySession,
     tas_load_provenance: Option<WsTasLoadProvenance>,
+    netplay_load_provenance: Option<WsNetplayLoadProvenance>,
+    host_persistence_enabled: bool,
 }
 
 impl WsBackend {
@@ -203,6 +211,8 @@ impl WsBackend {
             paths: BackendPaths::new(rom_path),
             sram_recovery,
             tas_load_provenance: None,
+            netplay_load_provenance: None,
+            host_persistence_enabled: true,
         }
     }
 
@@ -218,6 +228,8 @@ impl WsBackend {
             paths: BackendPaths::with_source_path(rom_path, source_path),
             sram_recovery,
             tas_load_provenance: None,
+            netplay_load_provenance: None,
+            host_persistence_enabled: true,
         }
     }
 
@@ -291,6 +303,9 @@ impl EmulatorCore for WsBackend {
     }
 
     fn flush_battery_sram(&mut self) -> anyhow::Result<Option<String>> {
+        if !self.host_persistence_enabled {
+            return Ok(None);
+        }
         let bytes = if self.tas_load_provenance.is_some() && self.emu.footer().rtc_present {
             self.emu.dump_complete_rtc_persistence()
         } else {

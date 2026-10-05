@@ -2,6 +2,13 @@ use super::Bus;
 use crate::hardware::constants::CYCLES_PER_SCANLINE;
 
 impl Bus {
+    pub(crate) fn hash_rollback_service(&self, hash: &mut sha2::Sha256) {
+        use sha2::Digest;
+        hash.update([u8::from(self.frame_service_deferred)]);
+        hash.update(self.frame_service_pending_cycles.to_le_bytes());
+        hash.update(self.frame_service_horizon.to_le_bytes());
+    }
+
     pub(crate) fn begin_frame_service(&mut self) {
         debug_assert!(!self.frame_service_deferred);
         debug_assert_eq!(self.frame_service_pending_cycles, 0);

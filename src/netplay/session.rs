@@ -77,7 +77,7 @@ impl Session {
         );
         let checkpoint = backend.encode_state_bytes()?;
         let publication = core::persistence(backend, None)?;
-        let lease = Lease::begin(backend)?;
+        let lease = Lease::begin(backend, start.player)?;
         let snapshot = lease.capture(backend)?;
         let restore_snapshot = lease.capture(backend)?;
         ensure!(
@@ -121,7 +121,8 @@ impl Session {
         })
     }
 
-    pub(crate) fn step(&mut self, backend: &mut EmuBackend, buttons: u8) -> Result<()> {
+    pub(crate) fn step(&mut self, backend: &mut EmuBackend, buttons: u16) -> Result<()> {
+        self.lease.validate_input(buttons)?;
         self.check_waiting()?;
         ensure!(self.ready, "netplay admission is pending");
         let rollback_frames = self.batch(backend, None)?;
@@ -256,6 +257,7 @@ impl Session {
                         buttons,
                     } => {
                         ensure!(player != self.player, "remote input owns the local port");
+                        self.lease.validate_input(buttons)?;
                         self.timeline.receive_remote(frame, buttons)?;
                     }
                     Message::Progress { frame, confirmed } => {
@@ -373,8 +375,13 @@ fn nes_mut(backend: &mut EmuBackend) -> Result<&mut crate::emu_backend::nes::Nes
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod input_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod pce_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod sega8_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod ws_tests;

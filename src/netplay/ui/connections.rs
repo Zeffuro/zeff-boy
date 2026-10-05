@@ -8,7 +8,8 @@ impl Ui {
 
     pub(crate) fn open_for_system(&mut self, system: ActiveSystem) {
         if !self.active && !self.link_active {
-            self.linked_devices = super::super::capabilities::linked_devices(system);
+            self.linked_devices = super::super::capabilities::linked_devices(system)
+                && !super::super::capabilities::rollback_session(system);
         }
         self.open();
     }
@@ -102,6 +103,7 @@ mod tests {
             assert_eq!(
                 ui.linked_devices,
                 super::super::super::capabilities::linked_devices(spec.system)
+                    && !super::super::super::capabilities::rollback_session(spec.system)
             );
         }
         ui.linked_devices = true;

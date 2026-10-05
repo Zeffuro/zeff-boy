@@ -235,7 +235,7 @@ fn run_frames(
         let input = Message::Input {
             player,
             frame: scheduled,
-            buttons,
+            buttons: u16::from(buttons),
         };
         if player == Player::Two {
             inject_before(connection, injector, frame, scenario)?;
@@ -252,7 +252,7 @@ fn run_frames(
                 Scenario::Conflict if frame == 5 => connection.send(&Message::Input {
                     player,
                     frame: scheduled,
-                    buttons: buttons ^ 1,
+                    buttons: u16::from(buttons ^ 1),
                 })?,
                 _ => {}
             }
@@ -367,7 +367,11 @@ fn receive_input(
                 buttons,
             } => {
                 schedule
-                    .submit(player, frame, buttons)
+                    .submit(
+                        player,
+                        frame,
+                        u8::try_from(buttons).context("unsupported proof input bits")?,
+                    )
                     .map_err(anyhow::Error::msg)?;
                 if frame == expected {
                     return Ok(());
@@ -389,7 +393,11 @@ fn receive_checkpoint(connection: &mut Connection, schedule: &mut Lockstep) -> R
                 buttons,
             } => {
                 schedule
-                    .submit(player, frame, buttons)
+                    .submit(
+                        player,
+                        frame,
+                        u8::try_from(buttons).context("unsupported proof input bits")?,
+                    )
                     .map_err(anyhow::Error::msg)?;
             }
             _ => bail!("unexpected message while waiting for checkpoint"),

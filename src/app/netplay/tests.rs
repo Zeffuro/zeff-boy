@@ -482,3 +482,20 @@ fn next_response(app: &App) -> EmuResponse {
         std::thread::sleep(Duration::from_millis(1));
     }
 }
+
+#[test]
+fn ws_host_input_preserves_both_diamonds_and_all_three_buttons() {
+    for bit in 0..11 {
+        let expected = 1u16 << bit;
+        let (buttons, dpad) = match bit {
+            0..=3 => (0, 1u8 << bit),
+            4..=7 => (1u8 << bit, 0),
+            8..=9 => (1u8 << (bit - 8), 0),
+            10 => (8, 0),
+            _ => unreachable!(),
+        };
+        assert_eq!(super::host_to_ws(buttons, dpad), expected);
+    }
+    assert_eq!(super::host_to_ws(0xfb, 0xf), 0x7ff);
+    assert_eq!(super::host_to_ws(4, 0xf0), 0);
+}

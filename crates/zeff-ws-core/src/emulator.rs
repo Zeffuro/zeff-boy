@@ -7,6 +7,7 @@ use std::fmt;
 use zeff_emu_common::debug::{AddressDebugController, OpcodeLog};
 
 mod audio_trace;
+pub mod link_pair;
 mod public_api;
 mod runtime;
 mod state_io;
@@ -39,6 +40,7 @@ impl From<FetchedInstruction> for WsOpcodeRecord {
 
 #[derive(Clone)]
 pub struct Emulator {
+    pub(crate) link_identity: std::sync::Arc<()>,
     pub(crate) cpu: Cpu,
     pub(crate) bus: Bus,
     pub(crate) rom_hash: [u8; 32],
@@ -59,6 +61,7 @@ impl Emulator {
         let mut bus = Bus::new(cartridge);
         bus.apu.set_sample_rate(sample_rate);
         let mut emu = Self {
+            link_identity: std::sync::Arc::new(()),
             cpu: Cpu::new(),
             bus,
             rom_hash,

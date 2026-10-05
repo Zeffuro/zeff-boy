@@ -40,7 +40,7 @@ use io::{read_deadline, write_deadline};
 pub use split::{ConnectionTerminated, Receiver, Sender};
 
 const MAGIC: &[u8; 4] = b"ZNPL";
-const VERSION: u16 = 6;
+const VERSION: u16 = 7;
 const BUILD_INFO_OFFSET: usize = 243;
 const HELLO_LEN: usize = BUILD_INFO_OFFSET + build::ENCODED_LEN;
 const HEADER_LEN: usize = 48;
@@ -74,7 +74,7 @@ pub enum Message {
     Input {
         player: Player,
         frame: u64,
-        buttons: u8,
+        buttons: u16,
     },
     Checkpoint {
         frame: u64,
