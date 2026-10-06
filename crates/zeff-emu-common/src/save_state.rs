@@ -343,11 +343,16 @@ impl<'a> StateReader<'a> {
 
     /// Read a length-prefixed byte vector, rejecting anything beyond `max_len`.
     pub fn read_vec(&mut self, max_len: usize) -> Result<Vec<u8>> {
+        Ok(self.read_slice(max_len)?.to_vec())
+    }
+
+    /// Borrow a bounded length-prefixed slice from the original input.
+    pub fn read_slice(&mut self, max_len: usize) -> Result<&'a [u8]> {
         let len = self.read_u32()? as usize;
         if len > max_len {
             bail!("save-state vector length {len} exceeds maximum {max_len}");
         }
-        Ok(self.take(len)?.to_vec())
+        self.take(len)
     }
 }
 
@@ -395,6 +400,56 @@ mod tests {
         let bytes = w.into_bytes();
         let mut r = StateReader::new(&bytes);
         assert!(r.read_vec(5).is_err());
+    }
+
+    #[test]
+    fn borrowed_slice_keeps_input_storage_and_reader_progress() {
+        let mut writer = StateWriter::new();
+        writer.write_vec(&[1, 2, 3, 4]);
+        writer.write_vec(&[]);
+        writer.write_u8(9);
+        let bytes = writer.into_bytes();
+        let mut reader = StateReader::new(&bytes);
+        let borrowed = reader.read_slice(4).unwrap();
+        assert_eq!(borrowed.as_ptr(), bytes[4..].as_ptr());
+        assert_eq!(reader.position(), 8);
+        assert!(reader.read_slice(0).unwrap().is_empty());
+        assert_eq!(reader.read_u8().unwrap(), 9);
+        assert!(reader.is_exhausted());
+        assert_eq!(borrowed, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn borrowed_and_owned_lengths_preserve_error_and_cursor_contracts() {
+        for (bytes, limit, position, error) in [
+            (&[4, 0, 0][..], 4, 0, "save-state data is truncated"),
+            (
+                &[4, 0, 0, 0, 1, 2][..],
+                4,
+                4,
+                "save-state data is truncated",
+            ),
+            (
+                &[6, 0, 0, 0][..],
+                5,
+                4,
+                "save-state vector length 6 exceeds maximum 5",
+            ),
+        ] {
+            let mut owned = StateReader::new(bytes);
+            let mut borrowed = StateReader::new(bytes);
+            assert_eq!(owned.read_vec(limit).unwrap_err().to_string(), error);
+            assert_eq!(borrowed.read_slice(limit).unwrap_err().to_string(), error);
+            assert_eq!(owned.position(), position);
+            assert_eq!(borrowed.position(), position);
+        }
+        let mut reader = StateReader::new(&[]);
+        reader.set_position(usize::MAX);
+        assert_eq!(
+            reader.read_slice(0).unwrap_err().to_string(),
+            "save-state offset overflow"
+        );
+        assert_eq!(reader.position(), usize::MAX);
     }
 
     #[test]

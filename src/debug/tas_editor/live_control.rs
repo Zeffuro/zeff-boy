@@ -176,7 +176,8 @@ impl TasEditorWindowState {
         } else if self.linked_session_active && self.live_status.requires_return_on_close() {
             self.close_keep_after_live_command = true;
             match &self.live_status {
-                TasEditorLiveStatus::Recording => {
+                TasEditorLiveStatus::Recording
+                | TasEditorLiveStatus::RecordingWaitingForGameInput => {
                     self.pending_host_request = Some(TasEditorHostRequest::Live(
                         TasEditorLiveAction::StopRealtimeRecording,
                     ));

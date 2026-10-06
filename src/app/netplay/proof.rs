@@ -24,6 +24,8 @@ use media::Options;
 
 #[cfg(test)]
 mod lobby_tests;
+#[cfg(test)]
+mod response_tests;
 
 #[derive(Default)]
 pub(super) struct Observation {
@@ -33,7 +35,7 @@ pub(super) struct Observation {
     pub(super) connection: Option<(SocketAddr, SocketAddr, ConnectionScope)>,
     pub(super) pause_rounds: u64,
     pub(super) last_pause: Option<(u64, bool, bool)>,
-    pub(super) cadence: bool,
+    ledger: Option<cadence::ledger::Ledger>,
     pub(super) presented: Vec<(u64, Instant)>,
     pub(super) depth_max: u64,
     pub(super) rollback_frames: u64,
@@ -43,6 +45,37 @@ pub(super) struct Observation {
 }
 
 impl Observation {
+    pub(super) fn record_input(&mut self, frame: u64, raw: u16) -> Result<()> {
+        if let Some(ledger) = &mut self.ledger {
+            ledger.record_input(frame, raw)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn record_frame(
+        &mut self,
+        checkpoint: &Message,
+        ports: [u16; 2],
+        audio: &[f32],
+    ) -> Result<()> {
+        if let Some(ledger) = &mut self.ledger {
+            ledger.record_frame(checkpoint, ports, audio)?;
+        }
+        self.frames += 1;
+        self.record_pcm(audio);
+        self.last = Some((checkpoint.clone(), ports, audio.to_vec()));
+        Ok(())
+    }
+
+    pub(super) fn record_audio(&mut self, audio: &[f32]) -> Result<()> {
+        if let Some(ledger) = &mut self.ledger {
+            ledger.record_audio()?;
+        }
+        self.frames += 1;
+        self.record_pcm(audio);
+        Ok(())
+    }
+
     pub(super) fn record_pcm(&mut self, audio: &[f32]) {
         for sample in audio {
             self.pcm_hash.update(sample.to_bits().to_le_bytes());
@@ -118,11 +151,13 @@ fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
     let started = Instant::now();
     let build = executable_build()?;
     let initial = capture(app)?;
-    app.netplay
-        .proof
-        .as_mut()
-        .context("proof observer lost")?
-        .cadence = options.cadence;
+    if options.cadence {
+        app.netplay
+            .proof
+            .as_mut()
+            .context("proof observer lost")?
+            .ledger = Some(cadence::ledger::Ledger::new(options.frames)?);
+    }
     app.debug_windows.netplay.private_network = true;
     options.route.configure(app);
     app.debug_windows.netplay.input_delay = options.input_delay.frames();
@@ -227,7 +262,7 @@ fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
         );
         chat::exchange(app, options, "ready")?;
         if options.cadence {
-            report["cadence"] = cadence::play(app, options)?;
+            report["cadence"] = cadence::play(app, options, path, &save, &mut reference, config)?;
         } else {
             let timings = play(app, options, path, &save, &mut reference, config)?;
             report["timing"] = timings.report();
@@ -235,9 +270,7 @@ fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
         report["paced"] = json!(options.paced);
         let observation = app.netplay.proof.as_ref().unwrap();
         report["frames"] = json!(observation.frames);
-        report["reference_checked_frames"] = json!(if options.cadence {
-            0
-        } else if options.fault.is_some() {
+        report["reference_checked_frames"] = json!(if options.fault.is_some() {
             8
         } else {
             observation.frames

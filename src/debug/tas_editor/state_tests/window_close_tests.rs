@@ -90,31 +90,36 @@ fn close_during_a_linked_command_waits_then_disconnects_with_the_completed_posit
 
 #[test]
 fn close_stops_realtime_recording_before_keeping_the_completed_position() {
-    let mut state = TasEditorWindowState::new();
-    state.set_live_status(TasEditorLiveStatus::Linked {
-        cursor: 4,
-        recording_available: true,
-    });
-    state.set_live_status(TasEditorLiveStatus::Recording);
+    for status in [
+        TasEditorLiveStatus::Recording,
+        TasEditorLiveStatus::RecordingWaitingForGameInput,
+    ] {
+        let mut state = TasEditorWindowState::new();
+        state.set_live_status(TasEditorLiveStatus::Linked {
+            cursor: 4,
+            recording_available: true,
+        });
+        state.set_live_status(status);
 
-    state.close();
-    assert_eq!(
-        state.take_pending_host_request(),
-        Some(TasEditorHostRequest::Live(
-            TasEditorLiveAction::StopRealtimeRecording
-        ))
-    );
+        state.close();
+        assert_eq!(
+            state.take_pending_host_request(),
+            Some(TasEditorHostRequest::Live(
+                TasEditorLiveAction::StopRealtimeRecording
+            ))
+        );
 
-    state.set_live_status(TasEditorLiveStatus::Linked {
-        cursor: 5,
-        recording_available: true,
-    });
-    assert_eq!(
-        state.take_pending_host_request(),
-        Some(TasEditorHostRequest::Live(
-            TasEditorLiveAction::KeepResultAndReturnToGame
-        ))
-    );
+        state.set_live_status(TasEditorLiveStatus::Linked {
+            cursor: 5,
+            recording_available: true,
+        });
+        assert_eq!(
+            state.take_pending_host_request(),
+            Some(TasEditorHostRequest::Live(
+                TasEditorLiveAction::KeepResultAndReturnToGame
+            ))
+        );
+    }
 }
 
 #[test]

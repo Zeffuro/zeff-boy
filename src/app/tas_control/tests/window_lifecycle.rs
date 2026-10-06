@@ -416,6 +416,12 @@ fn recording_focus_transfer(editor_focused: bool) {
         },
     );
     settle(&mut app, |app| linked_at(app, 4));
+    assert!(!app.realtime_tas_recording_waiting_for_game_input());
+    assert!(
+        !app.tas_control_live_status()
+            .primary_label()
+            .contains("waiting")
+    );
     live_ok(
         &mut app,
         LiveCommand::TasSetRealtimeRecording { active: true },
@@ -429,11 +435,17 @@ fn recording_focus_transfer(editor_focused: bool) {
     );
     assert!(app.tas_control.live_frame_in_flight());
 
+    assert_eq!(app.tas_control_live_status().primary_label(), "Recording");
     app.handle_focus_change(false);
     app.handle_tas_editor_window_event(WindowEvent::Focused(editor_focused));
     app.apply_focus_state();
     assert_eq!(app.window_focused, editor_focused);
     assert!(app.realtime_tas_recording_waiting_for_game_input());
+    app.refresh_tas_editor_live_status();
+    assert_eq!(
+        app.debug_windows.tas_editor.live_status().primary_label(),
+        "Recording: waiting for game input focus"
+    );
     app.pump_realtime_tas_recording();
     let (response, _) = receive_live_frame(&app);
     assert!(app.consume_tas_control_response(response).is_none());
@@ -454,6 +466,10 @@ fn recording_focus_transfer(editor_focused: bool) {
         assert!(app.realtime_tas_recording_active());
         assert!(app.realtime_tas_recording_waiting_for_game_input());
         assert_eq!(
+            app.tas_control_live_status().primary_label(),
+            "Recording: waiting for game input focus"
+        );
+        assert_eq!(
             app.debug_windows
                 .tas_editor
                 .active_session()
@@ -469,6 +485,11 @@ fn recording_focus_transfer(editor_focused: bool) {
     app.handle_focus_change(true);
     app.apply_focus_state();
     assert!(!app.realtime_tas_recording_waiting_for_game_input());
+    app.refresh_tas_editor_live_status();
+    assert_eq!(
+        app.debug_windows.tas_editor.live_status().primary_label(),
+        "Recording"
+    );
     let deadline = Instant::now() + Duration::from_secs(2);
     while !app.tas_control.live_frame_in_flight() && Instant::now() < deadline {
         app.pump_realtime_tas_recording();
@@ -500,6 +521,12 @@ fn recording_focus_transfer(editor_focused: bool) {
     live_ok(
         &mut app,
         LiveCommand::TasSetRealtimeRecording { active: false },
+    );
+    assert!(!app.realtime_tas_recording_waiting_for_game_input());
+    assert!(
+        !app.tas_control_live_status()
+            .primary_label()
+            .contains("waiting")
     );
     live_ok(&mut app, LiveCommand::TasDisconnect { keep: true });
     settle(&mut app, |app| {

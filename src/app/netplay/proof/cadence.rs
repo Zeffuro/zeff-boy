@@ -1,4 +1,5 @@
-use super::{App, Observation, Options, hold, sample, set_input};
+use super::{App, EmuBackend, EmuCommand, Observation, Options, hold, media, sample, set_input};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
@@ -8,7 +9,17 @@ const WARMUP: u64 = 60;
 const MIN_SAMPLES: u64 = 60;
 const POLL: Duration = Duration::from_millis(1);
 
-pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
+pub(super) mod ledger;
+mod oracle;
+
+pub(super) fn play(
+    app: &mut App,
+    options: &Options,
+    path: &Path,
+    save: &Option<Vec<u8>>,
+    reference: &mut EmuBackend,
+    config: [u8; 32],
+) -> Result<Value> {
     ensure!(
         options.frames >= WARMUP + MIN_SAMPLES,
         "cadence needs at least 120 frames"
@@ -21,7 +32,7 @@ pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
         app.netplay.running() && app.netplay.presented == 0 && !app.netplay.in_flight,
         "cadence requires a fresh admitted App session"
     );
-    ensure!(observation(app)?.cadence, "cadence observer is disabled");
+    ledger(app)?.check_error()?;
     let nominal = Duration::from_nanos(app.nominal_frame_duration_ns());
     ensure!(!nominal.is_zero(), "invalid regional frame duration");
     let budget = nominal
@@ -30,9 +41,11 @@ pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
         + Duration::from_secs(10);
     let started = Instant::now();
     let deadline = started + budget;
+    let mut fences_checked = false;
     app.netplay.next_frame = None;
     loop {
         app.drain_emu_responses();
+        ledger(app)?.check_error()?;
         ensure!(
             app.netplay.running(),
             "cadence session stopped: {}",
@@ -49,6 +62,18 @@ pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
         app.game_window_focused = options.role != 0 || !(5..8).contains(&frame);
         app.game_view_focused = options.role != 1 || !(9..12).contains(&frame);
         app.egui_wants_keyboard = options.role == 1 && (12..15).contains(&frame);
+        if frame == 5 && !fences_checked {
+            ensure!(
+                app.send_emu_command_checked(EmuCommand::Reset).is_err(),
+                "reset escaped App fence"
+            );
+            ensure!(
+                app.send_emu_command_checked(EmuCommand::SetSampleRate(44_100))
+                    .is_err(),
+                "sample rate escaped App fence"
+            );
+            fences_checked = true;
+        }
         app.pump_netplay();
         ensure!(
             Instant::now() < deadline,
@@ -67,6 +92,7 @@ pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
     let confirmation_deadline = confirmation_started + Duration::from_secs(5);
     loop {
         app.drain_emu_responses();
+        ledger(app)?.check_error()?;
         ensure!(
             app.netplay.running(),
             "cadence confirmation stopped: {}",
@@ -87,6 +113,15 @@ pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
         std::thread::sleep(POLL);
     }
     let observed = observation(app)?;
+    let confirmation_tail = confirmation_started.elapsed();
+    ensure!(fences_checked, "cadence mutation fences were not checked");
+    let reference_started = Instant::now();
+    oracle::verify(app, options, reference, config, ledger(app)?)?;
+    ensure!(
+        media::optional_save(path)? == *save,
+        "cadence published save bytes"
+    );
+    let reference_elapsed = reference_started.elapsed();
     ensure!(
         observed.presented.len() as u64 == options.frames,
         "cadence presentation observations missing"
@@ -95,7 +130,15 @@ pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
     report["presented_frames"] = json!(options.frames);
     report["confirmed_frames"] = json!(observed.frames);
     report["presentation_run_seconds"] = json!(presented_elapsed.as_secs_f64());
-    report["confirmation_tail_ms"] = json!(confirmation_started.elapsed().as_secs_f64() * 1000.0);
+    report["confirmation_tail_ms"] = json!(confirmation_tail.as_secs_f64() * 1000.0);
+    report["verification"] = json!({
+        "mode": "offline reference after nominal presentation and confirmation tail",
+        "reference_checked_frames": observed.frames,
+        "submitted_samples": ledger(app)?.inputs().len(),
+        "reference_seconds": reference_elapsed.as_secs_f64(),
+        "timing_includes": "per-frame verification hashing and bounded input/PCM recording",
+        "timing_excludes": "offline reference execution",
+    });
     report["max_prediction_depth"] = json!(observed.depth_max);
     report["rollback_frames"] = json!(observed.rollback_frames);
     report["stalls"] = json!(observed.stalls);
@@ -106,6 +149,13 @@ pub(super) fn play(app: &mut App, options: &Options) -> Result<Value> {
 
 fn observation(app: &App) -> Result<&Observation> {
     app.netplay.proof.as_ref().context("cadence observer lost")
+}
+
+fn ledger(app: &App) -> Result<&ledger::Ledger> {
+    observation(app)?
+        .ledger
+        .as_ref()
+        .context("cadence ledger is disabled")
 }
 
 fn intervals(points: &[(u64, Instant)], nominal: Duration) -> Result<Value> {

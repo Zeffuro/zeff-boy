@@ -336,12 +336,7 @@ impl App {
                     self.debug_windows.netplay.input_delay = start.input_delay.frames();
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        start.verify_every_frame = self
-                            .netplay
-                            .proof
-                            .as_ref()
-                            .is_some_and(|proof| !proof.cadence)
-                            || cfg!(test);
+                        start.verify_every_frame = self.netplay.proof.is_some() || cfg!(test);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     if let Some(proof) = &mut self.netplay.proof {
@@ -408,6 +403,13 @@ impl App {
             match self.send_emu_command_checked(EmuCommand::StepNetplay(raw)) {
                 Ok(()) => {
                     self.netplay.in_flight = true;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(proof) = &mut self.netplay.proof
+                        && proof.record_input(self.netplay.presented, raw).is_err()
+                    {
+                        self.request_netplay_stop();
+                        return;
+                    }
                     let interval = if self.netplay.paused {
                         Duration::from_millis(100)
                     } else {

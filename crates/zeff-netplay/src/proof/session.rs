@@ -1,4 +1,4 @@
-use std::net::{Shutdown, TcpStream};
+use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 
@@ -145,7 +145,6 @@ pub fn run_peer_with_setup(
     );
     let mut machine = Machine::new()?;
     let mut identity = machine.identity(build)?;
-    let injector = stream.try_clone()?;
     if player == Player::Two {
         match scenario {
             Scenario::Identity => identity.config[0] ^= 1,
@@ -172,17 +171,17 @@ pub fn run_peer_with_setup(
         let mut connection = admit_scoped(stream, player, &identity, &secret, scope)?;
         report.admitted = true;
         report.transcript = Some(connection.transcript());
-        run_frames(
+        let result = run_frames(
             &mut connection,
-            &injector,
             &mut machine,
             &mut schedule,
             &mut report,
             player,
             frames,
             scenario,
-        )?;
-        Ok(())
+        );
+        drop(connection);
+        result
     })();
     report.frames = machine.frame;
     report.cpu_cycles = machine.emu.cpu_cycles();
@@ -211,7 +210,6 @@ pub fn run_peer_with_setup(
 #[allow(clippy::too_many_arguments)]
 fn run_frames(
     connection: &mut Connection,
-    injector: &TcpStream,
     machine: &mut Machine,
     schedule: &mut Lockstep,
     report: &mut PeerReport,
@@ -238,7 +236,7 @@ fn run_frames(
             buttons: u16::from(buttons),
         };
         if player == Player::Two {
-            inject_before(connection, injector, frame, scenario)?;
+            inject_before(connection, frame, scenario)?;
         }
         connection.send(&input)?;
         if player == Player::Two {
@@ -308,12 +306,7 @@ fn run_frames(
     Ok(())
 }
 
-fn inject_before(
-    connection: &mut Connection,
-    stream: &TcpStream,
-    frame: u64,
-    scenario: Scenario,
-) -> Result<()> {
+fn inject_before(connection: &mut Connection, frame: u64, scenario: Scenario) -> Result<()> {
     if scenario == Scenario::Jitter {
         thread::sleep(Duration::from_millis([0, 1, 4, 2, 8][frame as usize % 5]));
     }
@@ -342,7 +335,7 @@ fn inject_before(
             bail!("malformed peer did not close after injection");
         }
         Scenario::Disconnect => {
-            stream.shutdown(Shutdown::Both)?;
+            // Returning releases every owned socket before the peer report is built.
             bail!("injected disconnect");
         }
         Scenario::Timeout => {
@@ -405,3 +398,6 @@ fn receive_checkpoint(connection: &mut Connection, schedule: &mut Lockstep) -> R
     }
     bail!("checkpoint packet budget exceeded")
 }
+
+#[cfg(test)]
+mod tests;

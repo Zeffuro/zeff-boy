@@ -14,6 +14,9 @@ pub(super) fn label(status: &TasEditorLiveStatus) -> Option<String> {
         }
         TasEditorLiveStatus::AdvancingFrame => Some("TAS · Recording frame…".to_owned()),
         TasEditorLiveStatus::Recording => Some("TAS · Recording".to_owned()),
+        TasEditorLiveStatus::RecordingWaitingForGameInput => {
+            Some(format!("TAS · {}", status.primary_label()))
+        }
         TasEditorLiveStatus::Returning => Some("TAS · Restoring game…".to_owned()),
         TasEditorLiveStatus::Keeping => Some("TAS · Keeping game…".to_owned()),
         TasEditorLiveStatus::Terminal(_) => Some("TAS · Needs attention".to_owned()),
@@ -96,6 +99,10 @@ mod tests {
         assert_eq!(
             label(&TasEditorLiveStatus::Recording).as_deref(),
             Some("TAS · Recording")
+        );
+        assert_eq!(
+            label(&TasEditorLiveStatus::RecordingWaitingForGameInput).as_deref(),
+            Some("TAS · Recording: waiting for game input focus")
         );
         assert_eq!(
             label(&TasEditorLiveStatus::Returning).as_deref(),

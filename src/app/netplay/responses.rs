@@ -63,10 +63,11 @@ impl App {
             {
                 self.netplay.confirmed = frame;
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(proof) = &mut self.netplay.proof {
-                    proof.frames += 1;
-                    proof.record_pcm(&audio);
-                    proof.last = Some((checkpoint.clone(), ports, audio.clone()));
+                if let Some(proof) = &mut self.netplay.proof
+                    && proof.record_frame(&checkpoint, ports, &audio).is_err()
+                {
+                    self.request_netplay_stop();
+                    return None;
                 }
                 #[cfg(all(test, not(target_arch = "wasm32")))]
                 self.netplay
@@ -84,9 +85,11 @@ impl App {
             {
                 self.netplay.confirmed = frame;
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(proof) = &mut self.netplay.proof {
-                    proof.frames += 1;
-                    proof.record_pcm(&audio);
+                if let Some(proof) = &mut self.netplay.proof
+                    && proof.record_audio(&audio).is_err()
+                {
+                    self.request_netplay_stop();
+                    return None;
                 }
                 if self.netplay.running() {
                     self.queue_netplay_audio(&audio);

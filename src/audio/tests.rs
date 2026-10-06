@@ -24,9 +24,8 @@ fn native_host_output_enumeration_diagnostic() {
     for device in &devices {
         let id: cpal::DeviceId = device.id.parse().expect("enumerated device ID must parse");
         assert_eq!(id.to_string(), device.id);
-        let resolved = host
-            .device_by_id(&id)
-            .expect("enumerated device ID must resolve");
+        let resolved =
+            resolve_output_device(&host, &device.id).expect("enumerated device ID must resolve");
         assert_eq!(
             resolved.id().expect("resolved device must expose its ID"),
             id

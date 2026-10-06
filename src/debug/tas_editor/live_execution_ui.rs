@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use super::{TasEditorAction, TasEditorFileRequest, TasLiveRecordingMode};
 
+#[cfg(test)]
+mod feedback_tests;
 mod transport;
 
 pub(super) use transport::{LiveTransportStripControls, draw_live_transport_strip};
@@ -28,6 +30,7 @@ pub(crate) enum TasEditorLiveStatus {
     },
     AdvancingFrame,
     Recording,
+    RecordingWaitingForGameInput,
     Returning,
     Keeping,
     Terminal(String),
@@ -64,6 +67,9 @@ impl TasEditorLiveStatus {
             }
             Self::AdvancingFrame => "Recording one frame…".to_owned(),
             Self::Recording => "Recording".to_owned(),
+            Self::RecordingWaitingForGameInput => {
+                "Recording: waiting for game input focus".to_owned()
+            }
             Self::Returning => "Restoring pre-TAS game…".to_owned(),
             Self::Keeping => "Disconnecting…".to_owned(),
             Self::Terminal(_) => "Live session needs attention".to_owned(),
@@ -95,13 +101,17 @@ impl TasEditorLiveStatus {
                 | Self::Playing { .. }
                 | Self::AdvancingFrame
                 | Self::Recording
+                | Self::RecordingWaitingForGameInput
         )
     }
 
     pub(crate) fn follows_cursor(&self) -> bool {
         matches!(
             self,
-            Self::Playing { .. } | Self::AdvancingFrame | Self::Recording
+            Self::Playing { .. }
+                | Self::AdvancingFrame
+                | Self::Recording
+                | Self::RecordingWaitingForGameInput
         )
     }
 
@@ -260,8 +270,8 @@ pub(super) fn draw_live_execution_panel(
                 ui.label("Recording the current controls in the loaded game…");
                 return_unchanged_button(ui, action);
             }
-            TasEditorLiveStatus::Recording => {
-                ui.strong("Recording");
+            TasEditorLiveStatus::Recording | TasEditorLiveStatus::RecordingWaitingForGameInput => {
+                ui.strong(status.primary_label());
                 ui.small(match recording_mode {
                     TasLiveRecordingMode::ReplaceExistingInput => {
                         "Existing input is replaced as the game advances; recording appends after End. Neutral input is recorded."
@@ -462,6 +472,25 @@ mod tests {
             "Connected · paused before input frame 42"
         );
         assert_eq!(TasEditorLiveStatus::Recording.primary_label(), "Recording");
+        assert_eq!(
+            TasEditorLiveStatus::RecordingWaitingForGameInput.primary_label(),
+            "Recording: waiting for game input focus"
+        );
+    }
+
+    #[test]
+    fn waiting_for_input_preserves_recording_authority_and_controls() {
+        let recording = TasEditorLiveStatus::Recording;
+        let waiting = TasEditorLiveStatus::RecordingWaitingForGameInput;
+        assert_eq!(waiting.locks_editor(), recording.locks_editor());
+        assert_eq!(waiting.holds_authority(), recording.holds_authority());
+        assert_eq!(
+            waiting.requires_return_on_close(),
+            recording.requires_return_on_close()
+        );
+        assert_eq!(waiting.follows_cursor(), recording.follows_cursor());
+        assert_eq!(waiting.is_linked(), recording.is_linked());
+        assert_eq!(waiting.execution_boundary(), recording.execution_boundary());
     }
 
     #[test]

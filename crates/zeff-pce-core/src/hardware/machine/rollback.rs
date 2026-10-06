@@ -227,9 +227,9 @@ impl PceRollbackSession {
             let mut reader = StateReader::new(snapshot.native_state());
             let mut header = [0; 50];
             reader.read_exact(&mut header)?;
-            let payload = reader.read_vec(8 * 1024 * 1024)?;
+            let payload = reader.read_slice(8 * 1024 * 1024)?;
             core.read_owned_rollback_payload(
-                &payload,
+                payload,
                 core.hardware_topology(),
                 false,
                 false,

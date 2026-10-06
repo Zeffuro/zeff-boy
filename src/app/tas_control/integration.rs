@@ -49,7 +49,14 @@ impl App {
     }
 
     pub(in crate::app) fn tas_control_live_status(&self) -> crate::debug::TasEditorLiveStatus {
-        self.tas_control.live_status()
+        match self.tas_control.live_status() {
+            crate::debug::TasEditorLiveStatus::Recording
+                if self.realtime_tas_recording_waiting_for_game_input() =>
+            {
+                crate::debug::TasEditorLiveStatus::RecordingWaitingForGameInput
+            }
+            status => status,
+        }
     }
 
     pub(in crate::app) fn worker_gameplay_commands_allowed(&self) -> bool {

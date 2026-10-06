@@ -202,13 +202,13 @@ mod native {
             }
             ensure!(
                 peer["outcome"] != "complete"
-                    && peer["frames"]
-                        .as_u64()
-                        .is_some_and(|frame| if boundary == 0 {
-                            frame == 0
+                    && peer["frames"].as_u64().is_some_and(|frame| {
+                        if boundary == 0 || scenario == Scenario::Disconnect {
+                            frame == boundary
                         } else {
                             (5..=6).contains(&frame)
-                        }),
+                        }
+                    }),
                 "peer continued past fault boundary"
             );
             let injected_cause = match scenario {
@@ -220,7 +220,9 @@ mod native {
             if let Some(cause) = injected_cause {
                 ensure!(
                     peer["outcome"] == cause,
-                    "peer did not execute intended fault"
+                    "peer did not execute intended {} fault: {}",
+                    scenario.name(),
+                    peer["outcome"]
                 );
             }
             if matches!(scenario, Scenario::Identity | Scenario::WrongSecret) {

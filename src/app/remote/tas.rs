@@ -317,7 +317,8 @@ fn live_tas_status_json(status: &crate::debug::TasEditorLiveStatus) -> Value {
         crate::debug::TasEditorLiveStatus::AdvancingFrame => {
             json!({ "state": "advancing_frame", "execution_boundary": Value::Null })
         }
-        crate::debug::TasEditorLiveStatus::Recording => {
+        crate::debug::TasEditorLiveStatus::Recording
+        | crate::debug::TasEditorLiveStatus::RecordingWaitingForGameInput => {
             json!({ "state": "recording", "execution_boundary": Value::Null })
         }
         crate::debug::TasEditorLiveStatus::Returning => {
@@ -614,6 +615,10 @@ mod tests {
 
     #[test]
     fn status_distinguishes_active_recording_from_waiting_for_game_input() {
+        assert_eq!(
+            live_tas_status_json(&crate::debug::TasEditorLiveStatus::RecordingWaitingForGameInput),
+            live_tas_status_json(&crate::debug::TasEditorLiveStatus::Recording)
+        );
         assert_eq!(
             realtime_tas_recording_json(false, true)["realtime_active"],
             false

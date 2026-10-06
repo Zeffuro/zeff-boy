@@ -153,7 +153,9 @@ fn primary_transport_actions(
             actions
         }
         TasEditorLiveStatus::Playing { .. } => vec![TasPrimaryTransportAction::Pause],
-        TasEditorLiveStatus::Recording => vec![TasPrimaryTransportAction::Stop],
+        TasEditorLiveStatus::Recording | TasEditorLiveStatus::RecordingWaitingForGameInput => {
+            vec![TasPrimaryTransportAction::Stop]
+        }
         _ => Vec::new(),
     }
 }
@@ -209,6 +211,10 @@ mod tests {
         );
         assert_eq!(
             primary_transport_actions(&TasEditorLiveStatus::Recording, 4, 8),
+            vec![TasPrimaryTransportAction::Stop]
+        );
+        assert_eq!(
+            primary_transport_actions(&TasEditorLiveStatus::RecordingWaitingForGameInput, 4, 8),
             vec![TasPrimaryTransportAction::Stop]
         );
         assert_eq!(

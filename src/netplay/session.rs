@@ -398,4 +398,6 @@ mod sega8_tests;
 mod tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod performance_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod ws_tests;

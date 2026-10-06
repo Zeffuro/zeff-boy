@@ -1,8 +1,7 @@
 use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{DeviceId, SampleFormat, StreamConfig, SupportedStreamConfig};
+use cpal::{SampleFormat, StreamConfig, SupportedStreamConfig};
 use std::collections::VecDeque;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -10,6 +9,11 @@ use std::time::Duration;
 use super::resampler;
 use super::{AudioQueueConfig, copy_stereo_at_speed};
 use crate::settings::AudioBufferPolicy;
+
+mod devices;
+use devices::output_device_info;
+pub(crate) use devices::output_devices;
+pub(super) use devices::resolve_output_device;
 
 const FAST_FORWARD_QUEUE_MS: usize = 40;
 const MAX_STAGED_AUDIO_MS: usize = 10_000;
@@ -87,30 +91,6 @@ pub(crate) struct AudioHostConfig<'a> {
 pub(crate) struct AudioOutputInit {
     pub(crate) output: AudioOutput,
     pub(crate) status: AudioHostStatus,
-}
-
-pub(crate) fn output_devices() -> anyhow::Result<Vec<AudioOutputDevice>> {
-    let host = cpal::default_host();
-    let mut devices = host
-        .output_devices()
-        .context("failed to enumerate audio output devices")?
-        .filter_map(|device| output_device_info(&device).ok())
-        .collect::<Vec<_>>();
-    devices.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
-    Ok(devices)
-}
-
-fn output_device_info(device: &cpal::Device) -> anyhow::Result<AudioOutputDevice> {
-    Ok(AudioOutputDevice {
-        id: device
-            .id()
-            .context("failed to obtain audio output device ID")?
-            .to_string(),
-        name: device
-            .description()
-            .map(|description| description.name().to_owned())
-            .unwrap_or_else(|_| "Unnamed output".to_owned()),
-    })
 }
 
 pub(super) fn buffer_fallback_for_underruns(
@@ -301,11 +281,7 @@ impl AudioOutput {
         let selected = config
             .output_device_id
             .filter(|id| !id.trim().is_empty())
-            .map(|id| {
-                DeviceId::from_str(id)
-                    .ok()
-                    .and_then(|id| host.device_by_id(&id))
-            });
+            .map(|id| resolve_output_device(&host, id));
         let selection_failure = match (config.output_device_id, selected.as_ref()) {
             (Some(_), Some(Some(_))) => None,
             (Some(_), _) => {
