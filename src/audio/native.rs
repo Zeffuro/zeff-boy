@@ -7,8 +7,23 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::resampler;
-use super::{AudioQueueConfig, copy_stereo_at_speed};
 use crate::settings::AudioBufferPolicy;
+
+mod queue;
+use queue::NativeSampleQueue;
+mod budget;
+use budget::{NetplayBufferBudget, QueueBudgetConfig};
+#[cfg(test)]
+mod test_output;
+#[cfg(test)]
+pub(crate) use test_output::AudioTestDriver;
+
+#[cfg(test)]
+type OwnedOutputStream = Option<cpal::Stream>;
+#[cfg(not(test))]
+type OwnedOutputStream = cpal::Stream;
+#[cfg(test)]
+pub(super) use queue::flush_staged_samples;
 
 mod devices;
 use devices::output_device_info;
@@ -152,9 +167,8 @@ pub(super) fn stream_error_message(errors: u64) -> Option<String> {
 }
 
 pub(crate) struct AudioOutput {
-    _stream: cpal::Stream,
-    producer: rtrb::Producer<QueuedAudioSample>,
-    staged_samples: VecDeque<f32>,
+    _stream: OwnedOutputStream,
+    queue: NativeSampleQueue,
     source_sample_rate: u32,
     output_sample_rate: u32,
     capacity: usize,
@@ -162,7 +176,7 @@ pub(crate) struct AudioOutput {
     resampler: Option<resampler::AudioResampler>,
     underruns: Arc<AtomicU64>,
     playback_preroll_samples: Arc<AtomicUsize>,
-    session_generation: u64,
+    callback_samples: Arc<AtomicUsize>,
     playback_generation: Arc<AtomicU64>,
     playback_speed: usize,
     speedup_samples: Vec<f32>,
@@ -186,6 +200,7 @@ pub(super) struct AudioPlaybackState {
     underruns: Arc<AtomicU64>,
     generation: Arc<AtomicU64>,
     observed_generation: u64,
+    callback_samples: Arc<AtomicUsize>,
 }
 
 impl AudioPlaybackState {
@@ -203,6 +218,7 @@ impl AudioPlaybackState {
             underruns,
             generation,
             observed_generation,
+            callback_samples: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -383,6 +399,7 @@ impl AudioOutput {
                 Arc::clone(&underruns),
                 Arc::clone(&playback_generation),
             );
+            let callback_samples = Arc::clone(&playback_state.callback_samples);
 
             match Self::build_stream_for_config(
                 device,
@@ -418,9 +435,17 @@ impl AudioOutput {
                     };
 
                     return Ok(Self {
-                        _stream: stream,
-                        producer,
-                        staged_samples: VecDeque::new(),
+                        _stream: {
+                            #[cfg(test)]
+                            {
+                                Some(stream)
+                            }
+                            #[cfg(not(test))]
+                            {
+                                stream
+                            }
+                        },
+                        queue: NativeSampleQueue::new(producer),
                         source_sample_rate,
                         output_sample_rate,
                         capacity,
@@ -428,7 +453,7 @@ impl AudioOutput {
                         resampler,
                         underruns,
                         playback_preroll_samples,
-                        session_generation: 0,
+                        callback_samples,
                         playback_generation,
                         playback_speed: 1,
                         speedup_samples: Vec::new(),
@@ -561,169 +586,6 @@ impl AudioOutput {
         }
     }
 
-    pub(crate) fn emulator_sample_rate(&self) -> u32 {
-        self.source_sample_rate
-    }
-
-    pub(crate) fn take_buffer_fallback_request(&mut self) -> Option<AudioBufferFallback> {
-        self.buffer_fallback_pending.take()
-    }
-
-    pub(crate) fn take_device_error(&self) -> Option<String> {
-        stream_error_message(self.stream_errors.swap(0, Ordering::Relaxed))
-    }
-
-    pub(crate) fn discard_queued_samples(&mut self) {
-        self.session_generation = self.session_generation.wrapping_add(1);
-        self.playback_generation
-            .store(self.session_generation, Ordering::Release);
-        self.staged_samples.clear();
-        self.low_pass_filter.reset();
-        if let Some(resampler) = &mut self.resampler {
-            resampler.reset();
-        }
-        self.underruns.store(0, Ordering::Relaxed);
-        self.underrun_recovery = UnderrunRecovery::default();
-        self.buffer_fallback_pending = None;
-    }
-
-    pub(crate) fn queue_samples(&mut self, samples: &[f32], config: &AudioQueueConfig) {
-        let playback_speed = config.playback_speed.max(1);
-        if playback_speed != self.playback_speed {
-            self.discard_queued_samples();
-            self.playback_speed = playback_speed;
-        }
-
-        flush_staged_samples(
-            &mut self.producer,
-            &mut self.staged_samples,
-            self.session_generation,
-        );
-
-        let fast_forward_active = playback_speed > 1;
-        if fast_forward_active && config.mute_during_fast_forward {
-            return;
-        }
-
-        let underruns = self.underruns.swap(0, Ordering::Relaxed);
-        if underruns != 0 {
-            log::warn!("audio output underrun ({underruns}); rebuffering before playback resumes");
-        }
-        if self.buffer_fallback_pending.is_none() {
-            self.buffer_fallback_pending = self.underrun_recovery.observe(
-                self.buffer_policy,
-                underruns,
-                self.underrun_clock.elapsed(),
-            );
-        }
-
-        let gain = config.master_volume.clamp(0.0, 1.0);
-
-        let queue_ms = if fast_forward_active {
-            FAST_FORWARD_QUEUE_MS
-        } else {
-            self.buffer_policy.normal_queue_ms()
-        };
-        self.playback_preroll_samples.store(
-            playback_preroll_samples(self.output_sample_rate, queue_ms),
-            Ordering::Relaxed,
-        );
-        let max_queued = (self.output_sample_rate as usize * 2 * queue_ms / 1000).max(2);
-
-        let occupied = self.capacity - self.producer.slots();
-        if occupied > max_queued {
-            return;
-        }
-
-        let buffered = occupied.saturating_add(self.staged_samples.len());
-        let fill_ratio = buffered as f32 / self.capacity as f32;
-
-        let resampled;
-        let samples = if let Some(ref mut resampler) = self.resampler {
-            resampled = resampler.process(samples, fill_ratio);
-            &resampled
-        } else {
-            samples
-        };
-
-        let samples = if fast_forward_active {
-            copy_stereo_at_speed(samples, playback_speed, &mut self.speedup_samples);
-            self.speedup_samples.as_slice()
-        } else {
-            samples
-        };
-
-        if samples.is_empty() {
-            return;
-        }
-
-        if !config.low_pass_enabled {
-            self.low_pass_filter.reset();
-        }
-        let alpha = low_pass_alpha(self.output_sample_rate, config.low_pass_cutoff_hz);
-
-        if fast_forward_active {
-            let available = self.producer.slots().min(samples.len()) & !1;
-            write_processed_samples(
-                &mut self.producer,
-                &samples[..available],
-                &mut self.low_pass_filter,
-                ProcessedSampleConfig {
-                    gain,
-                    low_pass_enabled: config.low_pass_enabled,
-                    alpha,
-                    generation: self.session_generation,
-                },
-            );
-            return;
-        }
-
-        let max_staged = self.output_sample_rate as usize * 2 * MAX_STAGED_AUDIO_MS / 1000;
-        let recovery = long_stall_recovery_range(
-            occupied.saturating_add(self.staged_samples.len()),
-            samples.len(),
-            max_staged,
-            max_queued,
-        );
-        let recovered_samples;
-        let samples = if let Some(range) = recovery {
-            let dropped = occupied
-                .saturating_add(self.staged_samples.len())
-                .saturating_add(samples.len())
-                .saturating_sub(range.len());
-            recovered_samples = samples[range].to_vec();
-            self.discard_queued_samples();
-            log::warn!(
-                "audio staging exceeded {MAX_STAGED_AUDIO_MS} ms; dropped {dropped} stale samples"
-            );
-            &recovered_samples
-        } else {
-            samples
-        };
-        if samples.is_empty() {
-            return;
-        }
-        if self.staged_samples.try_reserve(samples.len()).is_err() {
-            log::error!(
-                "failed to reserve audio staging buffer; dropping {} samples",
-                samples.len()
-            );
-            return;
-        }
-        for (index, &sample) in samples.iter().enumerate() {
-            let mut out = sample * gain;
-            if config.low_pass_enabled {
-                out = self.low_pass_filter.apply_sample(out, index, alpha);
-            }
-            self.staged_samples.push_back(out);
-        }
-        flush_staged_samples(
-            &mut self.producer,
-            &mut self.staged_samples,
-            self.session_generation,
-        );
-    }
-
     fn build_stream_f32(
         device: &cpal::Device,
         config: StreamConfig,
@@ -834,31 +696,6 @@ fn write_processed_samples(
     }
 }
 
-pub(super) fn flush_staged_samples(
-    producer: &mut rtrb::Producer<QueuedAudioSample>,
-    staged_samples: &mut VecDeque<f32>,
-    generation: u64,
-) {
-    let available = producer.slots().min(staged_samples.len());
-    if available == 0 {
-        return;
-    }
-    if let Ok(mut chunk) = producer.write_chunk_uninit(available) {
-        let (first, second) = chunk.as_mut_slices();
-        for dst in first.iter_mut().chain(second.iter_mut()) {
-            dst.write(QueuedAudioSample {
-                generation,
-                value: staged_samples
-                    .pop_front()
-                    .expect("staged audio length was checked before reserving the ring chunk"),
-            });
-        }
-        unsafe {
-            chunk.commit_all();
-        }
-    }
-}
-
 pub(super) fn fill_output_f32(
     data: &mut [f32],
     channels: u16,
@@ -872,6 +709,10 @@ pub(super) fn fill_output_f32(
     }
 
     let stereo_samples_needed = (data.len() / channels as usize).saturating_mul(2) & !1;
+    // Unprimed callbacks need this signal to escape undersized queue budgets.
+    playback_state
+        .callback_samples
+        .fetch_max(stereo_samples_needed, Ordering::Relaxed);
     if stereo_samples_needed == 0 {
         data.fill(0.0);
         return;

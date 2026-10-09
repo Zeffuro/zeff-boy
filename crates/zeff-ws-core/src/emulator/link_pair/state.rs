@@ -68,7 +68,7 @@ fn machine_hash(machine: &Emulator) -> Result<[u8; 32]> {
     Ok(hash.finalize().into())
 }
 
-pub(super) fn pair_hash(machines: [&Emulator; 2], schedule: &Schedule) -> Result<[u8; 32]> {
+pub(super) fn validate_schedule(schedule: &Schedule) -> Result<()> {
     ensure!(
         schedule.events.len() <= MAX_CABLE_EVENTS,
         "paired snapshot cable queue overflow"
@@ -92,9 +92,13 @@ pub(super) fn pair_hash(machines: [&Emulator; 2], schedule: &Schedule) -> Result
         )),
         "unordered paired cable events"
     );
+    Ok(())
+}
+
+pub(super) fn pair_hash(machine_hashes: [[u8; 32]; 2], schedule: &Schedule) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"zeff-ws-pair-checkpoint-v1\0");
-    for machine in machine_hashes(machines)? {
+    for machine in machine_hashes {
         hash.update(machine);
     }
     for epoch in schedule.epochs {
@@ -108,5 +112,5 @@ pub(super) fn pair_hash(machines: [&Emulator; 2], schedule: &Schedule) -> Result
         hash.update(event.generation.to_le_bytes());
         hash.update(event.baud_bps.to_le_bytes());
     }
-    Ok(hash.finalize().into())
+    hash.finalize().into()
 }

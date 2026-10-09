@@ -15,27 +15,40 @@ use crate::emu_backend::nes::NesBackend;
 const FRAMES: u64 = 72;
 const BURST: u64 = 6;
 const CONFIG: [u8; 32] = [0x53; 32];
+const MAPPERS: [u8; 5] = [0, 1, 3, 4, 34];
 
 // These fixture receipts do not qualify artifacts, browser engines or network sessions.
-const NATIVE_RECEIPTS: [&str; 18] = [
-    "9a5d3df4fd794c36070cd9a50e7ef573e86d671400f07c7e8086c7fdee82a490",
-    "5310ca96261101e4b13e2830ec48d23e269383951607438dc1e6e0e9f512fb3c",
-    "6bbf06c46344f68d84b77d8999cfdaa8043db7fac9f66c4e1193f776289fbae9",
-    "f54c6d264facb7da10836b6f5aad166f992de4fd776bc1f94307b35fe2368890",
-    "e1ad223a52b0df5426fb1fc0a3988ca9261b9a4a2acd516d9910a91a8e2df8ca",
-    "e39dc50c2de01287dbc3caa59679b6c8c2cb27d4cc4a0cf9432403bcfa0aedcd",
-    "a6c91a32e51258ba64bd960977d5d15f7248902a7402b8bb4be5a68bbc1e6a6f",
-    "9713b043dcb174dc67b93ec08b690523face3b73a13338209530d42aeb92bbec",
-    "01b9a20c6d3858aeb5fd0909983fea7d43488c94ab1063c6e749f777fe60c71b",
-    "c604c4ff156c42b2b05d020d93e7d7c601ec35d3f56cab83e5f12065eb9d1bf3",
-    "6d87366c2f43211c70fe63663e8ca2ffb0150ce51ec2069c75eaac77a205462c",
-    "7608826d5c71f850bf37f430d1bb325947916dec2e9675f12ba4c980b500f29d",
-    "412595434d2bcc1de34ca2cfebc7ed92e58d5e150dab43890ea6748024c90273",
-    "c139595266debdb2b8dc1b989d469c88f8f6226ea586f4f3ba871b7f3679a8e7",
-    "c3e35f85919050bf497964edf4c85f319b0c6bd4521963fc24b6733f482305ed",
-    "0ad134486b5e14e42fa03685ed160b2bda0fe8e00295b449ef1bfd89736894ea",
-    "55f779bed49453dbc229b5932efdffd2fb99264c61dbc1d7711b8de635b008e5",
-    "47d4a869224aec85c6b1a9ec4261f3869a92079b83fb3643f38663bb3911c1d3",
+const NATIVE_RECEIPTS: [&str; 30] = [
+    "841ca74ae4daa2a47680bf01cf2b5b6cad10a801e95e95373b7dc39f0f4106f4",
+    "96d1c5f0328c1ff8ed09ec42b0108d3cc056a22203c28ba14b043b06c40875e4",
+    "84f4f3b0af87cddbff8c3def2ebf02361134cba6ab00cc04465aaf5918e23f22",
+    "f3104aaae020d1b0e24d8ed65fb5044fa5a8b1879f0688902129e74cac632110",
+    "8177a08d77eec6aaf08bd46ce6a9a21cbce729315b6b43f6ffaa4c17d48c65eb",
+    "680783bcb8820b62f024c86a2d1db51a2bb01f0c807b81cebce6b31545120fa7",
+    "c51578c6e880a2ced1a70a8b075e8559d55d1780b89a4638ad2307d31137cbdb",
+    "cc251d085e0aaee3b38cd772001ec87d2815a8b7121ba0d7d3381b5fa7817478",
+    "947ce21b11066652c8c54d8f23a7f3a2a88909cfac3b081ff00915f15668734b",
+    "05ff57ff50ef19b42b403d56e3f2bff05fdfadf1c4ab87125b32f66ed09bed64",
+    "c20fb0c33efef5d163f2cca97e86371579b66a5401814e7ca96d39c08e0a8dcc",
+    "a5d15afb6c24eec91eed12fad5c0126c83069a1a5880f8ea40f61c2cbc026d2b",
+    "a0ea3ebf7c321053898cedfd7e7f7711e96036f7a656f74c5d2c14059d53ba56",
+    "6a27e49b5c94e511b3426f8d13735003fe2c2ca9c98356ae9baab803f3e92756",
+    "e7c40b91db0dc85b6aaf25b614147e6ef4a8f2cfb2f56ae15ef3dda5dba03e6c",
+    "5662c49a488a4f858239dbe11623fab362e2d36b6f3edac17aebea0afbb6bc45",
+    "dabb4c1edb3465475aa2c8217ad301c5ace4269ea342191896e93973d4f13eb7",
+    "fd3c7e4e8f545937825b6cfd4c4699253326a8631117dae834513ef77d9d756e",
+    "1e7a65c0b4f938138f7fb3d17b4fd033fb6388addb2cf8f645ad6911da09fb4e",
+    "7afd2dde5eca8713fcc309fa5216bda7aaf7c3c4c8ae1966fb4e75f2d9f50d45",
+    "2b84f07f654026bd59fd44e934f054b9d2ee2b66a1e06ec28248e025f60a9f3c",
+    "553b1ddabe08e5bd9dc16a921de5bdc2fd245479337d6f7daa77dbb34077fa39",
+    "b3649397f637fe98eded62955a2e3f2eb188330f95b6d3ec3d48427fbd791cda",
+    "e4f1a34115ecc15696f92e42f9f008c0868b751b22b74dbae5b405efd7bbbf4b",
+    "dccc74e76caabdd0b1e363b7bc02745f9f691e024cf4cdccc4c7d3b0259664f8",
+    "fb9fce6c6df2630eee7e0a11b698649b9b8989cd664528837cf0b419b5a3492b",
+    "9ea549ef18211333b087479c24b60cc25bcdb8b84766f08d4cd7de0343fe9d91",
+    "9fa716f453c9ac703ff2095ee0c350fef471c6492662a6060aa401dbf0cd16ca",
+    "c88e9c0fe154ca8abca362c3ac657124d40533420f64a9e8910d1bb7d3178ccb",
+    "52593a46dd935076446a9c750aa649ea84b10372196071efcb3558910fd673ef",
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -54,6 +67,66 @@ fn media(timing: u8, mapper: u8) -> Vec<u8> {
     bytes[7] = (mapper & 0xf0) | 0x08;
     bytes[10] = 0x70;
     bytes[12] = timing;
+    if matches!(mapper, 1 | 3 | 4) {
+        bytes[5] = 16;
+        bytes.resize(16 + 0x8000 + 0x20000, 0);
+        let chr = &mut bytes[16 + 0x8000..];
+        let mut pattern = 0x53a9_71c5u32;
+        for byte in chr.iter_mut() {
+            pattern ^= pattern << 13;
+            pattern ^= pattern >> 17;
+            pattern ^= pattern << 5;
+            *byte = pattern as u8;
+        }
+        chr.copy_within(0x4000..0x6000, 0x10000);
+        chr.copy_within(0xa000..0xc000, 0x18000);
+        let prg = &mut bytes[16..16 + 0x8000];
+        let epilogue = prg[0x100..0x200]
+            .windows(4)
+            .position(|bytes| bytes == [0x68, 0xaa, 0x68, 0x40])
+            .unwrap()
+            + 0x100;
+        let mut bank_write = Vec::new();
+        match mapper {
+            1 => {
+                bank_write.extend_from_slice(&[0xa5, 0x00]);
+                for _ in 0..5 {
+                    bank_write.extend_from_slice(&[0x8d, 0x00, 0xa0, 0x4a]);
+                }
+            }
+            3 => {
+                bytes[6] &= !2;
+                bytes[10] = 0;
+                let prg = &mut bytes[16..16 + 0x8000];
+                let mut redirected = 0;
+                for instruction in prg[0x100..epilogue].windows(3) {
+                    redirected += usize::from(
+                        matches!(instruction[0], 0x4d | 0x8d)
+                            && instruction[1] <= 1
+                            && instruction[2] == 0x60,
+                    );
+                }
+                assert_eq!(redirected, 4);
+                for index in 0x100..epilogue - 2 {
+                    if matches!(prg[index], 0x4d | 0x8d)
+                        && prg[index + 1] <= 1
+                        && prg[index + 2] == 0x60
+                    {
+                        prg[index + 2] = 0x02;
+                    }
+                }
+                // The bank register write must survive CNROM's ROM bus conflict.
+                prg[0x1000] = 0xff;
+                bank_write.extend_from_slice(&[0xa5, 0x00, 0x8d, 0x00, 0x90]);
+            }
+            4 => bank_write.extend_from_slice(&[
+                0xa9, 0x02, 0x8d, 0x00, 0x80, 0xa5, 0x00, 0x29, 0x7f, 0x8d, 0x01, 0x80,
+            ]),
+            _ => unreachable!(),
+        }
+        bank_write.extend_from_slice(&[0x68, 0xaa, 0x68, 0x40]);
+        bytes[16 + epilogue..16 + epilogue + bank_write.len()].copy_from_slice(&bank_write);
+    }
     bytes
 }
 
@@ -64,8 +137,9 @@ fn backend(bytes: &[u8]) -> EmuBackend {
         core.load_persistent_data(&persistent).unwrap();
         assert_eq!(core.dump_persistent_data().unwrap(), persistent);
     } else {
-        for (index, &value) in persistent.iter().enumerate() {
-            core.cpu_write8(0x6000 + index as u16, value);
+        let range = ram_range(core.cartridge_header().mapper_id);
+        for (address, &value) in range.zip(&persistent) {
+            core.cpu_write8(address, value);
         }
     }
     EmuBackend::Nes(Box::new(NesBackend::new(
@@ -88,9 +162,17 @@ fn buttons(sample: u64, player: usize) -> u16 {
 
 fn ram(backend: &EmuBackend) -> Vec<u8> {
     let nes = backend.nes().unwrap();
-    (0x6000..0x8000)
+    ram_range(nes.emu.cartridge_header().mapper_id)
         .map(|address| nes.emu.cpu_peek8(address))
         .collect()
+}
+
+fn ram_range(mapper: u16) -> std::ops::Range<u16> {
+    if mapper == 3 {
+        0x0200..0x0400
+    } else {
+        0x6000..0x8000
+    }
 }
 
 fn ports(frame: u64, delay: u64) -> [u16; 2] {
@@ -173,7 +255,24 @@ fn run_case(timing: u8, mapper: u8, delay: u64) -> String {
         _ => unreachable!(),
     };
     assert_eq!(core(&mut subject).resolved_timing_mode(), expected_timing);
+    for address in [
+        0x8000, 0x8100, 0xfffa, 0xfffb, 0xfffc, 0xfffd, 0xfffe, 0xffff,
+    ] {
+        assert_eq!(
+            core(&mut subject).cpu_peek8(address),
+            bytes[16 + usize::from(address - 0x8000)],
+            "initial program mapping at {address:#06x}"
+        );
+    }
     let original = subject.encode_state_bytes().unwrap();
+    if matches!(mapper, 1 | 3 | 4) {
+        assert!(
+            zeff_nes_core::save_state::encode_netplay_hash_state(core(&mut subject)).len() > 0xffff
+        );
+        let mut projected = original.clone();
+        zeff_nes_core::save_state::project_replay_state_bytes(&mut projected).unwrap();
+        assert!(projected.len() > 0xffff);
+    }
     let initial_sram = core(&mut subject).dump_persistent_data();
     let initial_ram = ram(&subject);
     assert_eq!(initial_sram.is_some(), mapper == 34);
@@ -283,7 +382,7 @@ fn run_case(timing: u8, mapper: u8, delay: u64) -> String {
 fn native_wasm_nes_portability_receipts() {
     let mut row = 0;
     for timing in [0, 1, 3] {
-        for mapper in [0, 1, 34] {
+        for mapper in MAPPERS {
             for delay in [0, 2] {
                 let actual = run_case(timing, mapper, delay);
                 assert_eq!(
@@ -302,7 +401,7 @@ fn native_wasm_nes_portability_receipts() {
 #[ignore = "prints fixture receipts for an independently verified native baseline"]
 fn emit_native_nes_portability_receipts() {
     for timing in [0, 1, 3] {
-        for mapper in [0, 1, 34] {
+        for mapper in MAPPERS {
             for delay in [0, 2] {
                 println!(
                     "timing={timing} mapper={mapper} delay={delay} {}",

@@ -4,6 +4,9 @@ use std::{cell::Cell, rc::Rc};
 use wasm_bindgen::prelude::*;
 use web_sys::AudioContext;
 
+mod sources;
+use sources::ScheduledSources;
+
 pub(super) const BUFFER_FRAMES: usize = 1024;
 
 const MAX_QUEUE_AHEAD_SECS: f64 = 0.12;
@@ -67,6 +70,7 @@ pub(crate) struct AudioOutput {
     sample_rate: u32,
     buffer: Vec<f32>,
     next_play_time: f64,
+    sources: ScheduledSources,
     left: Vec<f32>,
     right: Vec<f32>,
     playback_speed: usize,
@@ -127,6 +131,7 @@ impl AudioOutput {
             sample_rate,
             buffer: Vec::with_capacity(BUFFER_FRAMES * 4),
             next_play_time: 0.0,
+            sources: ScheduledSources::default(),
             left: Vec::with_capacity(BUFFER_FRAMES),
             right: Vec::with_capacity(BUFFER_FRAMES),
             playback_speed: 1,
@@ -138,6 +143,7 @@ impl AudioOutput {
     }
 
     pub(crate) fn discard_queued_samples(&mut self) {
+        self.sources.cancel();
         self.buffer.clear();
         self.left.clear();
         self.right.clear();
@@ -179,8 +185,16 @@ impl AudioOutput {
             self.buffer.push(frame[1] * gain);
         }
 
+        self.pump_queued_samples();
+    }
+
+    pub(crate) fn pump_queued_samples(&mut self) {
+        self.sources.prune();
         while self.buffer.len() >= BUFFER_FRAMES * 2 {
             let current_time = self.ctx.current_time();
+            if self.sources.is_full() {
+                break;
+            }
 
             if self.next_play_time < current_time {
                 self.next_play_time = current_time + CATCHUP_OFFSET_SECS;
@@ -211,8 +225,11 @@ impl AudioOutput {
 
             if let Ok(source) = self.ctx.create_buffer_source() {
                 source.set_buffer(Some(&audio_buffer));
-                let _ = source.connect_with_audio_node(&self.ctx.destination());
-                if source.start_with_when(self.next_play_time).is_ok() {
+                if source
+                    .connect_with_audio_node(&self.ctx.destination())
+                    .is_ok()
+                    && self.sources.start(source, self.next_play_time).is_ok()
+                {
                     #[cfg(feature = "wasm-browser-tests")]
                     {
                         self.scheduled_sources += 1;
@@ -245,6 +262,7 @@ impl AudioOutput {
 
 impl Drop for AudioOutput {
     fn drop(&mut self) {
+        self.discard_queued_samples();
         if let Some(window) = &self.activation_target {
             for (event_name, listener) in &self.activation_listeners {
                 let _ = window.remove_event_listener_with_callback_and_bool(

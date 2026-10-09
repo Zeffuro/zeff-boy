@@ -31,6 +31,7 @@ pub(crate) struct Connector {
     result: Rc<RefCell<Option<Result<Start>>>>,
     invitation: Rc<RefCell<Option<String>>>,
     cancelled: Option<LobbyCancellation>,
+    allow_different_versions: bool,
 }
 
 fn js_error(error: JsValue) -> anyhow::Error {
@@ -148,16 +149,20 @@ impl Connector {
             result,
             invitation,
             cancelled: Some(cancelled),
+            allow_different_versions: false,
         })
     }
 
-    pub(crate) fn set_version_consent(&mut self, _: bool) {}
+    pub(crate) fn set_version_consent(&mut self, allow: bool) {
+        self.allow_different_versions = allow;
+    }
     pub(crate) fn take_invitation(&mut self) -> Option<String> {
         self.invitation.borrow_mut().take()
     }
     pub(crate) fn poll(&mut self) -> Result<Option<Start>> {
-        let result = self.result.borrow_mut().take().transpose();
-        if matches!(result, Ok(Some(_))) {
+        let mut result = self.result.borrow_mut().take().transpose();
+        if let Ok(Some(start)) = &mut result {
+            start.allow_different_versions = self.allow_different_versions;
             self.cancelled.take();
         }
         result
@@ -168,6 +173,43 @@ impl Drop for Connector {
     fn drop(&mut self) {
         if let Some(cancelled) = self.cancelled.take() {
             cancelled.cancel();
+        }
+    }
+}
+
+#[cfg(all(test, feature = "wasm-browser-tests"))]
+mod tests {
+    use super::*;
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn browser_netplay_certificate_connector_publishes_latest_version_consent() {
+        for consent in [false, true] {
+            let peer = zeff_netplay_connect::browser::BrowserPeer::new("[]", false).unwrap();
+            let start = Start {
+                stream: Transport::Browser(peer),
+                player: Player::One,
+                build: [7; 32],
+                secret: [9; 32],
+                scope: ConnectionScope::TrustedPrivate,
+                allow_different_versions: false,
+                verify_every_frame: true,
+                input_delay: InputDelay::default(),
+            };
+            let mut connector = Connector {
+                result: Rc::new(RefCell::new(None)),
+                invitation: Rc::new(RefCell::new(None)),
+                cancelled: None,
+                allow_different_versions: false,
+            };
+            connector.set_version_consent(!consent);
+            assert!(connector.poll().unwrap().is_none());
+            *connector.result.borrow_mut() = Some(Ok(start));
+            connector.set_version_consent(consent);
+            let published = connector.poll().unwrap().unwrap();
+            assert_eq!(published.allow_different_versions, consent);
+            assert!(connector.poll().unwrap().is_none());
+            let Transport::Browser(peer) = published.stream;
+            peer.close();
         }
     }
 }

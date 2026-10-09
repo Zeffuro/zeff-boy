@@ -263,9 +263,30 @@ async fn case(color: bool, frames_delay: u64, host_is_zero: bool) {
         assert!(started.elapsed() < Duration::from_secs(3));
         netplay_test_yield().await;
     }
+    let close_frame = threads[0].inner.borrow().backend.frame_count();
     threads[0].send(EmuCommand::Shutdown);
-    threads[1].send(EmuCommand::StopNetplay);
     let started = Instant::now();
+    while !observed[1].stopped {
+        for index in 0..2 {
+            observed[index].drain(&threads[index]);
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "graceful linked peer stop stalled"
+        );
+        netplay_test_yield().await;
+    }
+    assert_eq!(
+        observed[1].stop_reason.as_deref(),
+        Some(format!("netplay peer closed at frame {close_frame}").as_str())
+    );
+    while crate::netplay::network::Network::pending_closes() != 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "browser linked close owner remained live"
+        );
+        netplay_test_yield().await;
+    }
     while !observed[0].shutdown {
         observed[0].drain(&threads[0]);
         assert!(started.elapsed() < Duration::from_secs(5));

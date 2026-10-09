@@ -13,6 +13,9 @@ use zeff_netplay_connect::browser::BrowserPeer;
 use super::metrics::{Metrics, Stats};
 use crate::platform::Instant;
 
+#[path = "browser/closing.rs"]
+mod closing;
+
 pub(crate) enum Event {
     Ready,
     Message(Message),
@@ -125,8 +128,23 @@ impl Network {
         pump.pending.clear();
     }
 
+    pub(crate) fn close(self, frame: u64) {
+        let pump = self.0.into_inner();
+        if pump.closed {
+            pump.peer.close();
+        } else if let Some(codec) = pump.codec {
+            closing::start(pump.peer, codec, frame);
+        } else {
+            pump.peer.close();
+        }
+    }
+
     pub(crate) fn stats(&self) -> Stats {
         self.0.borrow().metrics.snapshot(Instant::now())
+    }
+
+    pub(crate) fn pending_closes() -> usize {
+        closing::active()
     }
 }
 
@@ -169,6 +187,9 @@ impl Pump {
                 }
             } else {
                 self.packet(kind, bytes)?;
+                if self.closed {
+                    return Ok(());
+                }
             }
         }
         if self.codec.is_some() {
@@ -204,6 +225,13 @@ impl Pump {
                 "input on reliable control channel"
             );
             self.events.push_back(Event::Message(message));
+            if let Some(Event::Message(message @ Message::Close { .. })) = self.events.back() {
+                if let Ok(reply) = codec.encode(message) {
+                    let _ = self.peer.send_control(&reply);
+                }
+                self.closed = true;
+                self.pending.clear();
+            }
         } else if kind == 1 {
             let messages = self.inputs.receive(codec, &bytes)?;
             self.metrics

@@ -10,8 +10,8 @@ use zeff_netplay::wire::{Identity, Message};
 use crate::emu_backend::nes::NesPersistentLoadOutcome;
 use crate::emu_backend::{ActiveSystem, EmuBackend};
 
-const CHECKPOINT_ABI: &[u8] = b"ZeffNetplay-NES-replay-v10/mapper-runtime-v1";
-const CONFIG_DOMAIN: &[u8] = b"ZeffNetplay-App-native-NES/two-standard-controllers/delay0to8-predict8/runtime-snapshot2/hash60/48000/stereo-f32LE/discard-and-restore/v7";
+const CHECKPOINT_ABI: &[u8] = b"ZeffNetplay-NES-raw-execution-v1/mapper-runtime-v1";
+const CONFIG_DOMAIN: &[u8] = b"ZeffNetplay-App-native-NES/two-standard-controllers/delay0to8-predict8/runtime-snapshot2/hash60/48000/stereo-f32LE/discard-and-restore/v8";
 mod pce;
 mod sega8;
 mod ws;
@@ -146,7 +146,6 @@ pub(crate) fn identity_with_delay(
     })
 }
 
-#[cfg(any(test, not(target_arch = "wasm32")))]
 pub(crate) fn checkpoint(
     backend: &EmuBackend,
     frame: u64,
@@ -216,7 +215,14 @@ fn logical_hash_with_snapshot(
         digest.update(header);
         digest.update(state);
     } else {
-        digest.update(backend.encode_replay_hash_state_bytes()?);
+        match backend {
+            EmuBackend::Nes(nes) => {
+                digest.update(zeff_nes_core::save_state::encode_netplay_hash_state(
+                    &nes.emu,
+                ));
+            }
+            _ => digest.update(backend.encode_replay_hash_state_bytes()?),
+        }
     }
     digest.update(match backend {
         EmuBackend::Nes(nes) => nes.emu.encode_rollback_runtime_state(),

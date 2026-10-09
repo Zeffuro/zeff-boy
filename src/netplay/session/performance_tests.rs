@@ -2,6 +2,7 @@ use super::*;
 use std::hint::black_box;
 use zeff_netplay::rollback::InputDelay;
 
+mod cadence;
 mod fixtures;
 use fixtures::{CASES, Case};
 

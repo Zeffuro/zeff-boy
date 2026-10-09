@@ -130,7 +130,8 @@ impl WonderSwanLinkPair {
 
     pub fn capture(&self, machines: [&Emulator; 2]) -> Result<WonderSwanPairSnapshot> {
         self.check(machines)?;
-        let checksum = state::pair_hash(machines, &self.schedule)?;
+        state::validate_schedule(&self.schedule)?;
+        let checksum = state::pair_hash(self.expected, &self.schedule);
         let shared_media_bytes = machines[0].cartridge_rom_bytes().len()
             + if std::ptr::eq(
                 machines[0].cartridge_rom_bytes().as_ptr(),
@@ -181,14 +182,15 @@ impl WonderSwanLinkPair {
             saved.map(Emulator::rom_hash) == self.media,
             "paired snapshot media differs"
         );
+        state::validate_schedule(&snapshot.schedule)?;
+        let expected = state::machine_hashes(saved)?;
         ensure!(
-            state::pair_hash(saved, &snapshot.schedule)? == snapshot.checksum,
+            state::pair_hash(expected, &snapshot.schedule) == snapshot.checksum,
             "paired snapshot checkpoint differs"
         );
         for machine in saved {
             state::validate(machine)?;
         }
-        let expected = state::machine_hashes(saved)?;
         let restored = snapshot.machines.clone();
         let [left, right] = restored;
         *machines[0] = left;

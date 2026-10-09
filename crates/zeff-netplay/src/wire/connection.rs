@@ -169,6 +169,8 @@ impl Connection {
 
     pub(super) fn terminate(&mut self) {
         self.terminal = true;
-        let _ = self.stream.shutdown(Shutdown::Both);
+        if self.shutdown_on_terminal {
+            let _ = self.stream.shutdown(Shutdown::Both);
+        }
     }
 }

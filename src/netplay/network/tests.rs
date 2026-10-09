@@ -43,6 +43,62 @@ pub(super) fn input(player: Player, frame: u64) -> Message {
 }
 
 #[test]
+fn tcp_local_close_delivers_terminal_frame_with_bidirectional_traffic() {
+    for player in [Player::One, Player::Two] {
+        for _ in 0..16 {
+            let (host, guest) = streams();
+            let network = |stream, player| {
+                Network::spawn(
+                    stream,
+                    player,
+                    identity(),
+                    [9; 32],
+                    ConnectionScope::Loopback,
+                )
+                .unwrap()
+            };
+            let one = network(host, Player::One);
+            let two = network(guest, Player::Two);
+            assert!(matches!(event(&one), Event::Ready));
+            assert!(matches!(event(&two), Event::Ready));
+            let (local, mut remote) = if player == Player::One {
+                (one, two)
+            } else {
+                (two, one)
+            };
+            for _ in 0..8 {
+                local
+                    .send(Message::Progress {
+                        frame: 0,
+                        confirmed: 0,
+                    })
+                    .unwrap();
+                remote
+                    .send(Message::Progress {
+                        frame: 0,
+                        confirmed: 0,
+                    })
+                    .unwrap();
+            }
+            let start = Instant::now();
+            local.close(23);
+            loop {
+                match event(&remote) {
+                    Event::Message(Message::Close { frame: 23 }) => break,
+                    Event::Message(Message::Progress {
+                        frame: 0,
+                        confirmed: 0,
+                    }) => {}
+                    event => panic!("unexpected terminal event: {event:?}"),
+                }
+            }
+            assert!(start.elapsed() < Duration::from_secs(1));
+            remote.cancel();
+        }
+    }
+}
+
+#[test]
 fn admission_and_ordered_input_checkpoint_exchange() {
     let (host, client) = streams();
     let one = Network::spawn(

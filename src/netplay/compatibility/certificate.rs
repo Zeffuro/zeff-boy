@@ -1,6 +1,9 @@
-use std::fs::File;
-use std::io::{ErrorKind, Read};
-use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    fs::File,
+    io::{ErrorKind, Read},
+    path::Path,
+};
 
 use anyhow::{Context, Result, ensure};
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -14,6 +17,10 @@ const DOMAIN: &[u8] = b"ZeffNetplay-ArtifactPair/v1\0";
 const PUBLIC_KEY: &str = "c0c3e9303eccde66c0e207a014884b05b660b1f60ac9a16b9f28d1a3e5c12cba";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
 const LINUX: &str = "x86_64-unknown-linux-gnu";
+const WASM: &str = "wasm32-unknown-unknown";
+
+#[path = "certificate/mixed.rs"]
+mod mixed;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,6 +60,8 @@ struct Member {
     profile: String,
     opt_level: String,
     debug: String,
+    #[serde(default)]
+    execution: Option<mixed::Execution>,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +83,8 @@ pub(crate) struct CertifiedMember {
     profile: String,
     opt_level: String,
     debug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution: Option<mixed::Execution>,
 }
 
 #[derive(Clone, Serialize)]
@@ -107,6 +118,23 @@ pub(super) struct LocalFacts<'a> {
     pub profile: &'a str,
     pub opt_level: &'a str,
     pub debug: &'a str,
+    pub compiler: &'a str,
+    pub target_features: &'a str,
+}
+
+pub(super) fn compiled_facts(artifact: [u8; 32]) -> LocalFacts<'static> {
+    LocalFacts {
+        artifact,
+        source: env!("ZEFF_NETPLAY_QUALIFICATION_SOURCE"),
+        version: env!("CARGO_PKG_VERSION"),
+        target: env!("ZEFF_NETPLAY_BUILD_TARGET"),
+        test: cfg!(test),
+        profile: env!("ZEFF_NETPLAY_BUILD_PROFILE"),
+        opt_level: env!("ZEFF_NETPLAY_BUILD_OPT_LEVEL"),
+        debug: env!("ZEFF_NETPLAY_BUILD_DEBUG"),
+        compiler: env!("ZEFF_NETPLAY_BUILD_COMPILER"),
+        target_features: env!("ZEFF_NETPLAY_BUILD_FEATURES"),
+    }
 }
 
 pub(super) struct VerifiedPair {
@@ -150,6 +178,7 @@ impl VerifiedPair {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn read_sidecar(path: &Path) -> Result<Option<Vec<u8>>> {
     let file = match File::open(path) {
         Ok(file) => file,
@@ -159,6 +188,7 @@ pub(super) fn read_sidecar(path: &Path) -> Result<Option<Vec<u8>>> {
     read_bounded(file).map(Some)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_bounded(reader: impl Read) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     reader.take((MAX_SIZE + 1) as u64).read_to_end(&mut bytes)?;
@@ -215,15 +245,20 @@ fn verify_with_key(
     let payload: Payload =
         serde_json::from_str(&envelope.payload).context("invalid artifact pair payload")?;
     ensure!(
-        matches!(payload.format, 1 | 2),
+        matches!(payload.format, 1..=3),
         "unsupported artifact pair payload"
     );
     ensure!(
-        payload.fp_controls == REQUIRED_CONTROLS,
+        payload.fp_controls
+            == if payload.format == 3 {
+                0
+            } else {
+                REQUIRED_CONTROLS
+            },
         "unsupported artifact pair floating point controls"
     );
     ensure!(
-        (payload.format == 1
+        (matches!(payload.format, 1 | 3)
             && payload.core.is_none()
             && !payload.games.is_empty()
             && payload.games.len() <= 16)
@@ -242,11 +277,7 @@ fn verify_with_key(
         members[0].source == members[1].source,
         "artifact pair source snapshots differ"
     );
-    ensure!(
-        (members[0].target == WINDOWS && members[1].target == LINUX)
-            || (members[0].target == LINUX && members[1].target == WINDOWS),
-        "unsupported artifact pair targets"
-    );
+    mixed::validate_members(payload.format, &members)?;
     let local_member = members
         .iter()
         .position(|member| member.artifact == facts.artifact)
@@ -262,11 +293,12 @@ fn verify_with_key(
             && local.debug == facts.debug,
         "artifact pair compiled facts mismatch"
     );
+    mixed::validate_local(payload.format, local, facts)?;
     let mut games: Vec<CertifiedGame> = Vec::with_capacity(payload.games.len());
     for game in payload.games {
         let source = digest(&game.source)?;
         ensure!(
-            matches!(game.mapper, 0 | 2 | 4 | 34) && game.submapper == 0 && game.timing <= 2,
+            matches!(game.mapper, 0..=4 | 34) && game.submapper == 0 && game.timing <= 2,
             "unsupported artifact pair game hardware"
         );
         ensure!(
@@ -317,8 +349,10 @@ fn member(member: Member) -> Result<CertifiedMember> {
         profile: member.profile,
         opt_level: member.opt_level,
         debug: member.debug,
+        execution: member.execution,
     })
 }
 
 #[cfg(test)]
+#[path = "certificate/tests.rs"]
 mod tests;

@@ -619,6 +619,7 @@ impl ApplicationHandler for App {
             self.pump_netplay();
         }
         self.apply_focus_state();
+        self.pump_emulator_audio();
         self.schedule_next_frame(event_loop);
     }
 

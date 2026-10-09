@@ -61,6 +61,10 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if netplay::qualification::native::run_if_requested()? {
+        return Ok(());
+    }
+
     if app::run_netplay_proof_if_requested()? {
         return Ok(());
     }

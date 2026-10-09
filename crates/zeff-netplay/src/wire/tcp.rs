@@ -11,6 +11,7 @@ pub struct Connection {
     pub(super) sent_close: bool,
     pub(super) received_close: bool,
     pub(super) terminal: bool,
+    pub(super) shutdown_on_terminal: bool,
     pub(super) cancellation: Option<Arc<AtomicBool>>,
 }
 
@@ -96,6 +97,7 @@ fn admit_inner(
             sent_close: false,
             received_close: false,
             terminal: false,
+            shutdown_on_terminal: true,
             cancellation,
         }),
         Err(error) => {

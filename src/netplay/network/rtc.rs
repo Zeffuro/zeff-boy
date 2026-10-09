@@ -153,7 +153,12 @@ impl Worker {
         let mut inputs = InputChannel::new(self.player, self.delay.frames());
         publish(&self.events, Event::Ready)?;
         for packet in pending {
-            self.packet(&mut codec, &mut inputs, packet)?;
+            if self
+                .packet(connection, &mut codec, &mut inputs, packet)
+                .await?
+            {
+                return Ok(());
+            }
         }
         let mut heard = Instant::now();
         let mut retry = Instant::now();
@@ -189,6 +194,7 @@ impl Worker {
                     }
                 }
                 if close {
+                    self.finish_close(connection, &mut codec).await;
                     return Ok(());
                 }
             }
@@ -197,7 +203,9 @@ impl Worker {
                 retry = Instant::now();
             }
             if let Some(packet) = self.receive(connection).await? {
-                let close = self.packet(&mut codec, &mut inputs, packet)?;
+                let close = self
+                    .packet(connection, &mut codec, &mut inputs, packet)
+                    .await?;
                 heard = Instant::now();
                 if close {
                     return Ok(());
@@ -210,8 +218,9 @@ impl Worker {
         }
     }
 
-    fn packet(
+    async fn packet(
         &self,
+        connection: &impl Peer,
         codec: &mut PacketCodec,
         inputs: &mut InputChannel,
         packet: Packet,
@@ -225,7 +234,19 @@ impl Worker {
                     "input on reliable control channel"
                 );
                 let close = matches!(message, Message::Close { .. });
+                let reply = if close {
+                    codec.encode(&message).ok()
+                } else {
+                    None
+                };
                 publish(&self.events, Event::Message(message))?;
+                if let Some(reply) = reply {
+                    let _ = tokio::time::timeout(
+                        Duration::from_millis(250),
+                        cancellable(&self.cancelled, connection.send_control(&reply)),
+                    )
+                    .await;
+                }
                 Ok(close)
             }
             PacketKind::Input => {
@@ -245,6 +266,23 @@ impl Worker {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .received(packet_bytes)
         })
+    }
+
+    async fn finish_close(&self, connection: &mut impl Peer, codec: &mut PacketCodec) {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+        let mut decoding = true;
+        while tokio::time::Instant::now() < deadline && !self.cancelled.load(Ordering::Acquire) {
+            match self.receive(connection).await {
+                Ok(Some(packet)) if packet.kind == PacketKind::Control && decoding => {
+                    match codec.decode(&packet.bytes) {
+                        Ok(Message::Close { .. }) => return,
+                        _ => decoding = false,
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
     }
 
     async fn send_inputs(

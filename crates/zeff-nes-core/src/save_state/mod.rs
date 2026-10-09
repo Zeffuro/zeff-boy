@@ -62,7 +62,7 @@ pub fn decode_mirroring(tag: u8) -> Result<crate::hardware::cartridge::Mirroring
 
 // ─── Top-level encode / decode ─────────────────────────────────────
 
-pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
+fn execution_payload(emu: &crate::emulator::Emulator) -> StateWriter {
     let mut payload = StateWriter::new();
     payload.write_bytes(&emu.rom_hash);
     payload.write_u8(emu.bus.timing.state_tag());
@@ -74,6 +74,20 @@ pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
     emu.bus.write_apu_runtime_state(&mut payload);
     emu.bus.write_ppu_runtime_state(&mut payload);
     emu.bus.write_mutable_media_state(&mut payload);
+    payload
+}
+
+pub fn encode_netplay_hash_state(emu: &crate::emulator::Emulator) -> Vec<u8> {
+    let payload = execution_payload(emu).into_bytes();
+    let mut out = Vec::with_capacity(12 + payload.len());
+    out.extend_from_slice(b"ZBNHASH\0");
+    out.extend_from_slice(&NES_SAVE_STATE_FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&payload);
+    out
+}
+
+pub fn encode_state(emu: &crate::emulator::Emulator) -> Result<Vec<u8>> {
+    let mut payload = execution_payload(emu);
     payload.write_bool(emu.bus.ppu.frame_ready);
     payload.write_bytes(&emu.bus.ppu.framebuffer[..]);
     let raw_bytes = payload.into_bytes();
@@ -318,3 +332,6 @@ pub fn decode_state(emu: &mut crate::emulator::Emulator, bytes: &[u8]) -> Result
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod netplay_tests;

@@ -36,6 +36,7 @@ pub(super) struct Observation {
     pub(super) pause_rounds: u64,
     pub(super) last_pause: Option<(u64, bool, bool)>,
     ledger: Option<cadence::ledger::Ledger>,
+    latency: Option<cadence::latency::Trace>,
     pub(super) presented: Vec<(u64, Instant)>,
     pub(super) depth_max: u64,
     pub(super) rollback_frames: u64,
@@ -45,9 +46,12 @@ pub(super) struct Observation {
 }
 
 impl Observation {
-    pub(super) fn record_input(&mut self, frame: u64, raw: u16) -> Result<()> {
+    pub(super) fn record_input(&mut self, frame: u64, raw: u16, at: Instant) -> Result<()> {
         if let Some(ledger) = &mut self.ledger {
             ledger.record_input(frame, raw)?;
+        }
+        if let Some(latency) = &mut self.latency {
+            latency.record_input(frame, at)?;
         }
         Ok(())
     }
@@ -58,12 +62,23 @@ impl Observation {
         ports: [u16; 2],
         audio: &[f32],
     ) -> Result<()> {
+        let at = self.latency.as_ref().map(|_| Instant::now());
         if let Some(ledger) = &mut self.ledger {
             ledger.record_frame(checkpoint, ports, audio)?;
+        }
+        if let Some(latency) = &mut self.latency {
+            latency.record_confirmed(self.frames + 1, at.unwrap())?;
         }
         self.frames += 1;
         self.record_pcm(audio);
         self.last = Some((checkpoint.clone(), ports, audio.to_vec()));
+        Ok(())
+    }
+
+    pub(super) fn record_audio_handoff(&mut self, frame: u64) -> Result<()> {
+        if let Some(latency) = &mut self.latency {
+            latency.record_handoff(frame, Instant::now())?;
+        }
         Ok(())
     }
 
@@ -157,6 +172,10 @@ fn run(app: &mut App, options: &Options, path: &Path) -> Result<Value> {
             .as_mut()
             .context("proof observer lost")?
             .ledger = Some(cadence::ledger::Ledger::new(options.frames)?);
+        app.netplay.proof.as_mut().unwrap().latency = Some(cadence::latency::Trace::new(
+            options.frames,
+            options.input_delay,
+        )?);
     }
     app.debug_windows.netplay.private_network = true;
     options.route.configure(app);

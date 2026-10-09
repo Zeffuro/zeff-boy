@@ -3,6 +3,8 @@ mod resampler;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use native::AudioTestDriver;
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(unused_imports)]
 use native::*;

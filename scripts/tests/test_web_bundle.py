@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -61,6 +63,35 @@ class BundleTests(unittest.TestCase):
             (root / "index.html").write_text("unknown loader")
             with self.assertRaises(ValueError):
                 web_bundle.bind_bundle(root)
+
+    def test_pair_certificate_is_outside_sealed_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.fixture(root)
+            before, _ = self.manifest(root)
+            for content in ['{"pair":"first"}', '{"pair":"changed"}']:
+                (root / "zeff-boy.netplay.json").write_text(content)
+                (root / "index.html").write_text(
+                    "import init, * as bindings from '/stable/app.js';\n"
+                    "const wasm = await init({ module_or_path: '/stable/app_bg.wasm' });"
+                )
+                after, _ = self.manifest(root)
+                self.assertEqual(before, after)
+                self.assertNotIn("zeff-boy.netplay.json", after["files"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is needed to execute the loader")
+    def test_optional_pair_certificate_loader_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.fixture(root)
+            self.manifest(root)
+            result = subprocess.run(
+                [shutil.which("node"), str(Path(__file__).with_name("web_bundle_loader_test.cjs")),
+                 str(root / "index.html"), str(root)],
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("loader scenarios: 10 passed", result.stdout)
 
 
 if __name__ == "__main__":

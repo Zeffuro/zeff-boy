@@ -335,7 +335,16 @@ fn inject_before(connection: &mut Connection, frame: u64, scenario: Scenario) ->
             bail!("malformed peer did not close after injection");
         }
         Scenario::Disconnect => {
-            // Returning releases every owned socket before the peer report is built.
+            // Drain the host's input so owned socket teardown does not reset unread data.
+            ensure!(
+                connection.receive()?
+                    == Message::Input {
+                        player: Player::One,
+                        frame: frame + INPUT_DELAY,
+                        buttons: u16::from(sample(Player::One, frame)),
+                    },
+                "unexpected input before injected disconnect"
+            );
             bail!("injected disconnect");
         }
         Scenario::Timeout => {

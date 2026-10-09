@@ -83,6 +83,37 @@ fn signed_different_versions_still_require_each_players_consent() {
 }
 
 #[test]
+fn mixed_signed_pairs_require_mutual_artifacts_and_each_version_consent() {
+    for native_platform in [1, 2] {
+        let native = certified(1, 2, native_platform, "1.0", false);
+        let browser = certified(2, 1, 3, "1.0", false);
+        assert_admission(native.clone(), browser.clone(), true);
+        assert_admission(browser.clone(), native.clone(), true);
+        for changed in 0..5 {
+            let mut browser = browser.clone();
+            match changed {
+                0 => browser.build = [3; 32],
+                1 => browser.build_info.peer_build = [3; 32],
+                2 => browser.build_info.certificate = [32; 32],
+                3 => browser.build_info.contract = [18; 32],
+                4 => browser.build_info.version = "2.0".into(),
+                _ => unreachable!(),
+            }
+            assert_admission(native.clone(), browser, false);
+        }
+        for native_consent in [false, true] {
+            for browser_consent in [false, true] {
+                assert_admission(
+                    certified(1, 2, native_platform, "1.0", native_consent),
+                    certified(2, 1, 3, "2.0", browser_consent),
+                    native_consent && browser_consent,
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn exact_artifact_fallback_survives_optional_pair_certificates() {
     let local = certified(1, 2, 1, "1.0", false);
     let mut ordinary = identity();

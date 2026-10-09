@@ -16,7 +16,9 @@ use crate::emu_backend::{ActiveSystem, BackendLoadConfig, load_backend_from_rom_
 use crate::netplay::{Start, Transport, identity};
 use crate::platform::Instant;
 
+mod mixed;
 mod pce;
+mod progress;
 mod reference;
 mod sega8;
 mod ws;
@@ -378,6 +380,7 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
         }
     }
     let started = Instant::now();
+    let mut progress = progress::Progress::default();
     while !observed.iter().all(|peer| peer.frames.len() >= 72) {
         for index in 0..2 {
             observed[index].drain(&threads[index]);
@@ -391,12 +394,16 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
             }
         }
         assert!(
-            started.elapsed() < Duration::from_secs(15),
-            "{system:?}/{timing}/delay{frames_delay}/host-first{host_first}: presented={:?}, confirmed={:?}, pending={:?}, elapsed={:?}",
+            progress.observe(
+                started.elapsed(),
+                observed.each_ref().map(|peer| peer.frames.len())
+            ),
+            "{system:?}/{timing}/delay{frames_delay}/host-first{host_first}: presented={:?}, confirmed={:?}, pending={:?}, elapsed={:?}, progress-age={:?}",
             observed.each_ref().map(|peer| peer.presented),
             observed.each_ref().map(|peer| peer.frames.len()),
             observed.each_ref().map(|peer| peer.pending),
-            started.elapsed()
+            started.elapsed(),
+            progress.ages(started.elapsed())
         );
         netplay_test_yield().await;
     }
@@ -500,11 +507,34 @@ async fn case(system: ActiveSystem, timing: u8, frames_delay: u64, host_first: b
         assert!(started.elapsed() < Duration::from_secs(3));
         netplay_test_yield().await;
     }
-    threads[0].send(EmuCommand::Shutdown);
-    threads[1].send(EmuCommand::StopNetplay);
+    let initiator = usize::from(!host_first);
+    let remote = initiator ^ 1;
+    let close_frame = threads[initiator].inner.borrow().backend.frame_count();
+    threads[initiator].send(EmuCommand::Shutdown);
     let started = Instant::now();
-    while !observed[0].shutdown {
-        observed[0].drain(&threads[0]);
+    while !observed[remote].stopped {
+        for index in 0..2 {
+            observed[index].drain(&threads[index]);
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "graceful peer stop stalled"
+        );
+        netplay_test_yield().await;
+    }
+    assert_eq!(
+        observed[remote].stop_reason.as_deref(),
+        Some(format!("netplay peer closed at frame {close_frame}").as_str())
+    );
+    while crate::netplay::network::Network::pending_closes() != 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "browser close owner remained live"
+        );
+        netplay_test_yield().await;
+    }
+    while !observed[initiator].shutdown {
+        observed[initiator].drain(&threads[initiator]);
         assert!(started.elapsed() < Duration::from_secs(5));
         netplay_test_yield().await;
     }

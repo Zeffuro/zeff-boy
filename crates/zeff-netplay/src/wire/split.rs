@@ -30,7 +30,16 @@ pub struct Receiver {
 }
 
 impl Connection {
-    pub fn split(mut self) -> Result<(Sender, Receiver)> {
+    pub fn split(self) -> Result<(Sender, Receiver)> {
+        self.split_inner(true)
+    }
+
+    /// The caller owns bounded socket shutdown after terminal publication.
+    pub fn split_deferred(self) -> Result<(Sender, Receiver)> {
+        self.split_inner(false)
+    }
+
+    fn split_inner(mut self, shutdown_on_terminal: bool) -> Result<(Sender, Receiver)> {
         ensure!(
             !self.terminal && !self.sent_close && !self.received_close,
             "only an open connection can split"
@@ -40,6 +49,7 @@ impl Connection {
             .clone()
             .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
         self.cancellation = Some(Arc::clone(&terminal));
+        self.shutdown_on_terminal = shutdown_on_terminal;
         let stream = self
             .stream
             .try_clone()
@@ -55,10 +65,15 @@ impl Connection {
             sent_close: false,
             received_close: false,
             terminal: false,
+            shutdown_on_terminal,
             cancellation: self.cancellation.clone(),
         };
         let state = Arc::new(State {
-            terminal,
+            terminal: if shutdown_on_terminal {
+                terminal
+            } else {
+                Arc::new(AtomicBool::new(false))
+            },
             sent_close: AtomicBool::new(false),
             received_close: AtomicBool::new(false),
         });

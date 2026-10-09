@@ -6,6 +6,8 @@ use zeff_netplay_protocol::{ClientMessage, SessionIdentity, SessionMode, VERSION
 
 wasm_bindgen_test_configure!(run_in_browser);
 
+mod mixed;
+
 #[wasm_bindgen_test]
 fn browser_ice_config_uses_shared_bounds_before_creating_a_peer() {
     use zeff_netplay_protocol::{IceServer, MAX_ICE_CREDENTIAL_BYTES, MAX_ICE_URLS};

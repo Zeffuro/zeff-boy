@@ -195,10 +195,9 @@ fn runtime_omissions_affect_checkpoint_without_changing_native_format() {
     assert_eq!(corrupt.machines[0].encode_state().unwrap(), native);
     assert_ne!(
         state::pair_hash(
-            [&corrupt.machines[0], &corrupt.machines[1]],
+            state::machine_hashes([&corrupt.machines[0], &corrupt.machines[1]]).unwrap(),
             &corrupt.schedule
-        )
-        .unwrap(),
+        ),
         saved.checksum()
     );
     left.drain_audio_samples_into(&mut Vec::new());

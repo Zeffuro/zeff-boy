@@ -4,6 +4,8 @@ use super::*;
 use crate::netplay::network::tests::{event, identity, input};
 use tokio::sync::mpsc;
 
+mod closing;
+
 struct FakePeer {
     incoming: mpsc::Receiver<Packet>,
     outgoing: mpsc::Sender<Packet>,

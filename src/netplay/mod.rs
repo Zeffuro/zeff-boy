@@ -14,6 +14,8 @@ pub(crate) mod connect;
 pub(crate) mod connect;
 pub(crate) mod identity;
 pub(crate) mod metrics;
+#[cfg(all(test, any(not(target_arch = "wasm32"), feature = "wasm-browser-tests")))]
+pub(crate) mod mixed_fixture;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod network;
 #[cfg(target_arch = "wasm32")]
@@ -23,6 +25,7 @@ pub(crate) mod network;
 mod portability_tests;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod proof;
+pub(crate) mod qualification;
 pub(crate) mod session;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod test_lobby;

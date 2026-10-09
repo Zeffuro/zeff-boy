@@ -5,17 +5,23 @@ param(
         "wasm_sms_browser_indexeddb_transaction_matches_detached_control",
         "wasm_sms_browser_app_consumes_and_presents_detached_frame",
         "wasm_gba_browser_app_consumes_and_presents_detached_frame",
+        "browser_netplay_audio_",
+        "browser_netplay_certificate_",
         "wasm_coleco_"
     )]
     [string]$TestFilter = "browser_indexeddb_transaction_matches_detached_control",
     [switch]$Netplay,
-    [switch]$NetplaySmoke
+    [switch]$NetplaySmoke,
+    [switch]$MixedTransport,
+    [switch]$MixedGameplay
 )
 
 $ErrorActionPreference = "Stop"
 $runNetplay = $Netplay -or $NetplaySmoke
-if ($Netplay -and $NetplaySmoke) {
-    throw "Select either -Netplay or -NetplaySmoke"
+$runTransport = $runNetplay -or $MixedTransport
+$runFixture = $runTransport -or $MixedGameplay
+if (($Netplay -and $NetplaySmoke) -or ($MixedTransport -and $runNetplay) -or ($MixedGameplay -and $runTransport)) {
+    throw "Select only one transport or netplay suite"
 }
 
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -121,24 +127,64 @@ try {
     $previousTestTimeout = $env:WASM_BINDGEN_TEST_TIMEOUT
     $previousPath = $env:Path
     $previousAddress = $env:WASM_BINDGEN_TEST_ADDRESS
+    $previousFixtureRunId = $env:ZEFF_MIXED_TEST_RUN_ID
     try {
         $env:CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER = $runner
         $env:RUST_LOG = "warn"
         $env:MSEDGEDRIVER = $driver
         $env:WASM_BINDGEN_TEST_WEBDRIVER_JSON = $webdriverConfig
-        $env:WASM_BINDGEN_TEST_TIMEOUT = if ($runNetplay) { "180" } else { "60" }
+        $env:WASM_BINDGEN_TEST_TIMEOUT = if ($runFixture) { "180" } else { "60" }
         $env:Path = "$(Split-Path -Parent $driver);$previousPath"
-        if ($runNetplay) {
-            & cargo build --locked -p zeff-netplay-connect --features native --example browser-test-lobby
-            if ($LASTEXITCODE -ne 0) { throw "Netplay lobby fixture build failed" }
-            $netplayLobby = Start-Process -FilePath (Join-Path $targetRoot "debug\examples\browser-test-lobby.exe") -ArgumentList @("127.0.0.1:47180", "http://127.0.0.1:47181") -WindowStyle Hidden -PassThru
+        if ($runFixture) {
+            $fixtureRunId = Split-Path -Leaf $runRoot
+            if ($MixedGameplay) {
+                $artifactMessages = & cargo test --locked -p zeff-boy --bin zeff-boy --no-run --message-format=json
+                if ($LASTEXITCODE -ne 0) {
+                    $artifactMessages | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.reason -eq "compiler-message" } | ForEach-Object { Write-Host $_.message.rendered }
+                    throw "Native gameplay fixture build failed"
+                }
+                $fixtureArtifacts = @($artifactMessages | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object {
+                    $_.reason -eq "compiler-artifact" -and $_.target.name -eq "zeff-boy" -and $_.profile.test -and $_.executable
+                })
+                if ($fixtureArtifacts.Count -ne 1) { throw "Expected one native gameplay test artifact" }
+                $env:ZEFF_MIXED_TEST_RUN_ID = $fixtureRunId
+                $netplayLobby = Start-Process -FilePath $fixtureArtifacts[0].executable -ArgumentList @(
+                    "netplay::mixed_fixture::native::serve_mixed_gameplay_fixture", "--exact", "--ignored", "--nocapture", "--test-threads=1"
+                ) -WindowStyle Hidden -PassThru
+            } else {
+                & cargo build --locked -p zeff-netplay-connect --features native --example browser-test-lobby
+                if ($LASTEXITCODE -ne 0) { throw "Netplay lobby fixture build failed" }
+                $netplayLobby = Start-Process -FilePath (Join-Path $targetRoot "debug\examples\browser-test-lobby.exe") -ArgumentList @("127.0.0.1:47180", "http://127.0.0.1:47181", $fixtureRunId) -WindowStyle Hidden -PassThru
+            }
+            $readyDeadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ($true) {
+                if ($netplayLobby.HasExited) { throw "Netplay lobby fixture exited before readiness" }
+                try {
+                    $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:47180/test/mixed/health" -TimeoutSec 1
+                    if ($health.StatusCode -eq 200 -and $health.Content.Trim() -eq $fixtureRunId) { break }
+                } catch { }
+                if ([DateTime]::UtcNow -ge $readyDeadline) { throw "Netplay lobby fixture readiness timed out" }
+                Start-Sleep -Milliseconds 50
+            }
             $env:WASM_BINDGEN_TEST_ADDRESS = "127.0.0.1:47181"
-            & cargo test --locked -p zeff-netplay-connect --target wasm32-unknown-unknown --features browser-tests browser_
-            if ($LASTEXITCODE -ne 0) { throw "Browser transport tests failed" }
+            if ($runTransport) {
+                $transportFilter = if ($MixedTransport) { "browser_mixed_" } else { "browser_" }
+                & cargo test --locked -p zeff-netplay-connect --target wasm32-unknown-unknown --features browser-tests $transportFilter
+                if ($LASTEXITCODE -ne 0) { throw "Browser transport tests failed" }
+            }
         }
         $effectiveTestFilter = if ($runNetplay) { "browser_netplay_" } else { $TestFilter }
+        if ($MixedTransport) {
+            return
+        }
+        if ($MixedGameplay) {
+            & cargo test --locked --package zeff-boy --bin zeff-boy --target wasm32-unknown-unknown --no-default-features --features wasm-browser-tests browser_mixed_gameplay_
+            if ($LASTEXITCODE -ne 0) { throw "Mixed gameplay tests failed" }
+            return
+        }
         if ($NetplaySmoke) {
             foreach ($smokeFilter in @(
+                "browser_netplay_audio_",
                 "browser_netplay_actual_worker_matches_reference_and_restores_sram",
                 "browser_netplay_ws_worker_replicates_link_and_restores",
                 "browser_netplay_build_mismatch_and_suspended_peer_restore_before_saving"
@@ -167,7 +213,11 @@ try {
         $env:WASM_BINDGEN_TEST_TIMEOUT = $previousTestTimeout
         $env:Path = $previousPath
         $env:WASM_BINDGEN_TEST_ADDRESS = $previousAddress
-        if ($netplayLobby -and -not $netplayLobby.HasExited) { Stop-Process -Id $netplayLobby.Id }
+        $env:ZEFF_MIXED_TEST_RUN_ID = $previousFixtureRunId
+        if ($netplayLobby -and -not $netplayLobby.HasExited) {
+            Stop-Process -Id $netplayLobby.Id
+            $netplayLobby.WaitForExit()
+        }
     }
 } finally {
     try {

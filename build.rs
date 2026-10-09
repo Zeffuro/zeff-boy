@@ -2,6 +2,8 @@
 mod source_stamp;
 
 fn main() {
+    use sha2::{Digest, Sha256};
+
     for (cargo, embedded) in [
         ("TARGET", "ZEFF_NETPLAY_BUILD_TARGET"),
         ("PROFILE", "ZEFF_NETPLAY_BUILD_PROFILE"),
@@ -13,6 +15,20 @@ fn main() {
             std::env::var(cargo).unwrap()
         );
     }
+    println!(
+        "cargo:rustc-env=ZEFF_NETPLAY_BUILD_FEATURES={}",
+        std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default()
+    );
+    let compiler = std::process::Command::new(std::env::var_os("RUSTC").unwrap())
+        .arg("-vV")
+        .output()
+        .expect("read netplay compiler identity");
+    assert!(compiler.status.success(), "read netplay compiler identity");
+    let fingerprint: String = Sha256::digest(&compiler.stdout)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    println!("cargo:rustc-env=ZEFF_NETPLAY_BUILD_COMPILER={fingerprint}");
     println!("cargo:rerun-if-env-changed=ZEFF_NETPLAY_PIPELINE_OUTPUT_V1");
     let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let source = source_stamp::snapshot(&root).expect("capture netplay build source");

@@ -2,6 +2,7 @@ use super::*;
 use crate::hardware::cartridge::compute_footer_checksum;
 use crate::hardware::cpu::CpuState;
 
+mod checkpoints;
 mod snapshots;
 
 fn machine(color: bool, code: &[u8]) -> Emulator {

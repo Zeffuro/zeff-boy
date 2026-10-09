@@ -9,6 +9,7 @@ const WARMUP: u64 = 60;
 const MIN_SAMPLES: u64 = 60;
 const POLL: Duration = Duration::from_millis(1);
 
+pub(super) mod latency;
 pub(super) mod ledger;
 mod oracle;
 
@@ -127,6 +128,11 @@ pub(super) fn play(
         "cadence presentation observations missing"
     );
     let mut report = intervals(&observed.presented, nominal)?;
+    report["latency"] = observed
+        .latency
+        .as_ref()
+        .context("cadence latency observer lost")?
+        .report(&observed.presented, WARMUP)?;
     report["presented_frames"] = json!(options.frames);
     report["confirmed_frames"] = json!(observed.frames);
     report["presentation_run_seconds"] = json!(presented_elapsed.as_secs_f64());

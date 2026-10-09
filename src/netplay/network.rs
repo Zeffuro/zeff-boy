@@ -176,6 +176,21 @@ impl Network {
             let _ = worker.join();
         }
     }
+
+    pub(crate) fn close(mut self, frame: u64) {
+        if self.send(Message::Close { frame }).is_ok() {
+            let started = std::time::Instant::now();
+            while self
+                .worker
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
+                && started.elapsed() < Duration::from_millis(500)
+            {
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        self.cancel();
+    }
 }
 
 impl Drop for Network {
@@ -229,7 +244,7 @@ fn run(
         !cancelled.load(Ordering::Acquire),
         "netplay network cancelled during admission"
     );
-    let (mut sender, mut receiver) = connection.split()?;
+    let (mut sender, mut receiver) = connection.split_deferred()?;
     publish(events, Event::Ready)?;
     let reader_events = events.clone();
     let reader_metrics = metrics.clone();
@@ -271,7 +286,18 @@ fn run(
                     if owner_cancelled.load(Ordering::Acquire) { intentional_stop = true; return Ok(()); }
                     sender.send(&message).context("sending netplay message")?;
                     metrics.lock().unwrap_or_else(|poison| poison.into_inner()).sent(0);
-                    if matches!(message, Message::Close { .. }) { intentional_stop = true; return Ok(()); }
+                    if matches!(message, Message::Close { .. }) {
+                        let grace = Duration::from_millis(250);
+                        let started = std::time::Instant::now();
+                        if !matches!(completion.recv_timeout(grace), Ok(Ok(()))) {
+                            // Rejected in-flight gameplay must not cut off the outgoing Close.
+                            while started.elapsed() < grace && !cancelled.load(Ordering::Acquire) {
+                                thread::sleep(Duration::from_millis(1));
+                            }
+                        }
+                        intentional_stop = true;
+                        return Ok(());
+                    }
                 }
                 default(IDLE_POLL) => {}
             }

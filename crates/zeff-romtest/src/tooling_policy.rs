@@ -206,6 +206,7 @@ fn require_browser_tiers(ci: &str) -> anyhow::Result<()> {
     let expected = [
         script.to_string(),
         format!("{script} -Netplay"),
+        format!("{script} -MixedGameplay"),
         smoke_command.clone(),
         format!("{script} -TestFilter wasm_sms_browser_app_consumes_and_presents_detached_frame"),
         format!("{script} -TestFilter wasm_gba_browser_app_consumes_and_presents_detached_frame"),
@@ -298,12 +299,14 @@ mod tests {
         ] {
             assert!(require_browser_tiers(&workflow.replace(required, "")).is_err());
         }
-        assert!(
-            require_browser_tiers(&workflow.replace(
-                "run: ./scripts/test-wasm-browser-speculation.ps1 -TestFilter wasm_coleco_",
-                "run: echo skipped",
-            ))
-            .is_err()
-        );
+        for command in ["-TestFilter wasm_coleco_", "-MixedGameplay"] {
+            assert!(
+                require_browser_tiers(&workflow.replace(
+                    &format!("run: ./scripts/test-wasm-browser-speculation.ps1 {command}"),
+                    "run: echo skipped",
+                ))
+                .is_err()
+            );
+        }
     }
 }

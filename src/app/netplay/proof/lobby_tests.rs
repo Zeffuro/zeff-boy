@@ -50,6 +50,24 @@ fn check_pair(cadence: bool) {
             );
             assert_eq!(report["cadence"]["verification"]["submitted_samples"], 120);
             assert_eq!(report["cadence"]["measured_intervals"], 60);
+            let latency = &report["cadence"]["latency"];
+            assert_eq!(latency["warmup_input_samples"], 60);
+            assert_eq!(latency["tail_input_samples_without_effect"], 2);
+            assert_eq!(latency["paired_samples"], 58);
+            for stage in [
+                "input_to_predicted_response",
+                "input_to_confirmed_pcm",
+                "input_to_audio_handoff",
+                "confirmed_pcm_to_audio_handoff",
+            ] {
+                assert_eq!(latency[stage]["samples"], 58);
+                let mut previous = 0.0;
+                for percentile in ["p50_ms", "p95_ms", "p99_ms", "max_ms"] {
+                    let measured = latency[stage][percentile].as_f64().unwrap();
+                    assert!(measured.is_finite() && measured >= previous);
+                    previous = measured;
+                }
+            }
         }
         assert_eq!(report["scope"], "direct-dtls-sctp");
         assert_eq!(report["transport"], "webrtc-data-channel");

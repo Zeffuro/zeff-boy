@@ -10,7 +10,7 @@ pub struct BuildInfo {
     pub contract: [u8; 32],
     pub certificate: [u8; 32],
     pub peer_build: [u8; 32],
-    /// 0: exact artifact only; 1: Windows x86_64; 2: Linux x86_64.
+    /// 0: exact artifact only; 1: Windows x86_64; 2: Linux x86_64; 3: WebAssembly.
     pub platform: u8,
     pub allow_different_versions: bool,
 }
@@ -31,7 +31,11 @@ impl BuildInfo {
                 "unqualified build fields must be zero"
             );
         } else {
-            ensure!(matches!(self.platform, 1 | 2), "unknown build platform");
+            ensure!(matches!(self.platform, 1..=3), "unknown build platform");
+            ensure!(
+                self.platform != 3 || self.certificate != [0; 32],
+                "WebAssembly compatibility requires an artifact pair certificate"
+            );
             ensure!(
                 !self.version.is_empty(),
                 "qualified build requires App version"
@@ -102,7 +106,7 @@ pub(super) fn admit_builds(
             "build compatibility contract mismatch"
         );
         ensure!(
-            matches!(local.platform, 1 | 2) && matches!(remote.platform, 1 | 2),
+            matches!(local.platform, 1..=3) && matches!(remote.platform, 1..=3),
             "unqualified build platform"
         );
         if local.certificate != [0; 32] || remote.certificate != [0; 32] {
@@ -169,6 +173,7 @@ mod tests {
             ([0; 32], 1, "1"),
             ([1; 32], 0, "1"),
             ([1; 32], 3, "1"),
+            ([1; 32], 4, "1"),
             ([1; 32], 1, ""),
         ] {
             let info = BuildInfo {
@@ -212,5 +217,58 @@ mod tests {
             malformed[range].fill(0);
             assert!(BuildInfo::decode(&malformed).is_err());
         }
+    }
+
+    #[test]
+    fn browser_descriptors_require_a_certificate_and_mutual_peer_admission() {
+        let browser = BuildInfo {
+            version: "1.0".into(),
+            contract: [1; 32],
+            certificate: [2; 32],
+            peer_build: [3; 32],
+            platform: 3,
+            allow_different_versions: false,
+        };
+        assert_eq!(
+            BuildInfo::decode(&browser.encode().unwrap()).unwrap(),
+            browser
+        );
+        let native = BuildInfo {
+            peer_build: [4; 32],
+            platform: 1,
+            ..browser.clone()
+        };
+        assert!(admit_builds(&[4; 32], &browser, &[3; 32], &native).is_ok());
+        for invalid in [
+            BuildInfo {
+                certificate: [0; 32],
+                peer_build: [0; 32],
+                ..browser.clone()
+            },
+            BuildInfo {
+                certificate: [0; 32],
+                ..browser.clone()
+            },
+            BuildInfo {
+                peer_build: [0; 32],
+                ..browser.clone()
+            },
+            BuildInfo {
+                platform: 4,
+                ..browser.clone()
+            },
+        ] {
+            assert!(invalid.encode().is_err());
+        }
+        let mut unsigned = browser.encode().unwrap();
+        unsigned[99..163].fill(0);
+        assert!(BuildInfo::decode(&unsigned).is_err());
+        let unqualified = BuildInfo {
+            certificate: [0; 32],
+            peer_build: [0; 32],
+            ..native.clone()
+        };
+        assert!(admit_builds(&[4; 32], &browser, &[3; 32], &unqualified).is_err());
+        assert!(admit_builds(&[4; 32], &browser, &[5; 32], &native).is_err());
     }
 }

@@ -110,6 +110,40 @@ fn selected_input_delay_is_authenticated_before_any_frame_can_run() {
 }
 
 #[test]
+fn raw_execution_contract_rejects_previous_compressed_state_configuration() {
+    use std::net::{TcpListener, TcpStream};
+    use zeff_netplay::{lockstep::Player, wire};
+    let (_directory, backend) = clean(&build_nes_test_rom());
+    let local = identity(&backend, [7; 32]).unwrap();
+    let mut legacy = local.clone();
+    let mut config = Sha256::new();
+    config.update(b"ZeffNetplay-App-native-NES/two-standard-controllers/delay0to8-predict8/runtime-snapshot2/hash60/48000/stereo-f32LE/discard-and-restore/v7");
+    config.update([0]);
+    config.update(InputDelay::default().frames().to_le_bytes());
+    config.update(zeff_netplay::rollback::PREDICTION_WINDOW.to_le_bytes());
+    config.update(TAS_DETERMINISM_ABI_ID.as_bytes());
+    config.update(TAS_STATE_FORMAT_COMPATIBILITY_ID.as_bytes());
+    config.update(
+        backend
+            .nes_tas_load_provenance()
+            .unwrap()
+            .load
+            .netplay_media
+            .unwrap()
+            .policy,
+    );
+    legacy.config = config.finalize().into();
+    assert_ne!(local.config, legacy.config);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (peer, _) = listener.accept().unwrap();
+    let other = std::thread::spawn(move || wire::admit(peer, Player::Two, &legacy, &[5; 32]));
+    assert!(wire::admit(stream, Player::One, &local, &[5; 32]).is_err());
+    assert!(other.join().unwrap().is_err());
+    assert_eq!(backend.frame_count(), 0);
+}
+
+#[test]
 fn low_delay_contract_rejects_the_previous_two_frame_configuration_before_execution() {
     use std::net::{TcpListener, TcpStream};
     use zeff_netplay::{lockstep::Player, wire};

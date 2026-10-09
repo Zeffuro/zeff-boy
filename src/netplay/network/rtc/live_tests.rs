@@ -115,3 +115,45 @@ fn actual_rtc_runtime_handoff_authenticates_and_exchanges_both_channels() {
     two.cancel();
     assert!(start.elapsed() < Duration::from_secs(1));
 }
+
+#[test]
+fn actual_rtc_local_close_notifies_the_peer_in_both_roles() {
+    for player in [Player::One, Player::Two] {
+        let server = TestLobby::start();
+        let (host, guest) = direct_pair(&server);
+        let network = |peer, player| {
+            Network::spawn_transport(
+                Transport::Direct(Box::new(peer)),
+                player,
+                identity(),
+                [9; 32],
+                ConnectionScope::Loopback,
+                InputDelay::default(),
+            )
+            .unwrap()
+        };
+        let one = network(host, Player::One);
+        let two = network(guest, Player::Two);
+        assert!(matches!(event(&one), Event::Ready));
+        assert!(matches!(event(&two), Event::Ready));
+        let (local, mut remote) = if player == Player::One {
+            (one, two)
+        } else {
+            (two, one)
+        };
+        remote
+            .send(Message::Progress {
+                frame: 0,
+                confirmed: 0,
+            })
+            .unwrap();
+        let start = Instant::now();
+        local.close(19);
+        assert!(matches!(
+            event(&remote),
+            Event::Message(Message::Close { frame: 19 })
+        ));
+        assert!(start.elapsed() < Duration::from_secs(1));
+        remote.cancel();
+    }
+}

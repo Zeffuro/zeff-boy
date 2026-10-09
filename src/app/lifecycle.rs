@@ -120,6 +120,17 @@ impl App {
                 }
             }
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        let audio = audio.map(|mut next| {
+            if self
+                .netplay
+                .auto_audio_budget(self.settings.audio.buffer_policy)
+                && let Some(previous) = &self.audio
+            {
+                next.inherit_netplay_buffer(previous);
+            }
+            next
+        });
         let sample_rate = audio
             .as_ref()
             .map_or(preferred, AudioOutput::emulator_sample_rate);

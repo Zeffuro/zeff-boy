@@ -8,6 +8,7 @@ const HARDWARE: &str = "nes-nrom-ntsc-v1";
 
 mod certificate;
 mod certificate_fp;
+mod content;
 pub(crate) use certificate::CertificateSummary;
 pub(crate) use certificate_fp::floating_point_controls;
 
@@ -130,16 +131,7 @@ fn local_pair() -> anyhow::Result<Option<certificate::VerifiedPair>> {
     let Some(bytes) = certificate::read_sidecar(&path)? else {
         return Ok(None);
     };
-    let facts = certificate::LocalFacts {
-        artifact: super::connect::executable_build()?,
-        source: env!("ZEFF_NETPLAY_QUALIFICATION_SOURCE"),
-        version: env!("CARGO_PKG_VERSION"),
-        target: env!("ZEFF_NETPLAY_BUILD_TARGET"),
-        test: cfg!(test),
-        profile: env!("ZEFF_NETPLAY_BUILD_PROFILE"),
-        opt_level: env!("ZEFF_NETPLAY_BUILD_OPT_LEVEL"),
-        debug: env!("ZEFF_NETPLAY_BUILD_DEBUG"),
-    };
+    let facts = certificate::compiled_facts(super::connect::executable_build()?);
     certificate::verify(&bytes, &facts).map(Some)
 }
 
@@ -159,36 +151,14 @@ pub(crate) fn describe(backend: &EmuBackend, allow_different_versions: bool) -> 
     };
     if certificate_fp::supported(floating_point_controls())
         && let Ok(Some(pair)) = local_pair()
-        && let Some(nes) = backend.nes()
-        && let Some(provenance) = backend.nes_tas_load_provenance()
+        && content::permitted(&pair, backend)
     {
-        use zeff_nes_core::hardware::cartridge::TimingMode;
-        let header = nes.emu.cartridge_header();
-        let timing = match nes.emu.resolved_timing_mode() {
-            TimingMode::Ntsc => Some(0),
-            TimingMode::Pal => Some(1),
-            TimingMode::Dendy => Some(2),
-            TimingMode::MultiRegion => None,
-        };
-        if provenance.load.raw_source_media_sha256 == backend.rom_hash()
-            && nes.emu.cartridge_effective_mapper_label() == header.mapper_label()
-            && timing.is_some_and(|timing| {
-                pair.permits_content(
-                    backend.rom_hash(),
-                    header.mapper_id,
-                    header.submapper_id,
-                    timing,
-                    nes.emu.has_portable_rollback_hardware(),
-                )
-            })
-        {
-            let summary = pair.summary();
-            result.contract = summary.contract;
-            result.certificate = summary.certificate;
-            result.peer_build = summary.peer_build;
-            result.platform = platform();
-            return result;
-        }
+        let summary = pair.summary();
+        result.contract = summary.contract;
+        result.certificate = summary.certificate;
+        result.peer_build = summary.peer_build;
+        result.platform = platform();
+        return result;
     }
     if supported_hardware(backend)
         && let Some(contract) = compiled_contract()

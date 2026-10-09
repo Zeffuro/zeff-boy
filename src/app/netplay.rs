@@ -91,6 +91,15 @@ impl Frontend {
         self.running() && !self.paused
     }
 
+    pub(super) fn pumps_audio(&self, locally_paused: bool) -> bool {
+        self.playing() || (!self.fenced() && !locally_paused)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn auto_audio_budget(&self, policy: crate::settings::AudioBufferPolicy) -> bool {
+        self.running() && policy == crate::settings::AudioBufferPolicy::Auto
+    }
+
     pub(super) fn permits_menu_action(&self, action: &crate::debug::MenuAction) -> bool {
         use crate::debug::MenuAction;
         !self.fenced()
@@ -400,12 +409,16 @@ impl App {
             } else {
                 u16::from(host_to_nes(buttons, dpad))
             };
+            #[cfg(not(target_arch = "wasm32"))]
+            let sampled_at = self.netplay.proof.as_ref().map(|_| Instant::now());
             match self.send_emu_command_checked(EmuCommand::StepNetplay(raw)) {
                 Ok(()) => {
                     self.netplay.in_flight = true;
                     #[cfg(not(target_arch = "wasm32"))]
                     if let Some(proof) = &mut self.netplay.proof
-                        && proof.record_input(self.netplay.presented, raw).is_err()
+                        && proof
+                            .record_input(self.netplay.presented, raw, sampled_at.unwrap())
+                            .is_err()
                     {
                         self.request_netplay_stop();
                         return;
@@ -550,6 +563,9 @@ fn host_to_ws(buttons: u8, dpad: u8) -> u16 {
 }
 
 mod actions;
+
+#[cfg(test)]
+mod audio_pump_tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) mod proof;

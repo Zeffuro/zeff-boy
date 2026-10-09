@@ -56,10 +56,6 @@ reason = "TAS editor application integration remains together; cap the existing 
 max_lines = 1176
 reason = "Window event dispatch gains netplay window routing and focus tracking; new netplay logic remains separate."
 
-[exceptions."src/audio/native.rs"]
-max_lines = 941
-reason = "Native audio device setup and callback lifecycle share stream state; cap the existing implementation."
-
 [exceptions."src/audio_discovery/sf2.rs"]
 max_lines = 914
 reason = "SoundFont writer and format regression tests remain together; cap the existing exporter."

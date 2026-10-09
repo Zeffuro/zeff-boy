@@ -2,7 +2,10 @@ use super::*;
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
 
+#[path = "tests/core_coverage.rs"]
 mod core_coverage;
+#[path = "tests/mixed.rs"]
+mod mixed;
 
 fn key() -> SigningKey {
     SigningKey::from_bytes(&[42; 32])
@@ -23,7 +26,9 @@ fn payload() -> Value {
             {"source": "46".repeat(32), "mapper": 34, "submapper": 0, "timing": 1},
             {"source": "47".repeat(32), "mapper": 34, "submapper": 0, "timing": 2},
             {"source": "48".repeat(32), "mapper": 2, "submapper": 0, "timing": 0},
-            {"source": "49".repeat(32), "mapper": 4, "submapper": 0, "timing": 0}
+            {"source": "49".repeat(32), "mapper": 4, "submapper": 0, "timing": 0},
+            {"source": "4a".repeat(32), "mapper": 1, "submapper": 0, "timing": 0},
+            {"source": "4b".repeat(32), "mapper": 3, "submapper": 0, "timing": 0}
         ]
     })
 }
@@ -38,6 +43,8 @@ fn facts() -> LocalFacts<'static> {
         profile: "debug",
         opt_level: "0",
         debug: "true",
+        compiler: "abababababababababababababababababababababababababababababababab",
+        target_features: "fxsr,sse,sse2",
     }
 }
 
@@ -64,13 +71,15 @@ fn exact_members_select_mutual_peer_and_only_listed_games() {
         (0x47, 34, 2),
         (0x48, 2, 0),
         (0x49, 4, 0),
+        (0x4a, 1, 0),
+        (0x4b, 3, 0),
     ] {
         assert!(pair.permits_game([source; 32], mapper, 0, timing));
         assert!(!pair.permits_game([source; 32], mapper, 1, timing));
         assert!(!pair.permits_game([source; 32], mapper, 0, (timing + 1) % 3));
         assert!(!pair.permits_game([source; 32], mapper + 1, 0, timing));
     }
-    for mapper in [0, 2, 4, 34] {
+    for mapper in [0, 1, 2, 3, 4, 34] {
         assert!(!pair.permits_game([0x50; 32], mapper, 0, 0));
     }
     let linux = LocalFacts {
@@ -185,7 +194,7 @@ fn signed_invalid_duplicate_unknown_and_zero_fields_fail_closed() {
         ("/members/0/opt_level", json!("4")),
         ("/members/0/debug", json!(true)),
         ("/games/0/source", json!("00".repeat(32))),
-        ("/games/0/mapper", json!(1)),
+        ("/games/0/mapper", json!(5)),
         ("/games/0/mapper", json!(7)),
         ("/games/0/submapper", json!(1)),
         ("/games/0/timing", json!(3)),
@@ -218,6 +227,7 @@ fn signed_invalid_duplicate_unknown_and_zero_fields_fail_closed() {
     assert!(verify_with_key(&signed(&duplicate), &facts(), &key().verifying_key()).is_err());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn reads_are_bounded_and_a_missing_sidecar_is_optional() {
     let mut reader = std::io::Cursor::new(vec![b'x'; MAX_SIZE + 100]);

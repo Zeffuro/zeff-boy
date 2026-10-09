@@ -19,6 +19,8 @@ mod core;
 use core::{Lease, Snapshot};
 mod execution;
 mod pause;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod profile;
 use checks::Hashes;
 use execution::FrameBucket;
 use pause::PauseControl;
@@ -45,6 +47,8 @@ pub(crate) struct Session {
     persistent: [u8; 32],
     publication: bool,
     verification: bool,
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    profile: Option<profile::ExecutionProfile>,
     ready: bool,
     admission_since: Instant,
     stalled_since: Option<Instant>,
@@ -63,19 +67,9 @@ impl Session {
     }
 
     pub(crate) fn start(backend: &mut EmuBackend, start: Start) -> Result<Self> {
-        let admission = identity::identity_with_delay(backend, start.build, start.input_delay)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut admission = admission;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            admission.build_info =
-                super::compatibility::describe(backend, start.allow_different_versions);
-        }
-        #[cfg(target_arch = "wasm32")]
-        ensure!(
-            !start.allow_different_versions,
-            "browser netplay requires matching builds"
-        );
+        let mut admission = identity::identity_with_delay(backend, start.build, start.input_delay)?;
+        admission.build_info =
+            super::compatibility::describe(backend, start.allow_different_versions);
         let checkpoint = backend.encode_state_bytes()?;
         let publication = core::persistence(backend, None)?;
         let lease = Lease::begin(backend, start.player)?;
@@ -111,6 +105,8 @@ impl Session {
             persistent: admission.persistent,
             publication,
             verification: start.verify_every_frame,
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            profile: None,
             ready: false,
             admission_since: Instant::now(),
             stalled_since: None,
@@ -364,7 +360,12 @@ impl Session {
     }
 
     pub(crate) fn restore(mut self, backend: &mut EmuBackend) -> Result<()> {
-        self.network.cancel();
+        if self.ready {
+            self.network.close(self.timeline.frame());
+        } else {
+            let mut network = self.network;
+            network.cancel();
+        }
         self.lease
             .restore_checkpoint(backend, &self.restore_snapshot, self.checkpoint.clone())?;
         ensure!(

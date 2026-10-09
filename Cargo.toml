@@ -44,7 +44,7 @@ description = "A Game Boy, Game Boy Color, Game Boy Advance, NES, ColecoVision, 
 repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
-zeff-netplay = { path = "crates/zeff-netplay", default-features = false }
+zeff-netplay = { path = "crates/zeff-netplay", default-features = false, features = ["test-support"] }
 url = "2"
 zeff-audio-discovery = { path = "crates/zeff-audio-discovery" }
 zeff-emu-common = { path = "crates/zeff-emu-common", features = ["serde"] }
@@ -73,6 +73,7 @@ egui_dock = { version = "0.20.1", features = ["serde"] }
 png = "0.18.1"
 crc32fast = "1.5.0"
 const-hex = "1.19.1"
+ed25519-dalek = "3.0.0"
 arrayvec = "0.7.8"
 smallvec = "1.15.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
@@ -88,12 +89,13 @@ default-features = false
 features = ["links"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+zeff-netplay-lobby = { path = "crates/zeff-netplay-lobby" }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 zeff-netplay = { path = "crates/zeff-netplay", default-features = false, features = ["test-support"] }
 zeff-netplay-connect = { path = "crates/zeff-netplay-connect", features = ["native"] }
 tokio = { version = "1.52.1", features = ["rt", "time", "sync"] }
 getrandom = "0.4.3"
 netdev = { version = "0.46.3", default-features = false, features = ["gateway"] }
-ed25519-dalek = "3.0.0"
 zeff-pgo-corpus = { path = "crates/zeff-pgo-corpus" }
 chd = { version = "0.3.4", default-features = false, features = ["std", "cd_full", "fast_lzma"] }
 rars = "0.9.3"
@@ -153,7 +155,7 @@ web-sys = { version = "0.3.103", features = [
     "Window", "Document", "Node", "HtmlCanvasElement", "HtmlElement",
     "HtmlAnchorElement", "Element", "Storage", "console",
     "AudioContext", "AudioContextOptions", "AudioDestinationNode", "AudioBuffer",
-    "AudioBufferSourceNode", "GainNode", "ScriptProcessorNode",
+    "AudioBufferSourceNode", "AudioScheduledSourceNode", "GainNode", "ScriptProcessorNode",
     "AudioProcessingEvent",
     "Blob", "BlobPropertyBag", "File", "FileList", "FileReader",
     "HtmlInputElement", "EventTarget",
@@ -169,6 +171,7 @@ web-time = "1"
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 zeff-netplay = { path = "crates/zeff-netplay", default-features = false, features = ["test-support"] }
 wasm-bindgen-test = "=0.3.76"
+web-sys = { version = "0.3.103", features = ["OfflineAudioContext"] }
 
 [profile.dev]
 opt-level = 1

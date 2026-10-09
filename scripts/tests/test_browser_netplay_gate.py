@@ -139,16 +139,22 @@ class BrowserRoutingTests(unittest.TestCase):
         script = (ROOT / "scripts/test-wasm-browser-speculation.ps1").read_text()
         smoke = script.split("if ($NetplaySmoke) {", 1)[1].split("} elseif ($Netplay) {", 1)[0]
         filters = re.findall(r'"(browser_netplay_[^"]+)"', smoke)
-        self.assertEqual(len(filters), 3)
+        self.assertEqual(len(filters), 4)
+        self.assertIn("browser_netplay_audio_", filters)
+        audio_sources = "\n".join(path.read_text() for path in (ROOT / "src/audio").rglob("*.rs"))
+        self.assertGreater(len(re.findall(r"fn browser_netplay_audio_", audio_sources)), 1)
         sources = "\n".join(path.read_text() for path in (ROOT / "src/emu_thread/wasm/netplay").rglob("*.rs"))
         for name in filters:
+            if name == "browser_netplay_audio_":
+                continue
             self.assertEqual(len(re.findall(rf"async fn {re.escape(name)}\(", sources)), 1)
         self.assertIn("browser_netplay_actual_worker_matches_reference_and_restores_sram", filters)
         self.assertIn("browser_netplay_ws_worker_replicates_link_and_restores", filters)
         self.assertIn("browser_netplay_build_mismatch_and_suspended_peer_restore_before_saving", filters)
         self.assertIn("$runNetplay = $Netplay -or $NetplaySmoke", script)
-        self.assertIn("--features browser-tests browser_", script)
-        self.assertIn("if ($runNetplay) {", script)
+        self.assertIn('--features browser-tests $transportFilter', script)
+        self.assertIn('$transportFilter = if ($MixedTransport) { "browser_mixed_" } else { "browser_" }', script)
+        self.assertIn("if ($runTransport) {", script)
         self.assertIn("Stop-Process -Id $netplayLobby.Id", script)
         self.assertIn("Remove-TestRun $runRoot", script)
 
@@ -159,11 +165,12 @@ class BrowserRoutingTests(unittest.TestCase):
         self.assertIn("if: needs.browser-netplay-gate.outputs.suite != 'skip'", browser)
         steps = browser.split("      - name:")
         commands = [step for step in steps if "run: ./scripts/test-wasm-browser-speculation.ps1" in step]
-        self.assertEqual(len(commands), 6)
+        self.assertEqual(len(commands), 7)
         for step in commands:
             expected = "smoke" if "-NetplaySmoke" in step else "full"
             self.assertIn(f"if: needs.browser-netplay-gate.outputs.suite == '{expected}'", step)
         self.assertIn("fetch-depth: 0", workflow.split("  optimized-build-helper:", 1)[0])
+        self.assertIn("./scripts/test-wasm-browser-speculation.ps1 -MixedGameplay", browser)
 
     def test_cli_writes_safe_workflow_output(self):
         with tempfile.TemporaryDirectory() as directory:

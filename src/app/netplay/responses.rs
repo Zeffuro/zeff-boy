@@ -199,9 +199,26 @@ impl App {
             }
             self.netplay.audio_started = true;
             let buffered = std::mem::take(&mut self.netplay.audio_prebuffer);
+            if !self.record_netplay_audio_handoff() {
+                return;
+            }
             self.queue_emulator_audio(&buffered, 1);
         } else {
+            if !self.record_netplay_audio_handoff() {
+                return;
+            }
             self.queue_emulator_audio(audio, 1);
         }
+    }
+
+    fn record_netplay_audio_handoff(&mut self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(proof) = &mut self.netplay.proof
+            && proof.record_audio_handoff(self.netplay.confirmed).is_err()
+        {
+            self.request_netplay_stop();
+            return false;
+        }
+        true
     }
 }

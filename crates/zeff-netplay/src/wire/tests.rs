@@ -4,6 +4,7 @@ use std::thread;
 
 mod chat;
 mod compatibility;
+mod deferred;
 mod pause;
 mod split;
 mod wider_input;

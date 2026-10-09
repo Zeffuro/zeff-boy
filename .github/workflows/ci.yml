@@ -385,7 +385,7 @@ jobs:
     needs: browser-netplay-gate
     if: needs.browser-netplay-gate.outputs.suite != 'skip'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -427,6 +427,11 @@ jobs:
         if: needs.browser-netplay-gate.outputs.suite == 'full'
         shell: pwsh
         run: ./scripts/test-wasm-browser-speculation.ps1 -Netplay
+
+      - name: Test native and browser netplay gameplay
+        if: needs.browser-netplay-gate.outputs.suite == 'full'
+        shell: pwsh
+        run: ./scripts/test-wasm-browser-speculation.ps1 -MixedGameplay
 
       - name: Test browser netplay runtime smoke
         if: needs.browser-netplay-gate.outputs.suite == 'smoke'

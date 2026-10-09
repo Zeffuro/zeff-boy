@@ -1,6 +1,8 @@
 use super::*;
 use crate::netplay::{Response, session::Session};
 
+mod qualification;
+
 #[cfg(all(test, feature = "wasm-browser-tests"))]
 mod tests;
 

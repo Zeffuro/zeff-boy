@@ -4,7 +4,19 @@ use crate::emu_thread::{EmuResponse, FrameResult};
 use crate::platform::Instant;
 
 impl App {
+    pub(super) fn pump_emulator_audio(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.sync_netplay_audio_budget();
+        if self.netplay.pumps_audio(self.speed.paused)
+            && let Some(audio) = &mut self.audio
+        {
+            audio.pump_queued_samples();
+        }
+    }
+
     pub(in crate::app) fn queue_emulator_audio(&mut self, samples: &[f32], playback_speed: usize) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.sync_netplay_audio_budget();
         #[cfg(all(test, not(target_arch = "wasm32")))]
         if self.netplay.running() {
             self.netplay.queued_audio = Some((samples.to_vec(), playback_speed));
@@ -19,6 +31,16 @@ impl App {
                     low_pass_enabled: self.settings.audio.low_pass_enabled,
                     low_pass_cutoff_hz: self.settings.audio.low_pass_cutoff_hz,
                 },
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn sync_netplay_audio_budget(&mut self) {
+        if let Some(audio) = &mut self.audio {
+            audio.set_netplay_active(
+                self.netplay
+                    .auto_audio_budget(self.settings.audio.buffer_policy),
             );
         }
     }

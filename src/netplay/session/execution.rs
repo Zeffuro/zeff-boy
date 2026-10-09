@@ -13,13 +13,23 @@ impl Session {
             backend.frame_count() == input.frame,
             "rollback core frame differs"
         );
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        let mut timing = profile::FrameTimer::begin(self.profile.as_ref())?;
         let audio = self.lease.advance(backend, input.ports)?;
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        if let Some(timer) = timing.as_mut() {
+            timer.advanced();
+        }
         let completed = input.frame.checked_add(1).context("frame overflow")?;
         let snapshot = self.lease.capture(backend)?;
         ensure!(
             snapshot.frame() == completed,
             "rollback snapshot frame differs"
         );
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        if let Some(timer) = timing.as_mut() {
+            timer.captured();
+        }
         let checkpoint = if self.verification || completed % checks::HASH_INTERVAL == 0 {
             Some(identity::checkpoint_with_snapshot(
                 backend,
@@ -32,6 +42,10 @@ impl Session {
         } else {
             None
         };
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        let checkpoint_cost = timing
+            .as_ref()
+            .and_then(|timer| timer.checkpointed(checkpoint.is_some()));
         self.snapshots.insert(completed, snapshot);
         self.outputs.insert(
             completed,
@@ -41,6 +55,12 @@ impl Session {
                 checkpoint,
             },
         );
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        if let (Some(profile), Some(timer)) = (self.profile.as_mut(), timing) {
+            profile
+                .frames
+                .push(timer.finish(completed, checkpoint_cost));
+        }
         Ok(())
     }
 
