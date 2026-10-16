@@ -1,4 +1,4 @@
-pub(crate) type Mnemonic = arrayvec::ArrayString<32>;
+pub(crate) type Mnemonic = arrayvec::ArrayString<128>;
 pub(crate) type InstructionBytes = arrayvec::ArrayVec<u8, 16>;
 use zeff_emu_common::address::Address;
 
@@ -50,9 +50,12 @@ pub(crate) struct DisassemblyTarget {
 mod gb;
 mod gba;
 mod huc6280;
+mod m68k;
 mod nes;
 mod v30;
 mod z80;
+
+pub(crate) use m68k::disassemble_forward as m68k_disassemble_forward;
 
 pub(crate) fn disassemble_around(
     bus_read: impl Fn(u16) -> u8,

@@ -5,70 +5,62 @@ impl Cpu {
     pub(super) fn execute_cb<B: Z80Bus>(&mut self, bus: &mut B) -> u32 {
         let opcode = self.fetch_u8(bus);
         self.increment_refresh_register();
-
-        let group = opcode >> 6;
-        let operation = (opcode >> 3) & 0x07;
-        let register = opcode & 0x07;
-        let value = self.read_reg8(bus, register);
-        let uses_memory = register == REGISTER_MEMORY_INDEX;
-
-        match group {
-            0 => {
-                let (result, carry) = rotate_shift_cb(operation, value, self.regs.f);
-                self.write_reg8(bus, register, result);
-                self.regs.f = szp_flags(result) | if carry { Z80_FLAG_CARRY } else { 0 };
-                if uses_memory {
-                    CYCLES_CB_HL
-                } else {
-                    CYCLES_CB_R
-                }
-            }
-            1 => {
-                self.set_bit_flags(operation, value);
-                if uses_memory {
-                    CYCLES_CB_BIT_HL
-                } else {
-                    CYCLES_CB_R
-                }
-            }
-            2 => {
-                let result = value & !(1 << operation);
-                self.write_reg8(bus, register, result);
-                if uses_memory {
-                    CYCLES_CB_HL
-                } else {
-                    CYCLES_CB_R
-                }
-            }
-            3 => {
-                let result = value | (1 << operation);
-                self.write_reg8(bus, register, result);
-                if uses_memory {
-                    CYCLES_CB_HL
-                } else {
-                    CYCLES_CB_R
-                }
-            }
-            _ => unreachable!("CB group is always two bits"),
-        }
+        self.execute_cb_terminal(bus, opcode)
     }
 
-    pub(super) fn set_bit_flags(&mut self, bit: u8, value: u8) {
-        let bit_set = value & (1 << bit) != 0;
-        let carry = self.regs.f & Z80_FLAG_CARRY;
-        self.regs.f = carry
-            | Z80_FLAG_HALF_CARRY
-            | (value & (Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3))
-            | if bit == 7 && bit_set {
-                Z80_FLAG_SIGN
+    pub(super) fn execute_cb_terminal<B: Z80Bus>(&mut self, bus: &mut B, opcode: u8) -> u32 {
+        let register = opcode & 0x07;
+        if register == REGISTER_MEMORY_INDEX {
+            rmw::Rmw::cb(self, opcode).execute(self, bus);
+            if opcode >> 6 == 1 {
+                CYCLES_CB_BIT_HL
             } else {
-                0
+                CYCLES_CB_HL
             }
-            | if bit_set {
-                0
-            } else {
-                Z80_FLAG_ZERO | Z80_FLAG_PARITY_OVERFLOW
-            };
+        } else {
+            let value = self.read_reg8(bus, register);
+            let (result, flags, write) = effect(opcode, value, self.regs.f);
+            if write {
+                self.write_reg8(bus, register, result);
+            }
+            self.regs.f = flags;
+            CYCLES_CB_R
+        }
+    }
+}
+
+fn bit_flags(bit: u8, value: u8, flags: u8) -> u8 {
+    let bit_set = value & (1 << bit) != 0;
+    (flags & Z80_FLAG_CARRY)
+        | Z80_FLAG_HALF_CARRY
+        | (value & (Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3))
+        | if bit == 7 && bit_set {
+            Z80_FLAG_SIGN
+        } else {
+            0
+        }
+        | if bit_set {
+            0
+        } else {
+            Z80_FLAG_ZERO | Z80_FLAG_PARITY_OVERFLOW
+        }
+}
+
+pub(super) fn effect(opcode: u8, value: u8, flags: u8) -> (u8, u8, bool) {
+    let operation = (opcode >> 3) & 7;
+    match opcode >> 6 {
+        0 => {
+            let (result, carry) = rotate_shift_cb(operation, value, flags);
+            (
+                result,
+                szp_flags(result) | if carry { Z80_FLAG_CARRY } else { 0 },
+                true,
+            )
+        }
+        1 => (value, bit_flags(operation, value, flags), false),
+        2 => (value & !(1 << operation), flags, true),
+        3 => (value | (1 << operation), flags, true),
+        _ => unreachable!("CB group is always two bits"),
     }
 }
 

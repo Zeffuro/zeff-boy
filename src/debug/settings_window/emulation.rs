@@ -1,9 +1,10 @@
 use crate::debug::ui_helpers::EnumLabel;
 use crate::emu_backend::ActiveSystem;
 use crate::settings::{
-    PceArcadeCardPreference, PceCdArchiveMemoryLimit, PceConsoleWiringPreference,
-    PceControllerPreference, PceMemoryBasePreference, PceMouseCursorMode, RewindMode,
-    Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, Settings,
+    MdRegionPreference, PceArcadeCardPreference, PceCdArchiveMemoryLimit,
+    PceConsoleWiringPreference, PceControllerPreference, PceMemoryBasePreference,
+    PceMouseCursorMode, RewindMode, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference,
+    Settings,
 };
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -19,6 +20,21 @@ impl EnumLabel for HardwareModePreference {
 
     fn all_variants() -> &'static [Self] {
         &[Self::Auto, Self::ForceDmg, Self::ForceSgb, Self::ForceCgb]
+    }
+}
+
+impl EnumLabel for MdRegionPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::NtscUs => "NTSC (US)",
+            Self::NtscJapan => "NTSC (Japan)",
+            Self::Pal => "PAL (Europe)",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::NtscUs, Self::NtscJapan, Self::Pal]
     }
 }
 
@@ -372,6 +388,21 @@ pub(super) fn draw(
             egui::Slider::new(&mut settings.emulation.pce_mouse_sensitivity, 0.25..=4.0),
         )
     });
+
+    ui.add_space(22.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.heading("Mega Drive / Genesis");
+        if active_system == Some(ActiveSystem::Md) {
+            ui.label(egui::RichText::new("(active)").weak().italics().small());
+        }
+    });
+    enum_combo(
+        ui,
+        Id::EmulationMdRegion,
+        "emulation_md_region",
+        None,
+        &mut settings.emulation.md_region,
+    );
 
     ui.add_space(22.0);
     let sega_active = matches!(

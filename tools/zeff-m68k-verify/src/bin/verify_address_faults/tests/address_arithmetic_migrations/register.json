@@ -1,0 +1,355 @@
+{
+  "cohort": "MOVE.w",
+  "name": "553 MOVE.w A6, -(A5) 3b0e",
+  "initial": {
+    "d0": 897020176,
+    "d1": 759940340,
+    "d2": 2042485027,
+    "d3": 3427603436,
+    "d4": 866346442,
+    "d5": 526739418,
+    "d6": 3924025670,
+    "d7": 3792317144,
+    "a0": 782811415,
+    "a1": 659243276,
+    "a2": 1565530716,
+    "a3": 2107446777,
+    "a4": 2814319841,
+    "a5": 3218127661,
+    "a6": 4197297190,
+    "usp": 7739906,
+    "ssp": 16666074,
+    "sr": 1540,
+    "pc": 7701258,
+    "prefetch": [
+      15118,
+      55767
+    ],
+    "ram": [
+      [
+        12,
+        241
+      ],
+      [
+        13,
+        142
+      ],
+      [
+        14,
+        52
+      ],
+      [
+        15,
+        244
+      ],
+      [
+        7701254,
+        59
+      ],
+      [
+        7701255,
+        14
+      ],
+      [
+        7701256,
+        217
+      ],
+      [
+        7701257,
+        215
+      ],
+      [
+        7701258,
+        198
+      ],
+      [
+        7701259,
+        96
+      ],
+      [
+        9319668,
+        36
+      ],
+      [
+        9319669,
+        50
+      ],
+      [
+        9319670,
+        179
+      ],
+      [
+        9319671,
+        249
+      ]
+    ]
+  },
+  "final": {
+    "d0": 897020176,
+    "d1": 759940340,
+    "d2": 2042485027,
+    "d3": 3427603436,
+    "d4": 866346442,
+    "d5": 526739418,
+    "d6": 3924025670,
+    "d7": 3792317144,
+    "a0": 782811415,
+    "a1": 659243276,
+    "a2": 1565530716,
+    "a3": 2107446777,
+    "a4": 2814319841,
+    "a5": 3218127659,
+    "a6": 4197297190,
+    "usp": 7739906,
+    "ssp": 16666060,
+    "sr": 9736,
+    "pc": 4052628728,
+    "prefetch": [
+      9266,
+      46073
+    ],
+    "ram": [
+      [
+        12,
+        241
+      ],
+      [
+        13,
+        142
+      ],
+      [
+        14,
+        52
+      ],
+      [
+        15,
+        244
+      ],
+      [
+        7701254,
+        59
+      ],
+      [
+        7701255,
+        14
+      ],
+      [
+        7701256,
+        217
+      ],
+      [
+        7701257,
+        215
+      ],
+      [
+        7701258,
+        198
+      ],
+      [
+        7701259,
+        96
+      ],
+      [
+        9319668,
+        36
+      ],
+      [
+        9319669,
+        50
+      ],
+      [
+        9319670,
+        179
+      ],
+      [
+        9319671,
+        249
+      ],
+      [
+        16666060,
+        217
+      ],
+      [
+        16666061,
+        193
+      ],
+      [
+        16666062,
+        191
+      ],
+      [
+        16666063,
+        208
+      ],
+      [
+        16666064,
+        187
+      ],
+      [
+        16666065,
+        43
+      ],
+      [
+        16666066,
+        217
+      ],
+      [
+        16666067,
+        215
+      ],
+      [
+        16666068,
+        6
+      ],
+      [
+        16666069,
+        8
+      ],
+      [
+        16666070,
+        0
+      ],
+      [
+        16666071,
+        117
+      ],
+      [
+        16666072,
+        131
+      ],
+      [
+        16666073,
+        10
+      ]
+    ]
+  },
+  "reference_total_cycles": 62,
+  "transactions": [
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 2,
+      "address_bus": 7701258,
+      "data_bus": 50784,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write_address_error",
+      "duration_cycles": 4,
+      "function_code": 1,
+      "address_bus": 13679402,
+      "data_bus": 44070,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "idle",
+      "duration_cycles": 8
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 16666072,
+      "data_bus": 33546,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 16666068,
+      "data_bus": 1544,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 16666070,
+      "data_bus": 117,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 16666066,
+      "data_bus": 55767,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 16666064,
+      "data_bus": 47915,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 16666060,
+      "data_bus": 55745,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 16666062,
+      "data_bus": 49104,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12,
+      "data_bus": 61838,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 14,
+      "data_bus": 13556,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 6,
+      "address_bus": 9319668,
+      "data_bus": 9266,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "idle",
+      "duration_cycles": 2
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 6,
+      "address_bus": 9319670,
+      "data_bus": 46073,
+      "uds": 1,
+      "lds": 1
+    }
+  ],
+  "normalization_exclusion": "address_fault"
+}

@@ -1,0 +1,63 @@
+{
+  "source_commit": "64b253116a3de04aaac4346c43680960dc9b67e5",
+  "license": "MIT",
+  "original_sources": [
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/NEG.w.json.bin",
+      "sha256": "43f173304b82e4931cabc5b37744f12b617dee9d8bced8c071876a2c4e4c413e",
+      "bytes": 1232931,
+      "git_blob_sha1": "d56977694e8f34a10e22dbf8b5674a000406b92a",
+      "aggregate_fingerprints_sha256": "ea66584ecedce33aa7c5ec6f0f12d00a909d8701055eb78913b43820c53d1ebd"
+    },
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/NEG.l.json.bin",
+      "sha256": "52bbcf950c31a102340283135284798680f936789955e7918c0b55e69898e215",
+      "bytes": 1303763,
+      "git_blob_sha1": "e8cb0d0afcff2ed1f1df0f58de6ed6e7415a99e8",
+      "aggregate_fingerprints_sha256": "d2299cdaa094ef5ee7203f02c025c87d7c7c1cdb44cbf8563a57dbe4f95a00e9"
+    },
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/NEGX.w.json.bin",
+      "sha256": "8a85da17cd533d9444d78bb891620569b864da8c969f3a9330373e8d55a8c4d6",
+      "bytes": 1239317,
+      "git_blob_sha1": "0d3b6e01ccf07daa4843c53305b443514ebbf023",
+      "aggregate_fingerprints_sha256": "17d80727f722c1b58208a3706d90e7c1f1b98d0969fd1e67cb98053d1858c04b"
+    },
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/NEGX.l.json.bin",
+      "sha256": "ca59b55f388fe4d6849c4379fafb068ce2ef3d2fc6702898ed5aa63413c48d58",
+      "bytes": 1311345,
+      "git_blob_sha1": "032b74d7012ae804a52a8338bd8a021fa9e0292d",
+      "aggregate_fingerprints_sha256": "180b2b0a30c43d63190dee8ce4700872b21eb362832591fd8a60c75c6df68fa4"
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "tools/zeff-m68k-verify/src/negate/tests/data/firstodd.json",
+      "sha256": "d6815f5f7ba9ed83583119d7f9d1ad436f128b82ec11d605cebb733a3251a561",
+      "bytes": 78558
+    },
+    {
+      "path": "tools/zeff-m68k-verify/src/negate/tests/data/completion.json",
+      "sha256": "5c794bdac49455a5760388b8f07559e68228651ea9e5582570a79a2b20f2ea57",
+      "bytes": 44976
+    },
+    {
+      "path": "tools/zeff-m68k-verify/src/negate/tests/data/trace.json",
+      "sha256": "c57d196dc6ae2e473a78a2480fdf10a30022882f1c088e74e8b400b154434443",
+      "bytes": 2655
+    }
+  ],
+  "parent_exports": [
+    {
+      "name": "reference-phases-unary-remaining-v1",
+      "records": 20000,
+      "sha256": "377a86ff9662cd37be872897e39d8aace5d299abfacb84165029c36afa7e1607"
+    },
+    {
+      "name": "reference-phases-unary-v1",
+      "records": 17500,
+      "sha256": "ddedf7c475aef47ba2eb1d753f89c140cc098392f2b15bf4f2e9a8d0a0c35a9d"
+    }
+  ]
+}

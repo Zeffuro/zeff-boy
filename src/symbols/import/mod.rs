@@ -67,6 +67,10 @@ pub(crate) fn import_symbols(
     data: &[u8],
     ctx: &ImportContext,
 ) -> anyhow::Result<SymbolModule> {
+    anyhow::ensure!(
+        ctx.target.system != System::Md,
+        "Mega Drive symbol imports are not supported yet"
+    );
     let ca65 = ca65::Ca65DbgImporter;
     #[cfg(not(target_arch = "wasm32"))]
     let elf = elf::ElfImporter;
@@ -110,6 +114,24 @@ mod tests {
             rom_region: RegionId(0),
             cpu_space: AddressSpaceId(0),
             source_name: Some("game.sym".into()),
+        }
+    }
+
+    #[test]
+    fn md_symbol_imports_reject_unqualified_dialects() {
+        let mut ctx = context();
+        ctx.target.system = System::Md;
+        for (name, data) in [
+            ("game.sym", b"000200 Entry".as_slice()),
+            ("game.dbg", b"version\tmajor=2,minor=0".as_slice()),
+        ] {
+            assert!(
+                import_symbols(name, data, &ctx)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("Mega Drive")
+            );
         }
     }
 

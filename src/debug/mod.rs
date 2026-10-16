@@ -20,6 +20,7 @@ pub(crate) mod hex_search;
 pub(crate) mod hex_viewer;
 mod input_viewer;
 mod libretro_cheats;
+mod md_tile_viewer;
 mod memory_viewer;
 mod menu_bar;
 mod mods_window;
@@ -56,8 +57,8 @@ pub(crate) use cheats_window::draw_cheats_content;
 pub(crate) use console::{ConsoleReadSpace, DebugConsoleState};
 pub(crate) use disassembler::{
     DisassembledLine, DisassemblyTarget, DisassemblyView, disassemble_around,
-    gba_disassemble_around, huc6280_disassemble_around, nes_disassemble_around,
-    v30_disassemble_around, z80_disassemble_around,
+    gba_disassemble_around, huc6280_disassemble_around, m68k_disassemble_forward,
+    nes_disassemble_around, v30_disassemble_around, z80_disassemble_around,
 };
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, DebugWorkspacePreset, activate_dock_tab, compute_tab_requirements,
@@ -79,9 +80,9 @@ pub(crate) use toast::ToastManager;
 pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, CallStackDisplay, ConsoleGraphicsData, CpuDebugSnapshot,
     DebugSection, GbGraphicsData, GbaGraphicsData, InputDebugInfo, IoBitDisplay, IoRegisterDisplay,
-    NesGraphicsData, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug,
-    PceGraphicsData, PceVdcGraphicsData, RecentOpcodeDisplay, RomDebugInfo, RomInfoSection,
-    Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
+    MdGraphicsData, NesGraphicsData, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug,
+    PaletteRowDebug, PceGraphicsData, PceVdcGraphicsData, RecentOpcodeDisplay, RomDebugInfo,
+    RomInfoSection, Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use types::{
     BreakpointState, CheatState, DebugDataRefs, DebugWindowState, LibretroAsyncResult,

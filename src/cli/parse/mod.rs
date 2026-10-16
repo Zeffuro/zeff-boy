@@ -20,6 +20,7 @@ use super::types::{CliArgs, HeadlessBusTraceAccess, HeadlessOptions};
 mod audio_trace;
 mod bus;
 mod input;
+mod md;
 mod numbers;
 mod tas;
 #[cfg(test)]
@@ -280,6 +281,10 @@ pub(crate) fn parse_args_from(
                 headless.gb_dmg_palette_preset = Some(parse_dmg_palette_arg(value, &args[i])?);
                 i += 2;
             }
+            "--md-region" | "--md-controller" => {
+                md::parse(&args[i], args.get(i + 1), &mut headless)?;
+                i += 2;
+            }
             "--sega8-video-standard" | "--sega8-region" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("{} requires one of: auto|ntsc|pal|60hz|50hz", args[i]);
@@ -479,6 +484,13 @@ pub(crate) fn parse_args_from(
                 headless.load_state_path = Some(PathBuf::from(value));
                 i += 2;
             }
+            "--md-save-state-out" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--md-save-state-out requires a file path");
+                };
+                headless.md_save_state_path = Some(PathBuf::from(value));
+                i += 2;
+            }
             "--pce-save-state-out" => {
                 let Some(value) = args.get(i + 1) else {
                     anyhow::bail!("--pce-save-state-out requires a file path");
@@ -656,6 +668,14 @@ pub(crate) fn parse_args_from(
         anyhow::bail!("--tas-branch and --tas-export require --tas-verify");
     }
 
+    anyhow::ensure!(
+        headless_enabled
+            || !args.iter().any(|arg| matches!(
+                arg.as_str(),
+                "--md-region" | "--md-controller" | "--md-save-state-out"
+            )),
+        "--md-region, --md-controller and --md-save-state-out require --headless"
+    );
     audio_trace::validate(headless_enabled, rom_path.as_deref(), &headless)?;
 
     Ok(CliArgs {

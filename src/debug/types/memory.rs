@@ -60,6 +60,13 @@ impl MemoryAddressSpace {
         addr_width: 6,
     };
 
+    pub(crate) const MD: Self = Self {
+        min: 0,
+        max_start: 0xFF_FF00,
+        default_start: 0,
+        addr_width: 6,
+    };
+
     pub(crate) fn for_system(system: ActiveSystem) -> Self {
         match system {
             ActiveSystem::GameBoy
@@ -71,6 +78,7 @@ impl MemoryAddressSpace {
             | ActiveSystem::Sg1000 => Self::GB_NES,
             ActiveSystem::GameBoyAdvance => Self::GBA,
             ActiveSystem::WonderSwan => Self::WS,
+            ActiveSystem::Md => Self::MD,
         }
     }
 
@@ -236,5 +244,13 @@ mod tests {
         assert_eq!(state.view_start, 0);
         assert_eq!(state.jump_input, "0000");
         assert_eq!(state.address_space.max_start, 0xFF00);
+    }
+
+    #[test]
+    fn md_memory_viewer_covers_the_full_24_bit_bus() {
+        let address_space = MemoryAddressSpace::for_system(ActiveSystem::Md);
+        assert_eq!(address_space.format(0xff_0000), "FF0000");
+        assert_eq!(address_space.clamp_start(0xff_fffe), 0xff_ff00);
+        assert_eq!(address_space.clamp_start(0x100_0000), 0xff_ff00);
     }
 }

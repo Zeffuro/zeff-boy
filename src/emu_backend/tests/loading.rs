@@ -188,7 +188,14 @@ fn system_specs_map_to_shared_backend_loader() {
             assert_eq!(loaded.backend.core_family(), spec.core_family);
             assert_eq!(loaded.backend.rom_path(), rom_path);
             assert_eq!(loaded.backend.source_path(), rom_path);
-            assert_eq!(loaded.backend.framebuffer().len(), spec.framebuffer_len());
+            if spec.system == ActiveSystem::Md {
+                let (pixels, dimensions) = loaded.backend.display_framebuffer();
+                let (width, height) = dimensions.unwrap();
+                assert!(width <= spec.screen_size.0 && height <= spec.screen_size.1);
+                assert_eq!(pixels.len(), (width * height * 4) as usize);
+            } else {
+                assert_eq!(loaded.backend.framebuffer().len(), spec.framebuffer_len());
+            }
         }
     }
 }
@@ -232,6 +239,7 @@ fn shared_backend_loader_records_default_firmware_manifests() {
         ActiveSystem::MasterSystem,
         ActiveSystem::GameGear,
         ActiveSystem::Sg1000,
+        ActiveSystem::Md,
     ] {
         let path = PathBuf::from(match system {
             ActiveSystem::GameBoy => "firmware.gb",
@@ -243,6 +251,7 @@ fn shared_backend_loader_records_default_firmware_manifests() {
             ActiveSystem::MasterSystem => "firmware.sms",
             ActiveSystem::GameGear => "firmware.gg",
             ActiveSystem::Sg1000 => "firmware.sg",
+            ActiveSystem::Md => "firmware.md",
         });
         let loaded = load_backend_from_rom_source(
             system,
@@ -445,6 +454,7 @@ fn shared_backend_loader_applies_explicit_sega8_mapper_tag_from_paths() {
 
 fn test_rom_for_system(system: ActiveSystem) -> Vec<u8> {
     match system {
+        ActiveSystem::Md => super::md::rom(b'U', &[0x60fe, 0x4e71]),
         ActiveSystem::GameBoy => build_gb_test_rom(),
         ActiveSystem::GameBoyAdvance => build_gba_test_rom(),
         ActiveSystem::Nes => build_nes_test_rom(),

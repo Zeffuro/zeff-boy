@@ -136,6 +136,7 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
         BackendLoadConfig {
             authenticated_zip_member: detected.authenticated_zip_member,
             gb_hardware_mode_preference: settings.emulation.hardware_mode_preference,
+            md_region: settings.emulation.md_region.forced_region(),
             sega8_video_standard: settings.emulation.sega8_video_standard.forced_standard(),
             sega8_console_region: settings.emulation.sega8_console_region.forced_region(),
             pce_console_wiring: settings.emulation.pce_console_wiring.forced_wiring(),

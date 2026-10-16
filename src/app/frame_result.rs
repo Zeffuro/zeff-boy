@@ -266,6 +266,8 @@ impl App {
     }
 
     pub(super) fn process_frame_result(&mut self, mut result: FrameResult) {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        crate::app::tas_control::tests::audio_host::observe(&result);
         #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
         super::browser_speculation_test::record_frame_result(self, &result);
         self.frames_in_flight = self
@@ -495,7 +497,8 @@ impl App {
             | Some(ConsoleGraphicsData::Nes(_))
             | Some(ConsoleGraphicsData::Pce(_))
             | Some(ConsoleGraphicsData::Coleco(_))
-            | Some(ConsoleGraphicsData::Sega8(_)) => {
+            | Some(ConsoleGraphicsData::Sega8(_))
+            | Some(ConsoleGraphicsData::Md(_)) => {
                 if is_tab_open(&self.debug_dock, DebugTab::TileViewer) {
                     self.debug_windows.tiles.invalidate_cache();
                 }

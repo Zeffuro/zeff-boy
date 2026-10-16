@@ -10,6 +10,7 @@ mod input_profiles;
 mod input_scopes;
 mod keyboard_bindings;
 mod keycode_serde;
+mod md;
 mod shortcuts;
 mod structs;
 mod tilt_bindings;
@@ -42,6 +43,7 @@ pub(crate) use input_scopes::{
 };
 pub(crate) use keyboard_bindings::{KeyBindings, PceMultitapKeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
+pub(crate) use md::MdRegionPreference;
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
     AudioSettings, CameraSettings, DebugColors, EmulationSettings, GbBootRomMode, GbaBiosMode,

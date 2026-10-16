@@ -8,6 +8,10 @@ use crate::debug::CheatState;
 
 pub(crate) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
     ui.heading("Cheat Codes");
+    if state.active_system == crate::emu_backend::ActiveSystem::Md {
+        ui.label("Mega Drive cheats are not supported yet.");
+        return;
+    }
     let help_text = match state.active_system {
         crate::emu_backend::ActiveSystem::Nes => {
             "NES Game Genie (AAAAAA or AAAAAAAA), GameShark (01VVAAAA), or raw (AAAA:VV)"
@@ -26,6 +30,7 @@ pub(crate) fn draw_cheats_content(ui: &mut egui::Ui, state: &mut CheatState) {
             "Sega 8-bit raw RAM (AAAA:VV), Action Replay (00AA-AAVV), or Game Genie (XXX-XXX-XXX)"
         }
         crate::emu_backend::ActiveSystem::Sg1000 => "SG-1000 raw RAM cheats (AAAA:VV)",
+        crate::emu_backend::ActiveSystem::Md => "Mega Drive cheats are not supported yet.",
     };
     ui.label(help_text);
 

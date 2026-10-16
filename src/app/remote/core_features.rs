@@ -1,8 +1,9 @@
 use serde_json::{Value, json};
 use zeff_emu_common::system::CoreFamily;
 
-use super::{memory_region_json, save_ram_kind_json};
+use super::memory_region_json;
 use crate::emu_backend::CoreCapabilities;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 pub(super) fn core_features_json(features: &CoreCapabilities) -> Value {
     json!({
@@ -105,11 +106,37 @@ fn core_family_label(family: CoreFamily) -> &'static str {
     match family {
         CoreFamily::GameBoy => "game_boy",
         CoreFamily::GameBoyAdvance => "game_boy_advance",
+        CoreFamily::MegaDrive => "mega_drive",
         CoreFamily::Nes => "nes",
         CoreFamily::ColecoVision => "coleco_vision",
         CoreFamily::PcEngine => "pc_engine",
         CoreFamily::WonderSwan => "wonder_swan",
         CoreFamily::Sega8 => "sega8",
+    }
+}
+
+fn save_ram_kind_json(kind: SaveRamKind) -> Value {
+    match kind {
+        SaveRamKind::None => json!({
+            "kind": "none",
+            "size": 0,
+        }),
+        SaveRamKind::KnownVolatile { size } => json!({
+            "kind": "known_volatile",
+            "size": size,
+        }),
+        SaveRamKind::KnownBatteryBacked { size } => json!({
+            "kind": "known_battery_backed",
+            "size": size,
+        }),
+        SaveRamKind::KnownNonVolatile { size } => json!({
+            "kind": "known_nonvolatile",
+            "size": size,
+        }),
+        SaveRamKind::MapperRamUnknown { size } => json!({
+            "kind": "mapper_ram_unknown",
+            "size": size,
+        }),
     }
 }
 

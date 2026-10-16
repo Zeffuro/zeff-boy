@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "bcd_verifier": {
+    "source": "https://codeload.github.com/flamewing/68k-bcd-verifier/zip/39a01be528b0744302bf1dc9b3463fc22a3fc45f",
+    "commit": "39a01be528b0744302bf1dc9b3463fc22a3fc45f",
+    "archive_sha256": "53b6d6982006a7de16b0fdd3369a90f67e7d4f780b3db3183983569ab0701b9b",
+    "files": [
+      {
+        "path": ".gitattributes",
+        "sha256": "6b300f108dd51a23d2795e7350dfe5dccb0ec0234c0fcf469d26a50557574007",
+        "bytes": 101
+      },
+      {
+        "path": ".gitignore",
+        "sha256": "b0de8965c577dd1ddf273034ea316647e7b422bae4b85832f1fef7c4ac8491a1",
+        "bytes": 111
+      },
+      {
+        "path": "LICENSE",
+        "sha256": "589ed823e9a84c56feb95ac58e7cf384626b9cbf4fda2a907bc36e103de1bad2",
+        "bytes": 35141
+      },
+      {
+        "path": "Makefile",
+        "sha256": "93e6c93b23fde8585e28eb2385f9a50a6117d2e6d9bc06614281f40d80b52066",
+        "bytes": 2985
+      },
+      {
+        "path": "README.md",
+        "sha256": "e9265215836f9e190c083013e0aa7de001f79ad8adfb60caabc9dbcdbd0769a1",
+        "bytes": 1968
+      },
+      {
+        "path": "bcd-emul.cc",
+        "sha256": "8031ed69542475de443aad27c2bc58bd83b426eb5843ec99763fda479bac3424",
+        "bytes": 4306
+      },
+      {
+        "path": "bcd-emul.hh",
+        "sha256": "4dfff93573eec1b43e93da8e5512441ed701006cb7c2da177ae7d7064e17076c",
+        "bytes": 1224
+      },
+      {
+        "path": "bcd-gen.cc",
+        "sha256": "8f1b52a084cdff6ce24cc3640d3529b8b26fbf8f6f74fd9d4e3c2ccb6489f4fa",
+        "bytes": 1617
+      },
+      {
+        "path": "bcd-verifier.asm",
+        "sha256": "6afae4afb3d69e8bcc684d546fddbf1ba0474e812465dd451449cb24ee40df5b",
+        "bytes": 5055
+      },
+      {
+        "path": "constants.asm",
+        "sha256": "90ecaea02e17b5a74c5080d1011aec7fb202687137b0716a45a8b8b3f2bae431",
+        "bytes": 1590
+      },
+      {
+        "path": "data/TerminalFont.bin",
+        "sha256": "1c69a1456f98b59d849cc2d65d2d0e03a560b0c98b85bb98f91329684079dda6",
+        "bytes": 3040
+      },
+      {
+        "path": "data/TerminalPal.bin",
+        "sha256": "29ffaaa79689e9319b765637a2d317c4ea171aca50886d705258cce90e2fd08e",
+        "bytes": 128
+      },
+      {
+        "path": "header.asm",
+        "sha256": "0cd7851945b228dc98a67e04574d448e823afa10c67fa4ffe8c1a867952bd50c",
+        "bytes": 1970
+      },
+      {
+        "path": "inithw.asm",
+        "sha256": "1bdebf37b269038b77bf259139df5369e9f9c1a1720c3ee0053b25046dc3f340",
+        "bytes": 6746
+      },
+      {
+        "path": "macros.asm",
+        "sha256": "fcb5d34977f73c5c501c4956761314cb6b5f078e48137706d0d640bbbcbb5903",
+        "bytes": 5143
+      },
+      {
+        "path": "memory.asm",
+        "sha256": "04fca8cc2df2b0fe4bb6be1f6337c4f2cda29912141560e39c24de60e15709ef",
+        "bytes": 2478
+      },
+      {
+        "path": "print-byte.asm",
+        "sha256": "50d1c2cfd1ae20d5157db89688301312af0bcd47d7f725389cd410db04cf0207",
+        "bytes": 1364
+      },
+      {
+        "path": "print-flags.asm",
+        "sha256": "2f36fcb6c5f7ad15487f341b05c35f2a0299178c3f8663f26d899170549cfd70",
+        "bytes": 1758
+      },
+      {
+        "path": "print-long.asm",
+        "sha256": "3b5ed9735f393effb0d0cee278bf302263d82bc2a27665dff3499ceaa5e117ab",
+        "bytes": 1444
+      },
+      {
+        "path": "print-text.asm",
+        "sha256": "765418b5c7e23e58d522ec3402ac5241881addb75f2c06796838086769aa6130",
+        "bytes": 1100
+      },
+      {
+        "path": "test-bcd.asm",
+        "sha256": "101f29413c7156c2a5ce734ebae2bd6706097d6faed661f93e839ec55bd96eac",
+        "bytes": 7350
+      },
+      {
+        "path": "vectors.asm",
+        "sha256": "d63c5c261d6a858af95cd12cd9caeb172a1c6169f1417ec079de67337e871b1f",
+        "bytes": 2099
+      }
+    ],
+    "assembler": {
+      "url": "https://github.com/flamewing/asl-releases/releases/download/snapshot-snapshot-v1.4.2.20250717/asl-windows-x86_64-v1.4.2.20250717.zip",
+      "sha256": "6469b07f77390dd9325e9eb475720fad54db379a1843b91f5ad8cf8778a9b28b",
+      "release": "snapshot-snapshot-v1.4.2.20250717"
+    },
+    "license": "GPL-3.0-or-later",
+    "rom_sha256": "c8740ef08ae571c781cce73d1452dc40f74c1f6219092498dd778dd2c935ce1f",
+    "hardware_witness": "Author reports exhaustive tests passing on Model 1 Genesis and Model 3 VA2; no new physical run performed here.",
+    "build_commands": [
+      "g++ -O3 -s -Wall -Wextra -pedantic -Werror -std=c++11 -o bcd-gen.exe bcd-gen.cc bcd-emul.cc",
+      "bcd-gen.exe",
+      "asw -xx -c -L -r 2 -A -U bcd-verifier.asm",
+      "p2bin -r 0-$ bcd-verifier.p"
+    ],
+    "table_sha256": "8432868c9aa93c92574bae48bebd4efb2834e298340eb09530625365b80147e5",
+    "table_witnesses": {
+      "ABCD": 262144,
+      "SBCD": 262144,
+      "NBCD": 1024
+    }
+  },
+  "suite_240p": {
+    "page": "https://artemiourbina.itch.io/240p-test-suite",
+    "upload_id": 17035733,
+    "version": "1.32",
+    "archive_sha256": "0db29b9739cc75c44dcbf2f3fa74608fff57cf05835e88cf28ffeb1faa4b7970",
+    "license": "GPL-2.0",
+    "source_repo": "https://github.com/ArtemioUrbina/240pTestSuite",
+    "source_commit": "89adfdd66853746fa9db9105104314ac58021791",
+    "source_binary_correspondence": "Unverified: repository pin is documentation provenance, not claimed source for this published binary.",
+    "files": {
+      "240pSuite-1.32.bin": "fe448a879eda25daffa1548385aff464d5373c687db0cccf18f071c31d0976c7",
+      "240pSuite-1.32_emu.bin": "1d4a10f02e4bd60e341aa3c812dd24b877076af1f8e9ac0c271c7fde48515f48",
+      "GPLv2.txt": "189b1af95d661151e054cea10c91b3d754e4de4d3fecfb074c1fb29476f7167b",
+      "README.TXT": "22f551f355abf8c2cb967e40201f0f082f4ad9a2884772e4731ccaa8441d232f"
+    }
+  }
+}

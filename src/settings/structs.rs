@@ -13,6 +13,7 @@ use super::enums::{
     WonderSwanColorCorrection,
 };
 use super::keycode_serde::keycode_from_string;
+use super::md::MdRegionPreference;
 use super::tilt_bindings::TiltKeyBindings;
 use super::{
     LeftStickMode, TiltInputMode, default_color_correction_matrix, default_offscreen_scale,
@@ -393,6 +394,7 @@ impl VideoSettings {
             }
             Some(
                 crate::emu_backend::ActiveSystem::Nes
+                | crate::emu_backend::ActiveSystem::Md
                 | crate::emu_backend::ActiveSystem::Coleco
                 | crate::emu_backend::ActiveSystem::Pce
                 | crate::emu_backend::ActiveSystem::MasterSystem
@@ -775,6 +777,7 @@ pub(crate) enum SegaBootRomMode {
 #[serde(default)]
 pub(crate) struct EmulationSettings {
     pub(crate) hardware_mode_preference: HardwareModePreference,
+    pub(crate) md_region: MdRegionPreference,
     #[serde(default)]
     pub(crate) sega8_video_standard: Sega8VideoStandardPreference,
     #[serde(default)]
@@ -842,6 +845,7 @@ impl Default for EmulationSettings {
     fn default() -> Self {
         Self {
             hardware_mode_preference: HardwareModePreference::Auto,
+            md_region: MdRegionPreference::Auto,
             sega8_video_standard: Sega8VideoStandardPreference::Auto,
             sega8_console_region: Sega8ConsoleRegionPreference::Auto,
             pce_console_wiring: PceConsoleWiringPreference::Auto,

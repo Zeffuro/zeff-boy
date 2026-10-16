@@ -1,0 +1,12 @@
+pub(crate) mod alu;
+pub(crate) mod bcd;
+pub(crate) mod bit;
+pub(crate) mod bus_instruction;
+pub(crate) mod control;
+pub(crate) mod data;
+pub(crate) mod exception;
+pub(crate) mod extend;
+pub(crate) mod instruction;
+pub(crate) mod multiply;
+pub(crate) mod shift;
+pub(crate) mod transfer;

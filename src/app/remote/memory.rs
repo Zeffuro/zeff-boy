@@ -28,6 +28,16 @@ impl App {
         };
 
         if space == "cpu" {
+            if self.active_system == crate::emu_backend::ActiveSystem::Md
+                && (start > 0xff_ffff || length.min(256) > (0x100_0000 - start) as usize)
+            {
+                return memory_not_ready_json(
+                    "cpu",
+                    start,
+                    length,
+                    "requested range exceeds the 24-bit Mega Drive CPU address space",
+                );
+            }
             self.remote_memory_view_start = Some(start);
             self.remote_memory_frames_remaining = 3;
             return self.live_cpu_memory_json(start, length.min(256));
@@ -119,6 +129,19 @@ impl App {
         };
 
         match gfx {
+            ConsoleGraphicsData::Md(md) => match space {
+                "vram" => slice_memory_json(space, start, length, &md.vram),
+                "cram" | "palette" | "paletteram" => {
+                    slice_memory_json(space, start, length, &md.cram)
+                }
+                "vsram" => slice_memory_json(space, start, length, &md.vsram),
+                _ => memory_not_ready_json(
+                    space,
+                    start as u32,
+                    length,
+                    "unsupported Mega Drive graphics memory space",
+                ),
+            },
             ConsoleGraphicsData::Gb(gb) => match space {
                 "vram" => slice_memory_json(space, start, length, &gb.vram),
                 "oam" => slice_memory_json(space, start, length, &gb.oam),
@@ -435,3 +458,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod md_tests;

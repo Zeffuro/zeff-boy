@@ -193,7 +193,9 @@ impl TasPersistentStateIdentity {
         match save_ram_kind {
             SaveRamKind::None => Self::Absent,
             SaveRamKind::KnownVolatile { size } => Self::VolatileOnly { size },
-            SaveRamKind::KnownBatteryBacked { size } => Self::ExternalPersistent { size },
+            SaveRamKind::KnownBatteryBacked { size } | SaveRamKind::KnownNonVolatile { size } => {
+                Self::ExternalPersistent { size }
+            }
             SaveRamKind::MapperRamUnknown { size } => Self::Unknown { size },
         }
     }
@@ -217,7 +219,8 @@ impl TasInputModel {
             ActiveSystem::Nes
             | ActiveSystem::MasterSystem
             | ActiveSystem::Sg1000
-            | ActiveSystem::GameGear => Self::StandardDigitalPads { max_players: 2 },
+            | ActiveSystem::GameGear
+            | ActiveSystem::Md => Self::StandardDigitalPads { max_players: 2 },
             ActiveSystem::Pce => Self::StandardDigitalPads { max_players: 5 },
         }
     }
@@ -264,6 +267,12 @@ impl InputCapabilities {
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: true,
             },
+            ActiveSystem::Md => Self {
+                buttons: HostButton::WITH_SIX_BUTTONS,
+                max_players: 2,
+                supports_lightgun: false,
+                supports_wonderswan_direct_buttons: false,
+            },
             ActiveSystem::Pce => Self {
                 buttons: HostButton::WITH_SIX_BUTTONS,
                 max_players: 5,
@@ -292,6 +301,13 @@ pub(crate) struct CheatCapabilities {
 impl CheatCapabilities {
     pub(crate) fn for_system(system: ActiveSystem) -> Self {
         match system {
+            ActiveSystem::Md => Self {
+                supports_user_cheats: false,
+                supports_libretro_database: false,
+                supports_ram_writes: false,
+                supports_rom_patches: false,
+                formats: &[],
+            },
             ActiveSystem::GameBoy => Self {
                 supports_user_cheats: true,
                 supports_libretro_database: true,

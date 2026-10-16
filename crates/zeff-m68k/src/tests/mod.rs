@@ -1,0 +1,18 @@
+pub(crate) mod alu_tests;
+pub(crate) mod bcd_tests;
+pub(crate) mod bit_tests;
+pub(crate) mod bus_contract_tests;
+pub(crate) mod bus_instruction_tests;
+pub(crate) mod bus_tests;
+pub(crate) mod conformance_tests;
+pub(crate) mod control_tests;
+mod cpu;
+pub(crate) mod data_tests;
+pub(crate) mod ea_tests;
+pub(crate) mod exception_tests;
+pub(crate) mod extend_tests;
+pub(crate) mod multiply_tests;
+pub(crate) mod shift_tests;
+pub(crate) mod test_bus;
+pub(crate) mod transfer_bus_tests;
+pub(crate) mod transfer_tests;

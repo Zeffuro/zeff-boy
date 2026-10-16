@@ -82,6 +82,7 @@ fn try_parse_single_for_system(
     system: ActiveSystem,
 ) -> Option<(Vec<CheatPatch>, CheatType)> {
     match system {
+        ActiveSystem::Md => None,
         ActiveSystem::GameBoy => zeff_gb_core::cheats::parse_cheat(input).ok(),
         ActiveSystem::Nes => zeff_gb_core::cheats::parse_cheat(input)
             .ok()
@@ -111,6 +112,9 @@ pub(crate) fn parse_cheat_for_system(
     input: &str,
     system: ActiveSystem,
 ) -> Result<(Vec<CheatPatch>, CheatType), &'static str> {
+    if system == ActiveSystem::Md {
+        return Err("Mega Drive cheats are not supported yet");
+    }
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err("Empty cheat code");

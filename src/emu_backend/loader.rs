@@ -7,6 +7,7 @@ use super::{ActiveSystem, EmuBackend};
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod audio_discovery_tests;
 mod config;
+mod md;
 mod nes_policy;
 mod netplay;
 mod source;
@@ -215,6 +216,7 @@ fn load_backend_from_rom_source_inner(
     }
     let mut rom_data = match preloaded_data {
         Some(data) => data,
+        None if system == ActiveSystem::Md => md::read_rom(source_path)?,
         None => std::fs::read(source_path).with_context(|| {
             format!("Failed to read {} ROM", systems::system_load_label(system))
         })?,
@@ -797,6 +799,7 @@ fn load_backend_from_rom_source_inner(
             &config,
             gba_provenance.expect("GBA load provenance must exist for GBA"),
         )?,
+        ActiveSystem::Md => md::load(&rom_data, source_path, rom_path, &config)?,
         ActiveSystem::WonderSwan => systems::load_ws_backend(
             &rom_data,
             source_path,
@@ -824,6 +827,7 @@ fn load_backend_from_rom_source_inner(
             ActiveSystem::GameBoy => System::Gb,
             ActiveSystem::GameBoyAdvance => unreachable!("GBA owns its cartridge snapshot"),
             ActiveSystem::Nes => System::Nes,
+            ActiveSystem::Md => System::Md,
             ActiveSystem::Coleco => System::Coleco,
             ActiveSystem::Pce => System::Pce,
             ActiveSystem::WonderSwan => System::Ws,

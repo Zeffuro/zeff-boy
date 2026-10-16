@@ -10,6 +10,8 @@ mod game_boy;
 pub use game_boy::*;
 mod nes;
 pub use nes::*;
+mod md;
+pub use md::*;
 
 use crate::time::ClockRate;
 
@@ -213,7 +215,7 @@ impl<C: AudioTraceChip, W> ChipAudioTrace<C, W> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChipAudioTraceRecorder<C, W> {
     generation: u64,
     trace: Option<ChipAudioTrace<C, W>>,

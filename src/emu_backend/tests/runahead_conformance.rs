@@ -114,7 +114,7 @@ struct ConformanceReport {
 #[test]
 fn every_core_family_has_a_disabled_local_conformance_result() {
     let cases = core_cases();
-    assert_eq!(cases.len(), 9);
+    assert_eq!(cases.len(), crate::emu_backend::system_specs().len());
     let systems = cases
         .iter()
         .map(|case| case.eligibility.fixture_system)
@@ -837,6 +837,7 @@ fn apply_input(backend: &mut EmuBackend, input: InputState) {
 
 fn program_counter(backend: &EmuBackend) -> u64 {
     match backend {
+        EmuBackend::Md(backend) => u64::from(backend.emu.registers().pc),
         EmuBackend::Gb(backend) => u64::from(backend.emu.cpu_pc()),
         EmuBackend::Gba(backend) => u64::from(backend.emu.cpu_pc()),
         EmuBackend::Nes(backend) => u64::from(backend.emu.cpu_pc()),

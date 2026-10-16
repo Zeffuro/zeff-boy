@@ -12,6 +12,7 @@ pub(crate) fn symbols(system: System) -> Vec<SymbolRecord> {
         System::Nes => (&NES_REGISTERS, ExecMode::Mos6502, "NES hardware"),
         System::Coleco => (&[], ExecMode::Z80, "ColecoVision hardware"),
         System::Pce => (&[], ExecMode::Unknown, "PC Engine"),
+        System::Md => (&[], ExecMode::Unknown, "Mega Drive / Genesis"),
         System::Sms | System::Gg | System::Sg => {
             (&SEGA8_MAPPER, ExecMode::Z80, "Sega 8-bit mapper")
         }

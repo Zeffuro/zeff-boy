@@ -659,9 +659,9 @@ impl App {
 
             if let Some(gfx) = self.gfx.as_mut() {
                 gfx.set_native_size(native_w, native_h);
-                if self.active_system == crate::app::ActiveSystem::Pce {
-                    gfx.set_presentation_size(640, 480);
-                }
+                let (width, height) =
+                    crate::app::display::presentation_size(self.active_system, native_w, native_h);
+                gfx.set_presentation_size(width, height);
                 gfx.upload_framebuffer(&display_frame);
             }
             self.last_displayed_frame = Some(display_frame);

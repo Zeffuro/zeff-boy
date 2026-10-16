@@ -13,6 +13,7 @@ use super::{
 pub(crate) enum InputSystem {
     GameBoy,
     GameBoyAdvance,
+    Md,
     Nes,
     MasterSystem,
     GameGear,
@@ -23,9 +24,10 @@ pub(crate) enum InputSystem {
 }
 
 impl InputSystem {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::GameBoy,
         Self::GameBoyAdvance,
+        Self::Md,
         Self::Nes,
         Self::MasterSystem,
         Self::GameGear,
@@ -39,6 +41,7 @@ impl InputSystem {
         match self {
             Self::GameBoy => "Game Boy / Game Boy Color",
             Self::GameBoyAdvance => "Game Boy Advance",
+            Self::Md => "Mega Drive / Genesis",
             Self::Nes => "NES / Famicom Disk System",
             Self::MasterSystem => "Master System",
             Self::GameGear => "Game Gear",
@@ -53,6 +56,7 @@ impl InputSystem {
         match self {
             Self::GameBoy => "gb",
             Self::GameBoyAdvance => "gba",
+            Self::Md => "md",
             Self::Nes => "nes",
             Self::MasterSystem => "sms",
             Self::GameGear => "gg",
@@ -70,6 +74,7 @@ impl From<crate::emu_backend::ActiveSystem> for InputSystem {
         match system {
             ActiveSystem::GameBoy => Self::GameBoy,
             ActiveSystem::GameBoyAdvance => Self::GameBoyAdvance,
+            ActiveSystem::Md => Self::Md,
             ActiveSystem::Nes => Self::Nes,
             ActiveSystem::MasterSystem => Self::MasterSystem,
             ActiveSystem::GameGear => Self::GameGear,

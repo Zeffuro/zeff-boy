@@ -9,6 +9,8 @@ Web builds: [Nightly](https://zeffuro.github.io/zeff-boy/) · [Stable](https://z
 
 Browser netplay is in Nightly under **Netplay** on the quickbar. Load matching `.nes`, `.sms`, `.sg`, `.pce`, `.ws` or `.wsc` ROMs, directly or from ZIPs. Use the same web build and share a Lobby invitation. Browser ZIPs must contain one ROM.
 
+Experimental Mega Drive support loads linear cartridges up to 4 MiB from `.md` and `.gen` files or ZIPs. Ambiguous `.bin` files require a recognized console header. NTSC-US/Japan/PAL video, stereo audio, save states and two six-button pads are available; cartridge save hardware, debugger, rewind, replay and netplay are not supported yet. Headless runs accept `--md-region auto|ntsc|japan|pal`, `--md-controller 3|6`, `--load-state FILE` and `--md-save-state-out target/name.mdstate` (a new file).
+
 <img src="images/GBC.png" height="250" alt="GBC"> <img src="images/NES.png" height="250" alt="NES"> <img src="images/GBA.png" height="250" alt="GBA"> <img src="images/GB%20Camera.png" height="250" alt="GB Camera">
 <img src="images/IDE.png" height="700" alt="IDE Mode">
 

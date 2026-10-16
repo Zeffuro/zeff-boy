@@ -1,30 +1,348 @@
-use super::flags::{sz53_flags, szp_flags};
+use super::flags::sz53_flags;
 use super::*;
+
+mod state;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Io {
+    port: u8,
+    register: u8,
+    output: Option<u8>,
+}
+
+impl Io {
+    pub(super) fn decode<B: Z80Bus>(cpu: &Cpu, bus: &B, opcode: u8) -> Option<Self> {
+        if opcode & 0xc6 != 0x40 {
+            return None;
+        }
+        let register = (opcode >> 3) & 7;
+        let output = (opcode & 1 != 0).then(|| {
+            if register == REGISTER_MEMORY_INDEX {
+                0
+            } else {
+                cpu.read_reg8(bus, register)
+            }
+        });
+        Some(Self {
+            port: cpu.regs.c,
+            register,
+            output,
+        })
+    }
+
+    pub(super) fn execute<B: Z80Bus>(self, cpu: &mut Cpu, bus: &mut B, offset: u32) {
+        if let Some(value) = self.output {
+            cpu.write_io(bus, self.port, value, offset);
+        } else {
+            let value = bus.io_read(self.port);
+            if self.register != REGISTER_MEMORY_INDEX {
+                cpu.write_reg8(bus, self.register, value);
+            }
+            cpu.set_szp_flags_preserving_carry(value);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Internal {
+    opcode: u8,
+    final_phase: bool,
+}
+
+impl Internal {
+    pub(super) fn decode(opcode: u8) -> Option<Self> {
+        let final_phase = match opcode {
+            0x42 | 0x52 | 0x62 | 0x72 | 0x4a | 0x5a | 0x6a | 0x7a => false,
+            0x47 | 0x4f | 0x57 | 0x5f => true,
+            _ => return None,
+        };
+        Some(Self {
+            opcode,
+            final_phase,
+        })
+    }
+
+    pub(super) fn step<B: Z80Bus>(self, cpu: &mut Cpu, bus: &mut B) -> (Option<Self>, u32) {
+        if !self.final_phase {
+            return (
+                Some(Self {
+                    final_phase: true,
+                    ..self
+                }),
+                CYCLES_ED_ALU_INTERNAL,
+            );
+        }
+        cpu.execute_ed_terminal(bus, cpu.last_opcode_pc, self.opcode);
+        (
+            None,
+            if self.opcode & 7 == 2 {
+                CYCLES_ED_ALU_FINISH
+            } else {
+                CYCLES_ED_SPECIAL_INTERNAL
+            },
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Block {
+    opcode: u8,
+    pc: u16,
+    address: u16,
+    destination: u16,
+    port: u8,
+    phase: BlockPhase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BlockPhase {
+    Lead,
+    Read,
+    Write(u8),
+    Finish(u8),
+    Repeat(u8),
+}
+
+impl Block {
+    pub(super) fn decode(cpu: &Cpu, pc: u16, opcode: u8) -> Option<Self> {
+        (opcode & 0xe4 == 0xa0).then_some(Self {
+            opcode,
+            pc,
+            address: cpu.regs.hl(),
+            destination: cpu.regs.de(),
+            port: cpu.regs.c,
+            phase: if opcode & 2 != 0 {
+                BlockPhase::Lead
+            } else {
+                BlockPhase::Read
+            },
+        })
+    }
+
+    pub(super) fn step<B: Z80Bus>(
+        self,
+        cpu: &mut Cpu,
+        bus: &mut B,
+        offset: u32,
+    ) -> (Option<Self>, u32) {
+        match self.phase {
+            BlockPhase::Lead => (
+                Some(Self {
+                    phase: BlockPhase::Read,
+                    ..self
+                }),
+                CYCLES_ED_BLOCK_IO_INTERNAL,
+            ),
+            BlockPhase::Read => {
+                let input = self.opcode & 3 == 2;
+                let value = if input {
+                    bus.io_read(self.port)
+                } else {
+                    bus.cpu_read(self.address)
+                };
+                (
+                    Some(Self {
+                        phase: if self.opcode & 3 == 1 {
+                            BlockPhase::Finish(value)
+                        } else {
+                            BlockPhase::Write(value)
+                        },
+                        ..self
+                    }),
+                    if input {
+                        CYCLES_IO_MACHINE
+                    } else {
+                        CYCLES_MEMORY_TRANSFER
+                    },
+                )
+            }
+            BlockPhase::Write(value) => {
+                let kind = self.opcode & 3;
+                if kind == 3 {
+                    cpu.write_io(bus, self.port, value, offset);
+                } else {
+                    bus.cpu_write(
+                        if kind == 0 {
+                            self.destination
+                        } else {
+                            self.address
+                        },
+                        value,
+                    );
+                }
+                (
+                    if kind == 0 {
+                        Some(Self {
+                            phase: BlockPhase::Finish(value),
+                            ..self
+                        })
+                    } else {
+                        self.finish(cpu, value)
+                    },
+                    if kind == 3 {
+                        CYCLES_IO_MACHINE
+                    } else {
+                        CYCLES_MEMORY_TRANSFER
+                    },
+                )
+            }
+            BlockPhase::Finish(value) => (
+                self.finish(cpu, value),
+                if self.opcode & 3 == 0 {
+                    CYCLES_ED_BLOCK_COPY_INTERNAL
+                } else {
+                    CYCLES_ED_BLOCK_COMPARE_INTERNAL
+                },
+            ),
+            BlockPhase::Repeat(value) => {
+                cpu.regs.pc = self.pc;
+                let xy = Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3;
+                cpu.regs.f = (cpu.regs.f & !xy) | ((self.pc >> 8) as u8 & xy);
+                if self.opcode & 2 != 0 {
+                    let carry = cpu.regs.f & Z80_FLAG_CARRY != 0;
+                    let negative = value & Z80_FLAG_SIGN != 0;
+                    let b = cpu.regs.b;
+                    let adjusted = if !carry {
+                        b
+                    } else if negative {
+                        b.wrapping_sub(1)
+                    } else {
+                        b.wrapping_add(1)
+                    };
+                    let parity = (adjusted & 7).count_ones().is_multiple_of(2);
+                    let overflow = cpu.regs.f & Z80_FLAG_PARITY_OVERFLOW != 0;
+                    cpu.regs.f &= !(Z80_FLAG_HALF_CARRY | Z80_FLAG_PARITY_OVERFLOW);
+                    if parity == overflow {
+                        cpu.regs.f |= Z80_FLAG_PARITY_OVERFLOW;
+                    }
+                    if carry && b & 0x0f == if negative { 0 } else { 0x0f } {
+                        cpu.regs.f |= Z80_FLAG_HALF_CARRY;
+                    }
+                }
+                (None, CYCLES_ED_BLOCK_REPEAT_INTERNAL)
+            }
+        }
+    }
+
+    fn finish(self, cpu: &mut Cpu, value: u8) -> Option<Self> {
+        let delta = if self.opcode & 8 == 0 { 1 } else { -1 };
+        cpu.regs.set_hl(self.address.wrapping_add_signed(delta));
+        let kind = self.opcode & 3;
+        let repeats = match kind {
+            0 => {
+                cpu.regs.set_de(self.destination.wrapping_add_signed(delta));
+                cpu.regs.set_bc(cpu.regs.bc().wrapping_sub(1));
+                cpu.regs.f = (cpu.regs.f & (Z80_FLAG_SIGN | Z80_FLAG_ZERO | Z80_FLAG_CARRY))
+                    | block_xy(cpu.regs.a.wrapping_add(value))
+                    | if cpu.regs.bc() != 0 {
+                        Z80_FLAG_PARITY_OVERFLOW
+                    } else {
+                        0
+                    };
+                cpu.regs.bc() != 0
+            }
+            1 => {
+                let result = cpu.regs.a.wrapping_sub(value);
+                let half = (cpu.regs.a & 0x0f) < (value & 0x0f);
+                cpu.regs.set_bc(cpu.regs.bc().wrapping_sub(1));
+                cpu.regs.f = (cpu.regs.f & Z80_FLAG_CARRY)
+                    | (sz53_flags(result) & (Z80_FLAG_SIGN | Z80_FLAG_ZERO))
+                    | block_xy(result.wrapping_sub(u8::from(half)))
+                    | Z80_FLAG_SUBTRACT
+                    | if half { Z80_FLAG_HALF_CARRY } else { 0 }
+                    | if cpu.regs.bc() != 0 {
+                        Z80_FLAG_PARITY_OVERFLOW
+                    } else {
+                        0
+                    };
+                cpu.regs.bc() != 0 && result != 0
+            }
+            _ => {
+                cpu.regs.b = cpu.regs.b.wrapping_sub(1);
+                let addend = if kind == 2 {
+                    self.port.wrapping_add_signed(delta as i8)
+                } else {
+                    cpu.regs.l
+                };
+                let sum = u16::from(value) + u16::from(addend);
+                cpu.regs.f = sz53_flags(cpu.regs.b)
+                    | if value & Z80_FLAG_SIGN != 0 {
+                        Z80_FLAG_SUBTRACT
+                    } else {
+                        0
+                    }
+                    | if sum > u16::from(u8::MAX) {
+                        Z80_FLAG_HALF_CARRY | Z80_FLAG_CARRY
+                    } else {
+                        0
+                    }
+                    | (flags::szp_flags((sum as u8 & 7) ^ cpu.regs.b) & Z80_FLAG_PARITY_OVERFLOW);
+                cpu.regs.b != 0
+            }
+        };
+        (self.opcode & 0x10 != 0 && repeats).then_some(Self {
+            phase: BlockPhase::Repeat(value),
+            ..self
+        })
+    }
+
+    pub(super) fn execute<B: Z80Bus>(self, cpu: &mut Cpu, bus: &mut B) -> u32 {
+        let mut pending = Some(self);
+        let mut cycles = 2 * CYCLES_M1;
+        let mut offset = cpu.ed_io_t_states_before();
+        while let Some(operation) = pending {
+            let (next, clocks) = operation.step(cpu, bus, offset);
+            pending = next;
+            cycles += clocks;
+            offset += clocks;
+        }
+        cycles
+    }
+}
+
+fn block_xy(value: u8) -> u8 {
+    (value & Z80_FLAG_BIT_3) | ((value << 4) & Z80_FLAG_BIT_5)
+}
 
 impl Cpu {
     pub(super) fn execute_ed<B: Z80Bus>(&mut self, bus: &mut B, pc: u16) -> u32 {
         let opcode = self.fetch_u8(bus);
         self.increment_refresh_register();
+        self.execute_ed_terminal(bus, pc, opcode)
+    }
+
+    pub(super) fn execute_ed_terminal<B: Z80Bus>(
+        &mut self,
+        bus: &mut B,
+        pc: u16,
+        opcode: u8,
+    ) -> u32 {
+        if let Some(load) = load::Load::decode_ed(self, opcode) {
+            return load.execute(self, bus) + CYCLES_M1;
+        }
+        if let Some(operation) = stack::Stack::decode_ed(self, opcode) {
+            return operation.execute(self, bus) + CYCLES_M1;
+        }
+        if let Some(operation) = rmw::Rmw::decode_ed(self, opcode) {
+            operation.execute(self, bus);
+            return CYCLES_ED_NIBBLE_ROTATE;
+        }
+        if let Some(operation) = Io::decode(self, bus, opcode) {
+            operation.execute(self, bus, self.ed_io_t_states_before());
+            return CYCLES_ED_IO;
+        }
+        if let Some(operation) = Block::decode(self, pc, opcode) {
+            return operation.execute(self, bus);
+        }
         match opcode {
             0x42 | 0x52 | 0x62 | 0x72 => {
                 let pair = (opcode >> 4) & 0x03;
                 self.sbc_hl(self.read_reg16(pair));
                 CYCLES_ED_16BIT_ALU
             }
-            0x43 | 0x53 | 0x63 | 0x73 => {
-                let pair = (opcode >> 4) & 0x03;
-                let addr = self.fetch_u16(bus);
-                self.write_mem_u16(bus, addr, self.read_reg16(pair));
-                CYCLES_ED_16BIT_MEMORY
-            }
             0x44 | 0x4C | 0x54 | 0x5C | 0x64 | 0x6C | 0x74 | 0x7C => {
                 self.neg_a();
                 CYCLES_ED_NEG
-            }
-            0x45 | 0x4D | 0x55 | 0x5D | 0x65 | 0x6D | 0x75 | 0x7D => {
-                self.interrupt_flip_flop_1 = self.interrupt_flip_flop_2;
-                self.regs.pc = self.pop_u16(bus);
-                CYCLES_RETI_RETN
             }
             0x46 | 0x4E | 0x66 | 0x6E => {
                 self.interrupt_mode = InterruptMode::Im0;
@@ -39,23 +357,9 @@ impl Cpu {
                 self.adc_hl(self.read_reg16(pair));
                 CYCLES_ED_16BIT_ALU
             }
-            0x4B | 0x5B | 0x6B | 0x7B => {
-                let pair = (opcode >> 4) & 0x03;
-                let addr = self.fetch_u16(bus);
-                let value = self.read_mem_u16(bus, addr);
-                self.write_reg16(pair, value);
-                CYCLES_ED_16BIT_MEMORY
-            }
             0x4F => {
                 self.regs.r = self.regs.a;
                 CYCLES_ED_SPECIAL_REGISTER
-            }
-            0x40 | 0x48 | 0x50 | 0x58 | 0x60 | 0x68 | 0x78 => {
-                let register = (opcode >> 3) & 0x07;
-                let value = bus.io_read(self.regs.c);
-                self.write_reg8(bus, register, value);
-                self.set_szp_flags_preserving_carry(value);
-                CYCLES_ED_IO
             }
             0x57 => {
                 self.load_a_from_special_register(self.regs.i);
@@ -65,31 +369,6 @@ impl Cpu {
                 self.load_a_from_special_register(self.regs.r);
                 CYCLES_ED_SPECIAL_REGISTER
             }
-            0x67 => {
-                self.rotate_decimal_right(bus);
-                CYCLES_ED_NIBBLE_ROTATE
-            }
-            0x6F => {
-                self.rotate_decimal_left(bus);
-                CYCLES_ED_NIBBLE_ROTATE
-            }
-            0x70 => {
-                let value = bus.io_read(self.regs.c);
-                self.set_szp_flags_preserving_carry(value);
-                CYCLES_ED_IO
-            }
-            0x41 | 0x49 | 0x51 | 0x59 | 0x61 | 0x69 | 0x79 => {
-                let register = (opcode >> 3) & 0x07;
-                let value = self.read_reg8(bus, register);
-                let t_states_before = self.ed_io_t_states_before();
-                self.write_io(bus, self.regs.c, value, t_states_before);
-                CYCLES_ED_IO
-            }
-            0x71 => {
-                let t_states_before = self.ed_io_t_states_before();
-                self.write_io(bus, self.regs.c, 0, t_states_before);
-                CYCLES_ED_IO
-            }
             0x56 | 0x76 => {
                 self.interrupt_mode = InterruptMode::Im1;
                 CYCLES_IM
@@ -98,179 +377,8 @@ impl Cpu {
                 self.interrupt_mode = InterruptMode::Im2;
                 CYCLES_IM
             }
-            0xA0 => {
-                self.block_copy(bus, 1);
-                CYCLES_ED_BLOCK
-            }
-            0xA1 => {
-                self.block_compare(bus, 1);
-                CYCLES_ED_BLOCK
-            }
-            0xA2 => {
-                self.block_input(bus, 1);
-                CYCLES_ED_BLOCK
-            }
-            0xA3 => {
-                self.block_output(bus, 1);
-                CYCLES_ED_BLOCK
-            }
-            0xA8 => {
-                self.block_copy(bus, -1);
-                CYCLES_ED_BLOCK
-            }
-            0xA9 => {
-                self.block_compare(bus, -1);
-                CYCLES_ED_BLOCK
-            }
-            0xAA => {
-                self.block_input(bus, -1);
-                CYCLES_ED_BLOCK
-            }
-            0xAB => {
-                self.block_output(bus, -1);
-                CYCLES_ED_BLOCK
-            }
-            0xB0 => {
-                self.block_copy(bus, 1);
-                if self.regs.bc() != 0 {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
-            0xB1 => {
-                let matched = self.block_compare(bus, 1);
-                if self.regs.bc() != 0 && !matched {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
-            0xB2 => {
-                self.block_input(bus, 1);
-                if self.regs.b != 0 {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
-            0xB3 => {
-                self.block_output(bus, 1);
-                if self.regs.b != 0 {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
-            0xB8 => {
-                self.block_copy(bus, -1);
-                if self.regs.bc() != 0 {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
-            0xB9 => {
-                let matched = self.block_compare(bus, -1);
-                if self.regs.bc() != 0 && !matched {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
-            0xBA => {
-                self.block_input(bus, -1);
-                if self.regs.b != 0 {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
-            0xBB => {
-                self.block_output(bus, -1);
-                if self.regs.b != 0 {
-                    self.regs.pc = pc;
-                    CYCLES_ED_BLOCK_REPEAT
-                } else {
-                    CYCLES_ED_BLOCK
-                }
-            }
             _ => CYCLES_ED_NOP,
         }
-    }
-
-    fn block_copy<B: Z80Bus>(&mut self, bus: &mut B, delta: i16) {
-        let value = bus.cpu_read(self.regs.hl());
-        bus.cpu_write(self.regs.de(), value);
-        self.regs.set_hl(self.regs.hl().wrapping_add_signed(delta));
-        self.regs.set_de(self.regs.de().wrapping_add_signed(delta));
-        self.regs.set_bc(self.regs.bc().wrapping_sub(1));
-
-        let preserved = self.regs.f & (Z80_FLAG_SIGN | Z80_FLAG_ZERO | Z80_FLAG_CARRY);
-        let undocumented = self.regs.a.wrapping_add(value) & (Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3);
-        self.regs.f = preserved
-            | undocumented
-            | if self.regs.bc() != 0 {
-                Z80_FLAG_PARITY_OVERFLOW
-            } else {
-                0
-            };
-    }
-
-    fn block_compare<B: Z80Bus>(&mut self, bus: &B, delta: i16) -> bool {
-        let value = bus.cpu_read(self.regs.hl());
-        let result = self.regs.a.wrapping_sub(value);
-        let half_borrow = (self.regs.a & 0x0F) < (value & 0x0F);
-        self.regs.set_hl(self.regs.hl().wrapping_add_signed(delta));
-        self.regs.set_bc(self.regs.bc().wrapping_sub(1));
-
-        self.regs.f = (self.regs.f & Z80_FLAG_CARRY)
-            | (result & (Z80_FLAG_SIGN | Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3))
-            | if result == 0 { Z80_FLAG_ZERO } else { 0 }
-            | Z80_FLAG_SUBTRACT
-            | if half_borrow { Z80_FLAG_HALF_CARRY } else { 0 }
-            | if self.regs.bc() != 0 {
-                Z80_FLAG_PARITY_OVERFLOW
-            } else {
-                0
-            };
-
-        result == 0
-    }
-
-    fn block_input<B: Z80Bus>(&mut self, bus: &mut B, delta: i16) {
-        let value = bus.io_read(self.regs.c);
-        bus.cpu_write(self.regs.hl(), value);
-        self.regs.set_hl(self.regs.hl().wrapping_add_signed(delta));
-        self.regs.b = self.regs.b.wrapping_sub(1);
-        self.set_block_io_flags(value);
-    }
-
-    fn block_output<B: Z80Bus>(&mut self, bus: &mut B, delta: i16) {
-        let value = bus.cpu_read(self.regs.hl());
-        let t_states_before = self.ed_block_output_t_states_before();
-        self.write_io(bus, self.regs.c, value, t_states_before);
-        self.regs.set_hl(self.regs.hl().wrapping_add_signed(delta));
-        self.regs.b = self.regs.b.wrapping_sub(1);
-        self.set_block_io_flags(value);
-    }
-
-    fn set_block_io_flags(&mut self, value: u8) {
-        self.regs.f = (self.regs.f & Z80_FLAG_CARRY)
-            | (self.regs.b & (Z80_FLAG_SIGN | Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3))
-            | if self.regs.b == 0 { Z80_FLAG_ZERO } else { 0 }
-            | if value & 0x80 != 0 {
-                Z80_FLAG_SUBTRACT
-            } else {
-                0
-            };
     }
 
     fn adc_hl(&mut self, value: u16) {
@@ -340,22 +448,6 @@ impl Cpu {
             } else {
                 0
             };
-    }
-
-    fn rotate_decimal_right<B: Z80Bus>(&mut self, bus: &mut B) {
-        let value = bus.cpu_read(self.regs.hl());
-        let a = self.regs.a;
-        bus.cpu_write(self.regs.hl(), ((a & 0x0F) << 4) | (value >> 4));
-        self.regs.a = (a & 0xF0) | (value & 0x0F);
-        self.regs.f = (self.regs.f & Z80_FLAG_CARRY) | szp_flags(self.regs.a);
-    }
-
-    fn rotate_decimal_left<B: Z80Bus>(&mut self, bus: &mut B) {
-        let value = bus.cpu_read(self.regs.hl());
-        let a = self.regs.a;
-        bus.cpu_write(self.regs.hl(), (value << 4) | (a & 0x0F));
-        self.regs.a = (a & 0xF0) | (value >> 4);
-        self.regs.f = (self.regs.f & Z80_FLAG_CARRY) | szp_flags(self.regs.a);
     }
 }
 

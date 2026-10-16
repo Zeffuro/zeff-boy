@@ -22,6 +22,7 @@ pub(super) fn validate_paths(input: &Path, options: &super::HeadlessOptions) -> 
             options.screenshot_path.as_ref(),
             options.pce_save_state_path.as_ref(),
             options.coleco_save_state_path.as_ref(),
+            options.md_save_state_path.as_ref(),
             options.load_state_path.as_ref(),
             options.replay_path.as_ref(),
             options.replay_peer_path.as_ref(),
@@ -124,6 +125,9 @@ mod tests {
         assert!(validate_paths(&input, &options).is_err());
         options.audio_trace_path = None;
         assert!(validate_paths(&input, &options).is_ok());
+        options.md_save_state_path = Some(directory.path().join(".").join("capture.zip"));
+        assert!(validate_paths(&input, &options).is_err());
+        options.md_save_state_path = None;
         options.audio_dump_path = None;
         options.audio_trace_path = Some(directory.path().join("capture.zip"));
         options.screenshot_path = Some(directory.path().join(".").join("capture.zip"));

@@ -1,0 +1,14 @@
+pub(super) const CHANNELS: usize = crate::constants::FM_CHANNEL_COUNT;
+pub(super) const CHANNELS_PER_BANK: usize = 3;
+pub(super) const FM_CLOCK_DIVIDER: u64 = 144;
+pub(super) const BUSY_CLOCKS: u64 = 192;
+pub(super) const TIMER_A_STEPS: u16 = 1024;
+pub(super) const TIMER_B_STEPS: u16 = 256;
+pub(super) const TIMER_B_SUBCOUNTER_STEPS: u8 = 16;
+pub(super) const TIMER_B_DIVIDER: u64 = FM_CLOCK_DIVIDER * TIMER_B_SUBCOUNTER_STEPS as u64;
+pub(super) const BUSY_STATUS: u8 = 0x80;
+pub(super) const DAC_ENABLE: u8 = 0x80;
+pub(super) const DAC_CHANNEL: usize = 5;
+pub(super) const DAC_CENTER: i32 = 128;
+pub(super) const PAN_LEFT: u8 = 0x80;
+pub(super) const PAN_RIGHT: u8 = 0x40;

@@ -1,0 +1,380 @@
+{
+  "cohort": "MOVE.w",
+  "name": "2299 MOVE.w (A7), -(A6) 3d17",
+  "initial": {
+    "d0": 3796605601,
+    "d1": 621277735,
+    "d2": 2079074132,
+    "d3": 3441372440,
+    "d4": 1468988114,
+    "d5": 3392886465,
+    "d6": 2656458082,
+    "d7": 1734958135,
+    "a0": 61769343,
+    "a1": 4077874927,
+    "a2": 2991694340,
+    "a3": 3945059474,
+    "a4": 2084865678,
+    "a5": 3668079451,
+    "a6": 3038398289,
+    "usp": 11869000,
+    "ssp": 12088838,
+    "sr": 8713,
+    "pc": 4438730,
+    "prefetch": [
+      15639,
+      57328
+    ],
+    "ram": [
+      [
+        12,
+        102
+      ],
+      [
+        13,
+        66
+      ],
+      [
+        14,
+        202
+      ],
+      [
+        15,
+        146
+      ],
+      [
+        4377234,
+        252
+      ],
+      [
+        4377235,
+        180
+      ],
+      [
+        4377236,
+        93
+      ],
+      [
+        4377237,
+        37
+      ],
+      [
+        4438726,
+        61
+      ],
+      [
+        4438727,
+        23
+      ],
+      [
+        4438728,
+        223
+      ],
+      [
+        4438729,
+        240
+      ],
+      [
+        4438730,
+        240
+      ],
+      [
+        4438731,
+        131
+      ],
+      [
+        12088838,
+        76
+      ],
+      [
+        12088839,
+        31
+      ]
+    ]
+  },
+  "final": {
+    "d0": 3796605601,
+    "d1": 621277735,
+    "d2": 2079074132,
+    "d3": 3441372440,
+    "d4": 1468988114,
+    "d5": 3392886465,
+    "d6": 2656458082,
+    "d7": 1734958135,
+    "a0": 61769343,
+    "a1": 4077874927,
+    "a2": 2991694340,
+    "a3": 3945059474,
+    "a4": 2084865678,
+    "a5": 3668079451,
+    "a6": 3038398287,
+    "usp": 11869000,
+    "ssp": 12088824,
+    "sr": 8704,
+    "pc": 1715653270,
+    "prefetch": [
+      64692,
+      23845
+    ],
+    "ram": [
+      [
+        12,
+        102
+      ],
+      [
+        13,
+        66
+      ],
+      [
+        14,
+        202
+      ],
+      [
+        15,
+        146
+      ],
+      [
+        4377234,
+        252
+      ],
+      [
+        4377235,
+        180
+      ],
+      [
+        4377236,
+        93
+      ],
+      [
+        4377237,
+        37
+      ],
+      [
+        4438726,
+        61
+      ],
+      [
+        4438727,
+        23
+      ],
+      [
+        4438728,
+        223
+      ],
+      [
+        4438729,
+        240
+      ],
+      [
+        4438730,
+        240
+      ],
+      [
+        4438731,
+        131
+      ],
+      [
+        12088824,
+        223
+      ],
+      [
+        12088825,
+        229
+      ],
+      [
+        12088826,
+        181
+      ],
+      [
+        12088827,
+        26
+      ],
+      [
+        12088828,
+        71
+      ],
+      [
+        12088829,
+        79
+      ],
+      [
+        12088830,
+        223
+      ],
+      [
+        12088831,
+        240
+      ],
+      [
+        12088832,
+        34
+      ],
+      [
+        12088833,
+        0
+      ],
+      [
+        12088834,
+        0
+      ],
+      [
+        12088835,
+        67
+      ],
+      [
+        12088836,
+        186
+      ],
+      [
+        12088837,
+        202
+      ],
+      [
+        12088838,
+        76
+      ],
+      [
+        12088839,
+        31
+      ]
+    ]
+  },
+  "reference_total_cycles": 66,
+  "transactions": [
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088838,
+      "data_bus": 19487,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 6,
+      "address_bus": 4438730,
+      "data_bus": 61571,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write_address_error",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1722190,
+      "data_bus": 19487,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "idle",
+      "duration_cycles": 8
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088836,
+      "data_bus": 47818,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088832,
+      "data_bus": 8704,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088834,
+      "data_bus": 67,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088830,
+      "data_bus": 57328,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088828,
+      "data_bus": 18255,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088824,
+      "data_bus": 57317,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12088826,
+      "data_bus": 46362,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12,
+      "data_bus": 26178,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 14,
+      "data_bus": 51858,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 6,
+      "address_bus": 4377234,
+      "data_bus": 64692,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "idle",
+      "duration_cycles": 2
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 6,
+      "address_bus": 4377236,
+      "data_bus": 23845,
+      "uds": 1,
+      "lds": 1
+    }
+  ],
+  "normalization_exclusion": "address_fault"
+}

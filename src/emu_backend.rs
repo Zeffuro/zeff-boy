@@ -15,6 +15,7 @@ pub(crate) use self::gba::GbaBackend;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use self::gba::GbaTasLoadProvenanceView;
 pub(crate) use self::loader::{BackendLoadConfig, load_backend_from_rom_source};
+pub(crate) use self::md::MdBackend;
 pub(crate) use self::nes::NesBackend;
 pub(crate) use self::nes::NesTasLoadProvenanceView;
 pub(crate) use self::pce::PceBackend;
@@ -35,6 +36,7 @@ pub(crate) mod gb;
 pub(crate) mod gba;
 mod link;
 pub(crate) mod loader;
+pub(crate) mod md;
 pub(crate) mod nes;
 pub(crate) mod paths;
 pub(crate) mod pce;
@@ -69,6 +71,7 @@ pub(crate) enum EmuBackend {
     Gba(Box<GbaBackend>),
     Nes(Box<NesBackend>),
     Coleco(Box<ColecoBackend>),
+    Md(Box<MdBackend>),
     Pce(Box<PceBackend>),
     Sega8(Box<Sega8Backend>),
     Ws(Box<WsBackend>),
@@ -159,6 +162,7 @@ macro_rules! dispatch {
             EmuBackend::Gba(b) => b.$method($($arg),*),
             EmuBackend::Nes(b) => b.$method($($arg),*),
             EmuBackend::Coleco(b) => b.$method($($arg),*),
+            EmuBackend::Md(b) => b.$method($($arg),*),
             EmuBackend::Pce(b) => b.$method($($arg),*),
             EmuBackend::Sega8(b) => b.$method($($arg),*),
             EmuBackend::Ws(b) => b.$method($($arg),*),
@@ -328,6 +332,7 @@ impl EmuBackend {
             Self::Gba(..) => ActiveSystem::GameBoyAdvance,
             Self::Nes(..) => ActiveSystem::Nes,
             Self::Coleco(..) => ActiveSystem::Coleco,
+            Self::Md(..) => ActiveSystem::Md,
             Self::Pce(..) => ActiveSystem::Pce,
             Self::Sega8(b) => b.system(),
             Self::Ws(..) => ActiveSystem::WonderSwan,
@@ -337,6 +342,7 @@ impl EmuBackend {
     pub(crate) fn nominal_frame_duration_ns(&self) -> u64 {
         match self {
             Self::Nes(backend) => backend.nominal_frame_duration_ns(),
+            Self::Md(backend) => backend.nominal_frame_duration_ns(),
             Self::Sega8(backend) => backend.nominal_frame_duration_ns(),
             _ => self.system().frame_duration_ns(),
         }
@@ -408,6 +414,8 @@ impl EmuBackend {
 
     pub(crate) fn display_framebuffer(&self) -> (&[u8], Option<(u32, u32)>) {
         if let Self::Pce(backend) = self {
+            backend.display_framebuffer()
+        } else if let Self::Md(backend) = self {
             backend.display_framebuffer()
         } else {
             (self.framebuffer(), None)
@@ -481,6 +489,7 @@ impl EmuBackend {
             Self::Gba(backend) => Some(std::sync::Arc::new(backend.audio_discovery_input())),
             Self::Nes(backend) => backend.audio_discovery_input(),
             Self::Coleco(backend) => backend.audio_discovery_input(),
+            Self::Md(backend) => backend.audio_discovery_input(),
             #[cfg(target_arch = "wasm32")]
             Self::Pce(backend) => backend.audio_discovery_input(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -513,6 +522,7 @@ impl EmuBackend {
             Self::Gba(_) => {}
             Self::Nes(backend) => backend.set_audio_discovery_input(input),
             Self::Coleco(backend) => backend.set_audio_discovery_input(input),
+            Self::Md(backend) => backend.set_audio_discovery_input(input),
             Self::Pce(backend) => backend.set_audio_discovery_input(input),
             Self::Sega8(backend) => backend.set_audio_discovery_input(input),
             Self::Ws(backend) => backend.set_audio_discovery_input(input),
@@ -533,6 +543,7 @@ impl EmuBackend {
             Self::Gba(backend) => backend.battery_components(),
             Self::Nes(backend) => backend.battery_components(),
             Self::Coleco(backend) => backend.battery_components(),
+            Self::Md(backend) => backend.battery_components(),
             Self::Pce(backend) => backend.battery_components(),
             Self::Sega8(backend) => backend.battery_components(),
             Self::Ws(backend) => backend.battery_components(),

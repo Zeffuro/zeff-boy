@@ -297,6 +297,7 @@ fn system_code(system: System) -> &'static str {
     match system {
         System::Gb => "gb",
         System::Gba => "gba",
+        System::Md => "md",
         System::Nes => "nes",
         System::Coleco => "coleco",
         System::Pce => "pce",

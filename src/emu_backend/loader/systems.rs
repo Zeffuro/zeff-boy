@@ -12,6 +12,7 @@ pub(super) fn source_media_digest(system: ActiveSystem, bytes: &[u8]) -> Option<
         system,
         ActiveSystem::GameBoy
             | ActiveSystem::GameBoyAdvance
+            | ActiveSystem::Md
             | ActiveSystem::Nes
             | ActiveSystem::Coleco
             | ActiveSystem::MasterSystem
@@ -609,6 +610,7 @@ pub(super) fn system_load_label(system: ActiveSystem) -> &'static str {
         ActiveSystem::GameBoy => "GB",
         ActiveSystem::GameBoyAdvance => "GBA",
         ActiveSystem::Nes => "NES",
+        ActiveSystem::Md => "Mega Drive",
         ActiveSystem::Coleco => "ColecoVision",
         ActiveSystem::Pce => "PC Engine",
         ActiveSystem::WonderSwan => "WonderSwan",

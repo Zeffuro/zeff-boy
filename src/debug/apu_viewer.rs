@@ -109,7 +109,10 @@ pub(super) fn draw_apu_viewer_content(ui: &mut egui::Ui, data: &ApuDebugInfo) ->
 
     ui.horizontal(|ui| {
         ui.heading("Master");
-        if ui.small_button("Unmute All").clicked() {
+        if ui
+            .add_enabled(!muted.is_empty(), egui::Button::new("Unmute All").small())
+            .clicked()
+        {
             for m in muted.iter_mut() {
                 *m = false;
             }
@@ -178,3 +181,6 @@ mod tests {
         assert!(samples[(start + quarter) % samples.len()] > 0.0);
     }
 }
+
+#[cfg(test)]
+mod interaction_tests;

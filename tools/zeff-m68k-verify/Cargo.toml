@@ -1,0 +1,15 @@
+[package]
+name = "zeff-m68k-verify"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "M68000 conformance and diagnostic validators."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+zeff-m68k = { path = "../../crates/zeff-m68k" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"

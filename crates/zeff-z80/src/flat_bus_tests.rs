@@ -223,6 +223,10 @@ fn flat_bus_nmi_acknowledges_and_pushes_the_return_pc() {
         bus.take_accesses(),
         vec![
             FlatAccess::NmiAcknowledged,
+            FlatAccess::MemoryRead {
+                addr: 0x9ABC,
+                value: 0
+            },
             FlatAccess::MemoryWrite {
                 addr: 0xCFFF,
                 value: 0x9A,

@@ -4,6 +4,8 @@ use crate::emu_thread::{
     TasControlLeaseWitness, TasControlRollbackRejectedReason, TasExecutionProfile,
 };
 
+pub(in crate::app) mod audio_host;
+
 mod coleco_recording_roundtrip;
 mod execution;
 mod fds_recording_roundtrip;

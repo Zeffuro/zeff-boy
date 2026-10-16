@@ -85,7 +85,7 @@ impl App {
 
         let (rom_path, rom_data, system) = if is_zip {
             match super::extract_rom_from_zip_bytes(&data, &name) {
-                Ok((vp, d)) => match ActiveSystem::from_path(&vp) {
+                Ok((vp, d)) => match ActiveSystem::from_media(&vp, &d) {
                     Some(s) => (vp, d, s),
                     None => {
                         self.toast_manager
@@ -101,7 +101,7 @@ impl App {
                 }
             }
         } else {
-            match ActiveSystem::from_path(&path) {
+            match ActiveSystem::from_media(&path, &data) {
                 Some(s) => (path.clone(), data, s),
                 None => {
                     let ext = path

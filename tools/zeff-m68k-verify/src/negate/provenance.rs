@@ -1,0 +1,7 @@
+pub const FIRST_ODD_SHA256: &str =
+    "1cc3284f92c5d5a2b4b19985afd5da125cd3f14b9baa0401137527cd1fe694bc";
+pub const COMPLETION_SHA256: &str =
+    "c76abb4083024e5554692ed6974518e9180867ae5cd0f8355bce68ff3d89ceec";
+
+pub const REMAINDER_COMPLETION_SHA256: &str =
+    "346482e3f62c97f90336ecdfa94ea8d0d120fbef3cdfedd651723b15e1900f33";

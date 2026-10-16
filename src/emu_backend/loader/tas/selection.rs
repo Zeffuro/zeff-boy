@@ -24,6 +24,7 @@ pub(crate) fn select_private_tas_execution_loader_with_rom_path(
     firmware_search_dirs: Vec<PathBuf>,
 ) -> Result<PrivateTasExecutionLoader> {
     match system {
+        ActiveSystem::Md => bail!("Mega Drive TAS execution is not supported yet"),
         ActiveSystem::Nes if has_extension(&source_path, "fds") => {
             Ok(PrivateTasExecutionLoader::DirectFds(
                 DirectFdsTasExecutionLoader::new(source_path, firmware_search_dirs),

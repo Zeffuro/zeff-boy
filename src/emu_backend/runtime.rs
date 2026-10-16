@@ -69,6 +69,11 @@ impl EmuBackend {
         let supports_execution_controls = self.supports_execution_controls();
 
         match self {
+            Self::Md(md) => {
+                if !config.uncapped_mode {
+                    md.set_apu_sample_generation_enabled(!config.skip_audio);
+                }
+            }
             Self::Gb(gb) => {
                 if supports_debugger {
                     apply_gb_debug_actions(&mut gb.emu, config.debug_actions);
@@ -183,6 +188,7 @@ impl EmuBackend {
         self.validate_guest_call_target(request)?;
         let saved = self.encode_state_bytes()?;
         let result = match self {
+            Self::Md(_) => anyhow::bail!("Mega Drive guest calls are not supported yet"),
             Self::Gb(backend) => {
                 let target = u16::try_from(request.target)
                     .map_err(|_| anyhow::anyhow!("target is out of range"))?;
@@ -277,6 +283,7 @@ impl EmuBackend {
             return Ok(());
         }
         let actual = match self {
+            Self::Md(_) => None,
             Self::Gb(backend) => u16::try_from(request.target)
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),

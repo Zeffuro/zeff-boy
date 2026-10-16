@@ -14,6 +14,9 @@ use zeff_sega8_core::hardware::timing::Sega8VideoStandard;
 pub(crate) struct BackendLoadConfig {
     pub(crate) gb_hardware_mode_preference: HardwareModePreference,
     pub(crate) sample_rate: Option<u32>,
+    pub(crate) md_region: Option<zeff_md_core::Region>,
+    pub(crate) md_controller: zeff_md_core::ControllerKind,
+    pub(crate) md_load_save_ram: bool,
     pub(crate) apply_mods: bool,
     pub(crate) initial_input: Option<(u8, u8)>,
     pub(crate) gb_tas_source_media: Option<([u8; 32], usize, [u8; 32])>,
@@ -71,6 +74,9 @@ impl Default for BackendLoadConfig {
         Self {
             gb_hardware_mode_preference: HardwareModePreference::Auto,
             sample_rate: None,
+            md_region: None,
+            md_controller: zeff_md_core::ControllerKind::SixButton,
+            md_load_save_ram: true,
             apply_mods: false,
             initial_input: None,
             gb_tas_source_media: None,

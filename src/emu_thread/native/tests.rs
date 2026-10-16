@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use super::*;
 
+mod md_persistence;
+
 fn stopped_thread() -> EmuThread {
     let emulator = zeff_sega8_core::emulator::Emulator::new_with_hint(
         &[0x00],

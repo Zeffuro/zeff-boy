@@ -17,7 +17,7 @@ pub(crate) fn firmware_plan_for_active_system(
         ActiveSystem::GameBoyAdvance => ExistingCoreSystem::GameBoyAdvance,
         ActiveSystem::Nes => ExistingCoreSystem::Nes,
         ActiveSystem::Coleco => ExistingCoreSystem::ColecoVision,
-        ActiveSystem::Pce => return Vec::new(),
+        ActiveSystem::Pce | ActiveSystem::Md => return Vec::new(),
         ActiveSystem::WonderSwan => ExistingCoreSystem::WonderSwan,
         ActiveSystem::MasterSystem => ExistingCoreSystem::MasterSystem,
         ActiveSystem::GameGear => ExistingCoreSystem::GameGear,

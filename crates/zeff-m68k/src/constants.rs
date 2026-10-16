@@ -1,0 +1,41 @@
+pub const BUS_ADDRESS_MASK: u32 = 0x00ff_ffff;
+
+pub const STATUS_MASK: u16 = 0xa71f;
+pub const TRACE: u16 = 0x8000;
+pub const SUPERVISOR: u16 = 0x2000;
+pub const EXTEND: u16 = 0x10;
+pub const NEGATIVE: u16 = 0x08;
+pub const ZERO: u16 = 0x04;
+pub const OVERFLOW: u16 = 0x02;
+pub const CARRY: u16 = 0x01;
+pub(crate) const CCR_MASK: u16 = EXTEND | NEGATIVE | ZERO | OVERFLOW | CARRY;
+pub(crate) const INTERRUPT_MASK: u16 = 0x0700;
+pub(crate) const RESET_STATUS: u16 = SUPERVISOR | INTERRUPT_MASK;
+
+pub(crate) const RESET_SSP_VECTOR_ADDRESS: u32 = 0;
+pub(crate) const RESET_PC_VECTOR_ADDRESS: u32 = 4;
+pub(crate) const VECTOR_ENTRY_BYTES: u32 = 4;
+pub(crate) const VECTOR_ILLEGAL_INSTRUCTION: u8 = 4;
+pub(crate) const VECTOR_ZERO_DIVIDE: u8 = 5;
+pub(crate) const VECTOR_CHK: u8 = 6;
+pub(crate) const VECTOR_TRAPV: u8 = 7;
+pub(crate) const VECTOR_PRIVILEGE_VIOLATION: u8 = 8;
+pub(crate) const VECTOR_TRACE: u8 = 9;
+pub(crate) const VECTOR_LINE_A: u8 = 10;
+pub(crate) const VECTOR_LINE_F: u8 = 11;
+pub(crate) const VECTOR_SPURIOUS_INTERRUPT: u8 = 24;
+pub(crate) const VECTOR_AUTOVECTOR_BASE: u8 = 24;
+pub(crate) const VECTOR_TRAP_BASE: u8 = 32;
+
+pub(crate) const TRANSFER_CLOCKS: u32 = 4;
+pub(crate) const SHORT_EXCEPTION_CLOCKS: u32 = 34;
+pub(crate) const RESET_OUTPUT_CLOCKS: u32 = 124;
+pub(crate) const VECTOR_BUS_ERROR: u8 = 2;
+pub(crate) const VECTOR_ADDRESS_ERROR: u8 = 3;
+pub(crate) const GROUP0_FRAME_BYTES: u32 = 14;
+pub(crate) const GROUP0_INITIAL_CLOCKS: u32 = 4;
+pub(crate) const RESET_INITIAL_CLOCKS: u32 = 14;
+pub(crate) const ENTRY_REFILL_IDLE_CLOCKS: u32 = 2;
+pub(crate) const SSW_DEFINED_MASK: u16 = 0x1f;
+pub(crate) const SSW_READ: u16 = 0x10;
+pub(crate) const SSW_NOT_INSTRUCTION: u16 = 0x08;

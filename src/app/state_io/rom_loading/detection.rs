@@ -194,7 +194,15 @@ fn detect_system_for_loaded_path(
     rom_path: PathBuf,
     preloaded_data: Option<Vec<u8>>,
 ) -> anyhow::Result<(PathBuf, Option<Vec<u8>>, ActiveSystem)> {
-    let system = ActiveSystem::from_path(&rom_path).ok_or_else(|| {
+    let detected = if let Some(bytes) = preloaded_data.as_deref() {
+        ActiveSystem::from_media(&rom_path, bytes)
+    } else if let Some(system) = ActiveSystem::from_path(&rom_path) {
+        Some(system)
+    } else {
+        let mut file = std::fs::File::open(&rom_path)?;
+        crate::rom_archive::probe_rom_reader(&rom_path, &mut file)?
+    };
+    let system = detected.ok_or_else(|| {
         let ext = rom_path
             .extension()
             .and_then(|e| e.to_str())

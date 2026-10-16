@@ -249,6 +249,15 @@ pub(crate) enum ConsoleGraphicsData {
     Pce(Box<PceGraphicsData>),
     Coleco(Box<Sega8GraphicsData>),
     Sega8(Box<Sega8GraphicsData>),
+    Md(Box<MdGraphicsData>),
+}
+
+pub(crate) struct MdGraphicsData {
+    pub(crate) vram: Vec<u8>,
+    pub(crate) cram: Vec<u8>,
+    pub(crate) vsram: Vec<u8>,
+    pub(crate) palette: [[u8; 4]; 64],
+    pub(crate) tile_height: Option<usize>,
 }
 
 pub(crate) struct GbaGraphicsData {

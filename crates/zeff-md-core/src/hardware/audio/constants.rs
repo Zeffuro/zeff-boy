@@ -1,0 +1,29 @@
+pub(super) const PSG_CHANNELS: usize = crate::constants::PSG_CHANNEL_COUNT;
+pub(super) const PSG_TONES: usize = 3;
+pub(super) const PSG_CLOCK_TICKS: u64 = crate::constants::SOUND_CPU_DIVISOR * 16;
+pub(super) const PSG_LATCH_BIT: u8 = 0x80;
+pub(super) const PSG_REGISTER_MASK: u8 = 7;
+pub(super) const PSG_REGISTER_SHIFT: u32 = 4;
+pub(super) const PSG_VOLUME_BIT: u8 = 1;
+pub(super) const PSG_DATA_MASK: u8 = 15;
+pub(super) const PSG_TONE_HIGH_MASK: u8 = 63;
+pub(super) const PSG_TONE_LOW_MASK: u16 = 15;
+pub(super) const PSG_TONE_HIGH_SHIFT: u32 = 4;
+pub(super) const PSG_NOISE_REGISTER: u8 = 6;
+pub(super) const PSG_NOISE_MASK: u8 = 7;
+pub(super) const PSG_NOISE_RATE_MASK: u8 = 3;
+pub(super) const PSG_NOISE_TONE_RATE: u8 = 3;
+pub(super) const PSG_NOISE_WHITE: u8 = 4;
+pub(super) const PSG_NOISE_PERIOD: u16 = 16;
+pub(super) const PSG_NOISE_SEED: u16 = 0x8000;
+pub(super) const PSG_NOISE_BITS: usize = 16;
+pub(super) const PSG_NOISE_TAP_SHIFT: u32 = 3;
+pub(super) const PSG_VOLUME_LEVELS: [i16; 16] = [
+    8191, 6506, 5168, 4105, 3261, 2590, 2057, 1634, 1298, 1031, 819, 651, 517, 411, 326, 0,
+];
+pub(super) const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+pub(super) const MAX_SAMPLE_RATE: u32 = 192_000;
+pub(super) const SAMPLE_CAPACITY: usize = 4096;
+pub(super) const OUTPUT_CHANNELS: usize = 2;
+pub(super) const PSG_MIX_DIVISOR: i32 = 6;
+pub(super) const SAMPLE_SCALE: f32 = 32768.0;

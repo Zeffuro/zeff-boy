@@ -6,6 +6,7 @@ use anyhow::Context;
 
 const PCE_STATE_EXTENSION: &str = "pcestate";
 const COLECO_STATE_EXTENSION: &str = "colstate";
+const MD_STATE_EXTENSION: &str = "mdstate";
 const TEMP_FILE_ATTEMPTS: u32 = 64;
 
 pub(super) fn write_pce_state_artifact(
@@ -22,6 +23,15 @@ pub(super) fn write_coleco_state_artifact(
     bytes: &[u8],
 ) -> anyhow::Result<PathBuf> {
     let path = resolve_state_artifact_path(requested_path, COLECO_STATE_EXTENSION, "ColecoVision")?;
+    write_new_state_file(&path, bytes)?;
+    Ok(path)
+}
+
+pub(super) fn write_md_state_artifact(
+    requested_path: &Path,
+    bytes: &[u8],
+) -> anyhow::Result<PathBuf> {
+    let path = resolve_state_artifact_path(requested_path, MD_STATE_EXTENSION, "Mega Drive")?;
     write_new_state_file(&path, bytes)?;
     Ok(path)
 }
@@ -371,6 +381,25 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn md_artifacts_use_ignored_paths_and_preserve_existing_files() {
+        let workspace = test_workspace("md-policy");
+        let resolve = |path| {
+            resolve_state_artifact_path_from_root(
+                workspace.path(),
+                Path::new(path),
+                MD_STATE_EXTENSION,
+                "Mega Drive",
+            )
+        };
+        let path = resolve("target/checkpoint.mdstate").unwrap();
+        assert!(resolve("target/checkpoint.md").is_err());
+        assert!(resolve("src/checkpoint.mdstate").is_err());
+        write_new_state_file(&path, b"saved").unwrap();
+        assert!(write_new_state_file(&path, b"replacement").is_err());
+        assert_eq!(fs::read(path).unwrap(), b"saved");
     }
 
     #[cfg(any(unix, windows))]

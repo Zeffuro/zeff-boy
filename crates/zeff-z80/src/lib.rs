@@ -4,30 +4,28 @@ use std::num::NonZeroU64;
 
 use zeff_emu_common::cpu::{CpuCore, CpuStep};
 
-pub const Z80_INTERRUPT_ACK_OPCODE: u8 = 0xFF;
-pub const Z80_INTERRUPT_VECTOR_IM1: u16 = 0x0038;
-pub const Z80_INTERRUPT_VECTOR_NMI: u16 = 0x0066;
-pub const Z80_RESET_PC: u16 = 0x0000;
-pub const Z80_RESET_SP: u16 = 0x0000;
-pub const Z80_FLAG_SIGN: u8 = 0x80;
-pub const Z80_FLAG_ZERO: u8 = 0x40;
-pub const Z80_FLAG_BIT_5: u8 = 0x20;
-pub const Z80_FLAG_HALF_CARRY: u8 = 0x10;
-pub const Z80_FLAG_BIT_3: u8 = 0x08;
-pub const Z80_FLAG_PARITY_OVERFLOW: u8 = 0x04;
-pub const Z80_FLAG_SUBTRACT: u8 = 0x02;
-pub const Z80_FLAG_CARRY: u8 = 0x01;
-
 mod access;
 mod alu;
+mod bounded;
+pub use bounded::{BoundedStep, PrefixState};
+mod bus_segment;
+pub use bus_segment::BusState;
 mod cb;
+mod constants;
+pub use constants::*;
 mod ed;
 mod exchange;
 mod flags;
 mod index;
+mod indexed_cb;
+mod indexed_memory;
 mod interrupt;
+mod load;
 mod misc;
+mod rmw;
 mod rotate;
+mod stack;
+mod state;
 mod unprefixed;
 
 pub trait Z80Bus {
@@ -43,6 +41,12 @@ pub trait Z80Bus {
     fn maskable_interrupt_pending(&self) -> bool;
     fn non_maskable_interrupt_pending(&self) -> bool;
     fn acknowledge_non_maskable_interrupt(&mut self) -> bool;
+    fn acknowledge_maskable_interrupt(&mut self) -> u8 {
+        Z80_INTERRUPT_ACK_OPCODE
+    }
+    fn read_interrupt_instruction(&mut self, pc: u16) -> u8 {
+        self.cpu_read(pc)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -57,109 +61,6 @@ impl ResetState {
     }
 }
 
-const CYCLES_M1: u32 = 4;
-const CYCLES_NOP: u32 = CYCLES_M1;
-const CYCLES_LD_RR_NN: u32 = 10;
-const CYCLES_INDEX_LD_RR_NN: u32 = 14;
-const CYCLES_INDEX_LD_R_N: u32 = 11;
-const CYCLES_INC_DEC_RR: u32 = 6;
-const CYCLES_INDEX_INC_DEC_RR: u32 = 10;
-const CYCLES_ADD_HL_RR: u32 = 11;
-const CYCLES_INDEX_ADD_RR: u32 = 15;
-const CYCLES_LD_R_N: u32 = 7;
-const CYCLES_LD_HL_N: u32 = 10;
-const CYCLES_INDEX_LD_MEM_N: u32 = 19;
-const CYCLES_LD_R_R: u32 = 4;
-const CYCLES_INDEX_LD_R_R: u32 = 8;
-const CYCLES_LD_R_HL_OR_HL_R: u32 = 7;
-const CYCLES_INDEX_LD_R_MEM: u32 = 19;
-const CYCLES_INDEX_LD_MEM_R: u32 = 19;
-const CYCLES_JR: u32 = 12;
-const CYCLES_JR_NOT_TAKEN: u32 = 7;
-const CYCLES_DJNZ: u32 = 13;
-const CYCLES_DJNZ_NOT_TAKEN: u32 = 8;
-const CYCLES_LD_INDIRECT_A: u32 = 7;
-const CYCLES_LD_A_INDIRECT: u32 = 7;
-const CYCLES_ACCUMULATOR_ROTATE: u32 = 4;
-const CYCLES_LD_NN_A: u32 = 13;
-const CYCLES_LD_A_NN: u32 = 13;
-const CYCLES_LD_NN_HL: u32 = 16;
-const CYCLES_LD_HL_NN: u32 = 16;
-const CYCLES_INDEX_LD_NN_RR: u32 = 20;
-const CYCLES_INDEX_LD_RR_NN_INDIRECT: u32 = 20;
-const CYCLES_LD_SP_HL: u32 = 6;
-const CYCLES_INDEX_LD_SP_RR: u32 = 10;
-const CYCLES_LD_A_N: u32 = 7;
-const CYCLES_INC_DEC_R: u32 = 4;
-const CYCLES_INDEX_INC_DEC_R: u32 = 8;
-const CYCLES_INC_DEC_HL: u32 = 11;
-const CYCLES_INDEX_INC_DEC_MEM: u32 = 23;
-const CYCLES_HALT: u32 = 4;
-const CYCLES_DI_EI: u32 = 4;
-const CYCLES_ALU_R: u32 = 4;
-const CYCLES_ALU_HL: u32 = 7;
-const CYCLES_INDEX_ALU_MEM: u32 = 19;
-const CYCLES_ALU_N: u32 = 7;
-const CYCLES_JP_NN: u32 = 10;
-const CYCLES_JP_HL: u32 = 4;
-const CYCLES_INDEX_JP_RR: u32 = 8;
-const CYCLES_CALL_NN: u32 = 17;
-const CYCLES_CALL_NN_NOT_TAKEN: u32 = 10;
-const CYCLES_RET: u32 = 10;
-const CYCLES_RET_CC: u32 = 11;
-const CYCLES_RET_CC_NOT_TAKEN: u32 = 5;
-const CYCLES_RST: u32 = 11;
-const CYCLES_PUSH_RR: u32 = 11;
-const CYCLES_POP_RR: u32 = 10;
-const CYCLES_INDEX_PUSH_RR: u32 = 15;
-const CYCLES_INDEX_POP_RR: u32 = 14;
-const CYCLES_IN_A_N: u32 = 11;
-const CYCLES_OUT_N_A: u32 = 11;
-const CYCLES_CB_R: u32 = 8;
-const CYCLES_CB_HL: u32 = 15;
-const CYCLES_CB_BIT_HL: u32 = 12;
-const CYCLES_INDEX_CB: u32 = 23;
-const CYCLES_ED_IO: u32 = 12;
-const CYCLES_ED_BLOCK: u32 = 16;
-const CYCLES_ED_BLOCK_REPEAT: u32 = 21;
-const CYCLES_ED_16BIT_ALU: u32 = 15;
-const CYCLES_ED_16BIT_MEMORY: u32 = 20;
-const CYCLES_ED_NEG: u32 = 8;
-const CYCLES_ED_NIBBLE_ROTATE: u32 = 18;
-const CYCLES_ED_SPECIAL_REGISTER: u32 = 9;
-const CYCLES_IO_MACHINE: u32 = 4;
-const CYCLES_IMMEDIATE_IO_OPERAND: u32 = 3;
-const CYCLES_ED_BLOCK_OUTPUT_LEAD: u32 = 4;
-const CYCLES_INTERRUPT_ACK: u32 = 13;
-const CYCLES_IM: u32 = 8;
-const CYCLES_ED_NOP: u32 = 8;
-const CYCLES_RETI_RETN: u32 = 14;
-const CYCLES_NMI_ACK: u32 = 11;
-const CYCLES_EX_AF_AF_SHADOW: u32 = 4;
-const CYCLES_EX_DE_HL: u32 = 4;
-const CYCLES_EX_SP_HL: u32 = 19;
-const CYCLES_INDEX_EX_SP_RR: u32 = 23;
-const CYCLES_EXX: u32 = 4;
-const CYCLES_FLAG_OP: u32 = 4;
-const CYCLES_UNSUPPORTED: u32 = 0;
-const REFRESH_COUNTER_MASK: u8 = 0x7F;
-const REFRESH_COUNTER_BIT_7_MASK: u8 = 0x80;
-const Z80_PREFIX_CB: u8 = 0xCB;
-const Z80_PREFIX_DD: u8 = 0xDD;
-const Z80_PREFIX_ED: u8 = 0xED;
-const Z80_PREFIX_FD: u8 = 0xFD;
-const Z80_PREFIX_OVERHEAD: u32 = 4;
-const REGISTER_MEMORY_INDEX: u8 = 6;
-const REGISTER_A_INDEX: u8 = 7;
-const CONDITION_NZ: u8 = 0;
-const CONDITION_Z: u8 = 1;
-const CONDITION_NC: u8 = 2;
-const CONDITION_C: u8 = 3;
-const CONDITION_PO: u8 = 4;
-const CONDITION_PE: u8 = 5;
-const CONDITION_P: u8 = 6;
-const CONDITION_M: u8 = 7;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuState {
     Running,
@@ -169,8 +70,8 @@ pub enum CpuState {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InterruptMode {
-    Im0,
     #[default]
+    Im0,
     Im1,
     Im2,
 }
@@ -275,7 +176,7 @@ impl Registers {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cpu {
     reset_state: ResetState,
     regs: Registers,
@@ -352,34 +253,11 @@ impl Cpu {
 
     #[inline(always)]
     pub fn step_with_bus<B: Z80Bus>(&mut self, bus: &mut B) -> Option<FetchedInstruction> {
-        self.instruction_bytes = [0; 4];
-        self.instruction_byte_count = 0;
-        self.last_m1_fetch_count = 0;
-        if self.state == CpuState::Suspended {
-            return None;
-        }
-
-        self.last_step_was_interrupt = false;
-
-        if let Some(interrupt) = self.try_service_non_maskable_interrupt(bus) {
-            self.last_step_was_interrupt = true;
-            return Some(interrupt);
-        }
-
-        if let Some(interrupt) = self.try_service_maskable_interrupt(bus) {
-            self.last_step_was_interrupt = true;
-            return Some(interrupt);
-        }
-
-        if self.state == CpuState::Halted {
-            self.last_m1_fetch_count = 1;
-            let cycles = CYCLES_HALT;
-            self.cycles = self.cycles.wrapping_add(u64::from(cycles));
-            return Some(FetchedInstruction {
-                pc: self.regs.pc,
-                opcode: 0x76,
-                cycles,
-            });
+        match self.begin_step(bus) {
+            bounded::StepStart::Blocked => return None,
+            bounded::StepStart::Handled(instruction) => return Some(instruction),
+            bounded::StepStart::Interrupt(service) => return Some(service.execute(self, bus)),
+            bounded::StepStart::Opcode => {}
         }
 
         let pc = self.regs.pc;

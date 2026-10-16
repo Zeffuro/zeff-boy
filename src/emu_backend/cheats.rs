@@ -8,6 +8,7 @@ impl EmuBackend {
             return;
         }
         match self {
+            Self::Md(_) => {}
             Self::Gb(backend) => backend.install_rom_patches(cheats),
             Self::Gba(backend) => backend.install_rom_patches(cheats),
             Self::Nes(backend) => backend.install_rom_patches(cheats),
@@ -23,6 +24,7 @@ impl EmuBackend {
             return;
         }
         match self {
+            Self::Md(_) => {}
             Self::Gb(backend) => backend.apply_ram_cheats(cheats),
             Self::Gba(backend) => backend.apply_ram_cheats(cheats),
             Self::Nes(backend) => backend.apply_ram_cheats(cheats),

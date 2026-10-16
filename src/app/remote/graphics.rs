@@ -23,6 +23,17 @@ impl App {
         };
 
         match gfx {
+            ConsoleGraphicsData::Md(md) => json!({
+                "ready": true,
+                "system": "md",
+                "tile_height": md.tile_height,
+                "palette_colors": md.palette.len(),
+                "buffers": {
+                    "vram": buffer_summary_json(&md.vram),
+                    "cram": buffer_summary_json(&md.cram),
+                    "vsram": buffer_summary_json(&md.vsram),
+                },
+            }),
             ConsoleGraphicsData::Gb(gb) => json!({
                 "ready": true,
                 "system": "gb",

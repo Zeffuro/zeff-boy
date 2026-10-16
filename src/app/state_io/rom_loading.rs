@@ -121,6 +121,8 @@ impl App {
 
         BackendLoadConfig {
             gb_hardware_mode_preference: self.settings.emulation.hardware_mode_preference,
+            md_region: self.settings.emulation.md_region.forced_region(),
+            md_controller: zeff_md_core::ControllerKind::SixButton,
             sample_rate: self
                 .audio
                 .as_ref()
@@ -134,6 +136,7 @@ impl App {
             gba_seed_rtc_from_host: true,
             nes_load_battery_sram: true,
             sega8_load_battery_sram: true,
+            md_load_save_ram: true,
             #[cfg(target_arch = "wasm32")]
             netplay_browser_media: None,
             pce_netplay: false,
@@ -735,6 +738,9 @@ impl App {
         let (native_w, native_h) = self.active_display_size();
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.set_native_size(native_w, native_h);
+            let (width, height) =
+                crate::app::display::presentation_size(self.active_system, native_w, native_h);
+            gfx.set_presentation_size(width, height);
         }
     }
 }

@@ -8,6 +8,8 @@ members = [
     "crates/zeff-gba-core",
     "crates/zeff-nes-core",
     "crates/zeff-z80",
+    "crates/zeff-m68k",
+    "crates/zeff-md-core",
     "crates/zeff-coleco-core",
     "crates/zeff-pce-core",
     "crates/zeff-sega8-core",
@@ -21,6 +23,7 @@ members = [
     "crates/zeff-netplay-lobby",
     "crates/zeff-netplay-connect",
     "tools/zeff-netplay-build",
+    "tools/zeff-m68k-verify",
 ]
 exclude = ["fuzz"]
 
@@ -53,6 +56,8 @@ zeff-gb-core = { path = "crates/zeff-gb-core" }
 zeff-gba-core = { path = "crates/zeff-gba-core" }
 zeff-nes-core = { path = "crates/zeff-nes-core" }
 zeff-z80 = { path = "crates/zeff-z80" }
+zeff-m68k = { path = "crates/zeff-m68k" }
+zeff-md-core = { path = "crates/zeff-md-core" }
 zeff-coleco-core = { path = "crates/zeff-coleco-core" }
 zeff-pce-core = { path = "crates/zeff-pce-core" }
 zeff-sega8-core = { path = "crates/zeff-sega8-core" }

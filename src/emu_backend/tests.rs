@@ -27,6 +27,7 @@ mod fixtures;
 mod guest_calls;
 mod link;
 mod loading;
+mod md;
 mod pce;
 mod runahead_conformance;
 mod state;

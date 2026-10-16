@@ -39,6 +39,11 @@ pub(super) fn draw(context: &egui::Context, open: &mut bool) {
 
 fn system_row(system: System) -> (&'static str, &'static str, &'static str) {
     match system {
+        System::Md => (
+            "Mega Drive / Genesis",
+            "No native driver yet",
+            "Native preview / exports unavailable",
+        ),
         System::Gb => (
             "GB / GBC / SGB",
             "Banked GB drivers, GHX, GB Sound System, Carillon, Cosmigo, MPlay, IMED and selected native profiles",

@@ -1,0 +1,16 @@
+[package]
+name = "zeff-md-core"
+version = "0.1.0"
+edition = "2024"
+authors = ["Zeffuro"]
+license = "MIT OR Apache-2.0"
+description = "Mega Drive cartridge machine foundation."
+repository = "https://github.com/zeffuro/zeff-boy"
+
+[dependencies]
+anyhow = "1.0.104"
+encoding_rs = "0.8.35"
+sha2 = "0.11.0"
+zeff-emu-common = { path = "../zeff-emu-common" }
+zeff-m68k = { path = "../zeff-m68k" }
+zeff-z80 = { path = "../zeff-z80" }

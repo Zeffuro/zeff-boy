@@ -740,6 +740,7 @@ fn reset_page(settings: &mut Settings, category: SettingsCategory) {
         SettingsCategory::Emulation => {
             settings.emulation.hardware_mode_preference =
                 defaults.emulation.hardware_mode_preference;
+            settings.emulation.md_region = defaults.emulation.md_region;
             settings.emulation.sega8_video_standard = defaults.emulation.sega8_video_standard;
             settings.emulation.sega8_console_region = defaults.emulation.sega8_console_region;
             settings.emulation.pce_console_wiring = defaults.emulation.pce_console_wiring;

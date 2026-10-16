@@ -69,19 +69,19 @@ pub(crate) fn extract_rom_from_zip_bytes(
     let mut names = std::collections::BTreeSet::new();
     let mut selected = Vec::new();
     for index in 0..archive.len() {
-        let entry = archive
+        let mut entry = archive
             .by_index(index)
             .context("Failed to inspect ZIP member")?;
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name();
+        let name = entry.name().to_owned();
         anyhow::ensure!(name.len() <= 4096, "ZIP member name is too long");
         anyhow::ensure!(
-            names.insert(name.to_owned()),
+            names.insert(name.clone()),
             "ZIP contains duplicate member {name:?}"
         );
-        if ActiveSystem::from_path(Path::new(name)).is_some() {
+        if crate::rom_archive::probe_rom_reader(Path::new(&name), &mut entry)?.is_some() {
             anyhow::ensure!(entry.enclosed_name().is_some(), "ZIP member path is unsafe");
             anyhow::ensure!(
                 entry.size() <= 64 * 1024 * 1024,
@@ -162,12 +162,13 @@ fn collect_rom_entries<R: std::io::Read + std::io::Seek>(
 ) -> Vec<ArchiveRomEntry> {
     (0..archive.len())
         .filter_map(|index| {
-            let entry = archive.by_index(index).ok()?;
+            let mut entry = archive.by_index(index).ok()?;
             if entry.is_dir() {
                 return None;
             }
             let name = entry.name().to_string();
-            let system = ActiveSystem::from_path(Path::new(&name))?;
+            let system =
+                crate::rom_archive::probe_rom_reader(Path::new(&name), &mut entry).ok()??;
             Some(ArchiveRomEntry {
                 index,
                 name,
@@ -187,12 +188,35 @@ fn extract_rom_entry_by_index<R: std::io::Read + std::io::Seek>(
         .by_index(entry_index)
         .with_context(|| format!("Failed to read entry #{entry_index} from ZIP"))?;
     let name = entry.name().to_string();
-    if ActiveSystem::from_path(Path::new(&name)).is_none() {
+    let system = crate::rom_archive::probe_rom_reader(Path::new(&name), &mut entry)?;
+    if entry.is_dir() || system.is_none() {
         anyhow::bail!("Archive entry '{name}' is not a supported ROM");
     }
+    anyhow::ensure!(entry.enclosed_name().is_some(), "ZIP member path is unsafe");
+    let md_limit = zeff_md_core::constants::MAX_CARTRIDGE_SIZE as u64;
+    if system == Some(ActiveSystem::MegaDrive) {
+        anyhow::ensure!(
+            entry.size() <= md_limit,
+            "MD ZIP member exceeds the 4 MiB limit"
+        );
+    }
+    drop(entry);
+    let mut entry = archive.by_index(entry_index)?;
     let mut data = Vec::with_capacity(entry.size() as usize);
-    std::io::Read::read_to_end(&mut entry, &mut data)
+    if system == Some(ActiveSystem::MegaDrive) {
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(&mut entry, md_limit + 1),
+            &mut data,
+        )
         .with_context(|| format!("Failed to decompress '{name}'"))?;
+        anyhow::ensure!(
+            data.len() as u64 <= md_limit,
+            "MD ZIP member exceeds the 4 MiB limit"
+        );
+    } else {
+        std::io::Read::read_to_end(&mut entry, &mut data)
+            .with_context(|| format!("Failed to decompress '{name}'"))?;
+    }
     let virtual_path = base_path.join(name);
     Ok((virtual_path, data))
 }
@@ -366,5 +390,58 @@ mod tests {
 
         assert_eq!(path, PathBuf::from("archive.zip").join("folder/two.gba"));
         assert_eq!(data, [4, 5, 6, 7]);
+    }
+    fn md_rom() -> Vec<u8> {
+        let mut bytes = vec![0; 0x200];
+        bytes[0x100..0x110].copy_from_slice(b"SEGA MEGA DRIVE ");
+        bytes
+    }
+
+    #[test]
+    fn direct_and_zip_binary_detection_preserves_explicit_member_selection() -> anyhow::Result<()> {
+        let directory = crate::test_support::test_directory("md-media-probe")?;
+        let rom = md_rom();
+        let direct = directory.path().join("game.bin");
+        std::fs::write(&direct, &rom)?;
+        let (path, data, system) = crate::app::detect_and_extract_rom(&direct)?;
+        assert_eq!(path, direct);
+        assert_eq!(data, None);
+        assert_eq!(system, ActiveSystem::MegaDrive);
+        let archive = directory.path().join("mixed.zip");
+        crate::test_support::write_zip(
+            &archive,
+            &[
+                ("game.bin", &rom),
+                ("other.nes", b"NES\x1a"),
+                ("track.bin", &[0; 0x200]),
+            ],
+        )?;
+        let entries = list_rom_entries_in_zip(&archive)?;
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].system, ActiveSystem::MegaDrive);
+        assert!(extract_rom_from_zip(&archive).is_err());
+        let (path, bytes) = extract_rom_entry_path_from_zip(&archive, &archive.join("game.bin"))?;
+        assert_eq!(path, archive.join("game.bin"));
+        assert_eq!(bytes, rom);
+        let (_, bytes) = extract_rom_entry_path_from_zip(&archive, &archive.join("other.nes"))?;
+        assert_eq!(bytes, b"NES\x1a");
+        assert!(extract_rom_entry_path_from_zip(&archive, &archive.join("track.bin")).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn byte_zip_routes_binary_md_without_accepting_disc_tracks() -> anyhow::Result<()> {
+        let directory = crate::test_support::test_directory("md-media-byte-zip")?;
+        let archive = directory.path().join("game.zip");
+        let rom = md_rom();
+        crate::test_support::write_zip(
+            &archive,
+            &[("nested/game.bin", &rom), ("track.bin", &[0; 0x200])],
+        )?;
+        let archive_bytes = std::fs::read(&archive)?;
+        let (path, bytes) = extract_rom_from_zip_bytes(&archive_bytes, "game.zip")?;
+        assert_eq!(path, Path::new("game.zip").join("nested/game.bin"));
+        assert_eq!(bytes, rom);
+        Ok(())
     }
 }

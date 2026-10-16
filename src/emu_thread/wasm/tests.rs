@@ -10,6 +10,9 @@ use crate::emu_thread::{
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[cfg(feature = "wasm-browser-tests")]
+mod md_persistence;
+
+#[cfg(feature = "wasm-browser-tests")]
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
 export function browser_test_delay(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));

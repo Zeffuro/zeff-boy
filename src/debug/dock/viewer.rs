@@ -11,6 +11,7 @@ use super::super::gba_tile_viewer::draw_gba_tile_viewer_content;
 use super::super::gba_tilemap_viewer::draw_gba_tilemap_viewer_content;
 use super::super::hardware_io::draw_hardware_io_content;
 use super::super::input_viewer::draw_input_viewer_content;
+use super::super::md_tile_viewer::draw_md_tile_viewer_content;
 use super::super::memory_viewer::{MemoryViewerDebugContext, draw_memory_viewer_content};
 use super::super::mods_window::draw_mods_content;
 use super::super::nes_tile_viewer::draw_nes_tile_viewer_content;
@@ -214,6 +215,8 @@ impl TabViewer for DebugTabViewer<'_> {
                     draw_sega8_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 } else if let Some(ConsoleGraphicsData::Sega8(data)) = self.data.graphics_data {
                     draw_sega8_tile_viewer_content(ui, data, &mut self.window_state.tiles);
+                } else if let Some(ConsoleGraphicsData::Md(data)) = self.data.graphics_data {
+                    draw_md_tile_viewer_content(ui, data, &mut self.window_state.tiles);
                 }
             }
             DebugTab::TilemapViewer => {

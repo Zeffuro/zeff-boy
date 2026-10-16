@@ -11,9 +11,9 @@ pub(crate) use cheats::{BreakpointState, CheatState, LibretroAsyncResult};
 pub(crate) use data_models::{
     ApuChannelDebug, ApuDebugInfo, CallStackDisplay, ConsoleGraphicsData, CpuDebugSnapshot,
     CpuDebugViewState, DebugSection, GbGraphicsData, GbaGraphicsData, InputDebugInfo, IoBitDisplay,
-    IoRegisterDisplay, NesGraphicsData, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug,
-    PaletteRowDebug, PceGraphicsData, PceVdcGraphicsData, RecentOpcodeDisplay, RomDebugInfo,
-    RomInfoSection, Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
+    IoRegisterDisplay, MdGraphicsData, NesGraphicsData, OamDebugInfo, PaletteDebugInfo,
+    PaletteGroupDebug, PaletteRowDebug, PceGraphicsData, PceVdcGraphicsData, RecentOpcodeDisplay,
+    RomDebugInfo, RomInfoSection, Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use execution_coverage::ExecutionCoverage;
 pub(crate) use memory::{

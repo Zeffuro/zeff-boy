@@ -13,7 +13,10 @@ impl SymbolImporter for WlaSymImporter {
         "WLA .sym"
     }
 
-    fn probe(&self, file_name: &str, data: &[u8], _target: &TargetInfo) -> u8 {
+    fn probe(&self, file_name: &str, data: &[u8], target: &TargetInfo) -> u8 {
+        if target.system == System::Md {
+            return 0;
+        }
         if !file_name.to_ascii_lowercase().ends_with(".sym") {
             return 0;
         }
@@ -38,6 +41,10 @@ impl SymbolImporter for WlaSymImporter {
     }
 
     fn import(&self, data: &[u8], ctx: &ImportContext) -> anyhow::Result<SymbolModule> {
+        anyhow::ensure!(
+            ctx.target.system != System::Md,
+            "Mega Drive symbol imports are not supported yet"
+        );
         let text = std::str::from_utf8(data)?;
         let mut entries: Vec<Entry<'_>> = Vec::new();
         let mut sections = Vec::new();
@@ -425,6 +432,7 @@ fn exec_mode(system: System) -> ExecMode {
         System::Nes => ExecMode::Mos6502,
         System::Coleco => ExecMode::Z80,
         System::Pce => ExecMode::Unknown,
+        System::Md => ExecMode::Unknown,
         System::Ws => ExecMode::V30,
         System::Sms | System::Gg | System::Sg => ExecMode::Z80,
     }
@@ -443,6 +451,14 @@ mod tests {
             cpu_space: AddressSpaceId(0),
             source_name: Some("game.sym".into()),
         }
+    }
+
+    #[test]
+    fn rejects_md_without_guessing_banked_address_semantics() {
+        let data = b"[information]\nversion 3\n[labels]\n00:0200 Start";
+        let context = context(System::Md);
+        assert_eq!(WlaSymImporter.probe("game.sym", data, &context.target), 0);
+        assert!(WlaSymImporter.import(data, &context).is_err());
     }
 
     #[test]

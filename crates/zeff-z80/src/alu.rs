@@ -106,35 +106,41 @@ impl Cpu {
     }
 
     pub(super) fn set_inc_flags(&mut self, value: u8, result: u8) {
-        let carry = self.regs.f & Z80_FLAG_CARRY;
-        self.regs.f = carry
-            | sz53_flags(result)
-            | if value & 0x0F == 0x0F {
-                Z80_FLAG_HALF_CARRY
-            } else {
-                0
-            }
-            | if value == 0x7F {
-                Z80_FLAG_PARITY_OVERFLOW
-            } else {
-                0
-            };
+        self.regs.f = inc_flags(value, result, self.regs.f);
     }
 
     pub(super) fn set_dec_flags(&mut self, value: u8, result: u8) {
-        let carry = self.regs.f & Z80_FLAG_CARRY;
-        self.regs.f = carry
-            | sz53_flags(result)
-            | Z80_FLAG_SUBTRACT
-            | if value & 0x0F == 0 {
-                Z80_FLAG_HALF_CARRY
-            } else {
-                0
-            }
-            | if value == 0x80 {
-                Z80_FLAG_PARITY_OVERFLOW
-            } else {
-                0
-            };
+        self.regs.f = dec_flags(value, result, self.regs.f);
     }
+}
+
+pub(super) fn inc_flags(value: u8, result: u8, flags: u8) -> u8 {
+    (flags & Z80_FLAG_CARRY)
+        | sz53_flags(result)
+        | if value & 0x0f == 0x0f {
+            Z80_FLAG_HALF_CARRY
+        } else {
+            0
+        }
+        | if value == 0x7f {
+            Z80_FLAG_PARITY_OVERFLOW
+        } else {
+            0
+        }
+}
+
+pub(super) fn dec_flags(value: u8, result: u8, flags: u8) -> u8 {
+    (flags & Z80_FLAG_CARRY)
+        | sz53_flags(result)
+        | Z80_FLAG_SUBTRACT
+        | if value & 0x0f == 0 {
+            Z80_FLAG_HALF_CARRY
+        } else {
+            0
+        }
+        | if value == 0x80 {
+            Z80_FLAG_PARITY_OVERFLOW
+        } else {
+            0
+        }
 }

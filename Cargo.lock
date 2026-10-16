@@ -1232,6 +1232,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "core_detect"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
+
+[[package]]
 name = "coreaudio-rs"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1810,6 +1816,20 @@ checksum = "cd4ec073c9898516584d8c6cfdcee95b530b3d941cd5031ef4050aa36812308b"
 dependencies = [
  "bytemuck",
  "serde",
+]
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e985e0451871ad22fb8d2b6b076e2028a502a0d3950998c2c5c0a4f9b5d9679"
+dependencies = [
+ "cfg-if 1.0.4",
+ "core_detect",
+ "multiversion_no_op",
+ "rustversion",
+ "scopeguard",
+ "simdutf8",
 ]
 
 [[package]]
@@ -3302,6 +3322,12 @@ dependencies = [
  "num-traits",
  "pxfm",
 ]
+
+[[package]]
+name = "multiversion_no_op"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "munge"
@@ -7584,6 +7610,8 @@ dependencies = [
  "zeff-firmware",
  "zeff-gb-core",
  "zeff-gba-core",
+ "zeff-m68k",
+ "zeff-md-core",
  "zeff-nes-core",
  "zeff-netplay",
  "zeff-netplay-connect",
@@ -7681,11 +7709,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeff-m68k"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "zeff-emu-common",
+ "zeff-test-support",
+]
+
+[[package]]
+name = "zeff-m68k-verify"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "zeff-m68k",
+]
+
+[[package]]
 name = "zeff-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde_json",
+]
+
+[[package]]
+name = "zeff-md-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "encoding_rs",
+ "sha2",
+ "zeff-emu-common",
+ "zeff-m68k",
+ "zeff-z80",
 ]
 
 [[package]]

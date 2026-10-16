@@ -8,6 +8,7 @@ use crate::emu_backend::CoreCapabilities;
 use crate::input::HostButton;
 use crate::live_control::{LiveCommand, LiveInput, LiveReply, PendingButtonRelease};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, MemoryRegionView};
+#[cfg(test)]
 use zeff_emu_common::save_ram::SaveRamKind;
 #[cfg(test)]
 use zeff_emu_common::system::CoreFamily;
@@ -16,6 +17,8 @@ mod artifacts;
 mod core_features;
 mod graphics;
 mod json_helpers;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_register_tests;
 mod memory;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas;
@@ -699,27 +702,6 @@ fn memory_region_view_label(view: MemoryRegionView) -> &'static str {
         MemoryRegionView::Physical => "physical",
         MemoryRegionView::Aggregate => "aggregate",
         MemoryRegionView::Derived => "derived",
-    }
-}
-
-fn save_ram_kind_json(kind: SaveRamKind) -> Value {
-    match kind {
-        SaveRamKind::None => json!({
-            "kind": "none",
-            "size": 0,
-        }),
-        SaveRamKind::KnownVolatile { size } => json!({
-            "kind": "known_volatile",
-            "size": size,
-        }),
-        SaveRamKind::KnownBatteryBacked { size } => json!({
-            "kind": "known_battery_backed",
-            "size": size,
-        }),
-        SaveRamKind::MapperRamUnknown { size } => json!({
-            "kind": "mapper_ram_unknown",
-            "size": size,
-        }),
     }
 }
 

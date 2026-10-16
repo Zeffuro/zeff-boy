@@ -1,6 +1,8 @@
 use crate::emu_backend::{BackendRuntimeConfig, EmuBackend};
 use crate::ui;
 
+mod md_audio;
+
 use super::types::{publish_backend_framebuffer, publish_owned_framebuffer};
 use super::{
     EmuResponse, EmuThread, FrameInput, FrameResult, ReplayJoypadFrame, SharedFramebuffer,
@@ -15,6 +17,7 @@ use crate::link::transport::TcpLinkTransport;
 #[derive(Default)]
 struct PrimaryAdvanceResult {
     audio_semantic_frames: Vec<AudioSemanticFrame>,
+    audio_samples: Option<Vec<f32>>,
     advanced_frames: usize,
 }
 
@@ -22,7 +25,7 @@ impl EmuThread {
     #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn handle_step_frames(
         backend: &mut EmuBackend,
-        input: FrameInput,
+        mut input: FrameInput,
         cheats: &[crate::cheats::CheatPatch],
         uncapped_mode: bool,
         rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
@@ -43,7 +46,13 @@ impl EmuThread {
         let semantic_capture_active = input.audio.recording_capture.semantic;
         let mut advance = PrimaryAdvanceResult::default();
         let stepped_frames = input.frames > 0 && backend.is_running();
-        if stepped_frames {
+        if stepped_frames
+            && input.frames > 1
+            && !uncapped_mode
+            && matches!(backend, EmuBackend::Md(_))
+        {
+            Self::step_md_frames(backend, &mut input, cheats, runtime_fault, &mut advance);
+        } else if stepped_frames {
             advance.advanced_frames = Self::step_n_frames_with_runtime_fault(
                 backend,
                 input.frames,
@@ -174,7 +183,7 @@ impl EmuThread {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_step_frames_with_tcp_link(
         backend: &mut EmuBackend,
-        input: FrameInput,
+        mut input: FrameInput,
         cheats: &[crate::cheats::CheatPatch],
         mut tcp_link: Option<&mut RemoteLink<TcpLinkTransport>>,
         uncapped_mode: bool,
@@ -196,7 +205,14 @@ impl EmuThread {
         let semantic_capture_active = input.audio.recording_capture.semantic;
         let mut advance = PrimaryAdvanceResult::default();
         let stepped_frames = input.frames > 0 && backend.is_running();
-        if stepped_frames {
+        if stepped_frames
+            && input.frames > 1
+            && !uncapped_mode
+            && tcp_link.is_none()
+            && matches!(backend, EmuBackend::Md(_))
+        {
+            Self::step_md_frames(backend, &mut input, cheats, runtime_fault, &mut advance);
+        } else if stepped_frames {
             advance.advanced_frames = Self::step_n_frames_with_tcp_link_and_runtime_fault(
                 backend,
                 input.frames,
@@ -259,6 +275,7 @@ impl EmuThread {
     ) -> FrameResult {
         let PrimaryAdvanceResult {
             audio_semantic_frames,
+            audio_samples,
             advanced_frames,
         } = advance;
         if runtime_fault.can_step() {
@@ -300,6 +317,10 @@ impl EmuThread {
             advanced_frames,
             audio_playback_speed,
         );
+        if let Some(mut samples) = audio_samples {
+            samples.append(&mut result.audio_samples);
+            result.audio_samples = samples;
+        }
         result.staged_input_frames = staged_input_frames;
         result
     }
@@ -856,5 +877,7 @@ impl EmuThread {
     }
 }
 
+#[cfg(test)]
+mod md_audio_tests;
 #[cfg(test)]
 mod tests;

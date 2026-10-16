@@ -1,0 +1,380 @@
+{
+  "cohort": "MOVE.w",
+  "name": "1924 MOVE.w (A7), -(A2) 3517",
+  "initial": {
+    "d0": 1465541015,
+    "d1": 4264807041,
+    "d2": 2912571684,
+    "d3": 1298400955,
+    "d4": 4193304163,
+    "d5": 1425898854,
+    "d6": 3004399321,
+    "d7": 612738383,
+    "a0": 732277797,
+    "a1": 1951457428,
+    "a2": 3163246425,
+    "a3": 3690730315,
+    "a4": 449518453,
+    "a5": 2052325892,
+    "a6": 1500485633,
+    "usp": 11175184,
+    "ssp": 1865704,
+    "sr": 26,
+    "pc": 4033704,
+    "prefetch": [
+      13591,
+      56562
+    ],
+    "ram": [
+      [
+        12,
+        82
+      ],
+      [
+        13,
+        84
+      ],
+      [
+        14,
+        78
+      ],
+      [
+        15,
+        190
+      ],
+      [
+        4033700,
+        53
+      ],
+      [
+        4033701,
+        23
+      ],
+      [
+        4033702,
+        220
+      ],
+      [
+        4033703,
+        242
+      ],
+      [
+        4033704,
+        108
+      ],
+      [
+        4033705,
+        86
+      ],
+      [
+        5525182,
+        230
+      ],
+      [
+        5525183,
+        130
+      ],
+      [
+        5525184,
+        135
+      ],
+      [
+        5525185,
+        160
+      ],
+      [
+        11175184,
+        42
+      ],
+      [
+        11175185,
+        216
+      ]
+    ]
+  },
+  "final": {
+    "d0": 1465541015,
+    "d1": 4264807041,
+    "d2": 2912571684,
+    "d3": 1298400955,
+    "d4": 4193304163,
+    "d5": 1425898854,
+    "d6": 3004399321,
+    "d7": 612738383,
+    "a0": 732277797,
+    "a1": 1951457428,
+    "a2": 3163246423,
+    "a3": 3690730315,
+    "a4": 449518453,
+    "a5": 2052325892,
+    "a6": 1500485633,
+    "usp": 11175184,
+    "ssp": 1865690,
+    "sr": 8208,
+    "pc": 1381256898,
+    "prefetch": [
+      59010,
+      34720
+    ],
+    "ram": [
+      [
+        12,
+        82
+      ],
+      [
+        13,
+        84
+      ],
+      [
+        14,
+        78
+      ],
+      [
+        15,
+        190
+      ],
+      [
+        1865690,
+        220
+      ],
+      [
+        1865691,
+        225
+      ],
+      [
+        1865692,
+        188
+      ],
+      [
+        1865693,
+        139
+      ],
+      [
+        1865694,
+        79
+      ],
+      [
+        1865695,
+        87
+      ],
+      [
+        1865696,
+        220
+      ],
+      [
+        1865697,
+        242
+      ],
+      [
+        1865698,
+        0
+      ],
+      [
+        1865699,
+        16
+      ],
+      [
+        1865700,
+        0
+      ],
+      [
+        1865701,
+        61
+      ],
+      [
+        1865702,
+        140
+      ],
+      [
+        1865703,
+        168
+      ],
+      [
+        4033700,
+        53
+      ],
+      [
+        4033701,
+        23
+      ],
+      [
+        4033702,
+        220
+      ],
+      [
+        4033703,
+        242
+      ],
+      [
+        4033704,
+        108
+      ],
+      [
+        4033705,
+        86
+      ],
+      [
+        5525182,
+        230
+      ],
+      [
+        5525183,
+        130
+      ],
+      [
+        5525184,
+        135
+      ],
+      [
+        5525185,
+        160
+      ],
+      [
+        11175184,
+        42
+      ],
+      [
+        11175185,
+        216
+      ]
+    ]
+  },
+  "reference_total_cycles": 66,
+  "transactions": [
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 1,
+      "address_bus": 11175184,
+      "data_bus": 10968,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 2,
+      "address_bus": 4033704,
+      "data_bus": 27734,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write_address_error",
+      "duration_cycles": 4,
+      "function_code": 1,
+      "address_bus": 9129814,
+      "data_bus": 10968,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "idle",
+      "duration_cycles": 8
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1865702,
+      "data_bus": 36008,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1865698,
+      "data_bus": 16,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1865700,
+      "data_bus": 61,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1865696,
+      "data_bus": 56562,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1865694,
+      "data_bus": 20311,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1865690,
+      "data_bus": 56545,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "write",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 1865692,
+      "data_bus": 48267,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 12,
+      "data_bus": 21076,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 5,
+      "address_bus": 14,
+      "data_bus": 20158,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 6,
+      "address_bus": 5525182,
+      "data_bus": 59010,
+      "uds": 1,
+      "lds": 1
+    },
+    {
+      "kind": "idle",
+      "duration_cycles": 2
+    },
+    {
+      "kind": "read",
+      "duration_cycles": 4,
+      "function_code": 6,
+      "address_bus": 5525184,
+      "data_bus": 34720,
+      "uds": 1,
+      "lds": 1
+    }
+  ],
+  "normalization_exclusion": "address_fault"
+}

@@ -117,6 +117,7 @@ pub(crate) enum TileViewerPlatform {
     Nes,
     Pce,
     Sega8,
+    Md,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,0 +1,4 @@
+pub const FIRST_ODD_SHA256: &str =
+    "e1df3f52cd5d1080866e58ec7136479bf0f8589e7d8be1525002b418a29d8d33";
+pub const COMPLETION_SHA256: &str =
+    "e92f7c9150cc876fc85b2d8c715fabe872367ea0fe02571fe28b6d8bdddef24e";

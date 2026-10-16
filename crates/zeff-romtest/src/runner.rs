@@ -267,11 +267,16 @@ fn build_invocation(test: &TestCase, cli: &Cli) -> anyhow::Result<Option<Invocat
         zeff_args.push(input.clone());
     }
 
-    if let Some(model) = &test.model
-        && test.core == Core::Gb
-    {
-        zeff_args.push("--mode".to_string());
-        zeff_args.push(model.clone());
+    if let Some(model) = &test.model {
+        let flag = match test.core {
+            Core::Gb => Some("--mode"),
+            Core::Md => Some("--md-region"),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            zeff_args.push(flag.to_string());
+            zeff_args.push(model.clone());
+        }
     }
 
     match test.pass.kind {

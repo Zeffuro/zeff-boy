@@ -77,6 +77,7 @@ impl SymbolSession {
             Some(System::Nes) => super::ExecMode::Mos6502,
             Some(System::Coleco) => super::ExecMode::Z80,
             Some(System::Pce) => super::ExecMode::Unknown,
+            Some(System::Md) => super::ExecMode::Unknown,
             Some(System::Ws) => super::ExecMode::V30,
             Some(System::Sms | System::Gg | System::Sg) => super::ExecMode::Z80,
             None => super::ExecMode::Unknown,

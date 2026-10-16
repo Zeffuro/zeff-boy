@@ -20,6 +20,9 @@ pub(super) fn ensure_system_headless_options(
     system: &str,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
+    if system != "md" && (opts.md_region.is_some() || opts.md_controller.is_some()) {
+        anyhow::bail!("--md-region and --md-controller require Mega Drive media");
+    }
     if opts.expect_serial.is_some() {
         anyhow::bail!("--expect-serial is only supported for GB/GBC headless runs");
     }
@@ -61,6 +64,9 @@ pub(super) fn ensure_system_headless_options(
     if opts.pce_arcade_card_mode.is_some() && system != "pce" {
         anyhow::bail!("--pce-arcade-card is only supported for PC Engine headless runs");
     }
+    if opts.md_save_state_path.is_some() && system != "md" {
+        anyhow::bail!("--md-save-state-out is only supported for Mega Drive headless runs");
+    }
     if opts.pce_save_state_path.is_some() && system != "pce" {
         anyhow::bail!("--pce-save-state-out is only supported for PC Engine headless runs");
     }
@@ -71,8 +77,10 @@ pub(super) fn ensure_system_headless_options(
         anyhow::bail!("Coleco keypad input is only supported for ColecoVision headless runs");
     }
     if !opts.input_events_p2.is_empty()
-        && !(matches!(system, "nes" | "coleco" | "pce" | "sms" | "gg" | "sg")
-            || (system == "ws" && opts.ws_link_peer_path.is_some()))
+        && !(matches!(
+            system,
+            "nes" | "coleco" | "pce" | "sms" | "gg" | "sg" | "md"
+        ) || (system == "ws" && opts.ws_link_peer_path.is_some()))
     {
         anyhow::bail!(
             "--press-p2/--input-p2 is only supported for NES, ColecoVision, PC Engine, Sega 8-bit, and WonderSwan --ws-link-peer headless runs"
@@ -126,7 +134,7 @@ pub(super) fn ensure_system_headless_options(
     }
     if !matches!(
         system,
-        "gb" | "gba" | "nes" | "coleco" | "pce" | "ws" | "sms" | "gg" | "sg"
+        "gb" | "gba" | "nes" | "coleco" | "pce" | "ws" | "sms" | "gg" | "sg" | "md"
     ) && opts.audio_dump_path.is_some()
     {
         anyhow::bail!("--audio-dump requires a supported cartridge system");

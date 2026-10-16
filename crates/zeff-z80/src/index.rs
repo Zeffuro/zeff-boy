@@ -1,11 +1,28 @@
-use super::cb::rotate_shift_cb;
-use super::flags::szp_flags;
 use super::*;
 
 impl Cpu {
     pub(super) fn execute_index<B: Z80Bus>(&mut self, bus: &mut B, pc: u16, prefix: u8) -> u32 {
         let opcode = self.fetch_u8(bus);
         self.increment_refresh_register();
+        self.execute_index_terminal(bus, pc, prefix, opcode)
+    }
+
+    pub(super) fn execute_index_terminal<B: Z80Bus>(
+        &mut self,
+        bus: &mut B,
+        pc: u16,
+        prefix: u8,
+        opcode: u8,
+    ) -> u32 {
+        if let Some(load) = load::Load::decode(self, opcode, Some(prefix)) {
+            return load.execute(self, bus) + Z80_PREFIX_OVERHEAD;
+        }
+        if let Some(operation) = stack::Stack::decode(self, opcode, Some(prefix)) {
+            return operation.execute(self, bus) + Z80_PREFIX_OVERHEAD;
+        }
+        if let Some(operation) = indexed_memory::IndexedMemory::decode(self, opcode, prefix) {
+            return operation.execute(self, bus);
+        }
         let use_iy = prefix == Z80_PREFIX_FD;
 
         match opcode {
@@ -22,25 +39,10 @@ impl Cpu {
                 self.add_index(use_iy, value);
                 CYCLES_INDEX_ADD_RR
             }
-            0x21 => {
-                let value = self.fetch_u16(bus);
-                self.write_index(use_iy, value);
-                CYCLES_INDEX_LD_RR_NN
-            }
-            0x22 => {
-                let addr = self.fetch_u16(bus);
-                self.write_mem_u16(bus, addr, self.read_index(use_iy));
-                CYCLES_INDEX_LD_NN_RR
-            }
+
             0x23 => {
                 self.write_index(use_iy, self.read_index(use_iy).wrapping_add(1));
                 CYCLES_INDEX_INC_DEC_RR
-            }
-            0x2A => {
-                let addr = self.fetch_u16(bus);
-                let value = self.read_mem_u16(bus, addr);
-                self.write_index(use_iy, value);
-                CYCLES_INDEX_LD_RR_NN_INDIRECT
             }
             0x2B => {
                 self.write_index(use_iy, self.read_index(use_iy).wrapping_sub(1));
@@ -90,47 +92,9 @@ impl Cpu {
                 self.write_indexed_reg8(bus, use_iy, register, value);
                 CYCLES_INDEX_LD_R_N
             }
-            0x34 => {
-                let addr = self.fetch_indexed_addr(bus, use_iy);
-                let value = bus.cpu_read(addr);
-                let result = value.wrapping_add(1);
-                bus.cpu_write(addr, result);
-                self.set_inc_flags(value, result);
-                CYCLES_INDEX_INC_DEC_MEM
-            }
-            0x35 => {
-                let addr = self.fetch_indexed_addr(bus, use_iy);
-                let value = bus.cpu_read(addr);
-                let result = value.wrapping_sub(1);
-                bus.cpu_write(addr, result);
-                self.set_dec_flags(value, result);
-                CYCLES_INDEX_INC_DEC_MEM
-            }
-            0x36 => {
-                let addr = self.fetch_indexed_addr(bus, use_iy);
-                let value = self.fetch_u8(bus);
-                bus.cpu_write(addr, value);
-                CYCLES_INDEX_LD_MEM_N
-            }
-            Z80_PREFIX_CB => {
-                let displacement = self.fetch_u8(bus) as i8;
-                let cb_opcode = self.fetch_u8(bus);
-                self.execute_index_cb(bus, use_iy, displacement, cb_opcode);
-                CYCLES_INDEX_CB
-            }
-            0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                let register = (opcode >> 3) & 0x07;
-                let addr = self.fetch_indexed_addr(bus, use_iy);
-                let value = bus.cpu_read(addr);
-                self.write_reg8(bus, register, value);
-                CYCLES_INDEX_LD_R_MEM
-            }
-            0x70..=0x75 | 0x77 => {
-                let register = opcode & 0x07;
-                let value = self.read_reg8(bus, register);
-                let addr = self.fetch_indexed_addr(bus, use_iy);
-                bus.cpu_write(addr, value);
-                CYCLES_INDEX_LD_MEM_R
+            Z80_PREFIX_CB => indexed_cb::IndexedCb::new(self, prefix).execute(self, bus),
+            Z80_PREFIX_ED => {
+                self.execute_ed(bus, self.regs.pc.wrapping_sub(1)) + Z80_PREFIX_OVERHEAD
             }
             0x40..=0x7F if opcode != 0x76 => {
                 let dst = (opcode >> 3) & 0x07;
@@ -139,53 +103,16 @@ impl Cpu {
                 self.write_indexed_reg8(bus, use_iy, dst, value);
                 CYCLES_INDEX_LD_R_R
             }
-            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
-                let group = (opcode >> 3) & 0x07;
-                let addr = self.fetch_indexed_addr(bus, use_iy);
-                let value = bus.cpu_read(addr);
-                self.execute_alu_group(group, value);
-                CYCLES_INDEX_ALU_MEM
-            }
             0x80..=0xBF => {
                 let src = opcode & 0x07;
                 let value = self.read_indexed_reg8(bus, use_iy, src);
                 self.execute_alu_group((opcode >> 3) & 0x07, value);
                 CYCLES_INDEX_LD_R_R
             }
-            0xC0 | 0xC8 | 0xD0 | 0xD8 | 0xE0 | 0xE8 | 0xF0 | 0xF8 => {
-                let condition = (opcode >> 3) & 0x07;
-                if self.condition_is_true(condition) {
-                    self.regs.pc = self.pop_u16(bus);
-                    CYCLES_RET_CC + Z80_PREFIX_OVERHEAD
-                } else {
-                    CYCLES_RET_CC_NOT_TAKEN + Z80_PREFIX_OVERHEAD
-                }
-            }
-            0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => {
-                let vector = u16::from(opcode & 0x38);
-                self.push_u16(bus, self.regs.pc);
-                self.regs.pc = vector;
-                CYCLES_RST + Z80_PREFIX_OVERHEAD
-            }
             0xDB => {
                 let port = self.fetch_u8(bus);
                 self.regs.a = bus.io_read(port);
                 CYCLES_IN_A_N + Z80_PREFIX_OVERHEAD
-            }
-            0xE1 => {
-                let value = self.pop_u16(bus);
-                self.write_index(use_iy, value);
-                CYCLES_INDEX_POP_RR
-            }
-            0xE3 => {
-                let value = self.read_mem_u16(bus, self.regs.sp);
-                self.write_mem_u16(bus, self.regs.sp, self.read_index(use_iy));
-                self.write_index(use_iy, value);
-                CYCLES_INDEX_EX_SP_RR
-            }
-            0xE5 => {
-                self.push_u16(bus, self.read_index(use_iy));
-                CYCLES_INDEX_PUSH_RR
             }
             0xE9 => {
                 self.regs.pc = self.read_index(use_iy);
@@ -241,12 +168,6 @@ impl Cpu {
         }
     }
 
-    fn fetch_indexed_addr<B: Z80Bus>(&mut self, bus: &B, use_iy: bool) -> u16 {
-        let displacement = self.fetch_u8(bus) as i8;
-        self.read_index(use_iy)
-            .wrapping_add_signed(i16::from(displacement))
-    }
-
     fn add_index(&mut self, use_iy: bool, value: u16) {
         let index = self.read_index(use_iy);
         let result = index.wrapping_add(value);
@@ -260,48 +181,5 @@ impl Cpu {
             | undocumented
             | if half_carry { Z80_FLAG_HALF_CARRY } else { 0 }
             | if carry { Z80_FLAG_CARRY } else { 0 };
-    }
-
-    fn execute_index_cb<B: Z80Bus>(
-        &mut self,
-        bus: &mut B,
-        use_iy: bool,
-        displacement: i8,
-        opcode: u8,
-    ) {
-        let addr = self
-            .read_index(use_iy)
-            .wrapping_add_signed(i16::from(displacement));
-        let group = opcode >> 6;
-        let operation = (opcode >> 3) & 0x07;
-        let register = opcode & 0x07;
-        let value = bus.cpu_read(addr);
-
-        match group {
-            0 => {
-                let (result, carry) = rotate_shift_cb(operation, value, self.regs.f);
-                bus.cpu_write(addr, result);
-                if register != REGISTER_MEMORY_INDEX {
-                    self.write_reg8(bus, register, result);
-                }
-                self.regs.f = szp_flags(result) | if carry { Z80_FLAG_CARRY } else { 0 };
-            }
-            1 => self.set_bit_flags(operation, value),
-            2 => {
-                let result = value & !(1 << operation);
-                bus.cpu_write(addr, result);
-                if register != REGISTER_MEMORY_INDEX {
-                    self.write_reg8(bus, register, result);
-                }
-            }
-            3 => {
-                let result = value | (1 << operation);
-                bus.cpu_write(addr, result);
-                if register != REGISTER_MEMORY_INDEX {
-                    self.write_reg8(bus, register, result);
-                }
-            }
-            _ => unreachable!("CB group is always two bits"),
-        }
     }
 }
