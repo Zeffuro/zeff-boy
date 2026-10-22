@@ -71,6 +71,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=lobby
           cache-to: type=gha,mode=max,scope=lobby
+          no-cache-filters: certificates
+      - name: Check final image certificate trust
+        run: |
+          trap 'docker rm -f lobby-ca >/dev/null 2>&1 || true' EXIT
+          docker create --name lobby-ca --network none zeff-boy-lobby:ci
+          docker cp lobby-ca:/etc/ssl/certs/ca-certificates.crt "$RUNNER_TEMP/lobby-ca.pem"
+          python3 -I -S infra/lobby/verify_ca_bundle.py "$RUNNER_TEMP/lobby-ca.pem"
       - name: Check hardened container health
         run: |
           trap 'docker rm -f lobby-ci >/dev/null 2>&1 || true' EXIT
