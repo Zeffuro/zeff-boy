@@ -5,6 +5,8 @@ pub mod audio_trace;
 pub mod cheats;
 pub mod cpu;
 pub mod debug;
+#[cfg(feature = "host-clock")]
+pub mod host_clock;
 pub mod media;
 pub mod memory;
 pub mod replay;

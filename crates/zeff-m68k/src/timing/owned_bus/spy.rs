@@ -170,8 +170,8 @@ pub(super) fn seed(
 ) -> (PrefetchCpu, Spy, u32, u32) {
     let (mode, register) = shape;
     let mut cpu = cpu(sr);
-    for register in 0..8 {
-        cpu.registers.d[register] = 0x1234_0010 + register as u32 * 2;
+    for (register, value) in cpu.registers.d.iter_mut().enumerate() {
+        *value = 0x1234_0010 + register as u32 * 2;
     }
     for register in 0..7 {
         cpu.registers

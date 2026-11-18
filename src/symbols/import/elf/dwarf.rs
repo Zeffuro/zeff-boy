@@ -221,13 +221,12 @@ fn md_location(
     );
     let mut populated = false;
     for section in file.sections() {
-        let flags = match section.flags() {
-            object::SectionFlags::Elf { sh_flags } => sh_flags,
-            _ => 0,
+        let object::SectionFlags::Elf { sh_flags, .. } = section.flags() else {
+            continue;
         };
-        let required = u64::from(object::elf::SHF_ALLOC | object::elf::SHF_EXECINSTR);
-        if flags & required != required
-            || flags & u64::from(object::elf::SHF_COMPRESSED) != 0
+        let required = object::elf::SHF_ALLOC | object::elf::SHF_EXECINSTR;
+        if !sh_flags.contains(required)
+            || sh_flags.contains(object::elf::SHF_COMPRESSED)
             || section.kind() != object::SectionKind::Text
         {
             continue;

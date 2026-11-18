@@ -34,7 +34,9 @@ pub(crate) fn probe_rom_reader(
 }
 
 mod zip_directory;
+mod zip_names;
 pub(crate) use zip_directory::{preflight_bounded_zip_directory, validate_bounded_zip_directory};
+pub(crate) use zip_names::{decode_zip_member_name, enclosed_zip_member_path};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ArchiveRomEntry {
@@ -128,7 +130,7 @@ pub(crate) fn inspect_bounded_zip_members(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = decode_zip_member_name(&entry).into_owned();
         ensure!(name.len() <= 4096, "ZIP member name is too long");
         ensure!(
             names.insert(name.clone()),
@@ -141,10 +143,8 @@ pub(crate) fn inspect_bounded_zip_members(
         if !matches {
             continue;
         }
-        let relative_path = entry
-            .enclosed_name()
-            .context("ZIP member path is unsafe")?
-            .to_path_buf();
+        let relative_path =
+            enclosed_zip_member_path(&entry).context("ZIP member path is unsafe")?;
         ensure!(
             entry.size() <= member_limit,
             "ZIP member exceeds the {member_limit}-byte media limit"
@@ -213,7 +213,7 @@ fn extract_bounded_zip_member_inner(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = decode_zip_member_name(&entry).into_owned();
         ensure!(name.len() <= 4096, "ZIP member name is too long");
         ensure!(
             names.insert(name.clone()),
@@ -253,11 +253,8 @@ fn extract_bounded_zip_member_inner(
     let mut entry = archive
         .by_index(candidates[0])
         .context("failed to reopen selected ZIP member")?;
-    let member_name = entry.name().to_owned();
-    let relative_path = entry
-        .enclosed_name()
-        .context("ZIP member path is unsafe")?
-        .to_path_buf();
+    let member_name = decode_zip_member_name(&entry).into_owned();
+    let relative_path = enclosed_zip_member_path(&entry).context("ZIP member path is unsafe")?;
     let mut bytes = Vec::with_capacity(usize::try_from(entry.size())?);
     std::io::Read::by_ref(&mut entry)
         .take(member_limit + 1)

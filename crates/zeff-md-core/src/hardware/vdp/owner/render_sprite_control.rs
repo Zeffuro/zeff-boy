@@ -507,8 +507,8 @@ impl SpriteControl {
         }
         if p.data_master {
             *serial = external_serial;
-            for i in 0..2 {
-                self.serial_delay[i][1] = self.serial_delay[i][0];
+            for delay in &mut self.serial_delay {
+                delay[1] = delay[0];
             }
             self.serial_lead = [
                 p.horizontal_master && self.cells.serial_delay[1] != 0,

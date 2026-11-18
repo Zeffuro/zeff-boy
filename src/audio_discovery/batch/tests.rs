@@ -176,14 +176,17 @@ fn check_native_mini_batch(mut bytes: Vec<u8>, expected_songs: usize) -> Result<
             }
         }
     }
-    let unique_libraries = batch
+    let names = batch
         .file_names()
+        .collect::<zip::result::ZipResult<Vec<_>>>()?;
+    let unique_libraries = names
+        .iter()
         .filter(|name| name.ends_with(".gsflib"))
         .count();
     assert!(unique_libraries < libraries);
     assert_eq!(
-        batch
-            .file_names()
+        names
+            .iter()
             .filter(|name| name.ends_with(".minigsf"))
             .count(),
         expected_songs

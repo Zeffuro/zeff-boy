@@ -454,7 +454,7 @@ fn inspect_archive<R: Read + std::io::Seek>(
     let mut total_size = 0u64;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        let name = entry.name().to_owned();
+        let name = entry.name()?.into_owned();
         if entry.is_dir()
             || entry.is_symlink()
             || entry.enclosed_name().is_none()

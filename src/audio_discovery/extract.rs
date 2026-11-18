@@ -265,7 +265,7 @@ fn validate_archive(
 
     let mut selection = archive.by_index(0)?;
     ensure!(
-        selection.name() == SELECTION_ENTRY,
+        selection.name()? == SELECTION_ENTRY,
         "temporary selection ZIP has an unexpected metadata entry"
     );
     ensure!(
@@ -282,7 +282,7 @@ fn validate_archive(
 
     let mut data = archive.by_index(1)?;
     ensure!(
-        data.name() == DATA_ENTRY,
+        data.name()? == DATA_ENTRY,
         "temporary selection ZIP has an unexpected data entry"
     );
     ensure!(
@@ -379,8 +379,8 @@ mod tests {
         assert_eq!(first_bytes, std::fs::read(&second)?);
         let mut archive = zip::ZipArchive::new(Cursor::new(first_bytes))?;
         assert_eq!(archive.len(), 2);
-        assert_eq!(archive.by_index(0)?.name(), SELECTION_ENTRY);
-        assert_eq!(archive.by_index(1)?.name(), DATA_ENTRY);
+        assert_eq!(archive.by_index(0)?.name()?, SELECTION_ENTRY);
+        assert_eq!(archive.by_index(1)?.name()?, DATA_ENTRY);
         let selection: serde_json::Value = serde_json::from_reader(archive.by_index(0)?)?;
         let expected = &bytes[0x110..0x130];
         assert_eq!(selection["schema"], "zeff-audio-raw-selection/1");

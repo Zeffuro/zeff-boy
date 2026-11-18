@@ -157,8 +157,8 @@ fn all_channels(cgb: bool, double_speed: bool, render: bool) -> Apu {
     ] {
         apu.write(address, value);
     }
-    for offset in 0..16 {
-        apu.wave_ram[offset] = (offset as u8).wrapping_mul(0x31);
+    for (offset, byte) in apu.wave_ram.iter_mut().enumerate() {
+        *byte = (offset as u8).wrapping_mul(0x31);
     }
     apu.sample_generation_enabled = render;
     apu

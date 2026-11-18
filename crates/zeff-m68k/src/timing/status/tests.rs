@@ -29,8 +29,8 @@ pub(super) fn seed(
         cpu.registers
             .set_address_register(register, 0x2345_3008 + register as u32 * 16);
     }
-    for register in 0..8 {
-        cpu.registers.d[register] = 0x8765_0010 + register as u32 * 2;
+    for (register, value) in cpu.registers.d.iter_mut().enumerate() {
+        *value = 0x8765_0010 + register as u32 * 2;
     }
     let pc = cpu.registers.pc;
     let base = if mode == 7 {

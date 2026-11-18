@@ -29,8 +29,8 @@ impl M68kBus for OpcodeBus {
 
 fn witness(opcode: u16, source: u8, destination: u8, x: bool, z: bool, expected: &[u8]) -> bool {
     let mut cpu = Cpu::new();
-    for index in 0..8 {
-        cpu.registers.d[index] = 0xabcd_1200 + index as u32 * 0x100;
+    for (index, value) in cpu.registers.d.iter_mut().enumerate() {
+        *value = 0xabcd_1200 + index as u32 * 0x100;
     }
     cpu.registers.d[0] = 0xabcd_1200 | u32::from(source);
     cpu.registers.d[1] = 0xabcd_1300 | u32::from(destination);

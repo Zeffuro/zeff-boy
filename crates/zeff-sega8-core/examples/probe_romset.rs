@@ -458,7 +458,7 @@ fn probe_zip(path: &Path, config: &Config, report: &mut ProbeReport) {
     let mut rom_entries = (0..archive.len())
         .filter_map(|index| {
             let entry = archive.by_index(index).ok()?;
-            let name = entry.name().to_string();
+            let name = entry.name().ok()?.into_owned();
             let ext = normalized_extension(Path::new(&name))?;
             should_probe_extension(&ext, config).then_some((index, name))
         })

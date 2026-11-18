@@ -41,11 +41,11 @@ fn mapping() {
 }
 
 fn tagged(mut chip: Opn2, partial: bool) -> Opn2 {
-    for channel in 0..CHANNELS {
-        chip.channels[channel].set_frequency(0x101 + channel as u16 * 0x103, channel as u8);
+    for (channel, state) in chip.channels.iter_mut().enumerate() {
+        state.set_frequency(0x101 + channel as u16 * 0x103, channel as u8);
         for logical in 0..constants::OPERATORS {
             let tag = (channel * constants::OPERATORS + logical) as u16;
-            let pipeline = &mut chip.channels[channel].operator_mut(logical).pipeline;
+            let pipeline = &mut state.operator_mut(logical).pipeline;
             pipeline.desired = tag & 1 != 0;
             pipeline.csm = channel == 2 && logical & 1 != 0;
             pipeline.sampled = tag & 2 != 0 || pipeline.csm;

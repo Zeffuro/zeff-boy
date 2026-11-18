@@ -1,5 +1,5 @@
 use crate::emu_backend::{ActiveSystem, ROM_EXTENSIONS};
-use crate::rom_archive::ArchiveRomEntry;
+use crate::rom_archive::{ArchiveRomEntry, decode_zip_member_name, enclosed_zip_member_path};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
@@ -42,7 +42,7 @@ pub(crate) fn extract_rom_entry_path_from_zip(
         .find(|&i| {
             archive
                 .by_index(i)
-                .is_ok_and(|entry| entry.name() == entry_name)
+                .is_ok_and(|entry| decode_zip_member_name(&entry) == entry_name)
         })
         .with_context(|| format!("Archive entry '{entry_name}' no longer exists"))?;
     extract_rom_entry_by_index(&mut archive, zip_path, index)
@@ -75,7 +75,7 @@ pub(crate) fn extract_rom_from_zip_bytes(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = decode_zip_member_name(&entry).into_owned();
         anyhow::ensure!(name.len() <= 4096, "ZIP member name is too long");
         anyhow::ensure!(
             names.insert(name.clone()),
@@ -103,7 +103,7 @@ pub(crate) fn extract_rom_from_zip_bytes(
     let mut entry = archive.by_index(index)?;
     let virtual_root = PathBuf::from(source_name);
     let virtual_path =
-        virtual_root.join(entry.enclosed_name().context("ZIP member path is unsafe")?);
+        virtual_root.join(enclosed_zip_member_path(&entry).context("ZIP member path is unsafe")?);
     let mut bytes = Vec::with_capacity(usize::try_from(entry.size())?);
     std::io::Read::read_to_end(
         &mut std::io::Read::take(&mut entry, member_limit + 1),
@@ -124,7 +124,7 @@ fn extract_rom_entries<R: std::io::Read + std::io::Seek>(
     let all_names: Vec<String> = (0..archive.len())
         .filter_map(|i| {
             let entry = archive.by_index(i).ok()?;
-            Some(entry.name().to_string())
+            Some(decode_zip_member_name(&entry).into_owned())
         })
         .collect();
 
@@ -174,7 +174,7 @@ fn collect_rom_entries<R: std::io::Read + std::io::Seek>(
             if entry.is_dir() {
                 return None;
             }
-            let name = entry.name().to_string();
+            let name = decode_zip_member_name(&entry).into_owned();
             let system =
                 crate::rom_archive::probe_rom_reader(Path::new(&name), &mut entry).ok()??;
             Some(ArchiveRomEntry {
@@ -195,12 +195,20 @@ fn extract_rom_entry_by_index<R: std::io::Read + std::io::Seek>(
     let mut entry = archive
         .by_index(entry_index)
         .with_context(|| format!("Failed to read entry #{entry_index} from ZIP"))?;
-    let name = entry.name().to_string();
+    let name = decode_zip_member_name(&entry).into_owned();
     let system = crate::rom_archive::probe_rom_reader(Path::new(&name), &mut entry)?;
     if entry.is_dir() || system.is_none() {
         anyhow::bail!("Archive entry '{name}' is not a supported ROM");
     }
-    anyhow::ensure!(entry.enclosed_name().is_some(), "ZIP member path is unsafe");
+    let relative_path = Path::new(&name);
+    anyhow::ensure!(
+        entry.enclosed_name().is_some()
+            && !matches!(
+                relative_path.components().next(),
+                Some(std::path::Component::Prefix(_) | std::path::Component::RootDir)
+            ),
+        "ZIP member path is unsafe"
+    );
     let md_limit = zeff_md_core::constants::MAX_BANKED_CARTRIDGE_SIZE as u64;
     if system == Some(ActiveSystem::MegaDrive) {
         anyhow::ensure!(
@@ -225,7 +233,7 @@ fn extract_rom_entry_by_index<R: std::io::Read + std::io::Seek>(
         std::io::Read::read_to_end(&mut entry, &mut data)
             .with_context(|| format!("Failed to decompress '{name}'"))?;
     }
-    let virtual_path = base_path.join(name);
+    let virtual_path = base_path.join(relative_path);
     Ok((virtual_path, data))
 }
 
@@ -327,6 +335,22 @@ mod tests {
                 .to_string()
                 .contains("64 MiB")
         );
+    }
+
+    #[test]
+    fn legacy_zip_member_keeps_its_cp437_name_when_bytes_form_utf8() {
+        let mut bytes = zip_with_file("Café.nes", &[1]);
+        let central = bytes
+            .windows(4)
+            .position(|header| header == b"PK\x01\x02")
+            .unwrap();
+        bytes[7] &= !0x08;
+        bytes[central + 9] &= !0x08;
+
+        let (path, data) = extract_rom_from_zip_bytes(&bytes, "archive.zip").unwrap();
+
+        assert_eq!(path, PathBuf::from("archive.zip").join("Caf├⌐.nes"));
+        assert_eq!(data, [1]);
     }
 
     #[test]

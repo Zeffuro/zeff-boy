@@ -81,7 +81,8 @@ pub(crate) fn build(
     let bare = object.add_section(Vec::new(), b".bare".to_vec(), object::SectionKind::Text);
     object.append_section_data(bare, &[0x4e, 0x71], 2);
     object.section_mut(bare).flags = object::SectionFlags::Elf {
-        sh_flags: u64::from(object::elf::SHF_EXECINSTR),
+        sh_type: object::elf::SHT_PROGBITS,
+        sh_flags: object::elf::SHF_EXECINSTR,
     };
     if symbols {
         for (name, value, size, kind, section) in [
@@ -114,7 +115,7 @@ pub(crate) fn build(
         })
         .unwrap();
     let mut bytes = object.write().unwrap();
-    bytes[16..18].copy_from_slice(&object::elf::ET_EXEC.to_be_bytes());
+    bytes[16..18].copy_from_slice(&object::elf::ET_EXEC.0.to_be_bytes());
     let file = object::File::parse(bytes.as_slice()).unwrap();
     let indices = [".text", ".data", ".bss", ".top", ".bare"]
         .map(|name| file.section_by_name(name).unwrap().index().0);

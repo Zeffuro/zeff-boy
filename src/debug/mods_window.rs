@@ -62,8 +62,8 @@ pub(crate) fn draw_mods_content(ui: &mut egui::Ui, state: &mut ModState) {
             let mut swap: Option<(usize, usize)> = None;
             let entry_count = state.entries.len();
 
-            for i in 0..entry_count {
-                let is_xdelta = std::path::Path::new(&state.entries[i].filename)
+            for (i, entry) in state.entries.iter_mut().enumerate() {
+                let is_xdelta = std::path::Path::new(&entry.filename)
                     .extension()
                     .and_then(|extension| extension.to_str())
                     .is_some_and(|extension| {
@@ -72,10 +72,10 @@ pub(crate) fn draw_mods_content(ui: &mut egui::Ui, state: &mut ModState) {
                             || extension.eq_ignore_ascii_case("vcdiff")
                     });
                 ui.horizontal(|ui| {
-                    if ui.checkbox(&mut state.entries[i].enabled, "").changed() {
+                    if ui.checkbox(&mut entry.enabled, "").changed() {
                         changed = true;
                     }
-                    ui.label(&state.entries[i].filename);
+                    ui.label(&entry.filename);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let can_down = i + 1 < entry_count;
                         let can_up = i > 0;
@@ -94,7 +94,7 @@ pub(crate) fn draw_mods_content(ui: &mut egui::Ui, state: &mut ModState) {
                     });
                 });
                 if is_xdelta {
-                    let mut target = state.entries[i].target.clone().unwrap_or_default();
+                    let mut target = entry.target.clone().unwrap_or_default();
                     ui.horizontal(|ui| {
                         ui.add_space(24.0);
                         ui.label("Target:");
@@ -103,7 +103,7 @@ pub(crate) fn draw_mods_content(ui: &mut egui::Ui, state: &mut ModState) {
                                 .hint_text("auto from Track NN in filename"),
                         );
                         if response.changed() {
-                            state.entries[i].target =
+                            entry.target =
                                 (!target.trim().is_empty()).then(|| target.trim().to_owned());
                             changed = true;
                         }

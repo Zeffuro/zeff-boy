@@ -152,10 +152,9 @@ impl Bus {
 
             #[cfg(feature = "profiling")]
             if due_sources != 0 {
-                for source in 0..6 {
+                for (source, expiries) in self.profiling.deadline_expiries.iter_mut().enumerate() {
                     if due_sources & (1 << source) != 0 {
-                        self.profiling.deadline_expiries[source] =
-                            self.profiling.deadline_expiries[source].wrapping_add(1);
+                        *expiries = expiries.wrapping_add(1);
                     }
                 }
             }

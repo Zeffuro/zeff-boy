@@ -110,10 +110,7 @@ fn should_trace_sega8_op(
     {
         return false;
     }
-    if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&fetched.opcode) {
-        return false;
-    }
-    true
+    opts.trace_opcode_filter.is_empty() || opts.trace_opcode_filter.contains(&fetched.opcode)
 }
 
 fn format_sega8_op_line(

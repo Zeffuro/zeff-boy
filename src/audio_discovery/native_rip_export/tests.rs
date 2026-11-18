@@ -79,7 +79,7 @@ fn nsfe_single_and_bulk_exports_match_and_preserve_source_identity() -> Result<(
     let mut actual = Vec::new();
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        if entry.name().ends_with(".nsfe") {
+        if entry.name()?.ends_with(".nsfe") {
             let mut bytes = Vec::new();
             entry.read_to_end(&mut bytes)?;
             actual.push(bytes);

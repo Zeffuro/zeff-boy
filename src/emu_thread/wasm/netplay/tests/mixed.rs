@@ -162,12 +162,11 @@ async fn case(timing: u8, delay_frames: u64, native_host: bool) {
     let mut reference = backend(&bytes);
     let lease = reference::ReferenceLease::begin(&mut reference);
     let mut receipts = Vec::new();
-    for frame in 0..observed.frames.len() {
+    for (frame, actual) in observed.frames.iter().enumerate() {
         let ports = fixture::ports(frame as u64, delay_frames);
         let pcm = lease.advance(&mut reference, ports);
         let checkpoint =
             identity::checkpoint(&reference, frame as u64 + 1, &pcm, id.config).unwrap();
-        let actual = &observed.frames[frame];
         assert_eq!(actual.0, checkpoint);
         assert_eq!(actual.1, ports);
         assert!(

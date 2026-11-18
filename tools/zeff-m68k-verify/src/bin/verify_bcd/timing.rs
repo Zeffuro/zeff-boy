@@ -96,8 +96,8 @@ pub(super) fn witness(
     let nbcd = opcode == 0x4800;
     let opcode = if nbcd { 0x4810 } else { opcode | 8 };
     let mut registers = Registers::new();
-    for i in 0..8 {
-        registers.d[i] = 0xabcd_1200 + i as u32 * 0x100;
+    for (i, value) in registers.d.iter_mut().enumerate() {
+        *value = 0xabcd_1200 + i as u32 * 0x100;
     }
     registers.pc = 0x2000;
     registers.a[0] = if nbcd { 0x3000 } else { 0x3001 };

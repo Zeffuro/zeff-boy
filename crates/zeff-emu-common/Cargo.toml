@@ -9,12 +9,17 @@ repository = "https://github.com/zeffuro/zeff-boy"
 
 [dependencies]
 anyhow = "1.0.104"
+jiff = { version = "0.2.35", optional = true }
 log = "0.4.33"
 lz4_flex = "0.14.0"
 sha2 = "0.11.0"
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 
+[target.'cfg(windows)'.dependencies]
+time = { version = "0.3.55", default-features = false, features = ["local-offset"], optional = true }
+
 [dev-dependencies]
 
 [features]
+host-clock = ["dep:jiff", "dep:time"]
 serde = ["dep:serde"]

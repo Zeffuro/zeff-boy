@@ -7,8 +7,8 @@ fn movem_store_all_masks_preserves_registers_and_ascending_selection() {
     for mask in 0..=u16::MAX {
         let (mut cpu, mut bus) = program(&[0x4890, mask]);
         cpu.registers.a[0] = 0x2000;
-        for index in 0..8 {
-            cpu.registers.d[index] = 0x1234_8000 + index as u32;
+        for (index, value) in cpu.registers.d.iter_mut().enumerate() {
+            *value = 0x1234_8000 + index as u32;
         }
         for index in 1..8 {
             cpu.registers

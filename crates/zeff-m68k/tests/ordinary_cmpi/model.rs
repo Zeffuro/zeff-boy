@@ -212,9 +212,9 @@ impl Spec {
             cursor = cursor.wrapping_add(2);
             bus.word(cursor, self.immediate as u16);
         }
-        for n in 0..self.extensions() {
+        for &extension in &self.extension[..self.extensions()] {
             cursor = cursor.wrapping_add(2);
-            bus.word(cursor, self.extension[n]);
+            bus.word(cursor, extension);
         }
         cursor = cursor.wrapping_add(2);
         bus.word(cursor, 0x4e71);

@@ -407,20 +407,21 @@ impl App {
     }
 
     fn debug_workspace_visible(&self) -> bool {
-        if self.active_debug_presentation != DebugPresentation::GameAndDebugger {
-            return true;
-        }
-
+        let docked = self.active_debug_presentation != DebugPresentation::GameAndDebugger;
         #[cfg(not(target_arch = "wasm32"))]
-        return self.settings.ui.debugger_window_open
-            && self
-                .gfx
-                .as_ref()
-                .and_then(Graphics::debugger_window)
-                .is_some_and(|window| window.is_minimized() != Some(true));
-
+        {
+            docked
+                || (self.settings.ui.debugger_window_open
+                    && self
+                        .gfx
+                        .as_ref()
+                        .and_then(Graphics::debugger_window)
+                        .is_some_and(|window| window.is_minimized() != Some(true)))
+        }
         #[cfg(target_arch = "wasm32")]
-        false
+        {
+            docked
+        }
     }
 
     fn speed_mode(&self) -> SpeedMode {

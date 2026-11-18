@@ -16,7 +16,7 @@ zeff-z80 = { path = "../zeff-z80" }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
 [[bench]]
 name = "sega8_benchmarks"

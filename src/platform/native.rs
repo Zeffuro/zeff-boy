@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use chrono::{Datelike, Timelike};
+use zeff_emu_common::host_clock;
 
 pub(crate) struct FileDialog {
     inner: rfd::FileDialog,
@@ -56,16 +56,16 @@ pub(crate) fn screenshots_dir() -> PathBuf {
 }
 
 pub(crate) fn timestamp_string() -> String {
-    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
+    host_clock::now().strftime("%Y-%m-%d_%H-%M-%S").to_string()
 }
 
 pub(crate) fn local_gba_rtc_date_time() -> zeff_gba_core::hardware::cartridge::RtcDateTime {
-    let now = chrono::Local::now();
+    let now = host_clock::now();
     zeff_gba_core::hardware::cartridge::RtcDateTime::new(
         now.year().clamp(2000, 2099) as u16,
         now.month() as u8,
         now.day() as u8,
-        now.weekday().num_days_from_sunday() as u8,
+        now.weekday().to_sunday_zero_offset() as u8,
         [now.hour() as u8, now.minute() as u8, now.second() as u8],
     )
     .expect("host-local date/time should be valid")
@@ -73,8 +73,8 @@ pub(crate) fn local_gba_rtc_date_time() -> zeff_gba_core::hardware::cartridge::R
 
 pub(crate) fn format_file_modified_time(meta: &std::fs::Metadata) -> Option<String> {
     let modified = meta.modified().ok()?;
-    let dt: chrono::DateTime<chrono::Local> = modified.into();
-    Some(dt.format("%b %d %H:%M").to_string())
+    let dt = host_clock::at(modified)?;
+    Some(dt.strftime("%b %d %H:%M").to_string())
 }
 
 pub(crate) fn open_url(url: &str) {

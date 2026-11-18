@@ -1,10 +1,10 @@
 use super::*;
-use object::{ObjectKind, SectionFlags, SectionKind, SymbolSection};
+use object::{ObjectKind, SectionFlags, SectionKind, SymbolSection, elf};
 
-fn flags<'data>(section: &impl ObjectSection<'data>) -> u64 {
+fn flags<'data>(section: &impl ObjectSection<'data>) -> elf::SectionFlags {
     match section.flags() {
-        SectionFlags::Elf { sh_flags } => sh_flags,
-        _ => 0,
+        SectionFlags::Elf { sh_flags, .. } => sh_flags,
+        _ => elf::SectionFlags(0),
     }
 }
 
@@ -21,11 +21,11 @@ pub(super) fn import(file: &object::File<'_>, ctx: &ImportContext) -> anyhow::Re
     );
     for section in file.sections() {
         let attributes = flags(&section);
-        if attributes & u64::from(object::elf::SHF_ALLOC) == 0 {
+        if !attributes.contains(elf::SHF_ALLOC) {
             continue;
         }
         anyhow::ensure!(
-            attributes & u64::from(object::elf::SHF_TLS) == 0,
+            !attributes.contains(elf::SHF_TLS),
             "Mega Drive ELF TLS sections are not qualified"
         );
         crate::symbols::md::validate_cpu_range(section.address(), Some(section.size()))?;
@@ -52,11 +52,14 @@ pub(super) fn import(file: &object::File<'_>, ctx: &ImportContext) -> anyhow::Re
             "invalid Mega Drive ELF symbol name"
         );
         let symbol_kind = match symbol.flags() {
-            object::SymbolFlags::Elf { st_info, .. } => match st_info & 15 {
-                object::elf::STT_FUNC => ObjectSymbolKind::Text,
-                object::elf::STT_OBJECT => ObjectSymbolKind::Data,
-                object::elf::STT_NOTYPE => ObjectSymbolKind::Label,
-                kind => anyhow::bail!("unsupported Mega Drive ELF symbol type {kind} for {name}"),
+            object::SymbolFlags::Elf { st_info, .. } => match st_info.st_type() {
+                elf::STT_FUNC => ObjectSymbolKind::Text,
+                elf::STT_OBJECT => ObjectSymbolKind::Data,
+                elf::STT_NOTYPE => ObjectSymbolKind::Label,
+                kind => anyhow::bail!(
+                    "unsupported Mega Drive ELF symbol type {} for {name}",
+                    kind.0
+                ),
             },
             _ => anyhow::bail!("missing Mega Drive ELF symbol flags for {name}"),
         };
@@ -67,7 +70,7 @@ pub(super) fn import(file: &object::File<'_>, ctx: &ImportContext) -> anyhow::Re
             SymbolSection::Section(index) => {
                 let section = file.section_by_index(index)?;
                 let attributes = flags(&section);
-                if attributes & u64::from(object::elf::SHF_ALLOC) == 0 {
+                if !attributes.contains(elf::SHF_ALLOC) {
                     continue;
                 }
                 crate::symbols::md::validate_cpu_range(address, size)?;
@@ -84,7 +87,7 @@ pub(super) fn import(file: &object::File<'_>, ctx: &ImportContext) -> anyhow::Re
                         },
                     "Mega Drive ELF symbol {name} is outside its section"
                 );
-                let executable = attributes & u64::from(object::elf::SHF_EXECINSTR) != 0
+                let executable = attributes.contains(elf::SHF_EXECINSTR)
                     && section.kind() != SectionKind::UninitializedData;
                 let kind = match symbol_kind {
                     ObjectSymbolKind::Text => {
@@ -256,7 +259,7 @@ pub(crate) fn fixture() -> Vec<u8> {
         });
     }
     let mut bytes = object.write().unwrap();
-    bytes[16..18].copy_from_slice(&object::elf::ET_EXEC.to_be_bytes());
+    bytes[16..18].copy_from_slice(&elf::ET_EXEC.0.to_be_bytes());
     let sections = object::File::parse(bytes.as_slice()).unwrap();
     let indices =
         [".text", ".data", ".bss"].map(|name| sections.section_by_name(name).unwrap().index().0);
@@ -393,7 +396,7 @@ mod tests {
             foreign(object::Architecture::M68k, object::Endianness::Little),
         ];
         let mut wide = foreign(object::Architecture::X86_64, object::Endianness::Big);
-        wide[18..20].copy_from_slice(&object::elf::EM_68K.to_be_bytes());
+        wide[18..20].copy_from_slice(&elf::EM_68K.0.to_be_bytes());
         variants.push(wide);
         for value in [0x01000000_u32, 0xffff0400, 0x401, 0x500] {
             let mut bytes = good.clone();
@@ -428,14 +431,15 @@ mod tests {
             bytes[section + field..section + field + 4].copy_from_slice(&value.to_be_bytes());
             variants.push(bytes);
         }
-        for kind in [object::elf::ET_REL, object::elf::ET_DYN] {
+        for kind in [elf::ET_REL, elf::ET_DYN] {
             let mut bytes = good.clone();
-            bytes[16..18].copy_from_slice(&kind.to_be_bytes());
+            bytes[16..18].copy_from_slice(&kind.0.to_be_bytes());
             variants.push(bytes);
         }
         let mut tls = good.clone();
         let data = section_field(&tls, ".data");
-        tls[data + 8..data + 12].copy_from_slice(&(3 | object::elf::SHF_TLS).to_be_bytes());
+        let flags = (elf::SHF_WRITE | elf::SHF_ALLOC | elf::SHF_TLS).0 as u32;
+        tls[data + 8..data + 12].copy_from_slice(&flags.to_be_bytes());
         variants.push(tls);
         let mut end = good.clone();
         let entry = symbol_field(&end, "Entry");

@@ -64,8 +64,8 @@ pub(super) fn movem_seed(
         cpu.registers
             .set_address_register(index, 0x2345_3000 + index as u32 * 0x100);
     }
-    for index in 0..8 {
-        cpu.registers.d[index] = 0x8765_8010 + index as u32 * 0x102;
+    for (index, value) in cpu.registers.d.iter_mut().enumerate() {
+        *value = 0x8765_8010 + index as u32 * 0x102;
     }
     let pc = cpu.registers.pc;
     let base = if mode == 7 {
@@ -126,8 +126,8 @@ pub(super) fn movep_seed(
             .set_address_register(register, 0x2345_4000 + register as u32 * 0x100 + parity);
     }
     cpu.registers.set_address_register(7, 0x3000 + parity);
-    for register in 0..8 {
-        cpu.registers.d[register] = 0xa1b2_c3d4 ^ (register as u32 * 0x0306_0912);
+    for (register, value) in cpu.registers.d.iter_mut().enumerate() {
+        *value = 0xa1b2_c3d4 ^ (register as u32 * 0x0306_0912);
     }
     let pc = cpu.registers.pc;
     let address = cpu

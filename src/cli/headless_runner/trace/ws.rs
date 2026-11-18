@@ -21,11 +21,7 @@ pub(in crate::cli::headless_runner) fn should_trace_ws_op(
         return false;
     }
 
-    if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&op) {
-        return false;
-    }
-
-    true
+    opts.trace_opcode_filter.is_empty() || opts.trace_opcode_filter.contains(&op)
 }
 
 pub(in crate::cli::headless_runner) fn should_trace_ws_bus_event(

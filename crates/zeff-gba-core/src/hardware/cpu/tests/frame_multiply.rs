@@ -66,8 +66,8 @@ fn frame_multiply_preserves_aliasing_values_waitcnt_and_fetch_regions() {
                 for set_flags in [false, true] {
                     let raw = multiply(14, accumulate, set_flags, [rd, rn, rs, rm]);
                     let mut phase = fixture(0x0300_0200, &[raw]);
-                    for register in 0..15 {
-                        phase.cpu.regs[register] = seed
+                    for (register, value) in phase.cpu.regs[..15].iter_mut().enumerate() {
+                        *value = seed
                             .rotate_left(register as u32)
                             .wrapping_add((register as u32).wrapping_mul(0x1020_4081));
                     }

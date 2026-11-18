@@ -18,11 +18,11 @@ pub(super) fn seed(
     let mut machine = super::super::super::machine(&program);
     machine.concurrent_sound = concurrent;
     machine.bus.ram.fill(0x5a);
-    for register in 0..8 {
-        machine.cpu.registers.d[register] = 0x1020_3040 + register as u32 * 0x0101_0101;
+    for (register, value) in machine.cpu.registers.d.iter_mut().enumerate() {
+        *value = 0x1020_3040 + register as u32 * 0x0101_0101;
     }
-    for register in 0..7 {
-        machine.cpu.registers.a[register] = 0xffff_3000 + register as u32 * 0x100;
+    for (register, value) in machine.cpu.registers.a[..7].iter_mut().enumerate() {
+        *value = 0xffff_3000 + register as u32 * 0x100;
     }
     machine.cpu.registers.usp = 0x1111_8888;
     machine.cpu.registers.ssp = 0x2222_9998;

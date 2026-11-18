@@ -161,9 +161,12 @@ impl CaptureArtifact {
         let mut names = BTreeSet::new();
         for index in 0..zip.len() {
             let entry = zip.by_index(index)?;
+            let name = entry.name()?;
             ensure!(
-                matches!(entry.name(), "manifest.json" | "trace.json" | "capture.vgm")
-                    && names.insert(entry.name().to_owned()),
+                matches!(
+                    name.as_ref(),
+                    "manifest.json" | "trace.json" | "capture.vgm"
+                ) && names.insert(name.into_owned()),
                 "unexpected or duplicate capture entry"
             );
         }

@@ -30,8 +30,8 @@ pub(super) fn control_steps(bus: &mut MemoryBus) {
     registers.usp = 0x6000;
     registers.ssp = 0x5000;
     registers.d[6] = 4;
-    for index in 0..7 {
-        registers.a[index] = 0x3008 + index as u32 * 8;
+    for (index, value) in registers.a[..7].iter_mut().enumerate() {
+        *value = 0x3008 + index as u32 * 8;
     }
     let before = ALLOCATIONS.load(Ordering::Relaxed);
     let mut executed = 0;

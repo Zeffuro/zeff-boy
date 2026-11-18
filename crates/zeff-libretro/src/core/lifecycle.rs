@@ -1,5 +1,5 @@
 use super::{ActiveCore, CoreState, LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ};
-use chrono::{Datelike, Local, Timelike};
+use zeff_emu_common::host_clock;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use zeff_gba_core::hardware::cartridge::RtcDateTime;
 use zeff_sega8_core::emulator::Sega8LoadConfig;
@@ -124,12 +124,12 @@ impl CoreState {
 }
 
 fn local_rtc_date_time() -> Option<RtcDateTime> {
-    let now = Local::now();
+    let now = host_clock::now();
     RtcDateTime::new(
         u16::try_from(now.year()).ok()?,
         now.month() as u8,
         now.day() as u8,
-        now.weekday().num_days_from_sunday() as u8,
+        now.weekday().to_sunday_zero_offset() as u8,
         [now.hour() as u8, now.minute() as u8, now.second() as u8],
     )
     .ok()

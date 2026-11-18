@@ -99,8 +99,8 @@ fn md_dwarf_rejects_noninstruction_spans_atomically_but_keeps_valid_symbols() {
         true,
     );
     let bss = fixture::section_field(&bytes, ".bss");
-    bytes[bss + 8..bss + 12]
-        .copy_from_slice(&(object::elf::SHF_ALLOC | object::elf::SHF_EXECINSTR).to_be_bytes());
+    let flags = (object::elf::SHF_ALLOC | object::elf::SHF_EXECINSTR).0 as u32;
+    bytes[bss + 8..bss + 12].copy_from_slice(&flags.to_be_bytes());
     let module = import_symbols("bss.elf", &bytes, &context()).unwrap();
     assert!(module.source_lines.is_empty());
     assert_eq!(module.diagnostics.len(), 1);

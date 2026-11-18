@@ -94,7 +94,7 @@ fn activate_windows(target: &Path, staged: &Path) -> anyhow::Result<()> {
     let script_path = std::env::temp_dir().join(format!(
         "zeff-boy-update-{}-{}.ps1",
         std::process::id(),
-        chrono::Utc::now().timestamp_millis()
+        jiff::Timestamp::now().as_millisecond()
     ));
     let script = format!(
         "$ErrorActionPreference = 'Stop'\n\

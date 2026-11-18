@@ -647,9 +647,9 @@ fn low_lfo_trigger_activation_resets_the_audible_source_index() {
     for revision in [PsgRevision::HuC6280, PsgRevision::HuC6280A] {
         let mut psg = HuC6280Psg::with_revision(revision);
         psg.main_amplitude = 0xFF;
-        for channel in 0..=1 {
-            psg.channels[channel].control = 0x9F;
-            psg.channels[channel].balance = 0xFF;
+        for channel in &mut psg.channels[..2] {
+            channel.control = 0x9F;
+            channel.balance = 0xFF;
         }
         psg.channels[1].wave_index = 6;
         psg.channels[1].waveform[6] = 31;

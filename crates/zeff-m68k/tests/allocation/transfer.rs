@@ -31,8 +31,8 @@ pub(super) fn transfer_steps(bus: &mut MemoryBus) {
     registers.pc = 0x2000;
     registers.usp = 0x6000;
     registers.ssp = 0x5000;
-    for index in 0..7 {
-        registers.a[index] = 0x3008 + index as u32 * 8;
+    for (index, value) in registers.a[..7].iter_mut().enumerate() {
+        *value = 0x3008 + index as u32 * 8;
     }
     registers.d.fill(0x89ab_cdef);
     registers.d[7] = 4;
