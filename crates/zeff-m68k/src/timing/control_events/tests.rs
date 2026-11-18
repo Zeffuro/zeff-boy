@@ -2,7 +2,7 @@ use super::*;
 use crate::SUPERVISOR;
 use crate::bus::BUS_ADDRESS_MASK;
 use crate::timing::test_bus::{Bus, cpu};
-use crate::timing::{Pipeline, TimedOutcome, TimingFault};
+use crate::timing::{InstructionByteOrigin, InstructionInput, Pipeline, TimedOutcome, TimingFault};
 use zeff_emu_common::save_state::{StateReader, StateWriter};
 
 mod failures;
@@ -54,6 +54,30 @@ fn encoded(cpu: &PrefetchCpu) -> Vec<u8> {
     let mut writer = StateWriter::new();
     cpu.write_boundary_state(&mut writer).unwrap();
     writer.into_bytes()
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn cpu_debug_keeps_active_metadata_and_all_fields_in_pretty_output() {
+    let (mut cpu, _) = seed(0x4e71, 0x4e71, SUPERVISOR);
+    let pretty = format!("{cpu:#?}");
+    for field in ["origin:", "decision:", "control_events:"] {
+        assert!(pretty.contains(field));
+    }
+
+    cpu.pipeline = Some(Pipeline::sampled(
+        SOURCE,
+        [InstructionInput {
+            value: 0x4e71,
+            origin: [InstructionByteOrigin::NON_STORAGE; 2],
+        }; 2],
+    ));
+    assert!(cpu.interrupts.restore_observation(true, 2));
+    cpu.set_control_flow_recording(true);
+    let compact = format!("{cpu:?}");
+    assert!(compact.contains("origin: [[InstructionByteOrigin(1)"));
+    assert!(compact.contains("decision: Observed { pending: true, level: 2 }"));
+    assert!(compact.contains("control_events: Mailbox { enabled: true"));
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]

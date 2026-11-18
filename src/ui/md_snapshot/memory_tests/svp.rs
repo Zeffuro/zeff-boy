@@ -68,7 +68,7 @@ pub(super) fn contract() {
         }
     }
     assert_eq!(subject.registers().d[4], 0xabcd);
-    assert!(!subject.supports_rom_cheats());
+    assert!(subject.supports_rom_cheats());
     assert!(
         subject
             .synthetic_svp()

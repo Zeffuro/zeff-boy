@@ -1,5 +1,6 @@
 mod checkpoint;
 pub use checkpoint::InstructionOriginCheckpoint;
+use core::fmt;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(transparent)]
@@ -37,11 +38,25 @@ impl InstructionInput {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub(super) struct Pipeline {
     pub(super) address: u32,
     pub(super) words: [u16; 2],
     origin: [[InstructionByteOrigin; 2]; 2],
+}
+
+impl fmt::Debug for Pipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let full = f.alternate();
+        let mut pipeline = f.debug_struct("Pipeline");
+        pipeline
+            .field("address", &self.address)
+            .field("words", &self.words);
+        if full || self.origin != [[InstructionByteOrigin::UNKNOWN; 2]; 2] {
+            pipeline.field("origin", &self.origin);
+        }
+        pipeline.finish()
+    }
 }
 
 impl PartialEq for Pipeline {

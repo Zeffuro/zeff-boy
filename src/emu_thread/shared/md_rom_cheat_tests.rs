@@ -2,10 +2,10 @@ use super::md_pc_breakpoint_tests::{compare, deliver, fixture_with_timing, machi
 use super::*;
 use crate::cheats::{collect_enabled_patches, export_cht_file, parse_cht_file_for_system};
 use crate::debug::DebugUiActions;
-use crate::emu_backend::ActiveSystem;
+use crate::emu_backend::{ActiveSystem, MdBackend};
 use crate::emu_thread::EmuCommand;
 use zeff_emu_common::debug::WatchType;
-use zeff_md_core::TimingModel;
+use zeff_md_core::{Emulator, LoadConfig, Region, TimingModel};
 
 mod save_mapper;
 mod sf001;
@@ -130,25 +130,29 @@ fn md_rom_game_genie_and_watchpoints_reach_normal_worker_and_reject_updates_atom
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn md_rom_cheats_reject_ineligible_mappers_without_publishing_mixed_ram_updates() {
-    let mut rom = vec![0; 0x900000];
+    let mut rom = vec![0; 0x1000];
     rom[..8].copy_from_slice(&[0, 0xff, 0xff, 0xfc, 0, 0, 2, 0]);
-    rom[0x100..0x110].copy_from_slice(b"SEGA SSF        ");
+    rom[0x100..0x110].copy_from_slice(b"SEGA MEGA DRIVE ");
     rom[0x1f0] = b'U';
     rom[0x200..0x204].copy_from_slice(&[0x60, 0xfe, 0x4e, 0x71]);
-    let path = std::path::Path::new("rom-cheat-ineligible.md");
-    let mut backend = crate::emu_backend::load_backend_from_rom_source(
-        ActiveSystem::Md,
-        path,
-        path,
-        Some(rom),
-        crate::emu_backend::BackendLoadConfig {
-            md_load_save_ram: false,
-            md_host_persistence: false,
-            ..Default::default()
+    let rom_hash = zeff_firmware::sha256_bytes(&rom);
+    // Caller-granted SVP reads use the original image directly.
+    let core = Emulator::new_synthetic_svp(
+        rom,
+        LoadConfig {
+            region: Region::NtscUs,
+            concurrent_sound: true,
         },
+        vec![0; 1024],
     )
-    .unwrap()
-    .backend;
+    .unwrap();
+    let mut backend = EmuBackend::Md(Box::new(MdBackend::new(
+        core,
+        "rom-cheat-ineligible.md".into(),
+        "rom-cheat-ineligible.md".into(),
+        rom_hash,
+        false,
+    )));
     let caps = backend.capabilities();
     assert!(!caps.cheat_features.supports_rom_patches);
     assert!(caps.cheat_features.supports_libretro_database);

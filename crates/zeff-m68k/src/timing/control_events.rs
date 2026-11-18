@@ -91,6 +91,10 @@ impl PartialEq for Mailbox {
 impl Eq for Mailbox {}
 
 impl Mailbox {
+    pub(super) fn has_diagnostics(&self) -> bool {
+        self.enabled || self.pending != ControlFlowBatch::default()
+    }
+
     fn push(&mut self, event: ControlFlowEvent) {
         if self.enabled {
             if let Some(slot) = self.pending.events.iter_mut().find(|slot| slot.is_none()) {

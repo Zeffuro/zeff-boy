@@ -3,6 +3,7 @@ use crate::bus::{
 };
 use crate::constants::{TRANSFER_CLOCKS, VECTOR_TRACE};
 use crate::{Registers, TRACE};
+use core::fmt;
 
 mod binary;
 mod bit;
@@ -211,7 +212,7 @@ pub struct TimedStep {
     pub exception: Option<u8>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct PrefetchCpu {
     pub registers: Registers,
     clock: CpuClocks,
@@ -224,6 +225,27 @@ pub struct PrefetchCpu {
     physical_inspection: physical::PhysicalInspection,
     imported_boundary: Option<physical::ImportedGroup0Boundary>,
     control_events: control_events::Mailbox,
+}
+
+impl fmt::Debug for PrefetchCpu {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let full = f.alternate();
+        let mut cpu = f.debug_struct("PrefetchCpu");
+        cpu.field("registers", &self.registers)
+            .field("clock", &self.clock)
+            .field("pipeline", &self.pipeline)
+            .field("frozen", &self.frozen)
+            .field("stopped", &self.stopped)
+            .field("interrupts", &self.interrupts)
+            .field("pending_trace", &self.pending_trace)
+            .field("physical_state", &self.physical_state)
+            .field("physical_inspection", &self.physical_inspection)
+            .field("imported_boundary", &self.imported_boundary);
+        if full || self.control_events.has_diagnostics() {
+            cpu.field("control_events", &self.control_events);
+        }
+        cpu.finish()
+    }
 }
 
 impl PrefetchCpu {

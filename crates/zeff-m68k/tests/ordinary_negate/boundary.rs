@@ -57,12 +57,26 @@ pub(super) fn section21() -> (u32, u32) {
                 let mut bus = device::Device::new(11);
                 bus.put(r.pc, opcode);
                 bus.put(r.pc + 2, 0x8000);
-                let c = cpu.clone();
-                let b = bus.clone();
-                let result = cpu.step_instruction(&mut bus);
-                let good = result == Err(TimingFault::UnsupportedInstruction { pc: r.pc, opcode })
-                    && cpu == c
-                    && bus == b;
+                let good = if size < 3 {
+                    model::handler(&mut bus, 4);
+                    let expected = model::predict(
+                        r,
+                        [opcode, 0x8000],
+                        &bus,
+                        &model::entry(r, 4, false),
+                        Some(4),
+                        false,
+                    );
+                    cpu.step_instruction(&mut bus) == expected.result
+                        && model::matches(&mut cpu, &bus, &expected, 0, false)
+                } else {
+                    let before = cpu.clone();
+                    let initial_bus = bus.clone();
+                    cpu.step_instruction(&mut bus)
+                        == Err(TimingFault::UnsupportedInstruction { pc: r.pc, opcode })
+                        && cpu == before
+                        && bus == initial_bus
+                };
                 report(&mut count, &mut bad, good, opcode, u32::from(supervisor));
             }
         }

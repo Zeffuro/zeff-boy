@@ -21,11 +21,25 @@ enum BoundaryDecision {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct InterruptState {
     level: u8,
     level7_edge: bool,
     decision: BoundaryDecision,
+}
+
+impl fmt::Debug for InterruptState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let full = f.alternate();
+        let mut interrupts = f.debug_struct("InterruptState");
+        interrupts
+            .field("level", &self.level)
+            .field("level7_edge", &self.level7_edge);
+        if full || self.decision != BoundaryDecision::LegacyBoundary {
+            interrupts.field("decision", &self.decision);
+        }
+        interrupts.finish()
+    }
 }
 
 impl InterruptState {
