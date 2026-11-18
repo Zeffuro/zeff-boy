@@ -123,6 +123,8 @@ jobs:
     name: Test (${{ matrix.name }})
     needs: clippy
     runs-on: ${{ matrix.os }}
+    env:
+      ZEFF_MUTE_AUDIO: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -165,7 +167,9 @@ jobs:
           prefix-key: v4-test-${{ matrix.name }}
 
       - name: Run tests
-        run: ${{ matrix.wrapper }} cargo nextest run --workspace ${{ matrix.args }}
+        env:
+          ZEFF_CONFIG_DIR: ${{ runner.temp }}/zeff-boy-test-config
+        run: ${{ matrix.wrapper }} cargo nextest run --workspace --no-fail-fast ${{ matrix.args }}
 
       - name: Profile structural gate
         if: matrix.name == 'Linux (no default features)'
