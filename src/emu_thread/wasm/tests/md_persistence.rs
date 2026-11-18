@@ -43,14 +43,17 @@ fn save(backend: &EmuBackend) -> Vec<u8> {
     let EmuBackend::Md(backend) = backend else {
         panic!("MD backend expected");
     };
-    backend.emu.dump_save_ram().unwrap()
+    backend.core().dump_save_ram().unwrap()
 }
 
 fn import(backend: &mut EmuBackend, bytes: &[u8]) {
     let EmuBackend::Md(md) = backend else {
         unreachable!();
     };
-    md.emu.load_save_ram(bytes).unwrap();
+    md.test_normal_core_mut()
+        .unwrap()
+        .load_save_ram(bytes)
+        .unwrap();
 }
 
 fn pattern(size: usize, salt: u8) -> Vec<u8> {
@@ -274,3 +277,5 @@ async fn wasm_md_browser_transaction_abort_preserves_committed_save_and_retry() 
         clear().await;
     }
 }
+
+mod timed_ports;

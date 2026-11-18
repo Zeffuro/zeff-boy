@@ -1,10 +1,10 @@
-use std::{
-    io::{Read, Write},
-    path::Path,
-    sync::atomic::AtomicBool,
-};
+use std::{io::Read, path::Path, sync::atomic::AtomicBool};
 
-use anyhow::{Context, Result, ensure};
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
+use anyhow::{Result, ensure};
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::Write;
 use zeff_audio_discovery::{ScanStatus, scan};
 use zeff_emu_common::system::System;
 
@@ -29,16 +29,27 @@ fn main() -> Result<()> {
         "requires one supported hUGE catalog selection"
     );
     let (artifact, proof) = huge_gbs_validation::validate(&bytes, &report.huge_songs[0], &cancel)?;
+    publish_new_gbs(path, &artifact.bytes)?;
+    println!("{}", serde_json::to_string_pretty(&proof)?);
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn publish_new_gbs(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(&artifact.bytes)?;
+    temporary.write_all(bytes)?;
     temporary.flush()?;
     temporary
         .persist_noclobber(path)
         .context("cannot publish new GBS")?;
-    println!("{}", serde_json::to_string_pretty(&proof)?);
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn publish_new_gbs(_path: &Path, _bytes: &[u8]) -> Result<()> {
+    anyhow::bail!("GBS file publication requires a native filesystem")
 }

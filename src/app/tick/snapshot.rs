@@ -45,6 +45,8 @@ impl App {
         };
 
         SnapshotRequest {
+            debug_target: self.debug_windows.debug_target,
+            debug_revision: self.debug_windows.debug_revision,
             want_debug_info: (reqs.needs_debug_info && want_viewer_update) || remote_wants_debug,
             want_perf_info: (reqs.needs_perf_info && want_viewer_update)
                 || self.settings.ui.show_fps
@@ -62,7 +64,7 @@ impl App {
             show_rom_viewer: (reqs.needs_rom_page && want_viewer_update)
                 || console_rom_start.is_some(),
             show_instruction_trace: reqs.needs_trace && want_viewer_update,
-            trace_after_sequence: self.debug_windows.trace.last_sequence,
+            trace_cursor: self.debug_windows.trace.cursor(),
             rom_view_start: console_rom_start.unwrap_or(self.debug_windows.rom_viewer.view_start),
             last_disasm_pc: self.debug_windows.last_disasm_pc,
             last_disasm_mapping: self.debug_windows.last_disasm_mapping,

@@ -8,15 +8,6 @@ pub(super) enum Fetch {
     Interrupt,
 }
 
-impl Fetch {
-    pub(super) fn read<B: Z80Bus>(self, cpu: &mut Cpu, bus: &mut B) -> u8 {
-        match self {
-            Self::Memory => cpu.fetch_u8(bus),
-            Self::Interrupt => bus.read_interrupt_instruction(cpu.regs.pc),
-        }
-    }
-}
-
 impl Cpu {
     pub(super) fn write_io<B: Z80Bus>(
         &mut self,
@@ -42,10 +33,15 @@ impl Cpu {
         u32::from(self.last_m1_fetch_count) * CYCLES_M1
     }
 
+    pub(super) fn apply_relative_jump(&mut self, displacement: i8) {
+        self.regs.pc = self.regs.pc.wrapping_add_signed(i16::from(displacement));
+        self.set_memptr(self.regs.pc);
+    }
+
     pub(super) fn conditional_relative_jump<B: Z80Bus>(&mut self, bus: &B, condition: u8) -> u32 {
         let displacement = self.fetch_u8(bus) as i8;
         if self.condition_is_true(condition) {
-            self.regs.pc = self.regs.pc.wrapping_add_signed(i16::from(displacement));
+            self.apply_relative_jump(displacement);
             CYCLES_JR
         } else {
             CYCLES_JR_NOT_TAKEN
@@ -149,13 +145,17 @@ impl Cpu {
     }
 
     pub(super) fn fetch_u8<B: Z80Bus>(&mut self, bus: &B) -> u8 {
-        let value = bus.cpu_read(self.regs.pc);
+        let value = bus.cpu_read_instruction(self.regs.pc);
+        self.accept_fetched_byte(value);
+        value
+    }
+
+    pub(super) fn accept_fetched_byte(&mut self, value: u8) {
         self.regs.pc = self.regs.pc.wrapping_add(1);
         if usize::from(self.instruction_byte_count) < self.instruction_bytes.len() {
             self.instruction_bytes[usize::from(self.instruction_byte_count)] = value;
             self.instruction_byte_count += 1;
         }
-        value
     }
 
     pub(super) fn increment_refresh_register(&mut self) {

@@ -13,19 +13,29 @@ impl PrefetchCpu {
         if opcode & 0xff00 == 0x6100 {
             let word = opcode as u8 == 0;
             let displacement = if word {
+                bus.instruction_input(pc.wrapping_add(2), pipeline.input(1));
                 i32::from(pipeline.words[1] as i16)
             } else {
                 i32::from(opcode as u8 as i8)
             };
             let target = pc.wrapping_add(2).wrapping_add_signed(displacement);
             let return_pc = pc.wrapping_add(if word { 4 } else { 2 });
+            let bank = ControlStackBank::active(&self.registers);
+            let sp = self.registers.stack_pointer();
             self.idle(bus, 2)?;
             self.push_stack(bus, return_pc)?;
             self.control_refill(bus, target)?;
+            self.record_control_entry(
+                ControlFlowEntryKind::Bsr,
+                pc,
+                return_pc,
+                self.control_stack(bank, sp, sp.wrapping_sub(4)),
+            );
             return Ok(true);
         }
         let condition = crate::alu::condition(self.registers.status_register(), (opcode >> 8) & 15);
         if opcode & 0xf0f8 == 0x50c8 {
+            bus.instruction_input(pc.wrapping_add(2), pipeline.input(1));
             let register = usize::from(opcode & 7);
             let target = pc
                 .wrapping_add(2)
@@ -47,10 +57,7 @@ impl PrefetchCpu {
                     (self.registers.d[register] & 0xffff_0000) | u32::from(counter);
                 let second = self.fetch(bus, address.wrapping_add(2))?;
                 self.registers.pc = address;
-                self.pipeline = Some(Pipeline {
-                    address,
-                    words: [first, second],
-                });
+                self.pipeline = Some(Pipeline::sampled(address, [first, second]));
             }
             return Ok(true);
         }
@@ -74,19 +81,13 @@ impl PrefetchCpu {
                 self.idle(bus, 2)?;
             }
             self.registers.pc = stream.cursor;
-            self.pipeline = Some(Pipeline {
-                address: stream.cursor,
-                words,
-            });
+            self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         } else {
             let (_, address) = self.read_operand(bus, &mut stream, (Size::Byte, mode, register))?;
             let words = stream.finish(self, bus)?;
             self.write_data(bus, address, true, value)?;
             self.registers.pc = stream.cursor;
-            self.pipeline = Some(Pipeline {
-                address: stream.cursor,
-                words,
-            });
+            self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         }
         Ok(true)
     }
@@ -133,10 +134,7 @@ impl PrefetchCpu {
         let first = self.fetch(bus, address)?;
         let second = self.fetch(bus, address.wrapping_add(2))?;
         self.registers.pc = address;
-        self.pipeline = Some(Pipeline {
-            address,
-            words: [first, second],
-        });
+        self.pipeline = Some(Pipeline::sampled(address, [first, second]));
         Ok(())
     }
 }

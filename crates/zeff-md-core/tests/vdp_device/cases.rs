@@ -221,7 +221,8 @@ pub fn mode_and_clock_atomicity() {
             let mut candidate = initial.clone();
             let result = candidate.queue_register(index, value, Region::NtscUs);
             if value & mask == expected
-                || (index == SIZE_REGISTER && matches!(value & mask, 6 | 0x81 | 0x87))
+                || (index == SIZE_REGISTER
+                    && matches!(value & mask, 1 | 2 | 6 | 0x81 | 0x83 | 0x87))
             {
                 let write = result.unwrap();
                 assert_eq!(
@@ -318,7 +319,7 @@ pub fn mode_and_clock_atomicity() {
             VdpTimingError::UnknownRegister(MODE_REGISTER)
         )))
     );
-    for (index, value) in [(MODE_REGISTER, MODE5 | DISPLAY | 8), (SIZE_REGISTER, 2)] {
+    for (index, value) in [(MODE_REGISTER, MODE5 | DISPLAY | 8), (SIZE_REGISTER, 4)] {
         let (mut state, mut registers) = known(EPOCH, 0, 0);
         drain(&mut state, &mut registers, EPOCH + 1);
         registers.queue_register(index, value).unwrap();

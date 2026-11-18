@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::app::App;
 use crate::debug::{ConsoleGraphicsData, PceVdcGraphicsData};
 
-use super::json_helpers::{buffer_summary_json, gb_ppu_json};
+use super::json_helpers::{buffer_summary_json, gb_ppu_json, optional_buffer_summary_json};
 
 impl App {
     pub(super) fn live_graphics_json(&mut self) -> Value {
@@ -30,7 +30,7 @@ impl App {
                 "palette_colors": md.palette.len(),
                 "buffers": {
                     "vram": buffer_summary_json(&md.vram),
-                    "cram": buffer_summary_json(&md.cram),
+                    "cram": optional_buffer_summary_json(&md.cram),
                     "vsram": buffer_summary_json(&md.vsram),
                 },
             }),

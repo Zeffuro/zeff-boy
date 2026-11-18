@@ -70,7 +70,7 @@ pub fn unused_sound_memory_and_main_lanes() {
 }
 
 pub fn unsupported_devices_remain_faults() {
-    for address in [0x4004u16, 0x5fff, 0x7f00, 0x7fff] {
+    for address in [0x7f00u16, 0x7f01, 0x7ffe, 0x7fff] {
         for write in [false, true] {
             let [low, high] = address.to_le_bytes();
             let mut machine = stopped(&[if write { 0x32 } else { 0x3a }, low, high], &[]);

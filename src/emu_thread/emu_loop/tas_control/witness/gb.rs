@@ -48,6 +48,7 @@ fn observe(
     let is_cgb = profile == TasExecutionProfile::DirectGbCartridgeCgb;
     TasLoadedProfileObservation {
         profile,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref() == Some(ActiveSystem::GameBoy.code())
             && metadata.core_family.as_deref() == Some(expected_core_family.as_str()),

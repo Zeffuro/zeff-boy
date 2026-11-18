@@ -8,6 +8,7 @@ CORES = {
     "GBC": "zeff_gb_core",
     "GBA": "zeff_gba_core",
     "NES": "zeff_nes_core",
+    "MD": "zeff_md_core",
     "PCE": "zeff_pce_core",
     "SMS": "zeff_sega8_core",
     "GG": "zeff_sega8_core",
@@ -181,6 +182,13 @@ def digest(path):
         for block in iter(lambda: f.read(1048576), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def verify_desktop_audio(control, optimized, fixture_id):
+    if not control.is_file() or not control.stat().st_size:
+        raise RuntimeError(f"desktop audio output missing: {fixture_id}")
+    if not optimized.is_file() or digest(control) != digest(optimized):
+        raise RuntimeError(f"desktop audio mismatch: {fixture_id}")
 
 
 def fingerprint(root):
@@ -702,9 +710,13 @@ def main(argv=None):
                     left_summary.get("continuation_match") == "true"
                     and right_summary.get("continuation_match") == "true"
                 )
+                if f["system"] == "MD" and not strict:
+                    raise RuntimeError(f"MD state continuation mismatch: {f['id']}")
             else:
                 control_png = out / f"verify-control-{i:02d}.png"
                 optimized_png = out / f"verify-optimized-{i:02d}.png"
+                control_pcm = out / f"verify-control-{i:02d}.f32"
+                optimized_pcm = out / f"verify-optimized-{i:02d}.f32"
                 common = [
                     "--headless",
                     "--max-frames",
@@ -713,13 +725,15 @@ def main(argv=None):
                     str(f["path"]),
                 ]
                 control_output = execute(
-                    [str(control), *common, "--screenshot", str(control_png)],
+                    [str(control), *common, "--screenshot", str(control_png),
+                     *(["--audio-dump", str(control_pcm)] if f["system"] == "MD" else [])],
                     root,
                     env,
                     logs / f"verify-control-{i}.log",
                 )
                 optimized_output = execute(
-                    [str(optimized), *common, "--screenshot", str(optimized_png)],
+                    [str(optimized), *common, "--screenshot", str(optimized_png),
+                     *(["--audio-dump", str(optimized_pcm)] if f["system"] == "MD" else [])],
                     root,
                     env,
                     logs / f"verify-optimized-{i}.log",
@@ -732,6 +746,8 @@ def main(argv=None):
                     optimized_png
                 ):
                     raise RuntimeError(f"desktop screenshot mismatch: {f['id']}")
+                if f["system"] == "MD":
+                    verify_desktop_audio(control_pcm, optimized_pcm, f["id"])
             verified.append(
                 {
                     "id": f["id"],
@@ -741,7 +757,8 @@ def main(argv=None):
                     "evidence": (
                         "full harness domains"
                         if a.artifact == "libretro"
-                        else "encoded PNG equality"
+                        else ("encoded PNG and PCM equality" if f["system"] == "MD"
+                              else "encoded PNG equality")
                     ),
                 }
             )

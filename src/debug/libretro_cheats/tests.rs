@@ -103,3 +103,84 @@ fn urlencoded_handles_spaces() {
         "Nintendo%20-%20Game%20Boy"
     );
 }
+
+#[test]
+fn md_database_platform_directory_extensions_index_and_cache_are_isolated() {
+    let platform = LibretroPlatform::Md;
+    assert_eq!(platform as u8, 9);
+    for (index, peer) in [
+        LibretroPlatform::Gb,
+        LibretroPlatform::Gbc,
+        LibretroPlatform::Nes,
+        LibretroPlatform::Gba,
+        LibretroPlatform::MasterSystem,
+        LibretroPlatform::GameGear,
+        LibretroPlatform::Pce,
+        LibretroPlatform::PceCd,
+        LibretroPlatform::SuperGrafx,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(peer as usize, index);
+    }
+    assert_eq!(platform.label(), "Mega Drive / Genesis");
+    assert_eq!(platform.cache_suffix(), "md");
+    assert_eq!(platform.rom_extensions(), &[".md", ".gen", ".bin", ".smd"]);
+    assert_eq!(platform.cheat_extensions(), &[".cht"]);
+    assert_eq!(
+        browse_url(platform),
+        "https://github.com/libretro/libretro-database/tree/master/cht/Sega%20-%20Mega%20Drive%20-%20Genesis"
+    );
+    assert_eq!(
+        parse_dir_entry_sha(
+            r#"[{"name":"Sega - Mega Drive - Genesis","sha":"md-tree"}]"#,
+            platform.platform_dir()
+        )
+        .unwrap(),
+        "md-tree"
+    );
+    let names = parse_tree_blob_names(
+        r#"{"tree":[{"path":"Synthetic.cht"},{"path":"Legacy.txt"}]}"#,
+        platform,
+    );
+    assert_eq!(names, ["Synthetic.cht"]);
+    let base = std::env::temp_dir().join(format!(
+        "zeff-md-db-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(base.join("libretro-cht/md")).unwrap();
+    let peer = base.join("libretro-cht/Synthetic.cht");
+    std::fs::write(&peer, "peer cache").unwrap();
+    let md = download_cache_path("Synthetic.cht", platform, &base);
+    assert_eq!(md, base.join("libretro-cht/md/Synthetic.cht"));
+    assert!(!md.exists());
+    assert_eq!(
+        download_cache_path("Synthetic.cht", LibretroPlatform::Gb, &base),
+        peer
+    );
+    assert_eq!(
+        download_cache_path("nested/Synthetic.cht", platform, &base),
+        base.join("libretro-cht/md/nested_Synthetic.cht")
+    );
+    std::fs::write(&md, "md cache").unwrap();
+    assert_eq!(
+        download_cht_content("Synthetic.cht", platform, &base).unwrap(),
+        "md cache"
+    );
+    assert_eq!(
+        download_cht_content("Synthetic.cht", LibretroPlatform::Gb, &base).unwrap(),
+        "peer cache"
+    );
+    std::fs::write(base.join("libretro_md_index_v2.txt"), "Synthetic.cht").unwrap();
+    assert_eq!(
+        fetch_cheat_list(platform, &base).unwrap(),
+        ["Synthetic.cht"]
+    );
+    assert_eq!(std::fs::read_to_string(peer).unwrap(), "peer cache");
+    std::fs::remove_dir_all(base).unwrap();
+}

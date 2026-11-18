@@ -32,6 +32,7 @@ fn pending_store() -> Emulator {
         &mut machine.bus.sound,
         &mut machine.bus.ram,
         &mut machine.bus.audio,
+        &mut machine.bus.cartridge,
     );
     let pending = PendingSound::prepare(
         &machine.sound_cpu,
@@ -47,11 +48,11 @@ fn pending_store() -> Emulator {
 
 fn write(machine: &mut Emulator, access: BusAccess, value: u16) -> Result<(), BusError> {
     let clock = machine.bus.cpu_clock;
-    let result = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    let result = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .write_cycle(access, value, clock);
     assert_eq!(result.wait_clocks, 0);
     result.result
@@ -59,22 +60,22 @@ fn write(machine: &mut Emulator, access: BusAccess, value: u16) -> Result<(), Bu
 
 fn read(machine: &mut Emulator, access: BusAccess) -> Result<u16, BusError> {
     let clock = machine.bus.cpu_clock;
-    let result = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    let result = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .read_cycle(access, clock);
     assert_eq!(result.wait_clocks, 0);
     result.result
 }
 
 fn advance(machine: &mut Emulator, ticks: u64) {
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(ticks)
     .unwrap();
 }

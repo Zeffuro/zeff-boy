@@ -7,7 +7,8 @@ pub fn tick(value: u64) -> MasterTicks {
     MasterTicks::new(value)
 }
 pub fn accepted(index: u8, value: u8) -> bool {
-    (index != 1 || value & 4 != 0) && (index != 12 || matches!(value & 0x81, 0 | 0x81))
+    (index != 1 || value & 4 != 0)
+        && (index != 12 || matches!(value & 0x81, 0 | 0x81) || value & 0x87 == 1)
 }
 pub fn bases(bank: &VdpRegisterPipeline) -> [Option<u16>; 5] {
     [
@@ -66,7 +67,7 @@ pub fn published_bank_tracks_payloads() {
             }
         }
     }
-    assert_eq!((allowed, rejected), (5888, 256));
+    assert_eq!((allowed, rejected), (5904, 240));
 }
 
 pub fn table_addresses_follow_published_bits() {

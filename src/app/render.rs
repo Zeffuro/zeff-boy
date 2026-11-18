@@ -74,8 +74,9 @@ impl App {
         let supports_replay = self.core_supports_replay();
         let supports_audio = self.core_supports_audio();
         let supports_rewind = self.core_supports_rewind();
-        let supports_debugger = self.core_supports_debugger();
-        let supports_execution_controls = self.core_supports_execution_controls();
+        let supports_symbol_loading = self.core_supports_symbol_loading();
+        let supports_execution_controls = self.core_supports_execution_controls()
+            && self.debug_windows.debug_target == crate::debug::DebugTarget::Primary;
         #[cfg(not(target_arch = "wasm32"))]
         let package_load = self.pending_rom_preparation.as_ref().map(|pending| {
             let completed_bytes = pending.progress.completed_bytes();
@@ -169,7 +170,18 @@ impl App {
         let mut focus_debugger_window = false;
 
         match gfx.render(graphics::RenderContext {
-            data: debug_data_refs(ui_frame_data, &self.symbols),
+            data: debug_data_refs(
+                ui_frame_data,
+                if self.debug_windows.debug_target == crate::debug::DebugTarget::Sound {
+                    &self.sound_symbols
+                } else {
+                    &self.symbols
+                },
+                self.debug_windows.debug_target,
+                self.debug_windows.debug_revision,
+                &self.symbols,
+                &self.sound_symbols,
+            ),
             active_system: Some(self.active_system),
             media_slot_snapshot: self.media_slot_snapshot.as_ref(),
             media_event_change_allowed,
@@ -196,7 +208,7 @@ impl App {
             supports_rewind,
             supports_replay,
             supports_audio,
-            supports_debugger,
+            supports_symbol_loading,
             supports_execution_controls,
             is_rewinding,
             rewind_seconds_back,
@@ -242,11 +254,11 @@ impl App {
                         MenuAction::OpenFile => self.open_file_dialog(),
                         MenuAction::LoadSymbolFile => {
                             #[cfg(not(target_arch = "wasm32"))]
-                            if supports_debugger {
+                            if supports_symbol_loading {
                                 self.open_symbol_file_dialog();
                             }
                             #[cfg(target_arch = "wasm32")]
-                            if supports_debugger {
+                            if supports_symbol_loading {
                                 self.toast_manager.error("Symbol files are native-only");
                             }
                         }
@@ -531,18 +543,28 @@ impl App {
     ) -> bool {
         self.refresh_audio_discovery();
         let supports_rewind = self.core_supports_rewind();
-        let supports_debugger = self.core_supports_debugger();
-        let supports_execution_controls = self.core_supports_execution_controls();
+        let supports_execution_controls = self.core_supports_execution_controls()
+            && self.debug_windows.debug_target == crate::debug::DebugTarget::Primary;
         let Some(gfx) = self.gfx.as_mut() else {
             return false;
         };
         match gfx.render_debugger(graphics::DebuggerRenderContext {
-            data: debug_data_refs(ui_frame_data, &self.symbols),
+            data: debug_data_refs(
+                ui_frame_data,
+                if self.debug_windows.debug_target == crate::debug::DebugTarget::Sound {
+                    &self.sound_symbols
+                } else {
+                    &self.symbols
+                },
+                self.debug_windows.debug_target,
+                self.debug_windows.debug_revision,
+                &self.symbols,
+                &self.sound_symbols,
+            ),
             debug_windows: &mut self.debug_windows,
             settings: &self.settings,
             dock_state: &mut self.debug_dock,
             supports_rewind,
-            supports_debugger,
             supports_execution_controls,
         }) {
             Ok(result) => {
@@ -743,10 +765,37 @@ mod load_eta_tests {
 fn debug_data_refs<'a>(
     data: Option<&'a crate::ui::UiFrameData>,
     symbols: &'a crate::symbols::SymbolSession,
+    target: crate::debug::DebugTarget,
+    revision: u64,
+    primary_symbols: &'a crate::symbols::SymbolSession,
+    sound_symbols: &'a crate::symbols::SymbolSession,
 ) -> DebugDataRefs<'a> {
+    let data = data.filter(|data| {
+        revision != u64::MAX && data.debug_target == target && data.debug_revision == revision
+    });
+    let primary = target == crate::debug::DebugTarget::Primary;
     DebugDataRefs {
+        core_family: data
+            .and_then(|data| data.core_features.as_ref())
+            .map(|features| features.core_family),
+        supports_pc_breakpoints: data
+            .and_then(|data| data.core_features.as_ref())
+            .is_some_and(|features| primary && features.supports_pc_breakpoints),
+        supports_rom_breakpoints: data
+            .and_then(|data| data.core_features.as_ref())
+            .is_some_and(|features| primary && features.supports_rom_breakpoints),
+        supports_memory_watchpoints: data
+            .and_then(|data| data.core_features.as_ref())
+            .is_some_and(|features| primary && features.supports_memory_watchpoints),
+        memory_editing: data
+            .and_then(|data| data.core_features.as_ref())
+            .and_then(|features| primary.then_some(features.memory_editing).flatten()),
         symbols,
+        primary_symbols,
+        sound_symbols,
         cpu_debug: data.and_then(|data| data.cpu_debug.as_ref()),
+        md_sound_watch: data.and_then(|data| data.md_sound_watch.as_ref()),
+        md_timed_ports: data.and_then(|data| data.md_timed_ports.as_ref()),
         perf_info: data.and_then(|data| data.perf_info.as_ref()),
         apu_debug: data.and_then(|data| data.apu_debug.as_ref()),
         oam_debug: data.and_then(|data| data.oam_debug.as_ref()),

@@ -112,6 +112,14 @@ pub fn diagnostic_override_with(
             machine.set_interrupt_level(0);
             assert_eq!(machine.interrupt_level(), 6);
             machine.cpu.registers.set_status_register(0x2000);
+            if level != 7 {
+                assert!(matches!(
+                    step(&mut machine).unwrap().cpu,
+                    TimedOutcome::Instruction(_)
+                ));
+                assert_eq!(machine.registers().pc, 0x202);
+                assert!(machine.vdp().interrupts().vertical_pending());
+            }
             assert!(matches!(
                 step(&mut machine).unwrap().cpu,
                 TimedOutcome::Interrupt {
@@ -134,6 +142,7 @@ fn diagnostic_override() {
 pub fn acknowledge_collision_with(
     mut step: impl FnMut(&mut Emulator) -> Result<MachineStep, MachineFault>,
 ) {
+    super::interrupt_sampling::run();
     for concurrent in [false, true] {
         let mut machine = ready(VINT - 98, concurrent);
         assert_eq!(machine.interrupt_level(), 4);
@@ -150,7 +159,8 @@ pub fn acknowledge_collision_with(
     }
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn acknowledge_collision() {
     acknowledge_collision_with(Emulator::step_instruction);
 }
@@ -255,11 +265,11 @@ pub fn reservation_acknowledge() {
         });
         machine.bus.sound.requested = true;
         machine.sound_schedule.pending = Some(pending);
-        let response = ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        let response = ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .acknowledge_cycle(
             BusAccess {
                 logical_address: 0xfffffff8,

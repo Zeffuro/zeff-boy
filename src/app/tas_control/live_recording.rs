@@ -12,7 +12,9 @@ pub(in crate::app) const fn profile_supports_live_input_recording(
 ) -> bool {
     matches!(
         profile,
-        crate::emu_thread::TasExecutionProfile::DirectNesCartridge
+        crate::emu_thread::TasExecutionProfile::DirectMdThreeButton
+            | crate::emu_thread::TasExecutionProfile::DirectMdSixButton
+            | crate::emu_thread::TasExecutionProfile::DirectNesCartridge
             | crate::emu_thread::TasExecutionProfile::DirectFdsDisk
             | crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg
             | crate::emu_thread::TasExecutionProfile::DirectGbCartridgeCgb
@@ -255,6 +257,17 @@ fn input_from_prepared(
         ..TasInputFrame::default()
     };
     match profile {
+        crate::emu_thread::TasExecutionProfile::DirectMdThreeButton
+        | crate::emu_thread::TasExecutionProfile::DirectMdSixButton => {
+            crate::emu_backend::loader::md_product::validate_md_tas_project_input(profile, input)?;
+            Ok(TasInputFrame {
+                p1_buttons: input.players[0].buttons,
+                p1_dpad: input.players[0].dpad,
+                p2_buttons: input.players[1].buttons,
+                p2_dpad: input.players[1].dpad,
+                ..Default::default()
+            })
+        }
         crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg
         | crate::emu_thread::TasExecutionProfile::DirectGbCartridgeCgb => {
             if p1.p1_buttons & !0x0F != 0

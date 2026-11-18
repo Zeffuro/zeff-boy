@@ -58,12 +58,12 @@ impl PrefetchCpu {
             pipeline.address.wrapping_add(4),
             pipeline.words[1],
         );
-        let refill = self.physical_read(bus, phase)?;
+        let refill = self.physical_fetch(bus, phase)?;
         self.registers.pc = pipeline.address.wrapping_add(2);
-        self.pipeline = Some(Pipeline {
-            address: self.registers.pc,
-            words: [pipeline.words[1], refill],
-        });
+        self.pipeline = Some(Pipeline::sampled(
+            self.registers.pc,
+            [pipeline.input(1), refill],
+        ));
         Ok(())
     }
 }

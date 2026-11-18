@@ -1,6 +1,5 @@
-use super::super::chip_constants::{FM_CLOCK_DIVIDER, TIMER_A_STEPS};
+use super::super::chip_constants::TIMER_A_STEPS;
 use super::super::scheduler::SLOTS;
-use super::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TimerA {

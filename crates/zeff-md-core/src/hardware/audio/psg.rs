@@ -42,6 +42,14 @@ impl Psg {
         self.state
     }
 
+    pub(super) fn silent_with_mutes(&self, mutes: [bool; PSG_CHANNELS]) -> bool {
+        self.state
+            .volumes
+            .iter()
+            .zip(mutes)
+            .all(|(&volume, muted)| muted || PSG_VOLUME_LEVELS[usize::from(volume)] == 0)
+    }
+
     pub fn write_data(&mut self, value: u8) {
         let latch = value & PSG_LATCH_BIT != 0;
         if latch {

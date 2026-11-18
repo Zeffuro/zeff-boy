@@ -1,6 +1,9 @@
 use super::*;
 use crate::{Vdp, VdpRenderError};
 
+#[path = "tests/normal.rs"]
+mod normal;
+
 fn seeded(width: usize, height: usize) -> RowDelivery {
     let mut video = RowDelivery::default();
     for (index, byte) in video.framebuffer.iter_mut().enumerate() {
@@ -50,6 +53,12 @@ fn all_geometries_preserve_partial_frame_and_unused_backing() {
         (Region::Pal, VDP_FRAME_WIDTH, VDP_MAX_FRAME_HEIGHT),
     ] {
         let mut source = seeded(width, height);
+        source
+            .scroll
+            .fetch(7, (height / 2) as u16, true, Some([0x123, 0x2ab]));
+        source
+            .scroll
+            .fetch(7, (height / 2 + 1) as u16, false, Some([0, 0]));
         let bytes = encoded(&source);
         let mut restored = RowDelivery::default();
         let mut reader = StateReader::new(&bytes);
@@ -86,6 +95,12 @@ fn geometry_boolean_and_late_framebuffer_errors_are_atomic() {
         .unwrap();
     let before = target.clone();
     let mut malformed = Vec::new();
+    for trailer in [[0, 0], [1, 2], [2, 0]] {
+        let mut bad = bytes.clone();
+        let end = bad.len();
+        bad[end - 2..].copy_from_slice(&trailer);
+        malformed.push(bad);
+    }
     for (offset, value) in [(0, 0), (2, 225), (4, 241)] {
         let mut bad = bytes.clone();
         bad[offset..offset + 2].copy_from_slice(&u16::to_le_bytes(value));
@@ -94,6 +109,15 @@ fn geometry_boolean_and_late_framebuffer_errors_are_atomic() {
     let mut bad = bytes.clone();
     bad[14] = 2;
     malformed.push(bad);
+    let mut fetched = seeded(VDP_FRAME_WIDTH, VDP_MAX_FRAME_HEIGHT);
+    fetched.scroll.fetch(7, 120, true, Some([0x123, 0x2ab]));
+    let fetched = encoded(&fetched);
+    let scroll_at = bytes.len() - 5;
+    for offset in [scroll_at, scroll_at + 2, scroll_at + 5, scroll_at + 14] {
+        let mut bad = fetched.clone();
+        bad[offset] = 0xff;
+        malformed.push(bad);
+    }
     for end in [
         0,
         1,
@@ -125,6 +149,18 @@ fn geometry_boolean_and_late_framebuffer_errors_are_atomic() {
 
 #[test]
 fn diagnostic_capture_and_raster_errors_reject_before_writing() {
+    let bytes = encoded(&seeded(VDP_FRAME_WIDTH, VDP_MAX_FRAME_HEIGHT));
+    let mut profiled = RowDelivery::default();
+    profiled
+        .read_state_profile(&mut StateReader::new(&bytes), Region::NtscUs, true)
+        .unwrap();
+    let before = profiled.clone();
+    assert!(
+        profiled
+            .read_state_profile(&mut StateReader::new(&bytes), Region::NtscUs, false)
+            .is_err()
+    );
+    assert_eq!(profiled, before);
     let original = seeded(VDP_H32_FRAME_WIDTH, VDP_FRAME_HEIGHT);
     let error = VdpLineError::Render(VdpRenderError::PendingLineInputs);
     for kind in 0..3 {
@@ -144,17 +180,18 @@ fn diagnostic_capture_and_raster_errors_reject_before_writing() {
     }
 }
 
+fn line(width: usize, color: u16) -> VdpScanline {
+    let mut vdp = raster(width, VDP_FRAME_HEIGHT, Region::NtscUs);
+    vdp.write_control(0xc000, Region::NtscUs).unwrap();
+    vdp.write_control(0, Region::NtscUs).unwrap();
+    vdp.write_data(color, Region::NtscUs).unwrap();
+    vdp.advance_to(MasterTicks::new(vdp.now().get() + 1000), Region::NtscUs)
+        .unwrap();
+    vdp.prepare_raster_line(0, Region::NtscUs).unwrap()
+}
+
 #[test]
 fn interlace_seeds_weaves_and_discards_skipped_or_changed_geometry() {
-    fn line(width: usize, color: u16) -> VdpScanline {
-        let mut vdp = raster(width, VDP_FRAME_HEIGHT, Region::NtscUs);
-        vdp.write_control(0xc000, Region::NtscUs).unwrap();
-        vdp.write_control(0, Region::NtscUs).unwrap();
-        vdp.write_data(color, Region::NtscUs).unwrap();
-        vdp.advance_to(MasterTicks::new(vdp.now().get() + 1000), Region::NtscUs)
-            .unwrap();
-        vdp.prepare_raster_line(0, Region::NtscUs).unwrap()
-    }
     let mut video = RowDelivery::default();
     for (id, odd, width, color, expected_even, expected_odd) in [
         (0, false, 320, 0x000e, [255, 0, 0, 255], [255, 0, 0, 255]),
@@ -166,7 +203,7 @@ fn interlace_seeds_weaves_and_discards_skipped_or_changed_geometry() {
         let field = RasterField {
             id,
             height: 224,
-            interlaced: true,
+            mode: InterlaceMode::Double,
             odd,
         };
         for y in 0..224 {
@@ -196,6 +233,24 @@ fn interlace_seeds_weaves_and_discards_skipped_or_changed_geometry() {
         assert!(restored == video);
         video.clear_frame_ready();
     }
+    let field = RasterField {
+        id: 6,
+        height: 224,
+        mode: InterlaceMode::Double,
+        odd: false,
+    };
+    video.publish_field_row(
+        0,
+        field,
+        Err(VdpLineError::Render(VdpRenderError::UnknownCram(0))),
+    );
+    assert!(!video.framebuffer_available() && !video.frame_ready());
+    assert_eq!(video.field, None);
+    let mut unavailable = RowDelivery::default();
+    unavailable
+        .read_state(&mut StateReader::new(&encoded(&video)), Region::NtscUs)
+        .unwrap();
+    assert_eq!(unavailable, video);
     let checkpoint = video.checkpoint();
     let before = video.clone();
     video.reset();
@@ -207,7 +262,7 @@ fn interlace_seeds_weaves_and_discards_skipped_or_changed_geometry() {
         RasterField {
             id: 6,
             height: 224,
-            interlaced: false,
+            mode: InterlaceMode::Progressive,
             odd: false,
         },
         Ok(row),

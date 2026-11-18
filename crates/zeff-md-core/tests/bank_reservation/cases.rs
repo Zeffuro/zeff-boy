@@ -375,10 +375,12 @@ pub fn grant_preserves_latched_address_and_prior_write() {
 }
 
 pub fn fault_retains_prior_reserved_read_and_partial_write() {
-    let sound = [0x3a, 0, 0x88, 0x32, 0, 1, 0x21, 0x34, 0x12, 0x22, 3, 0x40];
+    let sound = [
+        0x3a, 0, 0x88, 0x32, 0, 1, 0x21, 0x34, 0x12, 0x22, 0x17, 0x7f,
+    ];
     let mut machine = start(&sound, 0, &[], true);
     let expected = MachineFault::Sound(SoundFault::UnsupportedAccess {
-        address: 0x4004,
+        address: 0x7f18,
         direction: Direction::Write,
     });
     let mut failure = None;
@@ -391,11 +393,11 @@ pub fn fault_retains_prior_reserved_read_and_partial_write() {
     assert_eq!(failure, Some(expected.clone()));
     assert_eq!(machine.sound_cpu().regs().a, 0x34);
     assert_eq!(machine.peek(SOUND_RAM + 0x100), Some(0x34));
-    assert_eq!(machine.opn2_snapshot().status & 0x80, 0x80);
+    assert_eq!(machine.psg_snapshot().periods[0], 0x340);
     let saved = machine.clone();
     assert_eq!(machine.step_instruction(), Err(expected));
     assert_eq!(machine, saved);
     machine.reset_sound_cpu();
     assert_eq!(machine.sound_fault(), None);
-    assert_eq!(machine.opn2_snapshot().status & 0x80, 0x80);
+    assert_eq!(machine.psg_snapshot().periods[0], 0x340);
 }

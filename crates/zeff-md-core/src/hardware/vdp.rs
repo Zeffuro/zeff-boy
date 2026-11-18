@@ -1,12 +1,15 @@
 mod constants;
+mod control_core;
 mod device;
 mod dma;
 mod dma_source;
+pub(crate) mod owner;
 pub use dma_source::VdpDmaSource;
 mod fifo;
 mod interrupts;
 mod memory;
 mod mode;
+pub(crate) use mode::InterlaceMode;
 mod read;
 mod registers;
 mod render;
@@ -17,6 +20,7 @@ mod timing;
 pub(crate) use timing::FieldPosition;
 
 use constants::*;
+pub(crate) use device::ZeroFillWrite;
 pub use device::{Vdp, VdpLineError, VdpPortError, VdpScanline, VdpStatusError};
 pub use dma::{VdpDmaCopy, VdpDmaError, VdpDmaRegisters, VdpDmaWrite};
 pub use fifo::VdpWriteFifo;
@@ -40,8 +44,16 @@ pub struct ControlCommand {
 }
 
 impl ControlCommand {
-    fn is_unused_write_target(self) -> bool {
-        matches!(self.code & !COMMAND_CD4, 2 | 6 | 7 | 9..=0xb | 0xd..=0xf)
+    fn is_no_effect_write_target(self) -> bool {
+        matches!(self.code & !COMMAND_CD4, 0 | 2 | 6 | 7 | 9..=0xb | 0xd..=0xf)
+            || self.code == (COMMAND_CD4 | VSRAM_READ_CODE)
+    }
+
+    fn has_two_write_slots(self) -> bool {
+        matches!(
+            self.code & !COMMAND_CD4,
+            VRAM_READ_CODE | VRAM_WRITE_CODE | 9
+        )
     }
 
     fn next_address(self, increment: u8) -> u32 {
@@ -73,15 +85,13 @@ pub enum VdpWriteError {
     UnsupportedCommand(ControlCommand),
 }
 
-/// Decodes mode-5 control requests; execution and bus timing are separate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct VdpControl {
     first_word: Option<u16>,
 }
 
 impl VdpControl {
-    /// Applies an accepted, collision-free word to a known settled mode-5 image.
-    /// Keep that image across pending words; reconcile raw writes before mixing APIs.
+    /// Keep the register image across pending words; reconcile raw writes before mixing APIs.
     /// Excludes active DMA and increment-carry aftermath; returns the raw, ungated request.
     pub fn complete_control_write(
         &mut self,

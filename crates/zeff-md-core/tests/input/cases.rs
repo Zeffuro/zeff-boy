@@ -87,6 +87,34 @@ pub fn pin_direction_and_latch() {
 }
 
 pub fn register_lanes() {
+    for region in [
+        zeff_md_core::Region::NtscUs,
+        zeff_md_core::Region::NtscJapan,
+        zeff_md_core::Region::Pal,
+    ] {
+        for concurrent_sound in [false, true] {
+            let mut program = Vec::new();
+            for address in (0xa1_0000..=0xa1_001e).step_by(2) {
+                for byte in [0, 0xff] {
+                    store_byte(&mut program, address, byte);
+                }
+            }
+            program.extend_from_slice(&[0x4e71; 2]);
+            let mut machine = Emulator::new(
+                image(&program, &[]),
+                LoadConfig {
+                    region,
+                    concurrent_sound,
+                },
+            )
+            .unwrap();
+            let input = machine.input().clone();
+            for _ in 0..32 {
+                instruction(&mut machine);
+                assert_eq!(machine.input(), &input);
+            }
+        }
+    }
     let mut program = Vec::new();
     store_word(&mut program, 0xa1_0008, 0x127f);
     store_word(&mut program, 0xa1_0002, 0x1285);
@@ -165,17 +193,6 @@ pub fn absent_devices_fail_once() {
             assert_eq!(machine, saved);
         }
     }
-    for address in [0xa1_0002, 0xa1_0008] {
-        let mut program = Vec::new();
-        store_byte(&mut program, address, 0xff);
-        program.extend_from_slice(&[0x4e71; 2]);
-        let mut machine = new(&program, &[]);
-        let input = machine.input().clone();
-        assert!(matches!(machine.step_instruction(), Err(MachineFault::Main(
-            TimingFault::Bus { source: BusError::UnsupportedAccess { address: actual, direction: Direction::Write }, .. }
-        )) if actual == address));
-        assert_eq!(machine.input(), &input);
-    }
 }
 
 pub fn serial_register_lanes_and_state() {
@@ -202,7 +219,11 @@ pub fn serial_register_lanes_and_state() {
             for _ in 0..8 {
                 instruction(&mut machine);
             }
-            assert_eq!(&machine.registers().d[..5], &[0xff, 0x5a, 0x5a5a, 0, 0xc8]);
+            let control = if transmit == 0xa1_001a { 0xc9 } else { 0xc8 };
+            assert_eq!(
+                &machine.registers().d[..5],
+                &[0xff, 0x5a, 0x5a5a, 0, control]
+            );
             assert_eq!(machine.peek(transmit + 1), Some(0x5a));
             let saved = machine.encode_state().unwrap();
             let mut restored = Emulator::new(
@@ -227,8 +248,13 @@ pub fn serial_register_lanes_and_state() {
             store_byte(&mut unsupported, transmit + 5, 0x30);
             unsupported.extend_from_slice(&[0x4e71; 2]);
             let mut rejected = new(&unsupported, &[]);
-            assert!(rejected.step_instruction().is_err());
-            assert_eq!(rejected.peek(transmit + 5), Some(0));
+            if transmit == 0xa1_001a {
+                instruction(&mut rejected);
+                assert_eq!(rejected.peek(transmit + 5), Some(0x30));
+            } else {
+                assert!(rejected.step_instruction().is_err());
+                assert_eq!(rejected.peek(transmit + 5), Some(0));
+            }
         }
     }
 }

@@ -1,11 +1,19 @@
 use super::*;
 use crate::VdpDmaError;
-use crate::hardware::vdp::{VdpDmaSource, VdpWrite};
+use crate::hardware::vdp::{VdpDmaSource, VdpDmaWrite, VdpWrite};
 
 const REGION: Region = Region::NtscUs;
 
+#[path = "cram_provenance.rs"]
+mod cram_provenance;
 #[path = "display_transition_tests.rs"]
 mod display_transition_tests;
+#[path = "normal_interlace.rs"]
+mod normal_interlace;
+#[path = "pending_fill.rs"]
+mod pending_fill;
+#[path = "register_interruption.rs"]
+mod register_interruption;
 
 fn tick(value: u64) -> MasterTicks {
     MasterTicks::new(value)
@@ -222,7 +230,7 @@ fn non_memory_mode_writes_preserve_both_read_phases() {
 }
 
 #[test]
-fn transfer_mode_changes_and_active_dma_still_reject_atomically() {
+fn unqualified_transfer_changes_and_active_dma_reject_atomically() {
     let mut vdp = transfer_fixture(REGION, 0, true);
     command(&mut vdp, 0, VRAM_WRITE_CODE, REGION);
     vdp.write_data(0xcafe, REGION).unwrap();
@@ -231,7 +239,7 @@ fn transfer_mode_changes_and_active_dma_still_reject_atomically() {
         (MODE_REGISTER, mode ^ MODE5_ENABLE),
         (MODE_REGISTER, mode ^ V30_ENABLE),
         (MODE_REGISTER, mode ^ VRAM_128K_ENABLE),
-        (DISPLAY_SIZE_REGISTER, H40_CLOCK_MASK),
+        (DISPLAY_SIZE_REGISTER, H40_CLOCK_MASK | INTERLACE_MODE_MASK),
     ] {
         let before = vdp.clone();
         assert!(vdp.queue_register(index, value, REGION).is_err());
@@ -385,6 +393,7 @@ fn pending_register_control_hv_and_interrupt_latches_continue() {
 fn read_prefetch_both_byte_phases_and_ready_cache_continue() {
     let mut vdp = Vdp::bootstrap_mode5();
     register(&mut vdp, AUTO_INCREMENT_REGISTER, 2, REGION);
+    vdp.invalidate_interval();
     vdp.memory
         .write_word(
             ControlCommand {
@@ -408,6 +417,10 @@ fn read_prefetch_both_byte_phases_and_ready_cache_continue() {
 }
 
 fn dma_fixture(mode: u8) -> Vdp {
+    dma_alias_fixture(mode, 0x30)
+}
+
+fn dma_alias_fixture(mode: u8, copy_code: u8) -> Vdp {
     let mut vdp = Vdp::bootstrap_mode5();
     for (index, value) in [
         (MODE_REGISTER, MODE5_ENABLE | DMA_ENABLE),
@@ -417,6 +430,7 @@ fn dma_fixture(mode: u8) -> Vdp {
     ] {
         register(&mut vdp, index, value, REGION);
     }
+    vdp.invalidate_interval();
     vdp.memory
         .write_word(
             ControlCommand {
@@ -429,56 +443,331 @@ fn dma_fixture(mode: u8) -> Vdp {
     command(
         &mut vdp,
         0x2000,
-        if mode == DMA_COPY_MODE { 0x30 } else { 0x21 },
+        if mode == DMA_COPY_MODE {
+            copy_code
+        } else {
+            0x21
+        },
         REGION,
     );
     vdp
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn fill_waiting_trigger_and_active_fill_continue() {
-    let mut vdp = dma_fixture(DMA_FILL_MODE);
-    assert_eq!(vdp.state.dma, Some(dma::Phase::FillWaiting));
-    let mut copy = restored(&vdp, REGION);
-    vdp.write_data(0xabcd, REGION).unwrap();
-    copy.write_data(0xabcd, REGION).unwrap();
-    for _ in 0..5 {
-        let at = next_slot(&vdp, REGION);
-        vdp.advance_to(at, REGION).unwrap();
-        copy.advance_to(at, REGION).unwrap();
-        assert_eq!(copy, vdp);
-        copy = restored(&vdp, REGION);
-    }
-    assert!(vdp.state.dma.is_none());
-    assert_eq!(vdp.memory.vram()[0x2003], 0xab);
-}
-
-#[test]
-fn copy_prefetched_snapshot_and_external_dma_continue() {
-    let mut vdp = dma_fixture(DMA_COPY_MODE);
-    let mut copy = restored(&vdp, REGION);
-    let at = next_slot(&vdp, REGION);
-    vdp.advance_to(at, REGION).unwrap();
-    copy.advance_to(at, REGION).unwrap();
-    assert_eq!(copy, vdp);
-    assert!(matches!(vdp.state.dma, Some(dma::Phase::Copy(Some(_)))));
-    vdp.memory
+    pending_fill::waiting_control_contract();
+    cram_provenance::cold_fill_retirement_and_reads();
+    let mut seed = Vdp::bootstrap_mode5();
+    register(&mut seed, AUTO_INCREMENT_REGISTER, 2, REGION);
+    seed.memory
         .write_word(
             ControlCommand {
                 address: 0,
                 code: VRAM_WRITE_CODE,
             },
-            0xffff,
+            0xcafe,
         )
         .unwrap();
-    copy = restored(&vdp, REGION);
-    for _ in 0..4 {
+    command(&mut seed, 0, VRAM_READ_CODE, REGION);
+    for slots in 0..=2 {
+        let mut source = seed.clone();
+        for _ in 0..slots {
+            let at = next_slot(&source, REGION);
+            source.advance_to(at, REGION).unwrap();
+        }
+        for index in 24..=31 {
+            let word = 0x8045 | (index << 8);
+            let mut vdp = source.clone();
+            let image = *vdp.registers().registers();
+            let buffered = vdp.read_cache().buffered_word();
+            let high = vdp.command().address & !0x3fff;
+            vdp.write_control(word, REGION).unwrap();
+            assert_eq!(vdp.registers().registers(), &image);
+            assert_eq!(vdp.registers().pending(), None);
+            assert_eq!(vdp.state.read_phase, None);
+            assert!(!vdp.read_cache().is_ready());
+            assert_eq!(vdp.read_cache().buffered_word(), buffered);
+            assert_eq!(vdp.command().address, high | u32::from(word & 0x3fff));
+            assert_eq!(vdp.command().code, 0x12);
+            assert_eq!(vdp.memory, source.memory);
+            let mut copy = restored(&vdp, REGION);
+            let at = tick(vdp.now().get() + 40);
+            vdp.advance_to(at, REGION).unwrap();
+            copy.advance_to(at, REGION).unwrap();
+            assert_eq!(copy, vdp);
+            for target in [&mut vdp, &mut copy] {
+                command(target, 0, VRAM_READ_CODE, REGION);
+                for _ in 0..2 {
+                    let at = next_slot(target, REGION);
+                    target.advance_to(at, REGION).unwrap();
+                }
+                assert_eq!(target.read_data(REGION), Ok(0xcafe));
+            }
+            assert_eq!(copy, vdp);
+        }
+    }
+    for index in 24..=31 {
+        let word = 0x8045 | (index << 8);
+        let mut pending = Vdp::bootstrap_mode5();
+        pending.advance_to(tick(1), REGION).unwrap();
+        pending
+            .queue_register(HINT_RELOAD_REGISTER, 1, REGION)
+            .unwrap();
+        let before = pending.clone();
+        assert!(pending.write_control(word, REGION).is_err());
+        assert_eq!(pending, before);
+        let mut half = Vdp::bootstrap_mode5();
+        half.write_control(0x4000, REGION).unwrap();
+        half.write_control(word, REGION).unwrap();
+        assert_eq!(half.control().pending_word(), None);
+        assert_eq!(half.registers().pending(), None);
+        assert_eq!(
+            half.command(),
+            ControlCommand {
+                address: 0x14000,
+                code: 0x11
+            }
+        );
+        for phase in [dma::Phase::FillWaiting, dma::Phase::Fill(0)] {
+            let mut busy = dma_fixture(DMA_FILL_MODE);
+            busy.state.dma = Some(phase);
+            let before = restored(&busy, REGION);
+            assert!(busy.write_control(word, REGION).is_err());
+            assert_eq!(busy, before);
+        }
+    }
+    for (length, source, address, increment) in [
+        (0u16, 0xffffu16, 0x1ffffu32, 1u8),
+        (1, 0xffff, 0xffff, 1),
+        (2, 0x123, 0x1ff00, 255),
+        (2, 0, 0, 0),
+    ] {
+        for (code, write_enabled) in [(0x21, true), (0x31, false), (0x32, false)] {
+            let mut image = VdpRegisterPipeline::at_h32_edge(tick(0));
+            let [lo, hi] = length.to_le_bytes();
+            let [slo, shi] = source.to_le_bytes();
+            for (offset, value) in [lo, hi, slo, shi, 0xbf].into_iter().enumerate() {
+                image.advance_to(tick(image.now().get() + 1)).unwrap();
+                let write = image.queue_register(19 + offset as u8, value).unwrap();
+                image.advance_to(write.publish_at).unwrap();
+            }
+            let mut dma = VdpDmaRegisters::from_registers(&image).unwrap();
+            let mut target = ControlCommand { address, code };
+            if code == 0x32 {
+                let before = (dma, target);
+                assert!(
+                    dma.fill_byte(&mut target, increment, 0xabcd, &mut VdpMemory::default())
+                        .is_err()
+                );
+                assert_eq!((dma, target), before);
+            }
+            let next = (address + u32::from(increment)) & COMMAND_ADDRESS_MASK;
+            let write = dma.complete_fill_service(&mut target, next, 0xabcd, write_enabled);
+            assert_eq!(
+                write,
+                write_enabled.then_some(VdpDmaWrite {
+                    address: address as u16 ^ 1,
+                    data: 0xab
+                })
+            );
+            assert_eq!(target.address, next);
+            assert_eq!(dma.source(), source.wrapping_add(1));
+            assert_eq!(dma.length(), length.wrapping_sub(1));
+            assert_eq!(dma.source_high(), 0xbf);
+            assert_eq!(
+                target.code,
+                if length == 1 {
+                    code & !COMMAND_CD5
+                } else {
+                    code
+                }
+            );
+        }
+    }
+    let mut invalid = dma_fixture(DMA_FILL_MODE);
+    invalid.state.command.code = 0x32;
+    invalid.state.dma = Some(dma::Phase::Fill(0xabcd));
+    assert!(
+        invalid
+            .write_state_in_region(&mut StateWriter::new(), REGION)
+            .is_err()
+    );
+    for queued_target in [CRAM_WRITE_CODE, VSRAM_WRITE_CODE] {
+        for fill_code in [0x21, 0x31] {
+            let mut vdp = Vdp::bootstrap_mode5();
+            for (index, value) in [
+                (MODE_REGISTER, MODE5_ENABLE | DMA_ENABLE),
+                (AUTO_INCREMENT_REGISTER, 2),
+                (DMA_LENGTH_LOW_REGISTER, 2),
+                (DMA_SOURCE_REGISTER, DMA_FILL_MODE),
+            ] {
+                register(&mut vdp, index, value, REGION);
+            }
+            command(&mut vdp, 0x20, queued_target, REGION);
+            vdp.write_data(0x1357, REGION).unwrap();
+            vdp.write_data(0x2468, REGION).unwrap();
+            command(&mut vdp, 0x2000, fill_code, REGION);
+            let mut copy = restored(&vdp, REGION);
+            let mut untriggered = restored(&vdp, REGION);
+            let mut whole_call = untriggered.clone();
+            let whole_before = encoded(&whole_call, REGION);
+            let first = next_slot(&untriggered, REGION);
+            untriggered.advance_to(first, REGION).unwrap();
+            assert_eq!(untriggered.fifo().len(), 1);
+            assert_eq!(untriggered.state.dma, Some(dma::Phase::FillWaiting));
+            let mut late_restore = restored(&untriggered, REGION);
+            let before = encoded(&untriggered, REGION);
+            let next = next_slot(&untriggered, REGION);
+            assert_eq!(
+                whole_call.advance_to(next, REGION),
+                Err(VdpScheduleError::Dma(VdpDmaError::PendingInputs))
+            );
+            assert_eq!(encoded(&whole_call, REGION), whole_before);
+            for candidate in [&mut untriggered, &mut late_restore] {
+                assert_eq!(
+                    candidate.advance_to(next, REGION),
+                    Err(VdpScheduleError::Dma(VdpDmaError::PendingInputs))
+                );
+                assert_eq!(encoded(candidate, REGION), before);
+            }
+            for phase in [dma::Phase::Fill(0xabcd), dma::Phase::Copy(None)] {
+                let mut invalid = vdp.clone();
+                invalid.state.dma = Some(phase);
+                assert!(
+                    invalid
+                        .write_state_in_region(&mut StateWriter::new(), REGION)
+                        .is_err()
+                );
+            }
+            let mut invalid = vdp.clone();
+            invalid.state.fifo = Default::default();
+            invalid
+                .state
+                .fifo
+                .push(VdpWrite {
+                    command: ControlCommand {
+                        address: 0,
+                        code: 9,
+                    },
+                    data: 0,
+                })
+                .unwrap();
+            assert!(
+                invalid
+                    .write_state_in_region(&mut StateWriter::new(), REGION)
+                    .is_err()
+            );
+            vdp.write_data(0xabcd, REGION).unwrap();
+            copy.write_data(0xabcd, REGION).unwrap();
+            copy = restored(&copy, REGION);
+            for _ in 0..6 {
+                let at = next_slot(&vdp, REGION);
+                vdp.advance_to(at, REGION).unwrap();
+                copy.advance_to(at, REGION).unwrap();
+                assert_eq!(copy, vdp);
+                copy = restored(&copy, REGION);
+            }
+            assert_eq!(vdp.state.dma, None);
+            assert!(vdp.fifo().is_empty());
+            assert_eq!(
+                &vdp.memory.vram()[0x2000..0x2006],
+                &[0xab, 0xcd, 0, 0xab, 0, 0xab]
+            );
+            let (target, other, mask): (&[u16], &[u16], u16) = if queued_target == CRAM_WRITE_CODE {
+                (vdp.memory.cram(), vdp.memory.vsram(), CRAM_DATA_MASK)
+            } else {
+                (vdp.memory.vsram(), vdp.memory.cram(), VSRAM_DATA_MASK)
+            };
+            assert_eq!(&target[16..18], &[0x1357 & mask, 0x2468 & mask]);
+            assert!(
+                target[..16]
+                    .iter()
+                    .chain(target[18..].iter())
+                    .all(|word| *word == 0)
+            );
+            assert!(other.iter().all(|word| *word == 0));
+        }
+    }
+    for code in [0x21, 0x31, 0x23, 0x33, 0x25, 0x35] {
+        let target = code & !(COMMAND_CD4 | COMMAND_CD5);
+        let word_fill = matches!(target, CRAM_WRITE_CODE | VSRAM_WRITE_CODE);
+        let mut vdp = dma_fixture(DMA_FILL_MODE);
+        vdp.state.dma = None;
+        if word_fill {
+            command(&mut vdp, 0x4000, VRAM_WRITE_CODE, REGION);
+            for word in [0x1379, 0x2f4d, 0x59a3, 0xc6e1] {
+                vdp.write_data(word, REGION).unwrap();
+                for _ in 0..2 {
+                    let at = next_slot(&vdp, REGION);
+                    vdp.advance_to(at, REGION).unwrap();
+                }
+            }
+        }
+        command(
+            &mut vdp,
+            if word_fill { 0x7f } else { 0x2000 },
+            code,
+            REGION,
+        );
+        assert_eq!(vdp.state.dma, Some(dma::Phase::FillWaiting));
+        let memory = vdp.memory.clone();
+        let mut copy = restored(&vdp, REGION);
+        vdp.write_data(0xabcd, REGION).unwrap();
+        copy.write_data(0xabcd, REGION).unwrap();
+        copy = restored(&copy, REGION);
+        for _ in 0..5 {
+            let at = next_slot(&vdp, REGION);
+            vdp.advance_to(at, REGION).unwrap();
+            copy.advance_to(at, REGION).unwrap();
+            assert_eq!(copy, vdp);
+            copy = restored(&vdp, REGION);
+        }
+        assert!(vdp.state.dma.is_none());
+        if target == CRAM_WRITE_CODE {
+            assert_eq!(vdp.memory.cram()[63], 0xabcd & CRAM_DATA_MASK);
+            assert_eq!(&vdp.memory.cram()[..2], &[0x2f4d & CRAM_DATA_MASK; 2]);
+            assert_eq!(vdp.memory.vram(), memory.vram());
+        } else if target == VSRAM_WRITE_CODE {
+            assert_eq!(&vdp.memory.vsram()[..2], &[0x2f4d & VSRAM_DATA_MASK; 2]);
+            assert!(vdp.memory.vsram()[2..].iter().all(|word| *word == 0));
+            assert_eq!(vdp.memory.cram(), memory.cram());
+            assert_eq!(vdp.memory.vram(), memory.vram());
+        } else {
+            assert_eq!(vdp.memory.vram()[0x2003], 0xab);
+        }
+    }
+}
+
+#[test]
+fn copy_prefetched_snapshot_and_external_dma_continue() {
+    for code in [0x30, 0x31, 0x33, 0x35, 0x3f] {
+        let mut vdp = dma_alias_fixture(DMA_COPY_MODE, code);
+        let mut copy = restored(&vdp, REGION);
         let at = next_slot(&vdp, REGION);
         vdp.advance_to(at, REGION).unwrap();
         copy.advance_to(at, REGION).unwrap();
         assert_eq!(copy, vdp);
+        assert!(matches!(vdp.state.dma, Some(dma::Phase::Copy(Some(_)))));
+        vdp.invalidate_interval();
+        vdp.memory
+            .write_word(
+                ControlCommand {
+                    address: 0,
+                    code: VRAM_WRITE_CODE,
+                },
+                0xffff,
+            )
+            .unwrap();
+        copy = restored(&vdp, REGION);
+        for _ in 0..4 {
+            let at = next_slot(&vdp, REGION);
+            vdp.advance_to(at, REGION).unwrap();
+            copy.advance_to(at, REGION).unwrap();
+            assert_eq!(copy, vdp);
+        }
+        assert_eq!(vdp.memory.vram()[0x2001], 0x34);
     }
-    assert_eq!(vdp.memory.vram()[0x2001], 0x34);
 
     let mut vdp = dma_fixture(0);
     let mut copy = restored(&vdp, REGION);
@@ -529,8 +818,7 @@ fn malformed_and_truncated_payloads_leave_target_unchanged() {
     );
     assert_eq!(target, before);
     invalid = bytes.clone();
-    let last = invalid.len() - 1;
-    invalid[last] = 0xff;
+    invalid[bytes.len() - 2] = 0xff;
     assert!(
         target
             .read_state(&mut StateReader::new(&invalid), REGION)
@@ -541,7 +829,7 @@ fn malformed_and_truncated_payloads_leave_target_unchanged() {
     let mut cursor = StateReader::new(&bytes);
     VdpRegisterPipeline::read_state(&mut cursor).unwrap();
     let interrupt = cursor.position();
-    VdpInterrupts::read_state(&mut cursor, crate::save_state::STATE_VERSION, REGION).unwrap();
+    VdpInterrupts::read_core_state(&mut cursor, REGION).unwrap();
     let _ = read_optional(&mut cursor, StateReader::read_u16).unwrap();
     let command = cursor.position();
     read_command(&mut cursor).unwrap();
@@ -553,9 +841,10 @@ fn malformed_and_truncated_payloads_leave_target_unchanged() {
     for (offset, value) in [
         (interrupt + 17, 2),
         (command + 4, 0xff),
-        (after_fifo - 3, 4),
+        (after_fifo - 4, 4),
+        (after_fifo - 3, 1),
         (after_fifo - 2, 1),
-        (after_fifo - 1, 1),
+        (after_fifo - 1, 16),
         (after_fifo + 1, 1),
         (dma, 0xff),
     ] {

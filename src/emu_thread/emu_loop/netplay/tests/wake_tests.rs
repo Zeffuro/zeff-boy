@@ -143,7 +143,7 @@ impl Fixture {
         };
         assert!(matches!(
             self.resp_rx.try_recv().unwrap(),
-            EmuResponse::Netplay(Response::Ready)
+            EmuResponse::Netplay(Response::Ready { md_input: None })
         ));
         assert!(
             !self

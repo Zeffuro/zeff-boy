@@ -486,10 +486,10 @@ fn print_pce_instruction_trace(backend: &PceBackend, opts: &HeadlessOptions) {
             .writes()
             .iter()
             .map(|write| {
-                format!(
-                    " {:04X}:{:02X}->{:02X}",
-                    write.address, write.old_value, write.new_value
-                )
+                let old = write
+                    .old_value
+                    .map_or_else(|| "??".into(), |value| format!("{value:02X}"));
+                format!(" {:04X}:{old}->{:02X}", write.address, write.new_value)
             })
             .collect::<String>();
         let bank = entry

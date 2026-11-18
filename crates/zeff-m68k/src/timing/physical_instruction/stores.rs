@@ -31,7 +31,7 @@ pub(super) struct StoreProfile {
 pub(super) struct StoreStream {
     pub anchor: u32,
     pub opcode: u16,
-    pub retained: u16,
+    pub retained: InstructionInput,
 }
 
 impl StoreStream {
@@ -39,7 +39,7 @@ impl StoreStream {
         Self {
             anchor: pipeline.address.wrapping_add(2),
             opcode: pipeline.words[0],
-            retained: pipeline.words[1],
+            retained: pipeline.input(1),
         }
     }
 }
@@ -100,7 +100,7 @@ impl StoreProfile {
     }
 
     fn address(self, cpu: &PrefetchCpu, stream: StoreStream, low: u16) -> u32 {
-        let extension = stream.retained;
+        let extension = stream.retained.value;
         match self.mode {
             StoreMode::AbsoluteWord => Size::Word.sign_extend(u32::from(extension)),
             StoreMode::AbsoluteLong => (u32::from(extension) << 16) | u32::from(low),
@@ -160,7 +160,7 @@ impl StoreProfile {
             direction: Direction::Write,
             internal_pc: self.operand_pc(stream),
             ird: if self.mode == StoreMode::Predecrement && !low {
-                stream.retained
+                stream.retained.value
             } else {
                 stream.opcode
             },
@@ -213,7 +213,7 @@ impl PrefetchCpu {
             },
             stream.opcode,
         );
-        let first = self.physical_read(bus, phase)?;
+        let first = self.physical_fetch(bus, phase)?;
         let next_opcode = if profile.mode == StoreMode::AbsoluteLong {
             self.physical_reserve()?;
             self.extension_store_flags(profile.size, value);
@@ -224,11 +224,11 @@ impl PrefetchCpu {
                 address,
                 stream.opcode,
             );
-            self.physical_read(bus, phase)?
+            self.physical_fetch(bus, phase)?
         } else {
             first
         };
-        let address = profile.address(self, stream, first);
+        let address = profile.address(self, stream, first.value);
         self.physical_extension_store(bus, stream, profile, address, value)?;
         self.physical_reserve()?;
         crate::alu::logic(&mut self.registers, profile.size, value);
@@ -238,9 +238,9 @@ impl PrefetchCpu {
             InstructionPhase::OperandRefill,
             refill_address,
             refill_address,
-            next_opcode,
+            next_opcode.value,
         );
-        let refill = self.physical_read(bus, phase)?;
+        let refill = self.physical_fetch(bus, phase)?;
         self.finish_store(end, next_opcode, refill);
         Ok(())
     }
@@ -281,8 +281,8 @@ impl PrefetchCpu {
             operand_pc,
             stream.opcode,
         );
-        let first = self.physical_read(bus, phase)?;
-        let address = profile.address(self, stream, first);
+        let first = self.physical_fetch(bus, phase)?;
+        let address = profile.address(self, stream, first.value);
         self.physical_reserve()?;
         if profile.mode == StoreMode::AbsoluteLong {
             self.extension_store_flags(profile.size, value);
@@ -304,7 +304,7 @@ impl PrefetchCpu {
             // Memory-source absolute-long stores fetch N only after their writes.
             let phase =
                 self.prefetch_phase(InstructionPhase::ExtensionSecond, end, end, stream.opcode);
-            self.physical_read(bus, phase)?
+            self.physical_fetch(bus, phase)?
         } else {
             first
         };
@@ -313,9 +313,9 @@ impl PrefetchCpu {
             InstructionPhase::OperandRefill,
             refill_address,
             refill_address,
-            next_opcode,
+            next_opcode.value,
         );
-        let refill = self.physical_read(bus, phase)?;
+        let refill = self.physical_fetch(bus, phase)?;
         self.finish_store(end, next_opcode, refill);
         Ok(())
     }
@@ -349,20 +349,17 @@ impl PrefetchCpu {
                 InstructionPhase::OperandRefill,
                 address,
                 address,
-                stream.retained,
+                stream.retained.value,
             );
-            self.physical_read(bus, phase)?
+            self.physical_fetch(bus, phase)?
         };
         self.finish_store(stream.anchor, stream.retained, refill);
         Ok(())
     }
 
-    fn finish_store(&mut self, pc: u32, opcode: u16, refill: u16) {
+    fn finish_store(&mut self, pc: u32, opcode: InstructionInput, refill: InstructionInput) {
         self.registers.pc = pc;
-        self.pipeline = Some(Pipeline {
-            address: pc,
-            words: [opcode, refill],
-        });
+        self.pipeline = Some(Pipeline::sampled(pc, [opcode, refill]));
     }
 
     fn physical_simple_store<B: InstructionBus>(
@@ -404,7 +401,7 @@ impl PrefetchCpu {
         profile: StoreProfile,
         address: u32,
         value: u32,
-    ) -> Result<u16, TransferExit<B::Error>> {
+    ) -> Result<InstructionInput, TransferExit<B::Error>> {
         self.physical_reserve()?;
         self.extension_store_flags(profile.size, value);
         let refill_address = stream.anchor.wrapping_add(2);
@@ -414,7 +411,7 @@ impl PrefetchCpu {
             refill_address,
             stream.opcode,
         );
-        let refill = self.physical_read(bus, phase)?;
+        let refill = self.physical_fetch(bus, phase)?;
         self.physical_reserve()?;
         if profile.size == Size::Long {
             crate::alu::logic(&mut self.registers, Size::Long, value);

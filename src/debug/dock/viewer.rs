@@ -1,7 +1,7 @@
 use egui_dock::{TabViewer, widgets::tab_viewer::OnCloseResponse};
 
 use super::super::apu_viewer::draw_apu_viewer_content;
-use super::super::breakpoints_window::draw_breakpoints_content;
+use super::super::breakpoints_window::{BreakpointContext, draw_breakpoints_content};
 use super::super::call_stack::draw_call_stack_content;
 use super::super::cheats_window::draw_cheats_content;
 use super::super::console::{DebugConsoleContext, DebugConsoleViews, draw_debug_console_content};
@@ -42,7 +42,6 @@ pub(crate) struct DebugTabViewer<'a> {
     pub(crate) window_state: &'a mut DebugWindowState,
     pub(crate) actions: DebugUiActions,
     pub(crate) supports_rewind: bool,
-    pub(crate) supports_debugger: bool,
     pub(crate) supports_execution_controls: bool,
     pub(crate) game_texture_id: Option<egui::TextureId>,
     pub(crate) game_native_size: (u32, u32),
@@ -58,6 +57,39 @@ impl TabViewer for DebugTabViewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DebugTab) {
+        self.actions.target = self.window_state.debug_target;
+        self.actions.target_revision = Some(self.window_state.debug_revision);
+        if self.data.core_family == Some(zeff_emu_common::system::CoreFamily::MegaDrive)
+            && !matches!(tab, DebugTab::GameView)
+        {
+            ui.horizontal(|ui| {
+                for (target, name) in [
+                    (crate::debug::DebugTarget::Primary, "MAIN M68000"),
+                    (crate::debug::DebugTarget::Sound, "SOUND Z80"),
+                ] {
+                    if ui
+                        .selectable_label(self.window_state.debug_target == target, name)
+                        .clicked()
+                    {
+                        self.actions.select_target = Some(target);
+                    }
+                }
+            });
+        }
+        if self.window_state.debug_target == crate::debug::DebugTarget::Sound
+            && !matches!(
+                tab,
+                DebugTab::GameView
+                    | DebugTab::CpuDebug
+                    | DebugTab::Disassembler
+                    | DebugTab::SymbolBrowser
+                    | DebugTab::SourceViewer
+                    | DebugTab::Trace
+            )
+        {
+            ui.weak("Select MAIN to use this tool. SOUND selection supports read-only CPU, disassembly, symbols and source.");
+            return;
+        }
         match tab {
             DebugTab::GameView => {
                 if let Some(tex_id) = self.game_texture_id {
@@ -103,6 +135,9 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::CpuDebug => {
+                if let Some(view) = self.data.md_sound_watch {
+                    crate::debug::sound_watchpoints::draw(ui, view, &mut self.actions);
+                }
                 if let Some(info) = self.data.cpu_debug {
                     draw_cpu_debug_content(
                         ui,
@@ -121,6 +156,9 @@ impl TabViewer for DebugTabViewer<'_> {
                         info,
                         &mut self.window_state.hardware_view,
                         &mut self.actions,
+                        self.data
+                            .md_timed_ports
+                            .map(|view| (view, &mut self.window_state.md_timed_ports)),
                     );
                 }
             }
@@ -156,7 +194,8 @@ impl TabViewer for DebugTabViewer<'_> {
                         ui,
                         view,
                         self.supports_rewind,
-                        self.supports_debugger,
+                        self.data.supports_pc_breakpoints,
+                        self.data.supports_rom_breakpoints,
                         self.supports_execution_controls,
                     );
                     self.actions
@@ -191,7 +230,8 @@ impl TabViewer for DebugTabViewer<'_> {
                         MemoryViewerDebugContext {
                             symbols: self.data.symbols,
                             cpu: self.data.cpu_debug,
-                            enabled: self.supports_debugger,
+                            memory_editing: self.data.memory_editing,
+                            watchpoints: self.data.supports_memory_watchpoints,
                         },
                     );
                     self.actions.memory_writes.extend(writes);
@@ -283,13 +323,18 @@ impl TabViewer for DebugTabViewer<'_> {
                 }
             }
             DebugTab::Breakpoints => {
-                if !self.supports_debugger {
+                if !self.data.supports_pc_breakpoints && !self.data.supports_memory_watchpoints {
                     ui.weak("Breakpoints and watchpoints are unavailable for this core.");
                 } else if let Some(info) = self.data.cpu_debug {
                     draw_breakpoints_content(
                         ui,
                         info,
-                        self.data.symbols,
+                        BreakpointContext {
+                            core_family: self.data.core_family,
+                            memory_watchpoints: self.data.supports_memory_watchpoints,
+                            rom_breakpoints: self.data.supports_rom_breakpoints,
+                            symbols: self.data.symbols,
+                        },
                         &mut self.window_state.bp,
                         &mut self.actions,
                     );
@@ -331,7 +376,8 @@ impl TabViewer for DebugTabViewer<'_> {
                 draw_trace_content(
                     ui,
                     &mut self.window_state.trace,
-                    self.data.symbols,
+                    self.data.primary_symbols,
+                    self.data.sound_symbols,
                     &mut self.actions,
                 );
             }
@@ -359,6 +405,7 @@ impl TabViewer for DebugTabViewer<'_> {
                     ui,
                     &mut self.window_state.console,
                     DebugConsoleContext {
+                        supports_rom_breakpoints: self.data.supports_rom_breakpoints,
                         symbols: self.data.symbols,
                         cpu_debug: self.data.cpu_debug,
                         rom_debug: self.data.rom_debug,

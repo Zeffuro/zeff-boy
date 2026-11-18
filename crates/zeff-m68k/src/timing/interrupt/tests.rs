@@ -3,6 +3,7 @@ use crate::timing::test_bus::{Bus, Event, cpu};
 
 #[test]
 fn interrupt_frame_acknowledge_and_refill_order() {
+    super::sampling_tests::normal_capture_contract();
     let mut cpu = cpu(0x0015);
     cpu.interrupt_input().set_level(4);
     let mut bus = Bus::default();

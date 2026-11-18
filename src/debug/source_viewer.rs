@@ -151,6 +151,9 @@ fn draw_breakpoint_button(
         return;
     }
 
+    if symbols.target() == crate::debug::DebugTarget::Sound {
+        return;
+    }
     let addresses = symbols.source_breakpoint_addresses(source_file, line);
     if addresses.is_empty() {
         return;
@@ -250,3 +253,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_dwarf_tests;

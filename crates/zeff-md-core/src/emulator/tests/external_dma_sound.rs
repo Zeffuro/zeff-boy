@@ -24,7 +24,7 @@ fn advance(machine: &mut Emulator, start: u64, end: u64, occupied: &[Reservation
     machine.sound_schedule.advance(
         &mut machine.sound_cpu,
         &mut machine.bus.sound,
-        &machine.bus.cartridge,
+        &mut machine.bus.cartridge,
         &mut machine.bus.ram,
         SoundInterval {
             sound_irq: None,
@@ -42,6 +42,26 @@ fn vdp(start: u64, end: u64) -> Reservation {
     }
 }
 
+fn restore_legacy_unqualified(machine: &mut Emulator) {
+    use zeff_emu_common::save_state::{StateReader, StateWriter};
+
+    let mut legacy = machine.sound_schedule.clone();
+    let pending = legacy.pending.as_mut().unwrap();
+    assert!(pending.bank_access.is_some());
+    assert!(pending.any_bank_access);
+    pending.bank_access = None;
+    let mut writer = StateWriter::new();
+    legacy.write_state(&machine.sound_cpu, &mut writer).unwrap();
+    let bytes = writer.into_bytes();
+    let mut reader = StateReader::new(&bytes);
+    machine
+        .sound_schedule
+        .read_state(&mut machine.sound_cpu, &mut reader)
+        .unwrap();
+    assert!(reader.is_exhausted());
+    assert_eq!(machine.sound_schedule, legacy);
+}
+
 fn ldi_pending(destination: u16, bank: u16, value: u8) -> Emulator {
     let [low, high] = destination.to_le_bytes();
     let mut machine = ready(
@@ -57,6 +77,7 @@ fn ldi_pending(destination: u16, bank: u16, value: u8) -> Emulator {
     assert_eq!(setup.fault.get(), None);
     assert_eq!(machine.sound_cpu.cycles(), 30);
     advance(&mut machine, 0, 11 * T + 1, &[]);
+    restore_legacy_unqualified(&mut machine);
     let pending = machine.sound_schedule.pending.as_ref().unwrap();
     assert_eq!((pending.start, pending.deadline), (165, 210));
     assert_eq!(pending.instruction.cycles, 3);
@@ -272,6 +293,7 @@ fn prior_ldi_bank_write_waits_through_actual_dma_acquisition() {
         }
         assert_eq!(setup.fault.get(), None);
         super::vdp_row_delivery::advance(&mut machine, 11 * T + 1).unwrap();
+        restore_legacy_unqualified(&mut machine);
         let pending = machine.sound_schedule.pending.as_ref().unwrap().clone();
         assert_eq!((pending.start, pending.deadline), (base + 165, base + 210));
         assert!(pending.any_bank_access);
@@ -302,11 +324,11 @@ fn prior_ldi_bank_write_waits_through_actual_dma_acquisition() {
         let mut copy = machine.clone();
         for candidate in [&mut machine, &mut copy] {
             let clock = candidate.bus.cpu_clock;
-            let result = ScheduledBus {
-                bus: &mut candidate.bus,
-                cpu: &mut candidate.sound_cpu,
-                schedule: &mut candidate.sound_schedule,
-            }
+            let result = ScheduledBus::new(
+                &mut candidate.bus,
+                &mut candidate.sound_cpu,
+                &mut candidate.sound_schedule,
+            )
             .write_cycle(
                 BusAccess {
                     logical_address: 0xc00004,

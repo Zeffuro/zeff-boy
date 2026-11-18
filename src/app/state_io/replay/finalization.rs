@@ -156,6 +156,9 @@ impl App {
 
 fn response_kind(response: &EmuResponse) -> &'static str {
     match response {
+        EmuResponse::MemoryWriteRejected(_) => "MemoryWriteRejected",
+        EmuResponse::MdTimedPortsFinished(_) => "MdTimedPortsFinished",
+        EmuResponse::CheatsUpdateFailed(_) => "CheatsUpdateFailed",
         EmuResponse::Netplay(_) => "Netplay",
         EmuResponse::SaveStateOk { .. } => "SaveStateOk",
         EmuResponse::SaveStateFailed(_) => "SaveStateFailed",
@@ -193,6 +196,7 @@ fn response_kind(response: &EmuResponse) -> &'static str {
         EmuResponse::TasReadinessObserved { .. } => "TasReadinessObserved",
         EmuResponse::TasControlAcquired { .. } => "TasControlAcquired",
         EmuResponse::TasControlAcquireRejected { .. } => "TasControlAcquireRejected",
+        EmuResponse::TasControlAcquireFenced { .. } => "TasControlAcquireFenced",
         EmuResponse::TasExecutionCompleted { .. } => "TasExecutionCompleted",
         EmuResponse::TasExecutionRejected { .. } => "TasExecutionRejected",
         EmuResponse::TasFrameAdvanced { .. } => "TasFrameAdvanced",

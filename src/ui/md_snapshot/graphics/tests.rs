@@ -48,6 +48,7 @@ fn md_pattern_geometry_requires_known_supported_mode_bits() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn md_graphics_snapshot_obeys_existing_viewer_gates_and_palette_rows() {
+    unknown_cram_snapshot();
     let emu = fixture(Region::NtscUs, false);
     let mut req = request();
     req.show_memory_viewer = false;
@@ -77,7 +78,10 @@ fn md_graphics_snapshot_obeys_existing_viewer_gates_and_palette_rows() {
         .iter()
         .zip(gfx.palette.as_chunks::<16>().0.iter())
     {
-        assert_eq!(row.colors, colors);
+        assert_eq!(
+            row.colors,
+            colors.iter().flatten().copied().collect::<Vec<_>>()
+        );
     }
     req.any_viewer_open = false;
     assert!(
@@ -91,6 +95,28 @@ fn md_graphics_snapshot_obeys_existing_viewer_gates_and_palette_rows() {
             .graphics_data
             .is_none()
     );
+}
+
+fn unknown_cram_snapshot() {
+    let mut bytes = vec![0; 0x400];
+    bytes[..8].copy_from_slice(&[0, 0xff, 0xff, 0xfc, 0, 0, 2, 0]);
+    let mut words = Vec::<u16>::new();
+    for value in [0x8114, 0x8f02, 0x9301, 0x9780, 0xc07e, 0x0080] {
+        words.extend([0x33fc, value, 0x00c0, 4]);
+    }
+    words.extend([0x33fc, 0xabcd, 0x00c0, 0, 0x60fe, 0x4e71]);
+    for (index, word) in words.into_iter().enumerate() {
+        bytes[0x200 + index * 2..0x202 + index * 2].copy_from_slice(&word.to_be_bytes());
+    }
+    let mut emu = Emulator::new(bytes, LoadConfig::default()).unwrap();
+    emu.step_field().unwrap();
+    let gfx = graphics(snapshot(&emu));
+    assert_eq!(gfx.cram[..2], [None; 2]);
+    assert_eq!(gfx.palette[0], None);
+    assert_eq!(gfx.palette[63], Some(rgba(0xabcd & 0x0eee)));
+    let palette = palette(&emu);
+    assert!(palette.groups[0].rows[0].label.contains("unknown"));
+    assert!(palette.groups[0].rows[0].colors.is_empty());
 }
 
 fn changing_vdp(mode2: bool) -> Emulator {
@@ -132,7 +158,7 @@ fn changing_vdp(mode2: bool) -> Emulator {
 
 fn wait_color(emu: &mut Emulator, color: u16) {
     for _ in 0..4096 {
-        if emu.vdp().memory().cram()[0] == color {
+        if emu.vdp().memory().cram_word(0).unwrap() == color {
             return;
         }
         emu.step_instruction().unwrap();
@@ -153,11 +179,11 @@ fn md_graphics_snapshots_refresh_and_restore_detached_vram_cram_and_mode2() {
         req.any_vram_viewer_open = true;
         let before = graphics(collect_md_snapshot(&emu, &req, None).graphics_data.unwrap());
         assert_eq!(&before.vram[..2], &[0x12, 0x34]);
-        assert_eq!(before.palette[0], [109, 72, 36, 255]);
+        assert_eq!(before.palette[0], Some([109, 72, 36, 255]));
         assert_eq!(before.cram.len(), 128);
         assert_eq!(before.vsram.len(), 80);
-        assert_eq!(&before.cram[..2], &[0x02, 0x46]);
-        assert_eq!(&before.cram[126..], &[0x0e, 0xee]);
+        assert_eq!(&before.cram[..2], &[Some(0x02), Some(0x46)]);
+        assert_eq!(&before.cram[126..], &[Some(0x0e), Some(0xee)]);
         assert_eq!(&before.vsram[..2], &[0x02, 0x35]);
         assert_eq!(&before.vsram[78..], &[0x07, 0xff]);
         assert_eq!(before.tile_height, Some(if mode2 { 16 } else { 8 }));
@@ -165,19 +191,19 @@ fn md_graphics_snapshots_refresh_and_restore_detached_vram_cram_and_mode2() {
         let after = collect_md_snapshot(&emu, &req, None);
         let updated = graphics(after.graphics_data.unwrap());
         assert_eq!(&updated.vram[..2], &[0x56, 0x78]);
-        assert_eq!(updated.palette[0], [255, 218, 182, 255]);
-        assert_eq!(&updated.cram[..2], &[0x0a, 0xce]);
-        assert_eq!(&updated.cram[126..], &[0x02, 0x46]);
+        assert_eq!(updated.palette[0], Some([255, 218, 182, 255]));
+        assert_eq!(&updated.cram[..2], &[Some(0x0a), Some(0xce)]);
+        assert_eq!(&updated.cram[126..], &[Some(0x02), Some(0x46)]);
         assert_eq!(&updated.vsram[..2], &[0x06, 0xab]);
         assert_eq!(&updated.vsram[78..], &[0x00, 0x12]);
-        assert_eq!(&before.cram[..2], &[0x02, 0x46]);
+        assert_eq!(&before.cram[..2], &[Some(0x02), Some(0x46)]);
         assert_eq!(&before.vsram[..2], &[0x02, 0x35]);
         assert_eq!(
             after.palette_debug.unwrap().groups[0].rows[0].colors[0],
-            updated.palette[0]
+            updated.palette[0].unwrap()
         );
         assert_eq!(&before.vram[..2], &[0x12, 0x34]);
-        assert_eq!(before.palette[0], [109, 72, 36, 255]);
+        assert_eq!(before.palette[0], Some([109, 72, 36, 255]));
         emu.decode_state(&original).unwrap();
         let restored = graphics(collect_md_snapshot(&emu, &req, None).graphics_data.unwrap());
         assert_eq!(restored.vram, before.vram);
@@ -284,14 +310,17 @@ fn md_raw_color_and_scroll_snapshots_cover_every_backing_word_in_bus_byte_order(
     assert_eq!(gfx.cram.len(), 128);
     assert_eq!(gfx.vsram.len(), 80);
     for (i, bytes) in gfx.cram.as_chunks::<2>().0.iter().enumerate() {
-        assert_eq!(bytes, &[0x0a, (((i & 7) << 1) | ((i >> 3) << 5)) as u8]);
+        assert_eq!(
+            bytes,
+            &[Some(0x0a), Some((((i & 7) << 1) | ((i >> 3) << 5)) as u8)]
+        );
     }
     for (i, bytes) in gfx.vsram.as_chunks::<2>().0.iter().enumerate() {
         let expected = 0x123 + i * 37;
         assert_eq!(bytes, &[(expected >> 8) as u8, expected as u8]);
     }
-    assert_eq!(&gfx.cram[..2], &[0x0a, 0]);
-    assert_eq!(&gfx.cram[126..], &[0x0a, 0xee]);
+    assert_eq!(&gfx.cram[..2], &[Some(0x0a), Some(0)]);
+    assert_eq!(&gfx.cram[126..], &[Some(0x0a), Some(0xee)]);
     assert_eq!(&gfx.vsram[..2], &[0x01, 0x23]);
     assert_eq!(&gfx.vsram[78..], &[0x06, 0xc6]);
     assert_eq!(emu.encode_state().unwrap(), original);

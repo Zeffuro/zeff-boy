@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "tests/ram_tas.rs"]
+mod ram_tas;
+
 #[path = "tests/pal.rs"]
 mod pal;
 
@@ -19,10 +22,20 @@ mod vdp_register_order;
 mod bank_reservation;
 #[path = "tests/banked_ram.rs"]
 mod banked_ram;
+#[path = "tests/internal_clock_rows.rs"]
+mod internal_clock_rows;
+#[path = "tests/interrupt_sampling.rs"]
+mod interrupt_sampling;
 #[path = "tests/open_bus.rs"]
 mod open_bus;
 #[path = "tests/requesters.rs"]
 mod requesters;
+#[path = "tests/reset_read.rs"]
+mod reset_read;
+#[path = "tests/sound_admission.rs"]
+mod sound_admission;
+#[path = "tests/sound_aperture.rs"]
+mod sound_aperture;
 #[path = "tests/sound_control.rs"]
 mod sound_control;
 #[path = "tests/vdp.rs"]
@@ -66,6 +79,8 @@ fn main_fault(fault: MachineFault) -> TimingFault<BusError> {
     match fault {
         MachineFault::Main(fault) => fault,
         MachineFault::Sound(fault) => panic!("sound fault: {fault:?}"),
+        MachineFault::Input(fault) => panic!("input fault: {fault:?}"),
+        MachineFault::PreciseTiming(fault) => panic!("precise timing fault: {fault}"),
     }
 }
 
@@ -111,7 +126,7 @@ fn multi_load_deadline_overflow_preserves_completed_write() {
     machine.sound_schedule.advance(
         &mut machine.sound_cpu,
         &mut machine.bus.sound,
-        &machine.bus.cartridge,
+        &mut machine.bus.cartridge,
         &mut machine.bus.ram,
         crate::hardware::sound::schedule::SoundInterval::new(0..345, &mut machine.bus.audio),
     );
@@ -120,6 +135,7 @@ fn multi_load_deadline_overflow_preserves_completed_write() {
     assert_eq!(machine.peek(0xa0_0101), Some(0));
     let cpu = machine.sound_cpu.clone();
     assert!(machine.sound_schedule.pending.is_none());
+    machine.bus.vdp.retire_timed_port_history();
     machine.bus.now = MasterTicks::new(u64::MAX - 28);
     machine.concurrent_sound = true;
     assert_eq!(
@@ -212,6 +228,7 @@ fn concurrent_deadline_control_ties_and_overflow() {
             &mut machine.bus.sound,
             &mut machine.bus.ram,
             &mut machine.bus.audio,
+            &mut machine.bus.cartridge,
         );
         let pending = PendingSound::prepare(
             &machine.sound_cpu,
@@ -230,11 +247,11 @@ fn concurrent_deadline_control_ties_and_overflow() {
             lanes: ByteLanes::Both,
         };
         let clock = machine.bus.cpu_clock;
-        let result = ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        let result = ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .write_cycle(
             access,
             if address == SOUND_BUS_REQUEST {
@@ -259,11 +276,11 @@ fn concurrent_deadline_control_ties_and_overflow() {
         machine.bus.now = MasterTicks::new(u64::MAX - 1);
         let saved = machine.clone();
         assert_eq!(
-            ScheduledBus {
-                bus: &mut machine.bus,
-                cpu: &mut machine.sound_cpu,
-                schedule: &mut machine.sound_schedule
-            }
+            ScheduledBus::new(
+                &mut machine.bus,
+                &mut machine.sound_cpu,
+                &mut machine.sound_schedule
+            )
             .advance_machine(7),
             Err(BusError::ClockOverflow)
         );
@@ -293,6 +310,7 @@ fn prefixed_pending_reset_ties_and_overflow() {
             &mut machine.bus.sound,
             &mut machine.bus.ram,
             &mut machine.bus.audio,
+            &mut machine.bus.cartridge,
         );
         let pending = PendingSound::prepare(
             &machine.sound_cpu,
@@ -324,11 +342,11 @@ fn prefixed_pending_reset_ties_and_overflow() {
             kind: AccessKind::Data,
             lanes: ByteLanes::Both,
         };
-        let result = ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        let result = ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .write_cycle(access, 0, clock);
         assert_eq!(result.result, Ok(()));
         let expected = if distance == 28 { [0x34, 0x12] } else { [0, 0] };
@@ -353,11 +371,11 @@ fn indexed_prefix_reset_and_deadline_overflow() {
     machine.bus.sound.set_reset(false);
     machine.bus.sound.ram[..2].copy_from_slice(&[0xdd, 0xfd]);
     machine.set_interrupt_level(4);
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(7)
     .unwrap();
     assert_eq!(machine.sound_cpu().regs().pc, 0);
@@ -365,11 +383,11 @@ fn indexed_prefix_reset_and_deadline_overflow() {
     machine.reset_sound_cpu();
     assert!(!machine.sound_prefix_pending());
     assert_eq!(machine.timing_snapshot().now().get(), 63);
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(60)
     .unwrap();
     assert_eq!(machine.sound_cpu().regs().pc, 1);
@@ -383,11 +401,11 @@ fn indexed_prefix_reset_and_deadline_overflow() {
         lanes: ByteLanes::Both,
     };
     assert_eq!(
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule
+        )
         .write_cycle(access, 0, clock)
         .result,
         Ok(())
@@ -397,13 +415,14 @@ fn indexed_prefix_reset_and_deadline_overflow() {
     assert!(machine.sound_deadline().is_none());
     assert_eq!(machine.interrupt_level(), 4);
     machine.bus.sound.set_reset(false);
+    machine.bus.vdp.retire_timed_port_history();
     machine.bus.now = MasterTicks::new(u64::MAX - 28);
     let sound = machine.sound_cpu.clone();
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(7)
     .unwrap();
     assert_eq!(machine.sound_cpu(), &sound);
@@ -417,3 +436,6 @@ fn indexed_prefix_reset_and_deadline_overflow() {
 
 #[path = "tests/external_dma_sound.rs"]
 mod external_dma_sound;
+
+#[path = "tests/rom_mode.rs"]
+mod rom_mode;

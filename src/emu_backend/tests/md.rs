@@ -1,6 +1,8 @@
 use super::*;
+use crate::emu_core_trait::EmulatorCore;
 use zeff_md_core::{ControllerKind, ControllerPort, Region};
 
+mod memory;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
 mod state;
@@ -36,7 +38,7 @@ fn machine(backend: &EmuBackend) -> &zeff_md_core::Emulator {
     let EmuBackend::Md(backend) = backend else {
         panic!("Mega Drive loader returned another backend");
     };
-    &backend.emu
+    backend.core()
 }
 
 fn write_byte(words: &mut Vec<u16>, address: u32, value: u8) {
@@ -214,6 +216,7 @@ fn md_backend_delivers_cpu_generated_left_dac_and_stereo_pcm() {
 
 #[test]
 fn md_backend_exposes_cpu_selected_h40_and_pal_v30_geometry() {
+    unknown_cram_withholds_publication();
     for (header, mode, height) in [(b'U', 0x04, 224), (b'E', 0x0c, 240)] {
         let mut words = Vec::new();
         write_word(&mut words, VDP_CONTROL, 0x8c81);
@@ -228,6 +231,35 @@ fn md_backend_exposes_cpu_selected_h40_and_pal_v30_geometry() {
         assert_eq!(pixels.len(), 320 * height as usize * 4);
         assert_eq!(machine(&backend).video_error(), None);
     }
+}
+
+fn unknown_cram_withholds_publication() {
+    let mut words = Vec::new();
+    for value in [0x8114, 0x8f02, 0x9301, 0x9780, 0xc07e, 0x0080] {
+        write_word(&mut words, VDP_CONTROL, value);
+    }
+    write_word(&mut words, 0xc00000, 0xabcd);
+    words.extend(LOOP);
+    let mut backend = load(rom(b'U', &words), BackendLoadConfig::default());
+    let shared = crate::emu_thread::framebuffer::new_shared_framebuffer();
+    crate::emu_thread::framebuffer::publish_backend_framebuffer(&shared, &backend);
+    let old = shared.load_full().unwrap();
+    for field in 1..=2 {
+        backend.step_frame();
+        assert!(!backend.is_suspended());
+        assert_eq!(backend.frame_count(), field);
+        assert!(!backend.framebuffer_available());
+        assert!(machine(&backend).video_error().is_none());
+        assert_eq!(machine(&backend).vdp().memory().cram_word(0), None);
+        crate::emu_thread::framebuffer::publish_backend_framebuffer(&shared, &backend);
+        assert!(std::sync::Arc::ptr_eq(&old, &shared.load_full().unwrap()));
+    }
+    let mut output = vec![0x5a];
+    for region in ["palette_ram", "framebuffer"] {
+        assert!(backend.copy_memory_region(region, &mut output).is_err());
+        assert_eq!(output, [0x5a]);
+    }
+    assert!(machine(&backend).encode_frontend_state().is_ok());
 }
 
 #[test]
@@ -261,8 +293,16 @@ fn md_backend_paces_cpu_selected_interlace_fields_and_restores_progressive() {
         let EmuBackend::Md(md) = &mut backend else {
             unreachable!()
         };
-        while md.emu.queue_vdp_register(12, 0x81).is_err() {
-            md.emu.step_instruction().unwrap();
+        while md
+            .test_normal_core_mut()
+            .unwrap()
+            .queue_vdp_register(12, 0x81)
+            .is_err()
+        {
+            md.test_normal_core_mut()
+                .unwrap()
+                .step_instruction()
+                .unwrap();
         }
         for _ in 0..3 {
             backend.step_frame();
@@ -289,7 +329,7 @@ fn md_backend_paces_fields_before_display_and_pause_freezes_machine() {
             assert_eq!(backend.frame_count(), field);
         }
         let paused = machine(&backend).clone();
-        assert!(!backend.supports_execution_controls());
+        assert!(backend.supports_execution_controls());
         backend.debug_suspend();
         assert_eq!(machine(&backend), &paused);
         assert!(backend.take_runtime_fault().is_none());
@@ -309,6 +349,19 @@ fn md_backend_fault_is_reported_once_and_reset_recovers() {
     let mut backend = load(rom(b'U', &words), BackendLoadConfig::default());
     backend.step_frame();
     assert!(backend.is_suspended());
+    let faulted = machine(&backend).clone();
+    let EmuBackend::Md(md) = &mut backend else {
+        unreachable!()
+    };
+    assert!(matches!(
+        md.try_warm_reset(),
+        Err(crate::emu_backend::md::MdWarmResetError::Core(
+            zeff_md_core::WarmResetError::Rejected(_)
+        ))
+    ));
+    assert_eq!(md.core(), &faulted);
+    md.apply_execution_controls(true, true);
+    assert!(md.is_suspended());
     assert!(
         backend
             .take_runtime_fault()
@@ -325,6 +378,80 @@ fn md_backend_fault_is_reported_once_and_reset_recovers() {
     assert_eq!(machine(&backend).registers().pc, PROGRAM_START as u32);
     backend.step_frame();
     assert!(backend.take_runtime_fault().is_some());
+
+    let words = [0x5279, 0x00ff, 0x0300, 0x4e72, 0x2700, 0x4e71];
+    let EmuBackend::Md(mut md) = load(rom(b'U', &words), BackendLoadConfig::default()) else {
+        unreachable!()
+    };
+    md.set_sample_rate(48_000);
+    md.set_input(0x51, 3);
+    md.step_frame();
+    assert!(md.core().main_cpu_stopped());
+    assert_eq!(&md.core().work_ram()[0x300..0x302], &[0, 1]);
+    let ram = md.core().work_ram().to_vec();
+    let input = md.core().input().clone();
+    let io: Vec<_> = (0xa10001..=0xa1001f)
+        .step_by(2)
+        .map(|address| md.core().peek(address))
+        .collect();
+    let tick = md.timing_snapshot().now().get();
+    let field = md.frame_count();
+    md.debug_suspend();
+    md.take_rewind_audio_change();
+    assert_eq!(md.try_warm_reset().unwrap().elapsed_cpu_clocks, 40);
+    assert!(!md.is_suspended() && md.take_runtime_fault().is_none());
+    assert!(!md.take_rewind_audio_change());
+    assert_eq!(md.core().work_ram(), ram);
+    // Warm reset retires UART qualification while preserving pad and I/O state.
+    for port in [ControllerPort::One, ControllerPort::Two] {
+        assert_eq!(
+            md.core().input().controller_kind(port),
+            input.controller_kind(port)
+        );
+        assert_eq!(
+            md.core().input().controller_raw(port),
+            input.controller_raw(port)
+        );
+        assert_eq!(
+            md.core().input().controller_extra_raw(port),
+            input.controller_extra_raw(port)
+        );
+    }
+    assert_eq!(md.core().input_fault(), None);
+    assert_eq!(
+        (0xa10001..=0xa1001f)
+            .step_by(2)
+            .map(|address| md.core().peek(address))
+            .collect::<Vec<_>>(),
+        io
+    );
+    assert_eq!(md.core().sample_rate(), 48_000);
+    assert_eq!(md.timing_snapshot().now().get(), tick + 280);
+    assert_eq!(md.frame_count(), field);
+    md.step_frame();
+    assert_eq!(&md.core().work_ram()[0x300..0x302], &[0, 2]);
+    assert!(!md.is_suspended());
+    md.reset();
+    assert_eq!(md.frame_count(), 0);
+    assert_eq!(&md.core().work_ram()[0x300..0x302], &[0, 0]);
+    let mut bytes = rom(b'U', &LOOP);
+    bytes[0x1b0..0x1bc].copy_from_slice(&[b'R', b'A', 0xf8, 0x20, 0, 0x20, 0, 1, 0, 0x20, 3, 0xff]);
+    let EmuBackend::Md(mut md) = load(bytes, BackendLoadConfig::default()) else {
+        unreachable!()
+    };
+    md.debug_suspend();
+    let before = md.core().clone();
+    assert_eq!(
+        md.try_warm_reset(),
+        Err(crate::emu_backend::md::MdWarmResetError::Core(
+            zeff_md_core::WarmResetError::Rejected(
+                zeff_md_core::WarmResetRejection::CartridgeOwner
+            )
+        ))
+    );
+    assert!(md.is_suspended());
+    assert!(md.take_runtime_fault().is_none());
+    assert_eq!(md.core(), &before);
 }
 
 #[test]
@@ -343,13 +470,13 @@ fn md_backend_rejects_malformed_state_transactionally_and_advertises_limits() {
     assert!(caps.supports_audio);
     assert!(caps.supports_save_states);
     assert!(caps.supports_state_capture);
-    assert!(!caps.supports_rewind);
-    assert!(!caps.supports_replay);
-    assert!(!caps.supports_debugger);
-    assert!(!caps.supports_execution_controls);
-    assert!(!caps.supports_opcode_history);
-    assert!(!caps.supports_cheats);
-    assert!(!caps.supports_guest_calls);
+    assert!(caps.supports_rewind);
+    assert!(caps.supports_replay);
+    assert!(caps.supports_debugger);
+    assert!(caps.supports_execution_controls);
+    assert!(caps.supports_opcode_history);
+    assert!(caps.supports_cheats);
+    assert!(caps.supports_guest_calls);
     assert_eq!(caps.input_features.max_players, 2);
     assert_eq!(caps.save_ram_kind, SaveRamKind::none());
 }

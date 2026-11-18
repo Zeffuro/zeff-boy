@@ -22,31 +22,7 @@ impl Command {
 }
 
 impl Scheduler {
-    pub(crate) fn migrated(clock: EnvelopeClock, phase: u64, output: [i32; CHANNELS]) -> Self {
-        Self {
-            step: 72 * u32::from(clock.counter)
-                + 24 * u32::from(clock.phase)
-                + (phase / SLOT_CLOCKS) as u32,
-            command: Command {
-                channel: 255,
-                mask: 0,
-            },
-            pending: None,
-            frequency: (0, 0),
-            frequency_valid: false,
-            output,
-            ready: 0,
-            accumulator: [0; CHANNELS],
-            carriers: [0; CHANNELS],
-        }
-    }
-
-    #[cfg(test)]
     pub(crate) fn write_state(&self, w: &mut Writer) {
-        self.write_state_version(w, crate::save_state::STATE_VERSION);
-    }
-
-    pub(crate) fn write_state_version(&self, w: &mut Writer, version: u32) {
         w.write_u32(self.step);
         self.command.write_state(w);
         w.write_bool(self.pending.is_some());
@@ -59,14 +35,8 @@ impl Scheduler {
         for value in self.output {
             w.write_u32(value as u32);
         }
-        w.write_u8(
-            if version >= crate::save_state::STATE_VERSION_WITH_FM_PUBLICATION {
-                self.ready
-            } else {
-                0
-            },
-        );
-        if version >= crate::save_state::STATE_VERSION_WITH_FM_PUBLICATION {
+        w.write_u8(self.ready);
+        {
             for value in self.accumulator {
                 w.write_u32(value as u32);
             }
@@ -74,12 +44,7 @@ impl Scheduler {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn read_state(r: &mut Reader<'_>) -> Result<Self> {
-        Self::read_state_version(r, crate::save_state::STATE_VERSION)
-    }
-
-    pub(crate) fn read_state_version(r: &mut Reader<'_>, version: u32) -> Result<Self> {
         let step = r.read_u32()?;
         let command = Command::read_state(r)?;
         let pending = if r.read_bool()? {
@@ -113,7 +78,7 @@ impl Scheduler {
             accumulator: [0; CHANNELS],
             carriers: [0; CHANNELS],
         };
-        if version >= crate::save_state::STATE_VERSION_WITH_FM_PUBLICATION {
+        {
             for value in &mut result.accumulator {
                 *value = r.read_u32()? as i32;
                 ensure!(

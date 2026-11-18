@@ -36,8 +36,12 @@ fn backend(region: Region, rate: u32, fault: bool) -> EmuBackend {
     .backend
 }
 
-fn input(frames: usize, skip_audio: bool) -> FrameInput {
+pub(super) fn input(frames: usize, skip_audio: bool) -> FrameInput {
     FrameInput {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_request: 0,
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_pacing: (0, 0),
         frames,
         speculation_blockers: super::super::SpeculationBlockers::feature_disabled(),
         replay_joypad_frames: None,
@@ -68,6 +72,8 @@ fn input(frames: usize, skip_audio: bool) -> FrameInput {
         },
         debug_actions: crate::debug::DebugUiActions::none(),
         snapshot: SnapshotRequest {
+            debug_target: crate::debug::DebugTarget::Primary,
+            debug_revision: 0,
             want_debug_info: false,
             want_perf_info: false,
             any_viewer_open: false,
@@ -80,7 +86,7 @@ fn input(frames: usize, skip_audio: bool) -> FrameInput {
             memory_view_start: 0,
             show_rom_viewer: false,
             show_instruction_trace: false,
-            trace_after_sequence: None,
+            trace_cursor: Default::default(),
             rom_view_start: 0,
             last_disasm_pc: None,
             last_disasm_mapping: None,
@@ -315,10 +321,16 @@ fn md_worker_read_only_inspection_preserves_state_and_future_audio() {
             let expected = step(&mut control, 1, false, native_path);
             let view = result.ui_data.disassembly_view.unwrap();
             assert_eq!(view.lines.len(), 26);
-            assert_eq!(view.lines[0].address, view.pc);
+            assert_eq!(view.lines[0].address, view.cursor.cpu_address().unwrap());
             assert!(expected.ui_data.disassembly_view.is_none());
             let apu = result.ui_data.apu_debug.unwrap();
-            assert!(apu.channels.is_empty() && apu.master_waveform.is_empty());
+            assert_eq!(apu.channels.len(), 10);
+            assert!(apu.master_waveform.is_empty());
+            assert!(
+                apu.channels
+                    .iter()
+                    .all(|channel| !channel.muted && channel.waveform.is_empty())
+            );
             assert_eq!(apu.extra_sections[0].heading, "PSG");
             assert_eq!(apu.extra_sections[1].heading, "OPN2");
             assert!(expected.ui_data.apu_debug.is_none());
@@ -329,7 +341,7 @@ fn md_worker_read_only_inspection_preserves_state_and_future_audio() {
                 panic!("expected Mega Drive graphics");
             };
             assert_eq!(graphics.vram.len(), 65536);
-            assert_eq!(graphics.cram, vec![0; 128]);
+            assert_eq!(graphics.cram, vec![Some(0); 128]);
             assert_eq!(graphics.vsram, vec![0; 80]);
             assert!(expected.ui_data.palette_debug.is_none());
             assert!(expected.ui_data.graphics_data.is_none());
@@ -347,6 +359,143 @@ fn md_worker_read_only_inspection_preserves_state_and_future_audio() {
             assert_eq!(
                 inspected.encode_state_bytes().unwrap(),
                 control.encode_state_bytes().unwrap()
+            );
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn md_worker_applies_all_channel_mute_solo_and_unmute_actions_to_snapshots() {
+    for native_path in [false, true] {
+        let mut controlled = backend(Region::NtscUs, 48_000, false);
+        let mut control = backend(Region::NtscUs, 48_000, false);
+        let mut patterns = Vec::new();
+        for slot in 0..10 {
+            for solo in [false, true] {
+                patterns.push(std::array::from_fn::<_, 10, _>(|index| {
+                    (index == slot) != solo
+                }));
+            }
+        }
+        patterns.extend([[true; 10], [false; 10]]);
+        for mutes in patterns {
+            let mut request = input(1, false);
+            request.debug_actions.apu_channel_mutes = Some(mutes.to_vec());
+            request.snapshot.show_apu_viewer = true;
+            let mut rewind = zeff_emu_common::rewind::RewindBuffer::new(0, 1);
+            let mut seconds = 10;
+            let mut fault = WorkerRuntimeFault::default();
+            #[cfg(not(target_arch = "wasm32"))]
+            let result = if native_path {
+                EmuThread::handle_step_frames_with_tcp_link(
+                    &mut controlled,
+                    request,
+                    &[],
+                    None,
+                    false,
+                    &mut rewind,
+                    &mut seconds,
+                    &mut fault,
+                )
+            } else {
+                EmuThread::handle_step_frames(
+                    &mut controlled,
+                    request,
+                    &[],
+                    false,
+                    &mut rewind,
+                    &mut seconds,
+                    &mut fault,
+                )
+            };
+            #[cfg(target_arch = "wasm32")]
+            let result = EmuThread::handle_step_frames(
+                &mut controlled,
+                request,
+                &[],
+                false,
+                &mut rewind,
+                &mut seconds,
+                &mut fault,
+            );
+            step(&mut control, 1, false, native_path);
+            assert!(result.runtime_fault.is_none());
+            let apu = result.ui_data.apu_debug.unwrap();
+            assert_eq!(apu.channels.len(), mutes.len());
+            assert_eq!(
+                apu.channels.iter().map(|ch| ch.muted).collect::<Vec<_>>(),
+                mutes
+            );
+            assert_eq!(
+                controlled.encode_state_bytes().unwrap(),
+                control.encode_state_bytes().unwrap()
+            );
+            if mutes.iter().all(|&mute| mute) {
+                assert!(result.audio_samples.iter().all(|&sample| sample == 0.0));
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn request_timing_tracks_real_worker_single_and_multifield_audio() {
+    use crate::emu_thread::audio_timing::Session;
+    use std::time::{Duration, Instant};
+    let session = Session::start(Instant::now());
+    let mut worker = EmuThread::spawn(backend(Region::NtscUs, 48_000, false), false);
+    for fields in [1, 3] {
+        assert!(
+            worker.send_checked(super::super::EmuCommand::StepFrames(Box::new(input(
+                fields, false
+            ))))
+        );
+        let start = Instant::now();
+        let result = loop {
+            if let Some(result) = worker.try_recv_frame() {
+                break result;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert_eq!(result.advanced_frames, fields);
+        assert_eq!(
+            result.audio_timing_requests,
+            vec![if fields == 1 { 1 } else { 2 }]
+        );
+    }
+    worker.shutdown();
+    let records = session.finish();
+    for (id, fields) in [(1, 1), (2, 3)] {
+        let stages: Vec<_> = records.iter().filter(|r| r.request == id).collect();
+        let ready: Vec<_> = stages
+            .iter()
+            .filter(|r| r.stage == "field_audio_ready")
+            .collect();
+        assert_eq!(ready.len(), fields);
+        assert_eq!(
+            ready.iter().map(|r| r.field).collect::<Vec<_>>(),
+            (0..fields as u64).collect::<Vec<_>>()
+        );
+        let sent = stages.iter().find(|r| r.stage == "send_begin").unwrap();
+        assert_eq!(ready.iter().map(|r| r.scalars).sum::<u64>(), sent.scalars);
+        assert!(ready.iter().all(|r| r.at_ns <= sent.at_ns));
+        for name in [
+            "dispatch_begin",
+            "dispatch_end",
+            "worker_dequeue",
+            "worker_start",
+            "result_built",
+            "result_ready",
+            "send_begin",
+            "send_end",
+            "app_dequeue",
+        ] {
+            assert_eq!(
+                stages.iter().filter(|r| r.stage == name).count(),
+                1,
+                "{name}"
             );
         }
     }

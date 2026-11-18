@@ -4,16 +4,14 @@ use crate::debug::{
 use zeff_md_core::Emulator;
 
 pub(super) fn snapshot(emu: &Emulator) -> ConsoleGraphicsData {
-    let registers = emu.vdp().registers().registers();
+    let registers = emu.vdp_registers();
     ConsoleGraphicsData::Md(Box::new(MdGraphicsData {
         vram: emu.vdp().memory().vram().to_vec(),
-        // Canonical backing words in bus byte order, without port-read FIFO history.
-        cram: emu
-            .vdp()
-            .memory()
-            .cram()
-            .iter()
-            .flat_map(|word| word.to_be_bytes())
+        cram: (0..emu.vdp().memory().cram_word_count())
+            .flat_map(|index| match emu.vdp().memory().cram_word(index) {
+                Some(word) => word.to_be_bytes().map(Some),
+                None => [None; 2],
+            })
             .collect(),
         vsram: emu
             .vdp()
@@ -48,17 +46,33 @@ pub(super) fn palette(emu: &Emulator) -> PaletteDebugInfo {
                 .0
                 .iter()
                 .enumerate()
-                .map(|(index, colors)| PaletteRowDebug {
-                    label: format!("Palette {index}"),
-                    colors: colors.to_vec(),
+                .flat_map(|(index, colors)| {
+                    if colors.iter().all(Option::is_some) {
+                        vec![PaletteRowDebug {
+                            label: format!("Palette {index}"),
+                            colors: colors.iter().flatten().copied().collect(),
+                        }]
+                    } else {
+                        colors
+                            .iter()
+                            .enumerate()
+                            .map(|(color, rgba)| PaletteRowDebug {
+                                label: format!(
+                                    "Palette {index}, color {color}{}",
+                                    if rgba.is_none() { ": unknown" } else { "" }
+                                ),
+                                colors: rgba.iter().copied().collect(),
+                            })
+                            .collect()
+                    }
                 })
                 .collect(),
         }],
     }
 }
 
-fn colors(emu: &Emulator) -> [[u8; 4]; 64] {
-    std::array::from_fn(|index| rgba(emu.vdp().memory().cram()[index]))
+fn colors(emu: &Emulator) -> [Option<[u8; 4]>; 64] {
+    std::array::from_fn(|index| emu.vdp().memory().cram_word(index).map(rgba))
 }
 
 fn rgba(color: u16) -> [u8; 4] {

@@ -8,6 +8,7 @@ use zeff_emu_common::save_ram::SaveRamKind;
 impl CoreState {
     pub fn battery_sram(&self) -> Option<Vec<u8>> {
         match &self.core {
+            ActiveCore::Md(emu) => emu.dump_save_ram(),
             ActiveCore::Gb(emu) => emu.dump_battery_sram(),
             ActiveCore::Gba(emu) => emu.dump_battery_sram(),
             ActiveCore::Nes(emu) => emu.dump_battery_sram(),
@@ -19,6 +20,7 @@ impl CoreState {
 
     pub fn save_ram_kind(&self) -> SaveRamKind {
         match &self.core {
+            ActiveCore::Md(emu) => emu.save_ram_kind(),
             ActiveCore::Gb(emu) => emu.save_ram_kind(),
             ActiveCore::Gba(emu) => emu.save_ram_kind(),
             ActiveCore::Nes(emu) => emu.save_ram_kind(),
@@ -30,6 +32,7 @@ impl CoreState {
 
     pub fn load_battery_sram(&mut self, data: &[u8]) -> anyhow::Result<()> {
         match &mut self.core {
+            ActiveCore::Md(emu) => emu.load_save_ram(data),
             ActiveCore::Gb(emu) => emu.load_battery_sram(data),
             ActiveCore::Gba(emu) => emu.load_battery_sram(data),
             ActiveCore::Nes(emu) => emu.load_battery_sram(data),
@@ -77,6 +80,9 @@ impl CoreState {
     }
 
     pub fn memory_regions(&self) -> Vec<MemoryRegionDescriptor> {
+        if let ActiveCore::Md(emu) = &self.core {
+            return super::md::memory_regions(emu);
+        }
         standard_memory_regions_with_extended(
             self.cpu_address_bits(),
             self.system_ram_size(),
@@ -107,6 +113,9 @@ impl CoreState {
         id_or_alias: &str,
         out: &mut Vec<u8>,
     ) -> anyhow::Result<MemoryRegionDescriptor> {
+        if let ActiveCore::Md(emu) = &self.core {
+            return super::md::copy_memory(emu, id_or_alias, out);
+        }
         let regions = self.memory_regions();
         let region = resolve_memory_region(&regions, id_or_alias)
             .ok_or_else(|| anyhow::anyhow!("unknown libretro memory region '{id_or_alias}'"))?;
@@ -247,6 +256,7 @@ impl CoreState {
             }
             (core, MemoryRegionKind::Framebuffer) => {
                 let framebuffer = match core {
+                    ActiveCore::Md(emu) => emu.framebuffer(),
                     ActiveCore::Gb(emu) => emu.framebuffer(),
                     ActiveCore::Gba(emu) => emu.framebuffer(),
                     ActiveCore::Nes(emu) => emu.framebuffer(),
@@ -266,6 +276,7 @@ impl CoreState {
 
     pub fn refresh_system_ram(&mut self) {
         match &self.core {
+            ActiveCore::Md(emu) => copy_slice_to_vec(&mut self.system_ram_buf, emu.work_ram()),
             ActiveCore::Gb(emu) => {
                 let wram = emu.system_ram();
                 self.system_ram_buf.resize(wram.len(), 0);
@@ -302,6 +313,9 @@ impl CoreState {
 
     pub fn refresh_video_ram(&mut self) {
         match &mut self.core {
+            ActiveCore::Md(emu) => {
+                copy_slice_to_vec(&mut self.video_ram_buf, emu.vdp().memory().vram())
+            }
             ActiveCore::Gb(emu) => {
                 let vram = emu.video_ram_snapshot();
                 self.video_ram_buf.resize(vram.len(), 0);
@@ -342,6 +356,7 @@ impl CoreState {
 
     pub fn cpu_address_bits(&self) -> u8 {
         match &self.core {
+            ActiveCore::Md(_) => 24,
             ActiveCore::Gba(_) => 32,
             ActiveCore::Ws(_) => 20,
             ActiveCore::Gb(_) | ActiveCore::Nes(_) | ActiveCore::Pce(_) | ActiveCore::Sega8(_) => {
@@ -352,6 +367,7 @@ impl CoreState {
 
     pub fn framebuffer_len(&self) -> usize {
         match &self.core {
+            ActiveCore::Md(emu) => emu.framebuffer().len(),
             ActiveCore::Gb(emu) => emu.framebuffer().len(),
             ActiveCore::Gba(emu) => emu.framebuffer().len(),
             ActiveCore::Nes(emu) => emu.framebuffer().len(),
@@ -363,6 +379,7 @@ impl CoreState {
 
     pub fn system_ram_size(&self) -> usize {
         match &self.core {
+            ActiveCore::Md(emu) => emu.work_ram().len(),
             ActiveCore::Gb(emu) => emu.system_ram().len(),
             ActiveCore::Gba(_) => zeff_gba_core::hardware::constants::SYSTEM_RAM_SIZE,
             ActiveCore::Nes(_) => zeff_nes_core::hardware::constants::SYSTEM_RAM_SIZE,
@@ -375,7 +392,8 @@ impl CoreState {
     pub fn external_work_ram_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gba(emu) => emu.system_ram().0.len(),
-            ActiveCore::Gb(_)
+            ActiveCore::Md(_)
+            | ActiveCore::Gb(_)
             | ActiveCore::Nes(_)
             | ActiveCore::Pce(_)
             | ActiveCore::Sega8(_)
@@ -386,7 +404,8 @@ impl CoreState {
     pub fn internal_work_ram_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gba(emu) => emu.system_ram().1.len(),
-            ActiveCore::Gb(_)
+            ActiveCore::Md(_)
+            | ActiveCore::Gb(_)
             | ActiveCore::Nes(_)
             | ActiveCore::Pce(_)
             | ActiveCore::Sega8(_)
@@ -396,6 +415,7 @@ impl CoreState {
 
     pub fn video_ram_size(&self) -> usize {
         match &self.core {
+            ActiveCore::Md(emu) => emu.vdp().memory().vram().len(),
             ActiveCore::Gb(emu) => emu.video_ram_snapshot().len(),
             ActiveCore::Gba(emu) => emu.video_ram_snapshot().len(),
             ActiveCore::Nes(_) => 0x2000,
@@ -411,6 +431,7 @@ impl CoreState {
 
     pub fn palette_ram_size(&self) -> usize {
         match &self.core {
+            ActiveCore::Md(emu) => emu.vdp().memory().cram_word_count() * size_of::<u16>(),
             ActiveCore::Gba(emu) => emu.palette_ram_snapshot().len(),
             ActiveCore::Nes(emu) => emu.ppu_palette_ram().len(),
             ActiveCore::Pce(_) => zeff_pce_core::hardware::VCE_PALETTE_COLORS * 2,
@@ -434,14 +455,15 @@ impl CoreState {
                     usize::from(host.machine().devices().supergrafx_video().is_some()) + 1;
                 zeff_pce_core::hardware::VDC_SATB_WORDS * 2 * multiplier
             }
-            ActiveCore::Gb(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
+            ActiveCore::Md(_) | ActiveCore::Gb(_) | ActiveCore::Sega8(_) | ActiveCore::Ws(_) => 0,
         }
     }
 
     pub fn io_registers_size(&self) -> usize {
         match &self.core {
             ActiveCore::Gba(emu) => emu.io_snapshot().len(),
-            ActiveCore::Gb(_)
+            ActiveCore::Md(_)
+            | ActiveCore::Gb(_)
             | ActiveCore::Nes(_)
             | ActiveCore::Pce(_)
             | ActiveCore::Sega8(_)

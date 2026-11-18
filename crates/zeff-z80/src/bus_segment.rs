@@ -1,6 +1,40 @@
 use super::*;
 
+mod indexed_bit_cycle;
+pub use indexed_bit_cycle::{IndexedCbCycleCompletion, IndexedCbCycleKind, IndexedCbCycleRequest};
+
+mod ed_word_cycle;
+pub use ed_word_cycle::{EdWordCompletion, EdWordKind, EdWordPhase, EdWordRequest};
+
+mod djnz_cycle;
+pub use djnz_cycle::{
+    DjnzCompletion, DjnzKind, DjnzPhase, DjnzReceipt, DjnzRequest, DjnzRetirement, DjnzTail,
+};
+mod indexed_memory_cycle;
+pub use indexed_memory_cycle::{
+    IndexedMemoryCompletion, IndexedMemoryKind, IndexedMemoryReceipt, IndexedMemoryRequest,
+};
+mod copy_cycle;
+pub use copy_cycle::{CopyCycleCompletion, CopyCycleKind, CopyCycleRequest, CopyReceipt};
+mod im1_cycle;
+mod word_add_cycle;
+pub use word_add_cycle::{
+    WordAddCompletion, WordAddKind, WordAddPhase, WordAddReceipt, WordAddRequest,
+    WordAddRetirement, WordAddTail,
+};
+mod jr_cycle;
+pub use jr_cycle::{
+    JrCycleCompletion, JrCycleKind, JrCycleRequest, JrReceipt, JrRetirement, JrTail,
+};
+mod index_cycle;
+pub use im1_cycle::{Im1CycleCompletion, Im1CycleKind, Im1CycleRequest, Im1Receipt};
+mod m1_timing;
+mod physical_cycle;
+mod prefix_cycle;
 mod state;
+pub use physical_cycle::{
+    CycleCompletion, CycleError, CycleInterrupts, CycleKind, CycleRequest, CycleSample,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BusState {
@@ -30,6 +64,25 @@ enum Operation {
     Interrupt(interrupt::Service),
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum LegacyRelative {
+    Jr,
+    Djnz,
+}
+
+impl LegacyRelative {
+    fn matches(self, opcode: u8) -> bool {
+        match self {
+            Self::Jr => matches!(opcode, 0x18 | 0x20 | 0x28 | 0x30 | 0x38),
+            Self::Djnz => opcode == 0x10,
+        }
+    }
+}
+
+pub(super) fn fetch_cycles(opcode: u8) -> u32 {
+    CYCLES_M1 + u32::from(opcode == 0x10)
+}
+
 impl Transfer {
     pub(super) fn interrupt(service: interrupt::Service) -> Self {
         Self {
@@ -40,11 +93,30 @@ impl Transfer {
 }
 
 impl BusState {
+    pub fn next_readonly_bit_address(&self) -> Option<u16> {
+        match self.transfer?.operation {
+            Operation::Rmw(operation) => operation.readonly_bit_address(),
+            _ => None,
+        }
+    }
+
+    /// Classifies a running CPU; HALT and boundary interrupts override this phase.
+    pub fn next_segment_reads_opcode(&self) -> bool {
+        match self.transfer.map(|transfer| transfer.operation) {
+            None | Some(Operation::CbFetch | Operation::EdFetch { .. }) => true,
+            Some(Operation::IndexedCb(operation)) => operation.is_terminal_fetch(),
+            _ => false,
+        }
+    }
+
     /// Duration of the next qualified memory phase; other phases remain unclassified.
     pub fn next_memory_cycle(&self) -> Option<u32> {
         match self.transfer?.operation {
+            Operation::Single { opcode, index } => single_memory_cycle(opcode, index.is_some()),
             Operation::Load(operation) => operation.memory_cycle(),
             Operation::Stack(operation) => operation.memory_cycle(),
+            Operation::IndexedMemory(operation) => operation.memory_cycle(),
+            Operation::EdBlock(operation) => operation.memory_cycle(),
             _ => None,
         }
     }
@@ -55,6 +127,10 @@ impl BusState {
 
     pub fn prefix_pending(&self) -> bool {
         self.prefix.pending()
+    }
+
+    pub fn transfer_pending(&self) -> bool {
+        self.transfer.is_some()
     }
 }
 
@@ -79,11 +155,42 @@ impl Cpu {
         bus: &mut B,
         state: &mut BusState,
     ) -> Option<BoundedStep> {
+        self.step_bus_segment_inner(bus, state, None)
+    }
+
+    /// Replays a saved aggregate JR without changing other admitted bus phases.
+    pub fn step_bus_segment_legacy_jr<B: Z80Bus>(
+        &mut self,
+        bus: &mut B,
+        state: &mut BusState,
+    ) -> Option<BoundedStep> {
+        self.step_bus_segment_inner(bus, state, Some(LegacyRelative::Jr))
+    }
+
+    pub fn step_bus_segment_legacy_djnz<B: Z80Bus>(
+        &mut self,
+        bus: &mut B,
+        state: &mut BusState,
+    ) -> Option<BoundedStep> {
+        self.step_bus_segment_inner(bus, state, Some(LegacyRelative::Djnz))
+    }
+
+    fn step_bus_segment_inner<B: Z80Bus>(
+        &mut self,
+        bus: &mut B,
+        state: &mut BusState,
+        legacy_relative: Option<LegacyRelative>,
+    ) -> Option<BoundedStep> {
         if self.state == CpuState::Suspended {
             return None;
         }
         let Some(transfer) = state.transfer.take() else {
-            return self.step_bounded_inner(bus, &mut state.prefix, Some(&mut state.transfer));
+            return self.step_bounded_inner(
+                bus,
+                &mut state.prefix,
+                Some(&mut state.transfer),
+                legacy_relative,
+            );
         };
         let (cycles, complete) = match transfer.operation {
             Operation::Interrupt(service) => {
@@ -194,9 +301,11 @@ impl Cpu {
                     Some(index) => {
                         self.execute_index_terminal(bus, transfer.pc, index, opcode)
                             - Z80_PREFIX_OVERHEAD
-                            - CYCLES_M1
+                            - fetch_cycles(opcode)
                     }
-                    None => self.execute_unprefixed(bus, transfer.pc, opcode) - CYCLES_M1,
+                    None => {
+                        self.execute_unprefixed(bus, transfer.pc, opcode) - fetch_cycles(opcode)
+                    }
                 },
                 true,
             ),
@@ -223,6 +332,7 @@ impl Cpu {
         pc: u16,
         opcode: u8,
         index: Option<u8>,
+        legacy_relative: Option<LegacyRelative>,
     ) -> bool {
         let Some(slot) = slot else {
             return false;
@@ -250,21 +360,50 @@ impl Cpu {
             .flatten()
         {
             Operation::Rmw(rmw)
-        } else if single_transfer(opcode, index.is_some()) {
+        } else if single_transfer(opcode, index.is_some())
+            && legacy_relative.is_none_or(|legacy| !legacy.matches(opcode))
+        {
             Operation::Single { opcode, index }
         } else {
             return false;
         };
         *slot = Some(Transfer { pc, operation });
-        self.cycles = self.cycles.wrapping_add(u64::from(CYCLES_M1));
+        self.cycles = self.cycles.wrapping_add(u64::from(fetch_cycles(opcode)));
         true
     }
+}
+
+fn single_memory_cycle(opcode: u8, indexed: bool) -> Option<u32> {
+    let memory = match opcode {
+        0x02 | 0x0a | 0x12 | 0x1a | 0x06 | 0x0e | 0x16 | 0x1e | 0x26 | 0x2e | 0x3e | 0xc6
+        | 0xce | 0xd6 | 0xde | 0xe6 | 0xee | 0xf6 | 0xfe => true,
+        0x46
+        | 0x4e
+        | 0x56
+        | 0x5e
+        | 0x66
+        | 0x6e
+        | 0x7e
+        | 0x70..=0x75
+        | 0x77
+        | 0x86
+        | 0x8e
+        | 0x96
+        | 0x9e
+        | 0xa6
+        | 0xae
+        | 0xb6
+        | 0xbe => !indexed,
+        _ => false,
+    };
+    memory.then_some(CYCLES_MEMORY_TRANSFER)
 }
 
 fn single_transfer(opcode: u8, indexed: bool) -> bool {
     match opcode {
         0x02 | 0x0a | 0x12 | 0x1a | 0x06 | 0x0e | 0x16 | 0x1e | 0x26 | 0x2e | 0x3e | 0xc6
-        | 0xce | 0xd6 | 0xde | 0xe6 | 0xee | 0xf6 | 0xfe => true,
+        | 0xce | 0xd6 | 0xde | 0xe6 | 0xee | 0xf6 | 0xfe | 0x10 | 0x18 | 0x20 | 0x28 | 0x30
+        | 0x38 => true,
         0x46
         | 0x4e
         | 0x56
@@ -289,3 +428,31 @@ fn single_transfer(opcode: u8, indexed: bool) -> bool {
 #[cfg(test)]
 #[path = "bus_segment/wait_tests.rs"]
 mod wait_tests;
+
+#[cfg(test)]
+#[path = "bus_segment/operand_tests.rs"]
+mod operand_tests;
+
+#[cfg(test)]
+#[path = "bus_segment/prefix_tests.rs"]
+mod prefix_tests;
+
+#[cfg(test)]
+#[path = "bus_segment/rmw_tests.rs"]
+mod rmw_tests;
+
+#[cfg(test)]
+#[path = "bus_segment/index_tests.rs"]
+mod index_tests;
+
+#[cfg(test)]
+#[path = "bus_segment/m1_tests.rs"]
+mod m1_tests;
+
+#[cfg(test)]
+#[path = "bus_segment/call_tests.rs"]
+mod call_tests;
+
+#[cfg(test)]
+#[path = "bus_segment/retirement_evidence_tests.rs"]
+mod retirement_evidence_tests;

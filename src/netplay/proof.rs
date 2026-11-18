@@ -128,7 +128,7 @@ fn sample(frame: u64, player: Player) -> u16 {
 
 fn response_summary(response: &Result<Response>) -> String {
     match response {
-        Ok(Response::Ready) => "ready".into(),
+        Ok(Response::Ready { .. }) => "ready".into(),
         Ok(Response::Chat { .. }) => "chat".into(),
         Ok(Response::ChatError(_)) => "chat error".into(),
         Ok(Response::Frame { .. }) => "confirmed frame".into(),
@@ -263,11 +263,11 @@ fn run_media(
         secret,
     })));
     ensure!(
-        matches!(next(&one)?, Response::Ready),
+        matches!(next(&one)?, Response::Ready { md_input: None }),
         "P1 admission failed"
     );
     ensure!(
-        matches!(next(&two)?, Response::Ready),
+        matches!(next(&two)?, Response::Ready { md_input: None }),
         "P2 admission failed"
     );
     let mut last = None;

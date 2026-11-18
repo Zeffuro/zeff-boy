@@ -1,11 +1,28 @@
 use super::*;
 use crate::hardware::vdp::VdpDmaSource;
-use crate::hardware::vdp::{VdpInterruptError, VdpTimingError, VdpWrite, VdpWriteError};
+use crate::hardware::vdp::memory::MemoryTransfer;
+use crate::hardware::vdp::{VdpInterruptError, VdpTimingError, VdpWriteError};
 
-pub(super) type WriteBatch = [Option<(VdpWrite, Option<bool>)>; WRITE_BATCH_CAPACITY];
+pub(super) type WriteBatch = [Option<MemoryTransfer>; WRITE_BATCH_CAPACITY];
+
+pub(super) struct Prepared {
+    pub state: State,
+    pub writes: WriteBatch,
+    pub level: Option<u8>,
+    pub dma_activity: bool,
+}
 
 impl State {
     pub(super) fn validate_transfer_mode(&self, region: Region) -> Result<(), VdpPortError> {
+        if self.interrupts.staged_blank() {
+            return Err(VdpPortError::Schedule(
+                VdpRegisterError::UnsupportedModeChange {
+                    index: 1,
+                    value: self.registers.registers()[1].unwrap(),
+                }
+                .into(),
+            ));
+        }
         self.validate_runtime_configuration(region)
             .map_err(VdpPortError::Schedule)?;
         self.interrupts
@@ -71,6 +88,11 @@ impl State {
 
     fn validate_data(&self, region: Region) -> Result<(), VdpPortError> {
         self.reject_dma_data()?;
+        if self.dma == Some(dma::Phase::FillWaiting)
+            && (self.control.pending_word().is_some() || self.registers.pending().is_some())
+        {
+            return Err(VdpPortError::Dma(super::super::VdpDmaError::PendingInputs));
+        }
         self.validate_transfer_mode(region)?;
         let code = self.command.code & !(COMMAND_CD4 | COMMAND_CD5);
         self.registers
@@ -78,7 +100,7 @@ impl State {
             .ok_or(VdpPortError::Data(VdpWriteError::UnknownIncrement))?;
         if self.command.address > COMMAND_ADDRESS_MASK
             || (!matches!(code, VRAM_WRITE_CODE | CRAM_WRITE_CODE | VSRAM_WRITE_CODE)
-                && !self.command.is_unused_write_target())
+                && !self.command.is_no_effect_write_target())
         {
             return Err(VdpPortError::Data(VdpWriteError::UnsupportedCommand(
                 self.command,
@@ -94,6 +116,15 @@ impl State {
         memory: &super::super::VdpMemory,
     ) -> Result<(), VdpPortError> {
         self.validate_data(region)?;
+        self.enqueue_data(word, region, memory)
+    }
+
+    pub(super) fn enqueue_data(
+        &mut self,
+        word: u16,
+        region: Region,
+        memory: &super::super::VdpMemory,
+    ) -> Result<(), VdpPortError> {
         self.interrupts
             .next_write_slot(self.now(), region, &self.registers)
             .map_err(VdpPortError::Schedule)?;
@@ -152,7 +183,7 @@ impl State {
         region: Region,
         acknowledge: bool,
         memory: &super::super::VdpMemory,
-    ) -> Result<(Self, WriteBatch, Option<u8>), VdpScheduleError> {
+    ) -> Result<Prepared, VdpScheduleError> {
         self.prepare_to_from(at, region, acknowledge, memory, None)
     }
 
@@ -163,9 +194,9 @@ impl State {
         acknowledge: bool,
         memory: &super::super::VdpMemory,
         source: Option<VdpDmaSource<'_>>,
-    ) -> Result<(Self, WriteBatch, Option<u8>), VdpScheduleError> {
+    ) -> Result<Prepared, VdpScheduleError> {
         let prepared = self.prepare_chunk_to_from(at, region, acknowledge, memory, source)?;
-        if prepared.0.now() < at {
+        if prepared.state.now() < at {
             return Err(VdpScheduleError::Dma(super::super::VdpDmaError::BatchFull));
         }
         Ok(prepared)
@@ -178,10 +209,11 @@ impl State {
         acknowledge: bool,
         memory: &super::super::VdpMemory,
         source: Option<VdpDmaSource<'_>>,
-    ) -> Result<(Self, WriteBatch, Option<u8>), VdpScheduleError> {
+    ) -> Result<Prepared, VdpScheduleError> {
         let mut candidate = self.clone();
         let mut writes = [None; WRITE_BATCH_CAPACITY];
         let mut count = 0;
+        let mut dma_activity = false;
         while (!candidate.fifo.is_empty()
             || candidate.read_phase.is_some()
             || candidate
@@ -189,8 +221,8 @@ impl State {
                 .is_some_and(|phase| phase != dma::Phase::FillWaiting))
             && at > candidate.now()
         {
-            let display_change = candidate.pending_fifo_display_change();
-            let published = display_change.map(|_| candidate.registers.published_state().1);
+            let mode_change = candidate.pending_fifo_mode_change(region);
+            let published = mode_change.map(|_| candidate.registers.published_state().1);
             let registers = published.as_ref().unwrap_or(&candidate.registers);
             candidate.validate_runtime_registers(region, registers)?;
             let mut consume = if candidate.fifo.is_empty()
@@ -234,19 +266,32 @@ impl State {
                     Err(VdpScheduleError::Interrupt(VdpInterruptError::Timing(
                         VdpTimingError::ClockOverflow,
                     ))) => None,
+                    Err(VdpScheduleError::Interrupt(VdpInterruptError::Timing(
+                        VdpTimingError::UnqualifiedMemoryInterval(next),
+                    ))) if next > at => {
+                        candidate
+                            .interrupts
+                            .is_external_slot(at, region, &candidate.registers)?;
+                        None
+                    }
                     Err(error) => return Err(error),
                 }
             } else {
                 None
             };
-            if let Some(write) = display_change.filter(|write| {
+            if let Some(write) = mode_change.filter(|write| {
                 write.publish_at <= at && consume.is_none_or(|slot| write.publish_at <= slot)
             }) {
                 if acknowledge && write.publish_at == at {
                     break;
                 }
                 if count == writes.len() {
-                    return Ok((candidate, writes, None));
+                    return Ok(Prepared {
+                        state: candidate,
+                        writes,
+                        level: None,
+                        dma_activity,
+                    });
                 }
                 candidate.advance_to(write.publish_at, region)?;
                 if !candidate.interrupts.is_machine_write_slot(
@@ -274,30 +319,88 @@ impl State {
                 && (!candidate.fifo.is_empty()
                     || matches!(
                         candidate.dma,
-                        Some(dma::Phase::Fill(_) | dma::Phase::Copy(Some(_)))
+                        Some(
+                            dma::Phase::Fill(_)
+                                | dma::Phase::FillUnknownCram
+                                | dma::Phase::Copy(Some(_))
+                        )
                     ))
             {
-                return Ok((candidate, writes, None));
+                return Ok(Prepared {
+                    state: candidate,
+                    writes,
+                    level: None,
+                    dma_activity,
+                });
             }
             candidate.advance_to(slot, region)?;
             if consume == Some(slot) && !candidate.fifo.is_empty() {
-                writes[count] = candidate.fifo.take_slot();
-                if let Some((entry, Some(true))) = writes[count] {
-                    candidate.sprites.observe_completed_write(
-                        candidate.registers.registers()[usize::from(SPRITE_TABLE_REGISTER)],
-                        entry,
-                        candidate.registers.horizontal_mode().unwrap(),
-                    );
+                if candidate.dma == Some(dma::Phase::FillWaiting)
+                    && candidate.command.code & !(COMMAND_CD4 | COMMAND_CD5) == VRAM_WRITE_CODE
+                    && candidate.fifo.len() == 1
+                    && candidate
+                        .fifo
+                        .front()
+                        .is_some_and(|entry| entry.command.code & !COMMAND_CD4 != VRAM_WRITE_CODE)
+                    && !candidate.zero_color_fill_seed()
+                {
+                    return Err(VdpScheduleError::Dma(
+                        super::super::VdpDmaError::PendingInputs,
+                    ));
+                }
+                let previous_count = candidate.fifo.len();
+                let retired = candidate.fifo.take_slot();
+                writes[count] = retired.map(|(entry, phase)| MemoryTransfer::Known(entry, phase));
+                if let Some((entry, _)) = retired {
+                    if candidate.fifo.len() < previous_count
+                        && entry.command.code & !COMMAND_CD4 == VRAM_WRITE_CODE
+                    {
+                        candidate.sprites.observe_completed_write(
+                            candidate.registers.registers()[usize::from(SPRITE_TABLE_REGISTER)],
+                            entry,
+                            candidate.registers.horizontal_mode().unwrap(),
+                        );
+                    }
                     if candidate.dma == Some(dma::Phase::FillWaiting) && candidate.fifo.is_empty() {
-                        candidate.dma = Some(dma::Phase::Fill(entry.data));
+                        candidate.dma = Some(
+                            if matches!(
+                                candidate.command.code & !(COMMAND_CD4 | COMMAND_CD5),
+                                CRAM_WRITE_CODE | VSRAM_WRITE_CODE
+                            ) {
+                                // Word fills reuse the next free FIFO slot, not the triggering word.
+                                match candidate.fifo.next_slot_data() {
+                                    Some(data) => dma::Phase::Fill(data),
+                                    None if candidate.command.code
+                                        & !(COMMAND_CD4 | COMMAND_CD5)
+                                        == CRAM_WRITE_CODE =>
+                                    {
+                                        dma::Phase::FillUnknownCram
+                                    }
+                                    None => {
+                                        return Err(VdpScheduleError::Dma(
+                                            super::super::VdpDmaError::MissingSource,
+                                        ));
+                                    }
+                                }
+                            } else {
+                                dma::Phase::Fill(entry.data)
+                            },
+                        );
                     }
                 }
                 count += 1;
             } else if consume == Some(slot) && candidate.dma.is_some() {
+                let accepts_source = matches!(
+                    candidate.dma,
+                    Some(
+                        dma::Phase::Copy(None) | dma::Phase::Fill(_) | dma::Phase::FillUnknownCram
+                    )
+                );
                 if let Some(write) = candidate.service_dma(memory, &writes)? {
                     writes[count] = Some(write);
                     count += 1;
                 }
+                dma_activity |= accepts_source;
             } else if consume == Some(slot) {
                 candidate
                     .service_read(memory, &writes)
@@ -311,6 +414,7 @@ impl State {
                         .is_external_slot(slot, region, &candidate.registers)?)
             {
                 candidate.fetch_external(source)?;
+                dma_activity = true;
             }
         }
         let level = if acknowledge {
@@ -319,6 +423,11 @@ impl State {
             candidate.advance_to(at, region)?;
             None
         };
-        Ok((candidate, writes, level))
+        Ok(Prepared {
+            state: candidate,
+            writes,
+            level,
+            dma_activity,
+        })
     }
 }

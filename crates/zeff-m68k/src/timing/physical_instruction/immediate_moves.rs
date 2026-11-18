@@ -31,7 +31,7 @@ impl PrefetchCpu {
             pipeline.address.wrapping_add(if long { 2 } else { 4 }),
             pipeline.words[0],
         );
-        let first = self.physical_read(bus, phase)?;
+        let first = self.physical_fetch(bus, phase)?;
         let (value, retained, length) = if long {
             let phase = self.prefetch_phase(
                 InstructionPhase::ExtensionSecond,
@@ -39,9 +39,9 @@ impl PrefetchCpu {
                 pipeline.address.wrapping_add(6),
                 pipeline.words[0],
             );
-            let retained = self.physical_read(bus, phase)?;
+            let retained = self.physical_fetch(bus, phase)?;
             (
-                (u32::from(pipeline.words[1]) << 16) | u32::from(first),
+                (u32::from(pipeline.words[1]) << 16) | u32::from(first.value),
                 retained,
                 6,
             )

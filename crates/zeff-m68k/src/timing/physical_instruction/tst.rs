@@ -54,7 +54,7 @@ impl PrefetchCpu {
             TstSource::Dn(register) => (
                 self.registers.d[register],
                 pipeline.address.wrapping_add(2),
-                pipeline.words[1],
+                pipeline.input(1),
             ),
             TstSource::Memory(source) => {
                 let operand = self.physical_memory_read(bus, pipeline, source)?;
@@ -64,14 +64,15 @@ impl PrefetchCpu {
         self.physical_reserve()?;
         crate::alu::logic(&mut self.registers, profile.size, value);
         let address = anchor.wrapping_add(2);
-        let phase =
-            self.prefetch_phase(InstructionPhase::OperandRefill, address, address, retained);
-        let fetched = self.physical_read(bus, phase)?;
+        let phase = self.prefetch_phase(
+            InstructionPhase::OperandRefill,
+            address,
+            address,
+            retained.value,
+        );
+        let fetched = self.physical_fetch(bus, phase)?;
         self.registers.pc = anchor;
-        self.pipeline = Some(Pipeline {
-            address: anchor,
-            words: [retained, fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(anchor, [retained, fetched]));
         Ok(())
     }
 }

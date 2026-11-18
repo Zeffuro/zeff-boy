@@ -64,8 +64,8 @@ impl App {
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
-        self.debug_windows.trace.clear();
-        self.debug_windows.execution_coverage.clear();
+        self.debug_windows.trace.reset_backend();
+        self.debug_windows.execution_coverage.reset_backend();
         self.recycled.clear();
         self.latest_frame = None;
         self.last_core_frame = None;

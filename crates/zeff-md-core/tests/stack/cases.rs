@@ -99,7 +99,7 @@ pub fn exchange_reset_and_second_write_fault() {
     let mut machine = start(
         &[0x31, 0xff, 0xff, 0x21, 0x34, 0x12, 0xe3, 0x76],
         11,
-        &[],
+        &multi::bank_sources(0x80),
         &[],
     );
     assert_eq!(machine.sound_cpu().cycles(), 35);
@@ -113,15 +113,20 @@ pub fn exchange_reset_and_second_write_fault() {
 }
 
 pub fn push_and_pop_second_access_faults_keep_progress() {
-    let mut machine = start(&[0x31, 1, 0, 0x21, 0x34, 0x12, 0xe5, 0x76], 9, &[], &[]);
+    let mut machine = start(
+        &[0x31, 1, 0, 0x21, 0x34, 0x12, 0xe5, 0x76],
+        9,
+        &multi::bank_sources(0x80),
+        &[],
+    );
     assert_eq!(machine.sound_cpu().cycles(), 28);
     assert_eq!(machine.sound_cpu().regs().sp, 0xffff);
     assert_eq!(machine.peek(0xa0_0000), Some(0x12));
     sticky_fault(&mut machine, 0xffff, Direction::Write);
     assert_eq!(machine.peek(0xa0_0000), Some(0x12));
-    let mut machine = start(&[0x31, 3, 0x40, 0xe1, 0x76], 3, &[(0x1fff, 0x34)], &[]);
+    let mut machine = start(&[0x31, 0xff, 0x7e, 0xe1, 0x76], 3, &[(0x1fff, 0x34)], &[]);
     assert_eq!(machine.sound_cpu().cycles(), 17);
-    assert_eq!(machine.sound_cpu().regs().sp, 0x4004);
+    assert_eq!(machine.sound_cpu().regs().sp, 0x7f00);
     assert_eq!(machine.sound_cpu().regs().hl(), 0);
-    sticky_fault(&mut machine, 0x4004, Direction::Read);
+    sticky_fault(&mut machine, 0x7f00, Direction::Read);
 }

@@ -6,10 +6,11 @@ use super::operator::Operator;
 #[cfg(test)]
 use super::operator::Sample;
 mod render;
+#[cfg(test)]
+#[path = "voice/routing/tests.rs"]
 mod routing;
 mod state;
 use render::Render;
-use routing::Routing;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Channel {

@@ -46,20 +46,37 @@ impl VdpScanline {
 }
 
 impl Vdp {
+    #[cfg(test)]
     pub(crate) fn prepare_raster_line(
         &self,
         row: u16,
         region: Region,
     ) -> Result<VdpScanline, VdpLineError> {
-        self.state
-            .interrupts
-            .timing_next_edge(region, &self.state.registers)?;
+        self.prepare_raster_with_horizontal(row, region, None)
+    }
+
+    pub(crate) fn prepare_raster_with_horizontal(
+        &self,
+        row: u16,
+        region: Region,
+        horizontal: Option<[u16; 2]>,
+    ) -> Result<VdpScanline, VdpLineError> {
+        self.require_legacy()?;
+        if self.state.interrupts.staged_blank() {
+            self.state
+                .interrupts
+                .hv_counter(region, &self.state.registers)?;
+        } else {
+            self.state
+                .interrupts
+                .timing_next_edge(region, &self.state.registers)?;
+        }
         let mode = self.state.registers.registers()[usize::from(MODE_REGISTER)]
             .ok_or(VdpRenderError::UnknownRegister(MODE_REGISTER))?;
         if mode & VRAM_128K_ENABLE != 0 {
             return Err(VdpRenderError::UnsupportedRenderMode(mode).into());
         }
-        compose_raster_line(&self.state, &self.memory, row, region)
+        compose_raster_line(&self.state, &self.memory, row, region, horizontal)
     }
 
     pub(crate) fn advance_with_line_from(
@@ -70,7 +87,9 @@ impl Vdp {
         region: Region,
         source: Option<VdpDmaSource<'_>>,
     ) -> Result<Result<VdpScanline, VdpLineError>, VdpScheduleError> {
-        let (state, mut writes, _) =
+        self.require_legacy()?;
+        self.invalidate_interval();
+        let mut prepared =
             match self
                 .state
                 .prepare_to_from(at, region, acknowledge, &self.memory, source)
@@ -91,29 +110,29 @@ impl Vdp {
                 .state
                 .prepare_to_from(capture_at, region, false, &self.memory, source)
             {
-                Ok((prefix, prefix_writes, _)) => {
-                    let count = prefix_writes.iter().flatten().count();
-                    self.publish(prefix, prefix_writes);
-                    writes[..count].fill(None);
+                Ok(prefix) => {
+                    let count = prefix.writes.iter().flatten().count();
+                    self.publish(prefix);
+                    prepared.writes[..count].fill(None);
                     self.prepare_line(region)
                 }
                 Err(error) => Err(error.into()),
             };
-        self.publish(state, writes);
+        self.publish(prepared);
         Ok(captured)
     }
 
-    /// HC-zero logical row snapshot, without physical fetch or output timing.
     pub fn prepare_line(&self, region: Region) -> Result<VdpScanline, VdpLineError> {
+        self.require_legacy()?;
         prepare_line(&self.state, &self.memory, region)
     }
 
-    /// Explicit logical row from current inputs, without physical fetch or output timing.
     pub fn prepare_logical_line(
         &self,
         row: u16,
         region: Region,
     ) -> Result<VdpScanline, VdpLineError> {
+        self.require_legacy()?;
         self.state.validate_memory_configuration(region)?;
         self.state
             .interrupts
@@ -127,19 +146,28 @@ impl Vdp {
         at: MasterTicks,
         region: Region,
     ) -> Result<VdpScanline, VdpLineError> {
-        let (state, writes, _) = match self.state.prepare_to(at, region, false, &self.memory) {
+        self.require_legacy()?;
+        self.invalidate_interval();
+        let prepared = match self.state.prepare_to(at, region, false, &self.memory) {
             Err(VdpScheduleError::Dma(VdpDmaError::BatchFull)) => {
                 return self.capture_dma_line_at(at, region);
             }
             result => result?,
         };
+        let data::Prepared {
+            state,
+            writes,
+            dma_activity,
+            ..
+        } = prepared;
         let mut undo = [None; WRITE_BATCH_CAPACITY];
-        for (slot, (entry, phase)) in writes.into_iter().flatten().enumerate() {
-            undo[slot] = Some(self.memory.publish_transfer(entry, phase));
+        for (slot, transfer) in writes.into_iter().flatten().enumerate() {
+            undo[slot] = Some(self.memory.publish_retirement(transfer));
         }
         let result = prepare_line(&state, &self.memory, region);
         if result.is_ok() {
             self.state = state;
+            self.commit_dma_activity(dma_activity);
         } else {
             for write in undo.into_iter().rev().flatten() {
                 self.memory.undo_transfer(write);
@@ -165,7 +193,7 @@ fn compose_line(
     row: u16,
     region: Region,
 ) -> Result<VdpScanline, VdpLineError> {
-    if usize::from(row) >= state.registers.display_height(region) {
+    if usize::from(row) >= state.display_height(region) {
         return Err(VdpRenderError::CoordinateOutOfBounds { x: 0, y: row }.into());
     }
     if !state.fifo.is_empty() || state.read_phase.is_some() || state.dma.is_some() {
@@ -176,7 +204,18 @@ fn compose_line(
         .interrupts
         .field_position(region, &state.registers)
         .map_err(|error| VdpScheduleError::Interrupt(error.into()))?;
-    let geometry = RasterGeometry::new(row, field.active_interlaced, field.active_odd);
+    let scroll = state.registers.registers()[usize::from(SCROLL_MODE_REGISTER)]
+        .ok_or(VdpRenderError::UnknownRegister(SCROLL_MODE_REGISTER))?;
+    crate::hardware::vdp::render::validate_scroll_mode(
+        &state.registers,
+        scroll,
+        field.active_mode.interlaced(),
+    )?;
+    let geometry = RasterGeometry::new(
+        row,
+        field.active_mode == crate::hardware::vdp::InterlaceMode::Double,
+        field.active_odd,
+    );
     let selected = state
         .sprites
         .select_complete_row_with_geometry(geometry, mode)?;
@@ -221,8 +260,9 @@ fn compose_raster_line(
     memory: &VdpMemory,
     row: u16,
     region: Region,
+    horizontal: Option<[u16; 2]>,
 ) -> Result<VdpScanline, VdpLineError> {
-    if usize::from(row) >= state.registers.display_height(region) {
+    if usize::from(row) >= state.display_height(region) {
         return Err(VdpRenderError::CoordinateOutOfBounds { x: 0, y: row }.into());
     }
     let mode = horizontal_mode(&state.registers)?;
@@ -239,20 +279,33 @@ fn compose_raster_line(
     if !enabled {
         let backdrop = state.registers.registers()[usize::from(BACKDROP_REGISTER)]
             .ok_or(VdpRenderError::UnknownRegister(BACKDROP_REGISTER))?;
-        line.colors[..line.width].fill(memory.cram()[usize::from(backdrop & BACKDROP_COLOR_MASK)]);
+        line.colors[..line.width]
+            .fill(memory.render_cram::<true>(usize::from(backdrop & BACKDROP_COLOR_MASK))?);
         return Ok(line);
     }
     let field = state
         .interrupts
         .field_position(region, &state.registers)
         .map_err(|error| VdpScheduleError::Interrupt(error.into()))?;
-    let geometry = RasterGeometry::new(row, field.active_interlaced, field.active_odd);
+    let scroll = state.registers.registers()[usize::from(SCROLL_MODE_REGISTER)]
+        .ok_or(VdpRenderError::UnknownRegister(SCROLL_MODE_REGISTER))?;
+    crate::hardware::vdp::render::validate_scroll_mode(
+        &state.registers,
+        scroll,
+        field.active_mode.interlaced(),
+    )?;
+    let geometry = RasterGeometry::new(
+        row,
+        field.active_mode == crate::hardware::vdp::InterlaceMode::Double,
+        field.active_odd,
+    );
     let sprites = raster_sprites(state, memory, geometry, mode)?;
-    memory.render_raster_sprite_line_with_geometry(
+    memory.render_raster_with_horizontal(
         &state.registers,
         &sprites,
         &mut line.colors[..line.width],
         geometry,
+        horizontal,
     )?;
     Ok(line)
 }

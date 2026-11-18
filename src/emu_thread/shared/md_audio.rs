@@ -24,7 +24,13 @@ impl EmuThread {
                 replay_input,
                 runtime_fault,
             );
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            let before = samples.len();
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            super::super::audio_timing::step_end(index, advanced);
             backend.drain_audio_samples_into(&mut samples);
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            super::super::audio_timing::field(index, advanced, samples.len() - before);
             advance.advanced_frames += advanced;
             if advanced == 0 || !runtime_fault.can_step() || backend.is_suspended() {
                 break;

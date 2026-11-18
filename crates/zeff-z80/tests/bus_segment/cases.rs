@@ -291,7 +291,7 @@ pub fn aggregate_fallback_and_old_bounded_api_stay_exact() {
         let mut reference_bus = bus.clone();
         let mut prefix = PrefixState::default();
         let mut state = BusState::default();
-        if matches!(program[0], 0x34 | 0xcb | 0xcd | 0xed)
+        if matches!(program[0], 0x20 | 0x34 | 0xcb | 0xcd | 0xed)
             || program == [0xdd, 0x7e, 0]
             || program == [0xfd, 0x77, 0]
             || program == [0xfd, 0xed, 0xb0]

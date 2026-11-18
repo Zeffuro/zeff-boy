@@ -14,6 +14,16 @@ struct IndexPrefix {
 }
 
 impl PrefixState {
+    pub(super) fn index(pc: u16, selected: u8) -> Self {
+        Self {
+            pending: Some(IndexPrefix { pc, selected }),
+        }
+    }
+
+    pub(super) fn selected_index(&self) -> Option<(u16, u8)> {
+        self.pending.map(|prefix| (prefix.pc, prefix.selected))
+    }
+
     pub fn pending(&self) -> bool {
         self.pending.is_some()
     }
@@ -43,24 +53,32 @@ impl Cpu {
         if self.state == CpuState::Suspended {
             return StepStart::Blocked;
         }
-        self.instruction_bytes = [0; 4];
-        self.instruction_byte_count = 0;
-        self.last_m1_fetch_count = 0;
-        self.last_step_was_interrupt = false;
+        self.clear_step_observation();
         if let Some(service) = interrupt::Service::poll(self, bus) {
             return StepStart::Interrupt(service);
         }
         if self.state == CpuState::Halted {
             bus.cpu_read(self.regs.pc);
-            self.increment_refresh_register();
-            self.cycles = self.cycles.wrapping_add(u64::from(CYCLES_HALT));
-            return StepStart::Handled(FetchedInstruction {
-                pc: self.regs.pc,
-                opcode: 0x76,
-                cycles: CYCLES_HALT,
-            });
+            return StepStart::Handled(self.complete_halt_fetch());
         }
         StepStart::Opcode
+    }
+
+    pub(super) fn clear_step_observation(&mut self) {
+        self.instruction_bytes = [0; 4];
+        self.instruction_byte_count = 0;
+        self.last_m1_fetch_count = 0;
+        self.last_step_was_interrupt = false;
+    }
+
+    pub(super) fn complete_halt_fetch(&mut self) -> FetchedInstruction {
+        self.increment_refresh_register();
+        self.cycles = self.cycles.wrapping_add(u64::from(CYCLES_HALT));
+        FetchedInstruction {
+            pc: self.regs.pc,
+            opcode: 0x76,
+            cycles: CYCLES_HALT,
+        }
     }
 
     /// Pair CPU and prefix state when cloning/resetting; do not mix APIs or codecs while pending.
@@ -70,7 +88,7 @@ impl Cpu {
         bus: &mut B,
         state: &mut PrefixState,
     ) -> Option<BoundedStep> {
-        self.step_bounded_inner(bus, state, None)
+        self.step_bounded_inner(bus, state, None, None)
     }
 
     pub(super) fn step_bounded_inner<B: Z80Bus>(
@@ -78,6 +96,7 @@ impl Cpu {
         bus: &mut B,
         state: &mut PrefixState,
         transfer: Option<&mut Option<bus_segment::Transfer>>,
+        legacy_relative: Option<bus_segment::LegacyRelative>,
     ) -> Option<BoundedStep> {
         if let Some(mut prefix) = state.pending {
             if self.state == CpuState::Suspended {
@@ -102,13 +121,19 @@ impl Cpu {
             }
             self.last_m1_fetch_count = 0;
             self.increment_refresh_register();
-            if self.defer_transfer(transfer, prefix.pc, opcode, Some(prefix.selected)) {
+            if self.defer_transfer(
+                transfer,
+                prefix.pc,
+                opcode,
+                Some(prefix.selected),
+                legacy_relative,
+            ) {
                 self.last_m1_fetch_count = prior_fetches.saturating_add(self.last_m1_fetch_count);
                 return Some(BoundedStep {
                     instruction: FetchedInstruction {
                         pc: prefix.pc,
                         opcode: self.last_opcode,
-                        cycles: CYCLES_M1,
+                        cycles: bus_segment::fetch_cycles(opcode),
                     },
                     complete: false,
                 });
@@ -181,12 +206,12 @@ impl Cpu {
                 },
                 complete: false,
             })
-        } else if self.defer_transfer(transfer, pc, opcode, None) {
+        } else if self.defer_transfer(transfer, pc, opcode, None, legacy_relative) {
             Some(BoundedStep {
                 instruction: FetchedInstruction {
                     pc,
                     opcode,
-                    cycles: CYCLES_M1,
+                    cycles: bus_segment::fetch_cycles(opcode),
                 },
                 complete: false,
             })

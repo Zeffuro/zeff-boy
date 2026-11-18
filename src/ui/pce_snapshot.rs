@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use crate::debug::{
     ApuChannelDebug, ApuDebugInfo, ConsoleGraphicsData, CpuDebugSnapshot, DebugSection,
-    DisassemblyTarget, InputDebugInfo, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug,
-    PaletteRowDebug, PceGraphicsData, PceVdcGraphicsData, PerfInfo, RomDebugInfo, RomInfoSection,
+    InputDebugInfo, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug,
+    PceGraphicsData, PceVdcGraphicsData, PerfInfo, RomDebugInfo, RomInfoSection,
     huc6280_disassemble_around,
 };
 use crate::emu_backend::PceBackend;
@@ -97,11 +97,14 @@ pub(crate) fn collect_pce_snapshot(
         ..Default::default()
     };
     let runtime_pc = cpu_snapshot.registers().pc;
-    let disasm_target = request.disasm_target.filter(|target| {
-        u16::try_from(target.cpu_address).is_ok()
-            && target.bank.is_none_or(|bank| u8::try_from(bank).is_ok())
-            && (target.bank.is_some() || target.storage_offset.is_some())
-    });
+    let disasm_target = request
+        .disasm_target
+        .and_then(crate::debug::DisassemblyTarget::as_cpu)
+        .filter(|target| {
+            u16::try_from(target.cpu_address).is_ok()
+                && target.bank.is_none_or(|bank| u8::try_from(bank).is_ok())
+                && (target.bank.is_some() || target.storage_offset.is_some())
+        });
     let pc = disasm_target
         .and_then(|target| u16::try_from(target.cpu_address).ok())
         .unwrap_or(runtime_pc);
@@ -181,7 +184,10 @@ fn pce_graphics_snapshot(snapshot: PceGraphicsSnapshot) -> ConsoleGraphicsData {
     }))
 }
 
-fn pce_target_physical_address(target: DisassemblyTarget, address: u16) -> Option<u32> {
+fn pce_target_physical_address(
+    target: crate::debug::CpuDisassemblyTarget,
+    address: u16,
+) -> Option<u32> {
     let target_cpu = u16::try_from(target.cpu_address).ok()?;
     let page = u8::try_from(target.bank?).ok()?;
     let base = zeff_pce_core::hardware::physical_address_for_page(target_cpu, page);
@@ -189,13 +195,20 @@ fn pce_target_physical_address(target: DisassemblyTarget, address: u16) -> Optio
     Some(base.wrapping_add_signed(i32::from(delta)) & 0x1F_FFFF)
 }
 
-fn pce_target_storage_offset(target: DisassemblyTarget, address: u16) -> Option<u64> {
+fn pce_target_storage_offset(
+    target: crate::debug::CpuDisassemblyTarget,
+    address: u16,
+) -> Option<u64> {
     let target_cpu = u16::try_from(target.cpu_address).ok()?;
     let delta = i64::from(address.wrapping_sub(target_cpu) as i16);
     target.storage_offset?.checked_add_signed(delta)
 }
 
-fn pce_target_byte(backend: &PceBackend, target: DisassemblyTarget, address: u16) -> u8 {
+fn pce_target_byte(
+    backend: &PceBackend,
+    target: crate::debug::CpuDisassemblyTarget,
+    address: u16,
+) -> u8 {
     pce_target_physical_address(target, address).map_or_else(
         || {
             pce_target_storage_offset(target, address)
@@ -1145,6 +1158,8 @@ mod tests {
 
     fn disassembly_request() -> SnapshotRequest {
         SnapshotRequest {
+            debug_target: crate::debug::DebugTarget::Primary,
+            debug_revision: 0,
             want_debug_info: false,
             want_perf_info: false,
             any_viewer_open: false,
@@ -1157,7 +1172,7 @@ mod tests {
             memory_view_start: 0,
             show_rom_viewer: false,
             show_instruction_trace: false,
-            trace_after_sequence: None,
+            trace_cursor: Default::default(),
             rom_view_start: 0,
             last_disasm_pc: None,
             last_disasm_mapping: None,
@@ -1416,12 +1431,14 @@ mod tests {
         rom[0x1FFE..0x2000].copy_from_slice(&0x0000_u16.to_le_bytes());
         let backend = PceBackend::new(rom, PathBuf::from("game.pce")).unwrap();
         let mut request = disassembly_request();
-        request.disasm_target = Some(DisassemblyTarget {
-            cpu_address: 0xA000,
-            storage_offset: None,
-            bank: Some(1),
-            thumb: None,
-        });
+        request.disasm_target = Some(crate::debug::DisassemblyTarget::Cpu(
+            crate::debug::CpuDisassemblyTarget {
+                cpu_address: 0xA000,
+                storage_offset: None,
+                bank: Some(1),
+                thumb: None,
+            },
+        ));
 
         let data = collect_pce_snapshot(&backend, &request, None);
         let view = data.disassembly_view.unwrap();

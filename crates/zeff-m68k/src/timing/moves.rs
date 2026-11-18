@@ -19,6 +19,10 @@ impl PrefetchCpu {
         pipeline: Pipeline,
     ) -> Result<bool, TimingFault<B::Error>> {
         let opcode = pipeline.words[0];
+        if opcode == 0x33fc {
+            self.immediate_word_absolute(bus, pipeline)?;
+            return Ok(true);
+        }
         let size = match opcode >> 12 {
             1 => Size::Byte,
             2 => Size::Long,
@@ -63,10 +67,7 @@ impl PrefetchCpu {
             crate::alu::logic(&mut self.registers, size, value);
         }
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: self.registers.pc,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(self.registers.pc, words));
         Ok(true)
     }
 

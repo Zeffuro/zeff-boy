@@ -5,6 +5,9 @@ use super::{
 use crate::Region;
 use zeff_emu_common::time::MasterTicks;
 
+mod anchored;
+mod blank_mode;
+mod interval;
 mod schedule;
 mod sound_irq;
 mod state;
@@ -27,7 +30,6 @@ impl From<VdpTimingError> for VdpInterruptError {
     }
 }
 
-/// Requires known HC0/VC0 and counter/latch seeds, stable mode and collision-free operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VdpInterrupts {
     timing: VdpVerticalTiming,
@@ -38,6 +40,12 @@ pub struct VdpInterrupts {
 }
 
 impl VdpInterrupts {
+    pub(super) fn has_normal_interlace_history(&self) -> bool {
+        use super::InterlaceMode;
+        self.timing.field.mode == InterlaceMode::Normal
+            || self.timing.field.active_mode == InterlaceMode::Normal
+    }
+
     pub(crate) fn field_count(&self) -> u64 {
         self.timing.field.id
     }
@@ -59,6 +67,7 @@ impl VdpInterrupts {
         self.timing.field_position_at(at, region, registers)
     }
 
+    #[cfg(test)]
     pub(crate) fn next_field_end(
         &self,
         region: Region,
@@ -74,19 +83,36 @@ impl VdpInterrupts {
         region: Region,
         registers: &VdpRegisterPipeline,
     ) -> Result<Option<(u16, super::timing::FieldPosition)>, VdpTimingError> {
+        if self.timing.blank.is_some_and(|b| b.authoritative()) {
+            if at <= self.now {
+                return Ok(None);
+            }
+            let position =
+                self.field_position_at(MasterTicks::new(at.get() - 1), region, registers)?;
+            return Ok((position.next_line()? == at).then_some((position.line, position)));
+        }
+        if self.timing.uses_history(registers) {
+            if at <= self.now {
+                return Ok(None);
+            }
+            let before = MasterTicks::new(at.get() - 1);
+            let position = self.field_position_at(before, region, registers)?;
+            return Ok((position.next_line()? == at).then_some((position.line, position)));
+        }
         let position = self.field_position_at(at, region, registers)?;
         let elapsed = at.get() - position.start.get();
         Ok(
             (elapsed.is_multiple_of(H32_LINE_TICKS) && position.line > 0)
-                .then_some((position.line.saturating_sub(1), position))
-                .filter(|(row, _)| usize::from(*row) < registers.display_height(region)),
+                .then_some((position.line.saturating_sub(1), position)),
         )
     }
 
     pub(crate) fn progressive_skip_allowed(&self, registers: &VdpRegisterPipeline) -> bool {
-        registers.pending().is_none()
-            && !self.timing.field.interlaced
-            && !self.timing.field.active_interlaced
+        self.timing.blank.is_none()
+            && self.timing.history.is_none()
+            && registers.pending().is_none()
+            && !self.timing.field.mode.interlaced()
+            && !self.timing.field.active_mode.interlaced()
             && registers.registers()[usize::from(DISPLAY_SIZE_REGISTER)]
                 .is_some_and(|value| value & INTERLACE_MODE_MASK == 0)
     }
@@ -181,10 +207,14 @@ impl VdpInterrupts {
         region: Region,
         registers: &VdpRegisterPipeline,
     ) -> Result<Option<VdpInterruptEdge>, VdpScheduleError> {
-        match self
-            .timing
-            .next_counter_edge(self.now, region, &registers.published_state().1, false)
-        {
+        let published = registers.published_state().1;
+        let view =
+            if self.staged_blank() || self.m5_vertical() || self.timing.uses_history(registers) {
+                registers
+            } else {
+                &published
+            };
+        match self.timing.next_counter_edge(self.now, region, view, false) {
             Ok(edge) => Ok(Some(edge)),
             Err(VdpTimingError::ClockOverflow) => Ok(None),
             Err(error) => Err(VdpInterruptError::from(error).into()),
@@ -195,15 +225,36 @@ impl VdpInterrupts {
         &self,
         region: Region,
         registers: &VdpRegisterPipeline,
-    ) -> Result<Option<MasterTicks>, VdpScheduleError> {
-        match self.next_field_end(region, &registers.published_state().1) {
-            Ok(end) => Ok(Some(end)),
-            Err(VdpTimingError::ClockOverflow) => Ok(None),
+    ) -> Result<(Option<MasterTicks>, Option<super::timing::FieldPosition>), VdpScheduleError> {
+        if let Some(blank) = self.timing.blank {
+            let next = blank
+                .next_event(registers)
+                .map_err(VdpInterruptError::from)?;
+            return Ok((Some(next), None));
+        }
+        let published = registers.published_state().1;
+        let view = if self.timing.uses_history(registers) {
+            registers
+        } else {
+            &published
+        };
+        let position = match self.field_position(region, view) {
+            Ok(position) => position,
+            Err(VdpTimingError::ClockOverflow) => return Ok((None, None)),
+            Err(error) => return Err(VdpInterruptError::from(error).into()),
+        };
+        let end = if self.timing.uses_history(registers) {
+            position.next_line()
+        } else {
+            position.end()
+        };
+        match end {
+            Ok(end) => Ok((Some(end), Some(position))),
+            Err(VdpTimingError::ClockOverflow) => Ok((None, Some(position))),
             Err(error) => Err(VdpInterruptError::from(error).into()),
         }
     }
 
-    /// Whole cycles preserve the settled line counter; pending requests coalesce.
     pub(super) fn skip_cycles(
         &mut self,
         at: MasterTicks,
@@ -272,7 +323,7 @@ impl VdpInterrupts {
         self.vertical_pending
     }
     pub fn status_bits(&self) -> u16 {
-        (u16::from(self.timing.field.interlaced && self.timing.field.odd) * ODD_FIELD_STATUS)
+        (u16::from(self.timing.field.mode.interlaced() && self.timing.field.odd) * ODD_FIELD_STATUS)
             | if self.vertical_pending {
                 VINT_PENDING_STATUS
             } else {
@@ -310,6 +361,20 @@ impl VdpInterrupts {
         registers: &VdpRegisterPipeline,
     ) -> Result<u8, VdpInterruptError> {
         let level = self.interrupt_level(registers)?;
+        if let Some(mut blank) = self.timing.blank.filter(|b| b.authoritative()) {
+            if registers.registers()[1].unwrap() & MODE5_ENABLE != 0 {
+                match level {
+                    VINT_LEVEL => blank.core.vp = false,
+                    HINT_LEVEL => blank.core.hp = false,
+                    _ => {}
+                }
+                blank.core.settle(registers.registers()[1].unwrap());
+                self.vertical_pending = blank.core.vp;
+                self.horizontal_pending = blank.core.hp;
+                self.timing.blank = Some(blank);
+            }
+            return Ok(level);
+        }
         match level {
             VINT_LEVEL => self.vertical_pending = false,
             HINT_LEVEL => self.horizontal_pending = false,
@@ -335,6 +400,29 @@ impl VdpInterrupts {
         registers: &VdpRegisterPipeline,
         require_display: bool,
     ) -> Result<Option<VdpInterruptEdge>, VdpInterruptError> {
+        if self.staged_blank() {
+            if registers.pending().is_some() {
+                return Err(VdpTimingError::PendingModeChange.into());
+            }
+            let mut view = *registers;
+            view.advance_to(self.now)
+                .map_err(|_| VdpTimingError::PendingModeChange)?;
+            return self
+                .advance_blank_pair(at, region, &mut view, require_display)
+                .map(|event| {
+                    event.and_then(|event| {
+                        if let VdpEvent::Interrupt(edge) = event {
+                            Some(edge)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .map_err(|error| match error {
+                    VdpScheduleError::Interrupt(error) => error,
+                    _ => VdpTimingError::UnqualifiedDisplayHistory.into(),
+                });
+        }
         self.advance_with_edge(at, region, registers, require_display, |timing, now| {
             timing.next_counter_edge(now, region, registers, require_display)
         })

@@ -32,6 +32,13 @@ thread_local! {
 }
 
 pub(in crate::app) fn observe(result: &FrameResult) {
+    crate::emu_thread::audio_timing::delivery(
+        &result.audio_timing_requests,
+        "app_observe",
+        result.advanced_frames,
+        result.audio_samples.len(),
+        u64::from(result.delivery_merged),
+    );
     ARRIVALS.with(|slot| {
         let mut slot = slot.borrow_mut();
         let Some(arrivals) = slot.as_mut() else {
@@ -201,6 +208,8 @@ fn run_case(case: &Case, duration: Duration, sample_rate: u32, stall: bool) -> V
     backend.set_sample_rate(sample_rate);
     let initial_frame = backend.frame_count();
     let frame_ns = backend.nominal_frame_duration_ns();
+    let epoch = (std::env::var("ZEFF_MD_AUDIO_TIMELINE").as_deref() == Ok("1")).then(Instant::now);
+    let request_session = epoch.map(crate::emu_thread::audio_timing::Session::start);
     let worker = EmuThread::spawn(backend, false);
     let mut app = app_with_worker(worker, 991, ActiveSystem::Md, case.rom.clone());
     app.settings.audio.output_sample_rate = sample_rate;
@@ -209,7 +218,6 @@ fn run_case(case: &Case, duration: Duration, sample_rate: u32, stall: bool) -> V
     app.settings.audio.low_pass_enabled = false;
     app.settings.emulation.frame_skip = false;
     app.settings.rewind.enabled = false;
-    let epoch = (std::env::var("ZEFF_MD_AUDIO_TIMELINE").as_deref() == Ok("1")).then(Instant::now);
     let (output, mut driver) =
         AudioOutput::silent_host_output(sample_rate, AudioBufferPolicy::Auto, epoch).unwrap();
     app.audio = Some(output);
@@ -246,15 +254,23 @@ fn run_case(case: &Case, duration: Duration, sample_rate: u32, stall: bool) -> V
         if let (Some(timeline), Some(record)) = (&mut timeline, record) {
             timeline.finish(record, app.audio.as_ref().unwrap());
         }
+        crate::emu_thread::audio_timing::record(0, "driver_poll_begin", 0, 0, 0, 0);
         driver.poll();
+        crate::emu_thread::audio_timing::record(0, "driver_poll_end", 0, 0, 0, 0);
+        crate::emu_thread::audio_timing::record(0, "driver_bookkeeping_begin", 0, 0, 0, 0);
         let (ring, staging) = app.audio.as_ref().unwrap().test_queue_levels();
         maximum_ring = maximum_ring.max(ring);
         maximum_staging = maximum_staging.max(staging);
+        crate::emu_thread::audio_timing::record(0, "driver_bookkeeping_end", 0, 0, 0, 0);
         if stall && stall_at.is_none() && start.elapsed() >= Duration::from_secs(1) {
             stall_at = Some(start.elapsed().as_secs_f64() * 1000.0);
+            crate::emu_thread::audio_timing::record(0, "driver_forced_stall_begin", 0, 0, 0, 0);
             std::thread::sleep(Duration::from_millis(250));
+            crate::emu_thread::audio_timing::record(0, "driver_forced_stall_end", 0, 0, 0, 0);
         }
+        crate::emu_thread::audio_timing::record(0, "driver_sleep_begin", 0, 0, 0, 0);
         std::thread::sleep(Duration::from_millis(1));
+        crate::emu_thread::audio_timing::record(0, "driver_sleep_end", 0, 0, 0, 0);
     }
     let queue = app.audio.as_ref().unwrap().test_queue_snapshot();
     app.audio = None;
@@ -263,6 +279,8 @@ fn run_case(case: &Case, duration: Duration, sample_rate: u32, stall: bool) -> V
     let arrivals = ARRIVALS.with(|slot| slot.borrow_mut().take().unwrap());
     let timeline =
         timeline.map(|timeline| timeline.report(start, &arrivals.timeline, &mut callback));
+    let request_timing = request_session
+        .map(|session| timeline::request_report(session.finish(), timeline.as_ref().unwrap()));
     let samples_per_frame: Vec<_> = arrivals
         .batches
         .iter()
@@ -287,6 +305,7 @@ fn run_case(case: &Case, duration: Duration, sample_rate: u32, stall: bool) -> V
         },
         "callback": callback,
         "timeline": timeline,
+        "request_timing": request_timing,
     })
 }
 

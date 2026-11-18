@@ -69,19 +69,21 @@ pub fn failed_transfers_preserve_fifo_flags() {
     }
     let mut memory = VdpMemory::default();
     let saved_memory = memory.clone();
-    let mut blocked = VdpWriteFifo::default();
-    for _ in 0..4 {
-        blocked.push(entry(0, 0, 0xffff)).unwrap();
-    }
-    let saved = blocked.clone();
-    for _ in 0..2 {
-        assert_eq!(
-            blocked.complete_write(&mut memory),
-            Err(VdpWriteError::UnsupportedCommand(entry(0, 0, 0).command))
-        );
-        check(&blocked, 4);
-        assert_eq!(blocked, saved);
-        assert_eq!(memory, saved_memory);
+    for code in [4, 8, 0x0c, 0x18, 0x1c] {
+        let mut blocked = VdpWriteFifo::default();
+        for _ in 0..4 {
+            blocked.push(entry(0, code, 0xffff)).unwrap();
+        }
+        let saved = blocked.clone();
+        for _ in 0..2 {
+            assert_eq!(
+                blocked.complete_write(&mut memory),
+                Err(VdpWriteError::UnsupportedCommand(entry(0, code, 0).command))
+            );
+            check(&blocked, 4);
+            assert_eq!(blocked, saved);
+            assert_eq!(memory, saved_memory);
+        }
     }
 }
 

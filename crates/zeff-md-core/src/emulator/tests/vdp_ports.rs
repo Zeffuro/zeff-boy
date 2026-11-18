@@ -6,6 +6,9 @@ use zeff_m68k::timing::{ClockedBus, CycleResult};
 
 type Write = CycleResult<(), BusError>;
 
+#[path = "vdp_ports/control_payload.rs"]
+mod control_payload;
+
 fn access(address: u32, lanes: ByteLanes) -> BusAccess {
     BusAccess {
         logical_address: address,
@@ -19,11 +22,11 @@ fn access(address: u32, lanes: ByteLanes) -> BusAccess {
 fn write(machine: &mut Emulator, access: BusAccess, value: u16) -> Write {
     let clock = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .write_cycle(access, value, clock)
     } else {
         machine.bus.write_cycle(access, value, clock)
@@ -118,15 +121,20 @@ pub fn bus_port_faults_with(mut transfer: impl FnMut(&mut Emulator, BusAccess, u
         ] {
             rewind(&mut machine);
             let mut expected = machine.vdp().clone();
+            if matches!(address, 0xc00000 | 0xc00002) {
+                expected.begin_main_data(expected.now(), true).unwrap();
+            } else if address & VDP_DECODE_MASK == VDP_DECODE_VALUE
+                && address & crate::constants::VDP_PORT_MASK <= crate::constants::VDP_HV_END
+            {
+                expected.retire_timed_port_history();
+            }
             expected
                 .advance_to(MasterTicks::new(84), Region::NtscUs)
                 .unwrap();
             let response = transfer(&mut machine, access(address, ByteLanes::Both), 0x8f02);
             if [0xc00000, 0xc00002].contains(&address) {
-                assert!(matches!(
-                    response.result,
-                    Err(BusError::VdpPort(VdpPortError::Data(_)))
-                ));
+                assert_eq!(response.result, Ok(()));
+                expected.write_main_data(0x8f02, Region::NtscUs).unwrap();
             } else {
                 assert_eq!(
                     response.result,
@@ -245,7 +253,7 @@ pub fn actual_guest_fault_with(
     for concurrent in [false, true] {
         let mut machine = program(
             &[
-                0x33fc, 0x5a69, 0x00ff, 0x8000, 0x23fc, 0x0123, 0, 0x00c0, 4, 0x4e71, 0x4e71,
+                0x33fc, 0x5a69, 0x00ff, 0x8000, 0x23fc, 0x0150, 0x10, 0x00c0, 4, 0x4e71, 0x4e71,
             ],
             concurrent,
         );
@@ -257,11 +265,11 @@ pub fn actual_guest_fault_with(
                 ..
             }))
         ));
-        assert_eq!(machine.vdp().control().pending_word(), Some(0x0123));
+        assert_eq!(machine.vdp().control().pending_word(), Some(0x0150));
         assert_eq!(
             machine.vdp().command(),
             ControlCommand {
-                address: 0x0123,
+                address: 0x0150,
                 code: 0x10
             }
         );
@@ -276,7 +284,7 @@ pub fn actual_guest_fault_with(
         );
         assert_eq!(machine, saved);
         machine.reset_cpu().unwrap();
-        assert_eq!(machine.vdp().control().pending_word(), Some(0x0123));
+        assert_eq!(machine.vdp().control().pending_word(), Some(0x0150));
         Reset::reset(&mut machine);
         assert_eq!(machine.vdp().control().pending_word(), None);
         assert_eq!(
@@ -298,6 +306,34 @@ pub fn reserved_register_write_with(
     mut transfer: impl FnMut(&mut Emulator, BusAccess, u16) -> Write,
 ) {
     use crate::hardware::sound::{BankAccess, CandidateBus, schedule::PendingSound};
+    for concurrent in [false, true] {
+        for blank in [false, true] {
+            let mut machine = ready(concurrent);
+            let setup = if blank { 0x8120 } else { 0x8c81 };
+            let response = transfer(&mut machine, access(0xc00004, ByteLanes::Both), setup);
+            assert_eq!(response.result, Ok(()));
+            let publication = machine.vdp().registers().pending().unwrap().publish_at;
+            machine
+                .bus
+                .advance_machine(publication.get() - machine.bus.now.get())
+                .unwrap();
+            assert_eq!(machine.vdp().requires_timed_ports(), blank);
+            let image = *machine.vdp().registers().registers();
+            for index in 24..=31 {
+                machine.bus.advance_machine(40).unwrap();
+                let word = 0x8045 | (index << 8);
+                let response = transfer(&mut machine, access(0xc00004, ByteLanes::Both), word);
+                assert_eq!(response.result, Ok(()));
+                assert_eq!(response.wait_clocks, 0);
+                assert_eq!(machine.vdp().registers().registers(), &image);
+                assert_eq!(machine.vdp().registers().pending(), None);
+                assert_eq!(machine.vdp().control().pending_word(), None);
+                assert_eq!(machine.vdp().command().address, u32::from(word & 0x3fff));
+                assert_eq!(machine.vdp().command().code, 0x12);
+                assert_eq!(machine.vdp().now(), machine.bus.now);
+            }
+        }
+    }
     for (release, publication) in [(84, 120), (112, 160)] {
         let mut machine = ready(true);
         machine.bus.sound.set_reset(false);
@@ -351,9 +387,11 @@ pub fn reserved_register_write_with(
     }
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn reserved_register_write() {
     reserved_register_write_with(write);
+    control_payload::check();
 }
 
 pub fn guest_interrupt_enable_with(
@@ -363,11 +401,11 @@ pub fn guest_interrupt_enable_with(
         let mut machine = program(&[0x33fc, 0x8010, 0x00c0, 4, 0x4e71, 0x4e71], concurrent);
         let ticks = 2661 - machine.bus.now.get();
         if concurrent {
-            ScheduledBus {
-                bus: &mut machine.bus,
-                cpu: &mut machine.sound_cpu,
-                schedule: &mut machine.sound_schedule,
-            }
+            ScheduledBus::new(
+                &mut machine.bus,
+                &mut machine.sound_cpu,
+                &mut machine.sound_schedule,
+            )
             .advance_machine(ticks)
             .unwrap();
         } else {
@@ -407,11 +445,11 @@ pub fn guarded_reads_and_reset() {
             let before = machine.vdp().clone();
             let clock = machine.bus.cpu_clock;
             let result = if concurrent {
-                ScheduledBus {
-                    bus: &mut machine.bus,
-                    cpu: &mut machine.sound_cpu,
-                    schedule: &mut machine.sound_schedule,
-                }
+                ScheduledBus::new(
+                    &mut machine.bus,
+                    &mut machine.sound_cpu,
+                    &mut machine.sound_schedule,
+                )
                 .read_cycle(access(address, ByteLanes::Both), clock)
             } else {
                 machine
@@ -436,11 +474,24 @@ pub fn guarded_reads_and_reset() {
                 }
             );
             let mut expected = before.clone();
+            if address == 0xc00000 {
+                expected.begin_main_data(before.now(), false).unwrap();
+            } else if address == 0xc00004 {
+                expected
+                    .begin_timed_status(before.now(), machine.bus.now, Region::NtscUs)
+                    .unwrap();
+            } else {
+                expected.retire_timed_port_history();
+            }
             expected
                 .advance_to(machine.bus.now, Region::NtscUs)
                 .unwrap();
-            if address == 0xc00004 {
-                expected.read_cpu_status(Region::NtscUs).unwrap();
+            if address == 0xc00000 {
+                expected.abort_main_data();
+            } else if address == 0xc00004 {
+                expected
+                    .finish_timed_status(machine.bus.now, Region::NtscUs)
+                    .unwrap();
             }
             assert_eq!(machine.vdp(), &expected);
             machine.cpu = PrefetchCpu::from_prefetched(

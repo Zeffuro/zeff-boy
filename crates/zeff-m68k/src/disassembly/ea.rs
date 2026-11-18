@@ -42,7 +42,7 @@ pub(super) fn control(mode: u16, reg: u16) -> bool {
     matches!(mode, 2 | 5 | 6) || mode == 7 && reg <= 3
 }
 
-impl<F: Fn(u32) -> Option<u8>> Decoder<F> {
+impl<F: Fn(usize) -> Option<u8>> Decoder<F> {
     pub(super) fn immediate(&mut self, size: Size) -> Result<String> {
         Ok(match size {
             Size::Byte => format!("#${:02X}", self.word()? as u8),
@@ -69,7 +69,10 @@ impl<F: Fn(u32) -> Option<u8>> Decoder<F> {
                 2 => {
                     let base = self.cursor();
                     let displacement = i32::from(self.word()? as i16);
-                    format!("(${:08X},PC)", base.wrapping_add_signed(displacement))
+                    base.map_or_else(
+                        || format!("({displacement},PC)"),
+                        |base| format!("(${:08X},PC)", base.wrapping_add_signed(displacement)),
+                    )
                 }
                 3 => {
                     let ext = self.word()?;
@@ -100,10 +103,12 @@ impl<F: Fn(u32) -> Option<u8>> Decoder<F> {
             }
             (7, 2) => {
                 let end = self.bytes.len();
-                Some(base.wrapping_add_signed(i32::from(i16::from_be_bytes([
-                    self.bytes[end - 2],
-                    self.bytes[end - 1],
-                ]))))
+                base.map(|base| {
+                    base.wrapping_add_signed(i32::from(i16::from_be_bytes([
+                        self.bytes[end - 2],
+                        self.bytes[end - 1],
+                    ])))
+                })
             }
             _ => None,
         };

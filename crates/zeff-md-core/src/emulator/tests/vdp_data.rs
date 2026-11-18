@@ -24,11 +24,11 @@ fn data_access(address: u32, lanes: ByteLanes) -> BusAccess {
 fn write(machine: &mut Emulator, access: BusAccess, value: u16) -> Write {
     let start = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .write_cycle(access, value, start)
     } else {
         machine.bus.write_cycle(access, value, start)
@@ -253,11 +253,11 @@ pub fn mapped_data_guards() {
         let mut machine = ready(56, 1, concurrent);
         let clock = machine.bus.cpu_clock;
         let result = if concurrent {
-            ScheduledBus {
-                bus: &mut machine.bus,
-                cpu: &mut machine.sound_cpu,
-                schedule: &mut machine.sound_schedule,
-            }
+            ScheduledBus::new(
+                &mut machine.bus,
+                &mut machine.sound_cpu,
+                &mut machine.sound_schedule,
+            )
             .read_cycle(data_access(0xc00000, ByteLanes::Both), clock)
         } else {
             machine

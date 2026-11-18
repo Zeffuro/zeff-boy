@@ -193,6 +193,16 @@ pub(crate) trait EmulatorCore: FrameLifecycle {
     }
 
     #[inline]
+    fn supports_pc_breakpoints(&self) -> bool {
+        self.supports_debugger()
+    }
+
+    #[inline]
+    fn supports_memory_watchpoints(&self) -> bool {
+        self.supports_debugger()
+    }
+
+    #[inline]
     fn supports_symbol_loading(&self) -> bool {
         self.supports_debugger()
     }

@@ -106,6 +106,7 @@ macro_rules! parse_hex_fn {
 
 parse_hex_fn!(parse_hex_u8, u8);
 parse_hex_fn!(parse_hex_u32, u32);
+parse_hex_fn!(parse_hex_u64, u64);
 
 pub(crate) fn nes_palette_rgba(
     palette_ram: &[u8; 32],

@@ -9,31 +9,34 @@ impl Cpu {
     }
 
     pub(super) fn execute_cb_terminal<B: Z80Bus>(&mut self, bus: &mut B, opcode: u8) -> u32 {
-        let register = opcode & 0x07;
-        if register == REGISTER_MEMORY_INDEX {
+        if self.execute_cb_register(opcode).is_some() {
+            CYCLES_CB_R
+        } else {
             rmw::Rmw::cb(self, opcode).execute(self, bus);
             if opcode >> 6 == 1 {
                 CYCLES_CB_BIT_HL
             } else {
                 CYCLES_CB_HL
             }
-        } else {
-            let value = self.read_reg8(bus, register);
-            let (result, flags, write) = effect(opcode, value, self.regs.f);
-            if write {
-                self.write_reg8(bus, register, result);
-            }
-            self.regs.f = flags;
-            CYCLES_CB_R
         }
+    }
+
+    pub(super) fn execute_cb_register(&mut self, opcode: u8) -> Option<()> {
+        let register = register_cycle::Register::decode(opcode & 7)?;
+        let (result, flags, write) = effect(opcode, register.read(self), self.regs.f);
+        if write {
+            register.write(self, result);
+        }
+        self.regs.f = flags;
+        Some(())
     }
 }
 
-fn bit_flags(bit: u8, value: u8, flags: u8) -> u8 {
+pub(super) fn bit_flags(bit: u8, value: u8, flags: u8, xy: u8) -> u8 {
     let bit_set = value & (1 << bit) != 0;
     (flags & Z80_FLAG_CARRY)
         | Z80_FLAG_HALF_CARRY
-        | (value & (Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3))
+        | (xy & (Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3))
         | if bit == 7 && bit_set {
             Z80_FLAG_SIGN
         } else {
@@ -57,7 +60,7 @@ pub(super) fn effect(opcode: u8, value: u8, flags: u8) -> (u8, u8, bool) {
                 true,
             )
         }
-        1 => (value, bit_flags(operation, value, flags), false),
+        1 => (value, bit_flags(operation, value, flags, value), false),
         2 => (value & !(1 << operation), flags, true),
         3 => (value | (1 << operation), flags, true),
         _ => unreachable!("CB group is always two bits"),

@@ -157,6 +157,27 @@ fn waits_advance_each_transfer_once_including_failed_refill() {
     let events = bus.events.clone();
     assert_eq!(cpu.step(&mut bus), Err(TimingFault::Frozen));
     assert_eq!(bus.events, events);
+
+    let mut cpu = seeded(0x100, [0x4e71, 0x4e71]);
+    let mut bus = Bus {
+        waits: 299_996,
+        fail_read: Some(0),
+        ..Bus::default()
+    };
+    let old = cpu.registers;
+    assert!(matches!(
+        cpu.step(&mut bus),
+        Err(TimingFault::Bus { source: 0, .. })
+    ));
+    assert_eq!(cpu.clock(), CpuClocks(300_000));
+    assert_eq!(bus.clock, cpu.clock().0);
+    assert_eq!(cpu.registers, old);
+    assert_eq!(reads(&bus), [(0x104, 0)]);
+    let events = bus.events.clone();
+    assert_eq!(cpu.step(&mut bus), Err(TimingFault::Frozen));
+    assert_eq!(cpu.clock(), CpuClocks(300_000));
+    assert_eq!(bus.clock, cpu.clock().0);
+    assert_eq!(bus.events, events);
 }
 
 #[test]

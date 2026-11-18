@@ -837,7 +837,7 @@ fn apply_input(backend: &mut EmuBackend, input: InputState) {
 
 fn program_counter(backend: &EmuBackend) -> u64 {
     match backend {
-        EmuBackend::Md(backend) => u64::from(backend.emu.registers().pc),
+        EmuBackend::Md(backend) => u64::from(backend.core().registers().pc),
         EmuBackend::Gb(backend) => u64::from(backend.emu.cpu_pc()),
         EmuBackend::Gba(backend) => u64::from(backend.emu.cpu_pc()),
         EmuBackend::Nes(backend) => u64::from(backend.emu.cpu_pc()),

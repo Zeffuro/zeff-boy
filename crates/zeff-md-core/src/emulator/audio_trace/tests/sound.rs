@@ -1,6 +1,7 @@
 use super::*;
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn actual_main_upload_and_sound_execution_emit_only_committed_chip_writes() {
     let sound: [u8; 16] = [
         0x3e, 0x85, 0x32, 0x11, 0x7f, 0x3e, 0x2a, 0x32, 0x00, 0x40, 0x3e, 0xc0, 0x32, 0x01, 0x40,
@@ -66,7 +67,8 @@ fn actual_main_upload_and_sound_execution_emit_only_committed_chip_writes() {
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn banked_rom_execution_retains_effective_input_mapping_at_segment_entry() {
     let sound = [
         0x3e, 0x85, 0x32, 0x11, 0x7f, 0x3e, 0x2a, 0x32, 0, 0x40, 0x3e, 0xc0, 0x32, 1, 0x40, 0x76,

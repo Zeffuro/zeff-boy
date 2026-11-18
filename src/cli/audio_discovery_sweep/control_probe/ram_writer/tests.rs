@@ -25,7 +25,7 @@ fn step(tracker: &mut Tracker, before: State, after: State, bytes: &[u8], writes
     for &(address, value) in writes {
         record.push_write(TraceWrite {
             address: u32::from(address),
-            old_value: 0,
+            old_value: Some(0),
             new_value: u32::from(value),
             width: TraceWriteWidth::Byte,
             kind: TraceWriteKind::Memory,

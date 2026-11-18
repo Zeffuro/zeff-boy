@@ -319,9 +319,9 @@ fn previous_full_precision_output_state_is_readable_and_bounded_at_the_dac() {
         ..Opn2::default()
     };
     let mut writer = StateWriter::new();
-    chip.write_state_version(&mut writer, 8);
+    chip.write_state(&mut writer);
     let bytes = writer.into_bytes();
-    let mut restored = Opn2::read_state_version(&mut StateReader::new(&bytes), 8).unwrap();
+    let mut restored = Opn2::read_state(&mut StateReader::new(&bytes)).unwrap();
     assert_eq!(restored.output, chip.output);
     assert_eq!(restored.sample_with_mutes([false; 6]), [-512; 2]);
     let migrated = restored;

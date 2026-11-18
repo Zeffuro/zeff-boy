@@ -6,6 +6,24 @@ use super::{ActiveSystem, EmuBackend};
 use crate::emu_core_trait::EmulatorCore;
 
 impl EmuBackend {
+    pub(crate) fn take_rewind_audio_change(&self) -> bool {
+        matches!(self, Self::Md(md) if md.take_rewind_audio_change())
+    }
+
+    pub(crate) fn encode_rewind_checkpoint(&self) -> anyhow::Result<Vec<u8>> {
+        match self {
+            Self::Md(md) => md.encode_rewind_checkpoint(),
+            _ => self.encode_state_bytes(),
+        }
+    }
+
+    pub(crate) fn restore_rewind_checkpoint(&mut self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        match self {
+            Self::Md(md) => md.restore_rewind_checkpoint(&bytes),
+            _ => self.load_state_from_bytes(bytes).map(|_| ()),
+        }
+    }
+
     pub(crate) fn encode_state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         if !self.supports_state_capture() {
             anyhow::bail!("state capture is not supported by this core");

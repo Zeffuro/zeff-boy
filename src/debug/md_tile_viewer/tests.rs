@@ -19,7 +19,7 @@ fn fixture(tile_height: usize) -> MdGraphicsData {
         vram,
         cram: Vec::new(),
         vsram: Vec::new(),
-        palette: std::array::from_fn(|index| [index as u8 * 4, index as u8, 0, 255]),
+        palette: std::array::from_fn(|index| Some([index as u8 * 4, index as u8, 0, 255])),
         tile_height: Some(tile_height),
     }
 }
@@ -114,7 +114,7 @@ fn md_atlas_refreshes_vram_cram_palette_geometry_and_restored_images() {
     gfx.vram[0] = 0xf2;
     refresh_image(&mut state, &gfx, 0);
     assert_eq!(state.image[(0, 0)], egui::Color32::from_rgb(60, 15, 0));
-    gfx.palette[15] = [17, 23, 42, 255];
+    gfx.palette[15] = Some([17, 23, 42, 255]);
     refresh_image(&mut state, &gfx, 0);
     assert_eq!(state.image[(0, 0)], egui::Color32::from_rgb(17, 23, 42));
     refresh_image(&mut state, &gfx, 3);
@@ -152,7 +152,7 @@ fn md_tile_draw_handles_geometry_empty_modes_and_platform_selection() {
         vram: Vec::new(),
         cram: Vec::new(),
         vsram: Vec::new(),
-        palette: [[3, 7, 11, 255]; 64],
+        palette: [Some([3, 7, 11, 255]); 64],
         tile_height: None,
     };
     draw(&unsupported, &mut state);
@@ -164,6 +164,11 @@ fn md_tile_draw_handles_geometry_empty_modes_and_platform_selection() {
     };
     draw(&empty, &mut state);
     assert!(state.texture.is_some());
+    let known_image = state.image.clone();
+    let mut unknown = fixture(8);
+    unknown.palette[0] = None;
+    draw(&unknown, &mut state);
+    assert_eq!(state.image, known_image);
     assert_eq!(state.image.size, [128, 1024]);
     assert!(
         state

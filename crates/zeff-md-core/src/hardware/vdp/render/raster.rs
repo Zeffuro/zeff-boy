@@ -1,14 +1,14 @@
 use super::*;
 
+mod spans;
+
 #[cfg(test)]
 mod tests;
 
 struct RasterContext {
     bases: [u16; 2],
     horizontal: [u16; 2],
-    columns: usize,
-    x_mask: u16,
-    y_mask: usize,
+    layout: PlaneLayout,
     geometry: RasterGeometry,
     column_scroll: bool,
     window_base: u16,
@@ -37,12 +37,24 @@ impl RasterContext {
         )
     }
 
+    #[cfg(test)]
     fn prepare_with_geometry(
         memory: &VdpMemory,
         registers: &VdpRegisterPipeline,
         sprites: &VdpSpriteLine,
         colors: &[u16],
         geometry: RasterGeometry,
+    ) -> Option<Self> {
+        Self::prepare_with_horizontal(memory, registers, sprites, colors, geometry, None)
+    }
+
+    fn prepare_with_horizontal(
+        memory: &VdpMemory,
+        registers: &VdpRegisterPipeline,
+        sprites: &VdpSpriteLine,
+        colors: &[u16],
+        geometry: RasterGeometry,
+        fetched: Option<[u16; 2]>,
     ) -> Option<Self> {
         let mode = horizontal_mode(registers).ok()?;
         if screen_bounds_with_geometry(0, geometry, mode).is_err()
@@ -57,25 +69,28 @@ impl RasterContext {
         let window_base = registers.window_base()?;
         let bases = [registers.plane_a_base()?, registers.plane_b_base()?];
         let size = published_register(registers, PLANE_SIZE_REGISTER).ok()?;
-        let (columns, rows) = plane_dimensions(size).ok()?;
+        let layout = PlaneLayout::new(size, geometry.interlaced);
         let scroll = published_register(registers, SCROLL_MODE_REGISTER).ok()?;
+        validate_scroll_mode(registers, scroll, geometry.interlaced).ok()?;
         published_register(registers, BACKDROP_REGISTER).ok()?;
-        let horizontal = [
-            memory
-                .scroll_offsets_with_geometry(registers, VdpPlane::A, geometry, 0)
-                .ok()?
-                .0,
-            memory
-                .scroll_offsets_with_geometry(registers, VdpPlane::B, geometry, 0)
-                .ok()?
-                .0,
-        ];
+        let horizontal = if let Some(pair) = fetched {
+            pair
+        } else {
+            [
+                memory
+                    .scroll_offsets_with_geometry(registers, VdpPlane::A, geometry, 0)
+                    .ok()?
+                    .0,
+                memory
+                    .scroll_offsets_with_geometry(registers, VdpPlane::B, geometry, 0)
+                    .ok()?
+                    .0,
+            ]
+        };
         Some(Self {
             bases,
             horizontal,
-            columns,
-            x_mask: (columns * TILE_WIDTH - 1) as u16,
-            y_mask: rows * tile_height(geometry.interlaced) - 1,
+            layout,
             geometry,
             column_scroll: scroll & VSCROLL_COLUMN_MODE != 0,
             window_base,
@@ -89,6 +104,7 @@ impl RasterContext {
         })
     }
 
+    #[cfg(test)]
     fn plane(
         &self,
         memory: &VdpMemory,
@@ -103,17 +119,18 @@ impl RasterContext {
         };
         let vertical = memory.vsram()[column * SCROLL_PAIR_WORDS + plane]
             & vertical_mask(self.geometry.interlaced);
-        let source_x = (x as u16).wrapping_sub(self.horizontal[plane]) & self.x_mask;
-        let source_y = (usize::from(y) + usize::from(vertical)) & self.y_mask;
+        let source_x = (x as u16).wrapping_sub(self.horizontal[plane]) & self.layout.x_mask;
+        let source_y = (usize::from(y) + usize::from(vertical)) & self.layout.y_mask;
         memory.sample_name(
             self.bases[plane],
-            self.columns,
+            self.layout.columns,
             usize::from(source_x),
             source_y,
             self.geometry.interlaced,
         )
     }
 
+    #[cfg(test)]
     fn background(
         &self,
         memory: &VdpMemory,
@@ -163,6 +180,7 @@ impl VdpMemory {
         )
     }
 
+    #[cfg(test)]
     pub(in crate::hardware::vdp) fn render_raster_sprite_line_with_geometry(
         &self,
         registers: &VdpRegisterPipeline,
@@ -170,24 +188,51 @@ impl VdpMemory {
         colors: &mut [u16],
         geometry: RasterGeometry,
     ) -> Result<(), VdpRenderError> {
+        self.render_raster_with_horizontal(registers, sprites, colors, geometry, None)
+    }
+
+    pub(in crate::hardware::vdp) fn render_raster_with_horizontal(
+        &self,
+        registers: &VdpRegisterPipeline,
+        sprites: &VdpSpriteLine,
+        colors: &mut [u16],
+        geometry: RasterGeometry,
+        fetched: Option<[u16; 2]>,
+    ) -> Result<(), VdpRenderError> {
         // Incomplete inputs retain the scalar path's first-error order.
-        let Some(context) =
-            RasterContext::prepare_with_geometry(self, registers, sprites, colors, geometry)
-        else {
+        let Some(context) = RasterContext::prepare_with_horizontal(
+            self, registers, sprites, colors, geometry, fetched,
+        ) else {
             for (x, color) in colors.iter_mut().enumerate() {
-                *color = self.raster_sprite_line_color_with_geometry(
-                    registers, sprites, x as u16, geometry,
+                if fetched.is_none() {
+                    *color = self.raster_sprite_line_color_with_geometry(
+                        registers, sprites, x as u16, geometry,
+                    )?;
+                    continue;
+                }
+                let background = self.background_pixel_with_horizontal(
+                    registers, x as u16, geometry, true, fetched,
+                )?;
+                let pixel =
+                    *sprites
+                        .pixels()
+                        .get(x)
+                        .ok_or(VdpRenderError::CoordinateOutOfBounds {
+                            x: x as u16,
+                            y: geometry.source_y,
+                        })?;
+                *color = self.composite_color_checked::<true>(
+                    registers,
+                    background,
+                    (!pixel.is_transparent()).then_some(pixel),
                 )?;
             }
             return Ok(());
         };
-        for (x, (color, pixel)) in colors.iter_mut().zip(sprites.pixels()).enumerate() {
-            *color = self.composite_color(
-                registers,
-                context.background(self, x, geometry.source_y)?,
-                (!pixel.is_transparent()).then_some(*pixel),
-            )?;
+        if self.cram_all_known() {
+            context.render_spans::<false>(self, registers, sprites, colors, 0)
+        } else {
+            context.render_spans::<true>(self, registers, sprites, colors, 0)
         }
-        Ok(())
     }
 }

@@ -1,7 +1,7 @@
 use zeff_emu_common::time::MasterTicks;
 use zeff_md_core::{
-    ControlCommand, ControlWrite, Region, Vdp, VdpControl, VdpDmaError, VdpPortError,
-    VdpRegisterError, VdpScheduleError, VdpWriteError,
+    ControlCommand, ControlWrite, Region, Vdp, VdpControl, VdpDmaError, VdpInterrupts,
+    VdpPortError, VdpRegisterError, VdpRegisterPipeline, VdpScheduleError, VdpWriteError,
 };
 
 const INTERNAL_TICKS: u64 = 20;
@@ -25,6 +25,26 @@ fn register_word(index: u8, value: u8) -> u16 {
 fn at(value: u64) -> Vdp {
     let mut device = Vdp::bootstrap_mode5();
     device.advance_to(tick(value), Region::NtscUs).unwrap();
+    device
+}
+fn at_clock_end(now: u64) -> Vdp {
+    let epoch = now - now % 3420;
+    let mut registers = VdpRegisterPipeline::at_h32_edge(tick(epoch - 24 * 20));
+    for index in 0..24 {
+        registers
+            .advance_to(tick(registers.now().get() + 1))
+            .unwrap();
+        let pending = registers
+            .queue_register(index, if index == 1 { 4 } else { 0 })
+            .unwrap();
+        registers.advance_to(pending.publish_at).unwrap();
+    }
+    assert_eq!(registers.now(), tick(epoch));
+    let interrupts = VdpInterrupts::at_counters_zero(tick(epoch), 0, false, false);
+    let mut device = Vdp::from_known_state(interrupts, registers, Region::NtscUs).unwrap();
+    device.advance_to(tick(now), Region::NtscUs).unwrap();
+    assert_eq!(device.now(), tick(now));
+    assert_eq!(device.registers().auto_increment(), Some(0));
     device
 }
 fn schedule(error: VdpRegisterError) -> VdpPortError {
@@ -126,6 +146,45 @@ pub fn delayed_register_publication_with(mut write: impl FnMut(&mut Vdp, u16, Re
             Some(value)
         );
         assert_eq!(device.registers().pending(), None);
+    }
+    for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
+        for code in [3u16, 0x12] {
+            for word in [0x9f00, 0x9fff, 0xbf55] {
+                let mut device = Vdp::bootstrap_mode5();
+                device.advance_to(tick(1), region).unwrap();
+                write(&mut device, 0xd234, region).unwrap();
+                write(&mut device, 7, region).unwrap();
+                if code == 0x12 {
+                    write(&mut device, 0x8f02, region).unwrap();
+                    device.advance_to(tick(INTERNAL_TICKS), region).unwrap();
+                }
+                let registers = *device.registers();
+                let memory = device.memory().clone();
+                let fifo = device.fifo().clone();
+                assert_eq!(
+                    write(&mut device, word, region),
+                    Ok(ControlWrite::Register {
+                        index: 31,
+                        value: word as u8
+                    })
+                );
+                assert_eq!(
+                    device.command(),
+                    ControlCommand {
+                        address: 0x1c000 | u32::from(word & 0x3fff),
+                        code: (code as u8 & 0x3c) | 0x12,
+                    }
+                );
+                assert_eq!(device.control().pending_word(), None);
+                assert_eq!(*device.registers(), registers);
+                let edge = tick((device.now().get() / INTERNAL_TICKS + 1) * INTERNAL_TICKS);
+                device.advance_to(edge, region).unwrap();
+                assert_eq!(device.registers().pending(), None);
+                assert_eq!(device.registers().registers(), registers.registers());
+                assert_eq!(device.memory(), &memory);
+                assert_eq!(device.fifo(), &fifo);
+            }
+        }
     }
 }
 pub fn delayed_register_publication() {
@@ -270,14 +329,54 @@ pub fn dma_gate_and_rejection() {
 
 pub fn register_fault_atomicity_with(mut write: impl FnMut(&mut Vdp, u16, Region) -> Write) {
     let initial = at(1);
-    for index in 24..32 {
+    for index in 24..=31 {
         let mut device = initial.clone();
+        let word = register_word(index, 0x55);
         assert_eq!(
-            write(&mut device, register_word(index, 0x55), Region::NtscUs),
-            Err(schedule(VdpRegisterError::UnsupportedRegister(index)))
+            write(&mut device, word, Region::NtscUs),
+            Ok(ControlWrite::Register { index, value: 0x55 })
         );
-        assert_eq!(device, initial);
+        assert_eq!(
+            device.command(),
+            ControlCommand {
+                address: u32::from(word & 0x3fff),
+                code: 0x12
+            }
+        );
+        assert_eq!(device.control(), initial.control());
+        assert_eq!(device.registers(), initial.registers());
+        assert_eq!(device.now(), initial.now());
+        assert_eq!(
+            device.interrupts().line_counter(),
+            initial.interrupts().line_counter()
+        );
+        assert_eq!(
+            device.interrupts().horizontal_pending(),
+            initial.interrupts().horizontal_pending()
+        );
+        assert_eq!(
+            device.interrupts().vertical_pending(),
+            initial.interrupts().vertical_pending()
+        );
+        assert_eq!(device.fifo(), initial.fifo());
+        assert_eq!(device.read_cache(), initial.read_cache());
+        assert_eq!(device.memory(), initial.memory());
+        device
+            .advance_to(tick(INTERNAL_TICKS), Region::NtscUs)
+            .unwrap();
+        assert_eq!(
+            device.registers().registers(),
+            initial.registers().registers()
+        );
+        assert_eq!(device.registers().pending(), None);
+        assert_eq!(device.memory(), initial.memory());
     }
+    let mut typed = initial.clone();
+    assert_eq!(
+        typed.queue_register(31, 0x55, Region::NtscUs),
+        Err(VdpRegisterError::UnsupportedRegister(31).into())
+    );
+    assert_eq!(typed, initial);
     for value in 0..0x80 {
         let mut device = initial.clone();
         assert_eq!(
@@ -312,7 +411,8 @@ pub fn register_fault_atomicity_with(mut write: impl FnMut(&mut Vdp, u16, Region
     for (index, mask, expected) in [(MODE_REGISTER, MODE5 | 8, MODE5), (SIZE_REGISTER, 0x87, 0)] {
         for value in 0..=u8::MAX {
             if value & mask == expected
-                || (index == SIZE_REGISTER && matches!(value & mask, 6 | 0x81 | 0x87))
+                || (index == SIZE_REGISTER
+                    && matches!(value & mask, 1 | 2 | 6 | 0x81 | 0x83 | 0x87))
             {
                 continue;
             }
@@ -363,6 +463,11 @@ pub fn register_fault_atomicity_with(mut write: impl FnMut(&mut Vdp, u16, Region
         }))
     );
     assert_eq!(device, before);
+    assert_eq!(
+        write(&mut device, 0x9f00, Region::NtscUs),
+        Err(schedule(VdpRegisterError::UnsupportedRegister(31)))
+    );
+    assert_eq!(device, before);
     write(&mut device, 0x4001, Region::NtscUs).unwrap();
     write(&mut device, 0, Region::NtscUs).unwrap();
     assert_eq!(device.registers().pending(), before.registers().pending());
@@ -382,7 +487,7 @@ pub fn register_fault_atomicity_with(mut write: impl FnMut(&mut Vdp, u16, Region
     );
     assert_eq!(device.interrupts().line_counter(), 0);
     assert!(device.interrupts().horizontal_pending());
-    let mut device = at(u64::MAX);
+    let mut device = at_clock_end(u64::MAX);
     let before = device.clone();
     assert_eq!(
         write(
@@ -424,7 +529,7 @@ pub fn unsupported_command_atomicity_with(mut write: impl FnMut(&mut Vdp, u16, R
     for region in [Region::NtscUs, Region::NtscJapan] {
         for raw_code in 0u8..64 {
             let code = raw_code & 0x1f;
-            if raw_code & 3 == 2 || !matches!(code & 0xf, 0 | 4 | 8 | 0xc) {
+            if raw_code & 3 == 2 || code & 0x10 != 0 || !matches!(code & 0xf, 0 | 4 | 8 | 0xc) {
                 continue;
             }
             let mut device = at(1);
@@ -438,16 +543,25 @@ pub fn unsupported_command_atomicity_with(mut write: impl FnMut(&mut Vdp, u16, R
                 code,
             };
             let second = 5 | (u16::from(raw_code & 0x3c) << 2);
+            let result = write(&mut device, second, region);
+            if command.code == 0 {
+                assert_eq!(
+                    result,
+                    Ok(ControlWrite::Command(ControlCommand {
+                        address: command.address,
+                        code: raw_code,
+                    }))
+                );
+                assert_eq!(device.command(), command);
+                assert_eq!(device.control().pending_word(), None);
+                continue;
+            }
             assert_eq!(
-                write(&mut device, second, region),
+                result,
                 if matches!(command.code, 4 | 8) {
                     Err(VdpPortError::Schedule(VdpScheduleError::Read(
                         zeff_md_core::VdpReadError::UnknownFifoHistory,
                     )))
-                } else if command.code == 0 {
-                    Err(VdpPortError::Read(
-                        zeff_md_core::VdpReadError::UnsupportedCommand(command),
-                    ))
                 } else {
                     Err(VdpPortError::Control(VdpWriteError::UnsupportedCommand(
                         command,

@@ -23,6 +23,27 @@ fn at(now: u64) -> Vdp {
     device
 }
 
+fn at_clock_end(now: u64) -> Vdp {
+    let epoch = now - now % 3420;
+    let mut registers = VdpRegisterPipeline::at_h32_edge(tick(epoch - 24 * 20));
+    for index in 0..24 {
+        registers
+            .advance_to(tick(registers.now().get() + 1))
+            .unwrap();
+        let pending = registers
+            .queue_register(index, if index == 1 { 4 } else { 0 })
+            .unwrap();
+        registers.advance_to(pending.publish_at).unwrap();
+    }
+    assert_eq!(registers.now(), tick(epoch));
+    let interrupts = VdpInterrupts::at_counters_zero(tick(epoch), 0, false, false);
+    let mut device = Vdp::from_known_state(interrupts, registers, REGION).unwrap();
+    device.advance_to(tick(now), REGION).unwrap();
+    assert_eq!(device.now(), tick(now));
+    assert_eq!(device.registers().auto_increment(), Some(0));
+    device
+}
+
 fn first_word(address: u32, code: u8) -> u16 {
     (address as u16 & 0x3fff) | (u16::from(code & 3) << 14)
 }
@@ -222,14 +243,6 @@ pub fn control_invalidation_and_interrupted_second_phase_are_atomic() {
     let mut device = at(1);
     command(&mut device, 0, VRAM_READ);
     device.advance_to(tick(10), REGION).unwrap();
-    for word in [0x4000, 0x8f02, 0x8000] {
-        let saved = device.clone();
-        assert_eq!(
-            device.write_control(word, REGION),
-            Err(read_error(VdpReadError::PrefetchPending))
-        );
-        assert_eq!(device, saved);
-    }
     for (index, value) in [(1, 0x44), (12, 0x81), (INCREMENT, 2)] {
         let saved = device.clone();
         assert_eq!(
@@ -237,6 +250,17 @@ pub fn control_invalidation_and_interrupted_second_phase_are_atomic() {
             Err(VdpRegisterError::UnsupportedModeChange { index, value }.into())
         );
         assert_eq!(device, saved);
+    }
+    for word in [0x8f02, 0x8000] {
+        let mut interrupted = device.clone();
+        interrupted.write_control(word, REGION).unwrap();
+        assert!(!interrupted.read_cache().is_ready());
+        assert_eq!(interrupted.control().pending_word(), None);
+        let address = interrupted.command().address;
+        interrupted.advance_to(tick(71), REGION).unwrap();
+        assert!(!interrupted.read_cache().is_ready());
+        assert_eq!(interrupted.read_cache().buffered_word(), None);
+        assert_eq!(interrupted.command().address, address);
     }
     device.advance_to(tick(31), REGION).unwrap();
     assert!(device.read_cache().is_ready());
@@ -270,7 +294,6 @@ pub fn phase_zero_command_transition_cancels_pending_fetch() {
 }
 
 pub fn refresh_and_strict_next_slot_boundaries() {
-    // Literal software nonactive-slot baseline, without a physical timing claim.
     for (arrival, end) in [
         (9, 30),
         (10, 50),
@@ -304,7 +327,8 @@ pub fn refresh_and_strict_next_slot_boundaries() {
 }
 
 pub fn unsupported_address_increment_and_carry_reject_before_fetch() {
-    for (address, code) in [(1, VRAM_READ), (0x50, VSRAM_READ)] {
+    {
+        let (address, code) = (0x50, VSRAM_READ);
         let mut device = at(1);
         rejected_command(
             &mut device,
@@ -318,12 +342,16 @@ pub fn unsupported_address_increment_and_carry_reject_before_fetch() {
     }
     let mut device = at(1);
     register(&mut device, INCREMENT, 1);
-    rejected_command(
-        &mut device,
-        0,
-        VRAM_READ,
-        read_error(VdpReadError::UnsupportedIncrement(1)),
-    );
+    command(&mut device, 0, VRAM_READ);
+    let end = device.data_read_wait(REGION).unwrap().unwrap();
+    device.advance_to(end, REGION).unwrap();
+    assert_eq!(device.command().address, 1);
+    assert!(device.read_cache().is_ready());
+    assert_eq!(device.read_data(REGION), Ok(0));
+    let end = device.data_read_wait(REGION).unwrap().unwrap();
+    device.advance_to(end, REGION).unwrap();
+    assert_eq!(device.command().address, 2);
+    assert_eq!(device.read_cache().buffered_word(), Some(0));
     for address in [0x3ffe, 0x7ffe, 0xbffe, 0xfffe] {
         let mut device = at(1);
         register(&mut device, INCREMENT, 2);
@@ -480,7 +508,7 @@ pub fn command_and_consumption_preflight_future_irq_and_clock_tail_with(
     assert!(!device.read_cache().is_ready());
     assert_eq!(wait(&device, REGION), Ok(Some(tick(766130))));
     for arrival in [u64::MAX - 6, u64::MAX] {
-        let mut device = at(arrival);
+        let mut device = at_clock_end(arrival);
         rejected_command_with(
             &mut device,
             0,
@@ -489,7 +517,7 @@ pub fn command_and_consumption_preflight_future_irq_and_clock_tail_with(
             &mut control,
         );
     }
-    let mut device = at(u64::MAX - 46);
+    let mut device = at_clock_end(u64::MAX - 46);
     command_with(&mut device, 0, VRAM_READ, &mut control);
     advance(&mut device, tick(u64::MAX - 24), REGION).unwrap();
     let saved = device.clone();

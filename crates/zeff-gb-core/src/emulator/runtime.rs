@@ -170,7 +170,7 @@ impl Emulator {
                         if let Some(record) = &mut trace_record {
                             record.push_write(TraceWrite {
                                 address: addr,
-                                old_value,
+                                old_value: Some(old_value),
                                 new_value,
                                 width: TraceWriteWidth::Byte,
                                 kind: TraceWriteKind::Memory,

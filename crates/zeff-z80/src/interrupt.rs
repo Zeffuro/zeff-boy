@@ -28,6 +28,77 @@ enum Phase {
 }
 
 impl Service {
+    fn start(self, cpu: &mut Cpu) {
+        cpu.state = CpuState::Running;
+        cpu.interrupt_flip_flop_1 = false;
+        cpu.enable_interrupts_delay = 0;
+        cpu.last_step_was_interrupt = true;
+        cpu.last_opcode_pc = self.pc;
+        cpu.last_opcode = Z80_INTERRUPT_ACK_OPCODE;
+        cpu.increment_refresh_register();
+    }
+
+    pub(super) fn acknowledge_im1(cpu: &mut Cpu) -> Self {
+        let mut service = Self {
+            pc: cpu.regs.pc,
+            kind: Kind::Maskable(InterruptMode::Im1, cpu.regs.i),
+            phase: Phase::Acknowledge,
+        };
+        service.start(cpu);
+        cpu.interrupt_flip_flop_2 = false;
+        service.phase = Phase::Stack {
+            operation: stack::Stack::interrupt(cpu, Some(Z80_INTERRUPT_VECTOR_IM1)),
+            vector: None,
+        };
+        service
+    }
+
+    pub(super) fn im1_write(self, cpu: &Cpu) -> Option<(u16, u8, bool)> {
+        if self.kind != Kind::Maskable(InterruptMode::Im1, cpu.regs.i)
+            || self.pc != cpu.regs.pc
+            || cpu.state != CpuState::Running
+            || cpu.interrupt_flip_flop_1
+            || cpu.interrupt_flip_flop_2
+            || cpu.enable_interrupts_delay != 0
+            || !cpu.last_step_was_interrupt
+            || cpu.last_opcode_pc != self.pc
+            || cpu.last_opcode != Z80_INTERRUPT_ACK_OPCODE
+            || cpu.instruction_byte_count != 0
+            || cpu.instruction_bytes != [0; 4]
+            || cpu.last_m1_fetch_count != 1
+        {
+            return None;
+        }
+        match self.phase {
+            Phase::Stack {
+                operation,
+                vector: None,
+            } => operation.im1_write(cpu),
+            _ => None,
+        }
+    }
+
+    pub(super) fn complete_im1_write(mut self, cpu: &mut Cpu) -> Result<Option<Self>, ()> {
+        self.im1_write(cpu).ok_or(())?;
+        let Phase::Stack {
+            operation,
+            vector: None,
+        } = self.phase
+        else {
+            return Err(());
+        };
+        match operation.complete_push(cpu)? {
+            Some(operation) => {
+                self.phase = Phase::Stack {
+                    operation,
+                    vector: None,
+                };
+                Ok(Some(self))
+            }
+            None => Ok(None),
+        }
+    }
+
     pub(super) fn poll<B: Z80Bus>(cpu: &Cpu, bus: &B) -> Option<Self> {
         let kind = if bus.non_maskable_interrupt_pending() {
             Kind::Nmi
@@ -54,13 +125,7 @@ impl Service {
         let cycles;
         self.phase = match self.phase {
             Phase::Acknowledge => {
-                cpu.state = CpuState::Running;
-                cpu.interrupt_flip_flop_1 = false;
-                cpu.enable_interrupts_delay = 0;
-                cpu.last_step_was_interrupt = true;
-                cpu.last_opcode_pc = self.pc;
-                cpu.last_opcode = Z80_INTERRUPT_ACK_OPCODE;
-                cpu.increment_refresh_register();
+                self.start(cpu);
                 let (target, vector) = match self.kind {
                     Kind::Nmi => {
                         bus.acknowledge_non_maskable_interrupt();
@@ -86,6 +151,7 @@ impl Service {
                                 };
                                 return (Some(self), CYCLES_INTERRUPT_FETCH);
                             }
+                            cpu.memptr = None;
                             cpu.trap = Some(CpuTrap::UnsupportedOpcode {
                                 pc: self.pc,
                                 opcode,
@@ -128,6 +194,7 @@ impl Service {
             }
             Phase::VectorHigh(address, low) => {
                 cpu.regs.pc = u16::from_le_bytes([low, bus.cpu_read(address)]);
+                cpu.set_memptr(cpu.regs.pc);
                 return (None, CYCLES_MEMORY_TRANSFER);
             }
         };

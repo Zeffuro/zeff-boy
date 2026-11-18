@@ -250,7 +250,7 @@ pub fn mode_and_tail_guards_with(
         query(&clock, tick(47), Region::NtscUs, &unknown),
         (Err(error), Err(error))
     );
-    for (index, value) in [(1, 0x40), (12, 0x01), (12, 0x80)] {
+    for (index, value) in [(1, 0x40), (12, 0x03), (12, 0x80)] {
         let mut invalid = registers;
         invalid.advance_to(tick(invalid.now().get() + 1)).unwrap();
         let saved = invalid;
@@ -260,7 +260,7 @@ pub fn mode_and_tail_guards_with(
         );
         assert_eq!(invalid, saved);
     }
-    for (index, value) in [(1, 0x4c), (1, 0xc4), (12, 0x02), (12, 0x04)] {
+    for (index, value) in [(1, 0x4c), (1, 0xc4), (12, 0x04)] {
         let mut invalid = registers;
         publish(&mut invalid, index, value);
         let error = VdpTimingError::UnsupportedMode { index, value };

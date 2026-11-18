@@ -27,7 +27,6 @@ impl VdpSpriteRow {
         &self.indices[..self.len]
     }
 
-    /// Requires a stable cache; excludes changed-cache out-of-row behavior and fetch timing.
     pub fn prepare_sprite(
         &self,
         cache: &VdpSpriteCache,
@@ -75,7 +74,6 @@ impl VdpSpriteCache {
         }
     }
 
-    /// Validates a stable, acyclic H32 list for y in 0..256, without scan timing.
     pub fn select_row(&self, y: u16) -> Result<VdpSpriteRow, VdpRenderError> {
         self.select_row_in_mode(RasterGeometry::progressive(y), false, HorizontalMode::H32)
     }
@@ -173,7 +171,6 @@ impl VdpSpriteCache {
             .ok_or(VdpRenderError::InvalidSpriteIndex(index))
     }
 
-    /// Completed even VRAM word with stable R5 and horizontal mode; no byte-latch timing.
     pub fn complete_write(
         &mut self,
         memory: &mut VdpMemory,
@@ -241,7 +238,6 @@ impl VdpSpriteCache {
         }
     }
 
-    /// Cached Y/size/link with current VRAM X/name, without physical fetch timing.
     pub fn sprite_entry(
         &self,
         memory: &VdpMemory,

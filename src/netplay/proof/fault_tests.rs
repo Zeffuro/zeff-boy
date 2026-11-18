@@ -205,7 +205,7 @@ pub(super) fn run_fault(fault: Fault, media: &media::Media, check_restored_publi
         secret: [5; 32],
     })));
     assert!(
-        matches!(next(&worker).unwrap(), Response::Ready),
+        matches!(next(&worker).unwrap(), Response::Ready { md_input: None }),
         "{fault:?}"
     );
     let success = matches!(fault, Fault::Jitter | Fault::Duplicate | Fault::Stale);

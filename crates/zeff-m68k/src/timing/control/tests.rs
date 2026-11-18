@@ -71,10 +71,14 @@ fn stopped_trace_uses_entry_latch_and_loaded_status() {
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn short_traps_and_privilege_suppress_or_retain_trace_as_required() {
+    illegal_entry_with_discardable_stack();
     for (opcode, sr, vector, saved, trace) in [
         (0x4afc, 0xa000, 4, 0x100, false),
+        (0x444e, 0xa000, 4, 0x100, false),
+        (0x444e, 0x001f, 4, 0x100, false),
         (0xa123, 0xa000, 10, 0x100, false),
         (0xf123, 0xa000, 11, 0x100, false),
         (0x4e72, 0x8000, 8, 0x100, false),
@@ -101,6 +105,57 @@ fn short_traps_and_privilege_suppress_or_retain_trace_as_required() {
             assert_eq!(bus.words[&0xff4], 0x2000);
         }
     }
+}
+
+fn illegal_entry_with_discardable_stack() {
+    let mut timed = cpu(0x2700);
+    timed.registers.pc = 0;
+    timed.registers.ssp = 0x444e4c44;
+    timed.pipeline = Some(Pipeline::unknown(0, [0x444e, 0x4c44]));
+    let mut bus = Bus::default();
+    bus.words
+        .extend([(0x10, 0), (0x12, 0x200), (0x200, 0x4e71), (0x202, 0x60fe)]);
+    let step = timed.step_boundary(&mut bus).unwrap();
+    assert_eq!(
+        step,
+        TimedOutcome::Instruction(TimedStep {
+            opcode: 0x444e,
+            clocks: 34,
+            exception: Some(4)
+        })
+    );
+    assert_eq!(
+        (
+            timed.registers.pc,
+            timed.registers.ssp,
+            timed.registers.status_register()
+        ),
+        (0x200, 0x444e4c3e, 0x2700)
+    );
+    let transfers: Vec<_> = bus
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Read(a, at) => Some((a.logical_address, a.bus_address, *at, None)),
+            Event::Write(a, value, at) => {
+                Some((a.logical_address, a.bus_address, *at, Some(*value)))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        transfers,
+        [
+            (0x444e4c42, 0x4e4c42, 4, Some(0)),
+            (0x444e4c3e, 0x4e4c3e, 8, Some(0x2700)),
+            (0x444e4c40, 0x4e4c40, 12, Some(0)),
+            (0x10, 0x10, 16, None),
+            (0x12, 0x12, 20, None),
+            (0x200, 0x200, 24, None),
+            (0x202, 0x202, 30, None),
+        ]
+    );
+    assert_eq!(timed.queued_words(), Some([0x4e71, 0x60fe]));
 }
 
 #[test]
@@ -208,27 +263,51 @@ fn aborted_refill_cancels_trace_and_retains_completed_external_effects() {
     assert_eq!(cpu.step_boundary(&mut bus), Err(TimingFault::Frozen));
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn every_short_exception_transfer_failure_preserves_elapsed_effects() {
-    for index in 0..7 {
-        let mut cpu = cpu(0x2000);
-        cpu.pipeline.as_mut().unwrap().words[0] = 0x4e40;
-        let mut bus = Bus {
-            wait: 2,
-            fail: Some(index),
-            ..Bus::default()
-        };
-        bus.handler(32);
-        assert!(
-            matches!(cpu.step(&mut bus), Err(TimingFault::Bus { source, .. }) if source == index)
-        );
-        assert_eq!(cpu.clock().0, bus.clock);
-        assert_eq!(bus.transfers, index + 1);
-        let events = bus.events.clone();
-        assert_eq!(cpu.step_boundary(&mut bus), Err(TimingFault::Frozen));
-        assert_eq!(bus.events, events);
-        if index > 0 {
-            assert_eq!(bus.words[&0xffe], 0x0102);
+    for opcode in [0x4e40, 0x444e] {
+        for index in 0..7 {
+            let mut cpu = cpu(0x2000);
+            cpu.pipeline.as_mut().unwrap().words[0] = opcode;
+            let mut bus = Bus {
+                wait: 2,
+                fail: Some(index),
+                ..Bus::default()
+            };
+            bus.handler(if opcode == 0x444e { 4 } else { 32 });
+            let original = cpu.clone();
+            let mut expected_words = bus.words.clone();
+            let writes = [
+                (0xffe, if opcode == 0x444e { 0x0100 } else { 0x0102 }),
+                (0xffa, 0x2000),
+                (0xffc, 0x1234),
+            ];
+            for &(address, value) in writes.iter().take(index.min(3)) {
+                expected_words.insert(address, value);
+            }
+            assert!(
+                matches!(cpu.step(&mut bus), Err(TimingFault::Bus { source, .. }) if source == index)
+            );
+            assert_eq!(cpu.clock().0, bus.clock);
+            assert_eq!(
+                cpu.clock().0,
+                4 + 6 * (index as u64 + 1) + if index == 6 { 2 } else { 0 }
+            );
+            assert_eq!(bus.words, expected_words);
+            assert_eq!(cpu.registers, original.registers);
+            assert_eq!(cpu.queued_words(), original.queued_words());
+            assert!(!cpu.trace_pending());
+            assert_eq!(bus.transfers, index + 1);
+            let events = bus.events.clone();
+            assert_eq!(cpu.step_boundary(&mut bus), Err(TimingFault::Frozen));
+            assert_eq!(bus.events, events);
+            if index > 0 {
+                assert_eq!(
+                    bus.words[&0xffe],
+                    if opcode == 0x444e { 0x0100 } else { 0x0102 }
+                );
+            }
         }
     }
 }

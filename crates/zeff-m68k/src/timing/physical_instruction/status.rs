@@ -60,7 +60,7 @@ impl PrefetchCpu {
                     address,
                     pipeline.words[0],
                 );
-                self.physical_read(bus, phase)?;
+                self.physical_fetch(bus, phase)?;
                 (value, address)
             }
             StatusSource::Memory(source) => {
@@ -84,15 +84,17 @@ impl PrefetchCpu {
             anchor,
             pipeline.words[0],
         );
-        let first = self.physical_read(bus, phase)?;
+        let first = self.physical_fetch(bus, phase)?;
         let address = anchor.wrapping_add(2);
-        let phase = self.prefetch_phase(InstructionPhase::StatusSecond, address, address, first);
-        let second = self.physical_read(bus, phase)?;
+        let phase = self.prefetch_phase(
+            InstructionPhase::StatusSecond,
+            address,
+            address,
+            first.value,
+        );
+        let second = self.physical_fetch(bus, phase)?;
         self.registers.pc = anchor;
-        self.pipeline = Some(Pipeline {
-            address: anchor,
-            words: [first, second],
-        });
+        self.pipeline = Some(Pipeline::sampled(anchor, [first, second]));
         Ok(())
     }
 }

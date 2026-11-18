@@ -126,7 +126,7 @@ pub fn active_fifo_and_captured_targets_with(
         assert_eq!(device.command().address, 6);
         assert!(device.fifo().is_empty());
     }
-    assert_eq!(device.memory().cram()[0], 0x0eee);
+    assert_eq!(device.memory().known_cram().unwrap()[0], 0x0eee);
     assert_eq!(device.memory().vsram()[0], 0x0234);
 }
 
@@ -266,7 +266,7 @@ pub fn margins_and_atomic_preflight_with(
     command(&mut control, &mut last, 0, 3);
     data(&mut last, 0xffff, REGION).unwrap();
     advance(&mut last, tick(885770), REGION).unwrap();
-    assert_eq!(last.memory().cram()[0], 0x0eee);
+    assert_eq!(last.memory().known_cram().unwrap()[0], 0x0eee);
     advance(&mut last, tick(896041), REGION).unwrap();
     assert_eq!(last.now(), tick(896041));
     let mut short = at(758711);
@@ -336,7 +336,7 @@ pub fn constructor_and_legacy_guards_with(
             ))))
         );
     }
-    for (index, value) in [(1, 0xc4), (1, 0x4c), (12, 2)] {
+    for (index, value) in [(1, 0xc4), (1, 0x4c), (12, 4)] {
         let (mut irq, mut registers) = inputs(121, 0);
         let baseline = registers;
         let write = registers.queue_register(index, value).unwrap();

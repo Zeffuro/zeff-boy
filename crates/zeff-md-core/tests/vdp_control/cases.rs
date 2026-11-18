@@ -200,7 +200,27 @@ pub fn machine_ports_remain_unadmitted() {
                 let mut machine = machine_start(address, direction, concurrent);
                 assert!(machine.step_instruction().is_ok());
                 let before = machine.timing_snapshot().now();
+                let memory = machine.vdp().memory().clone();
                 let result = machine.step_instruction();
+                if direction == Direction::Write && [0xc00000, 0xc00002].contains(&address) {
+                    assert!(result.is_ok());
+                    assert_eq!(machine.vdp().registers().auto_increment(), Some(0));
+                    assert_eq!(
+                        machine.vdp().command(),
+                        ControlCommand {
+                            address: 0,
+                            code: 0
+                        }
+                    );
+                    assert_eq!(machine.vdp().control().pending_word(), None);
+                    assert_eq!(machine.vdp().memory(), &memory);
+                    assert!(machine.timing_snapshot().now() > before);
+                    assert_eq!(machine.peek(address), None);
+                    assert_eq!(machine.peek(0xff8000), Some(0xa5));
+                    assert_eq!(machine.peek(0xff8001), Some(0x5a));
+                    assert!(machine.step_instruction().is_ok());
+                    continue;
+                }
                 if direction == Direction::Write
                     && [0xc00004, 0xc00006, 0xd8ff04].contains(&address)
                 {

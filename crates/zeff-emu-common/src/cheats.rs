@@ -146,6 +146,15 @@ pub enum CheatPatch {
         value: CheatValue,
         compare: CheatValue,
     },
+    WideRomWrite {
+        address: Address,
+        value: CheatValue,
+    },
+    WideRomWriteIfEquals {
+        address: Address,
+        value: CheatValue,
+        compare: CheatValue,
+    },
     RamWriteIfEquals {
         address: u16,
         value: CheatValue,
@@ -172,7 +181,13 @@ pub trait CheatByteTarget<A: Copy> {
 
 impl CheatPatch {
     pub fn is_rom_patch(self) -> bool {
-        matches!(self, Self::RomWrite { .. } | Self::RomWriteIfEquals { .. })
+        matches!(
+            self,
+            Self::RomWrite { .. }
+                | Self::RomWriteIfEquals { .. }
+                | Self::WideRomWrite { .. }
+                | Self::WideRomWriteIfEquals { .. }
+        )
     }
 
     pub fn constant_rom_write(self) -> Option<(u16, u8, Option<u8>)> {
@@ -204,8 +219,10 @@ impl CheatPatch {
         match self {
             Self::RamWrite { value, .. }
             | Self::WideRamWrite { value, .. }
-            | Self::RomWrite { value, .. } => value.has_user_parameter(),
+            | Self::RomWrite { value, .. }
+            | Self::WideRomWrite { value, .. } => value.has_user_parameter(),
             Self::RomWriteIfEquals { value, compare, .. }
+            | Self::WideRomWriteIfEquals { value, compare, .. }
             | Self::RamWriteIfEquals { value, compare, .. }
             | Self::WideRamWriteIfEquals { value, compare, .. } => {
                 value.has_user_parameter() || compare.has_user_parameter()
@@ -217,8 +234,10 @@ impl CheatPatch {
         match self {
             Self::RamWrite { value, .. }
             | Self::WideRamWrite { value, .. }
-            | Self::RomWrite { value, .. } => value.default_user_value(),
+            | Self::RomWrite { value, .. }
+            | Self::WideRomWrite { value, .. } => value.default_user_value(),
             Self::RomWriteIfEquals { value, compare, .. }
+            | Self::WideRomWriteIfEquals { value, compare, .. }
             | Self::RamWriteIfEquals { value, compare, .. }
             | Self::WideRamWriteIfEquals { value, compare, .. } => value
                 .default_user_value()
@@ -239,6 +258,19 @@ impl CheatPatch {
             Self::RomWrite { address, value } => Self::RomWrite {
                 address,
                 value: value.resolve_user_parameter(user_value),
+            },
+            Self::WideRomWrite { address, value } => Self::WideRomWrite {
+                address,
+                value: value.resolve_user_parameter(user_value),
+            },
+            Self::WideRomWriteIfEquals {
+                address,
+                value,
+                compare,
+            } => Self::WideRomWriteIfEquals {
+                address,
+                value: value.resolve_user_parameter(user_value),
+                compare: compare.resolve_user_parameter(user_value),
             },
             Self::RomWriteIfEquals {
                 address,

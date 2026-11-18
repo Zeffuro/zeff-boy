@@ -120,7 +120,9 @@ pub fn external_destinations_and_retirement() {
 
 pub fn external_destinations_and_retirement_with(step: &mut Step<'_>) {
     for cd4 in [0, 0x10] {
-        for (address, expected) in [(0, [0x12, 0x34]), (1, [0x34, 0x12])] {
+        for (address, first, expected) in
+            [(0, [0, 0x34], [0x12, 0x34]), (1, [0x34, 0], [0x34, 0x12])]
+        {
             let mut dma = image(1, 0, 0);
             let mut current = command(address, 0x21 | cd4);
             let mut memory = VdpMemory::default();
@@ -130,7 +132,7 @@ pub fn external_destinations_and_retirement_with(step: &mut Step<'_>) {
             assert_eq!(&memory.vram()[..2], &[0, 0]);
             fifo.push(write).unwrap();
             assert_eq!(fifo.service_write_slot(&mut memory), Ok(None));
-            assert_eq!(&memory.vram()[..2], &[0, expected[1]]);
+            assert_eq!(&memory.vram()[..2], &first);
             assert_eq!(dma.source(), 1);
             assert_eq!(fifo.len(), 1);
             assert_eq!(fifo.service_write_slot(&mut memory), Ok(Some(write)));
@@ -150,8 +152,8 @@ pub fn external_destinations_and_retirement_with(step: &mut Step<'_>) {
             assert_eq!(dma.source(), 2);
             assert_eq!(dma.source_high(), 0x7f);
             if code == 3 {
-                assert_eq!(memory.cram()[63], 0x0eee);
-                assert_eq!(&memory.cram()[..2], &[0x0224, 0x0668]);
+                assert_eq!(memory.known_cram().unwrap()[63], 0x0eee);
+                assert_eq!(&memory.known_cram().unwrap()[..2], &[0x0224, 0x0668]);
             } else {
                 assert_eq!(&memory.vsram()[..2], &[0x0234, 0x0678]);
                 assert!(memory.vsram()[2..].iter().all(|word| *word == 0));

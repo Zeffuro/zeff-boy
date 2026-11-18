@@ -224,8 +224,10 @@ fn operand_reads_prefetch_then_low_first_writes_have_exact_addresses_and_data() 
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn negx_zero_is_sticky_and_clear_reads_even_when_operand_does_not_affect_result() {
+    discarded_clear_cycles();
     for size in [Size::Byte, Size::Word, Size::Long] {
         for (status, value, expected) in [
             (ZERO, 0, ZERO),
@@ -253,6 +255,74 @@ fn negx_zero_is_sticky_and_clear_reads_even_when_operand_does_not_affect_result(
                 .iter()
                 .all(|event| !matches!(event, Event::Write(..)))
         );
+    }
+}
+
+struct Discarded<'a> {
+    bus: &'a mut Bus,
+    reads: usize,
+}
+
+impl ClockedBus for Discarded<'_> {
+    type Error = usize;
+
+    fn read_cycle(&mut self, access: BusAccess, start: CpuClocks) -> CycleResult<u16, usize> {
+        assert_ne!(access.kind, AccessKind::Data);
+        self.bus.read_cycle(access, start)
+    }
+
+    fn read_discarded_cycle(
+        &mut self,
+        access: BusAccess,
+        start: CpuClocks,
+    ) -> CycleResult<(), usize> {
+        assert_eq!(access.kind, AccessKind::Data);
+        self.reads += 1;
+        let cycle = self.bus.read_cycle(access, start);
+        CycleResult {
+            result: cycle.result.map(|_| ()),
+            wait_clocks: cycle.wait_clocks,
+        }
+    }
+
+    fn write_cycle(
+        &mut self,
+        access: BusAccess,
+        value: u16,
+        start: CpuClocks,
+    ) -> CycleResult<(), usize> {
+        self.bus.write_cycle(access, value, start)
+    }
+
+    fn idle(&mut self, start: CpuClocks, clocks: u32) {
+        self.bus.idle(start, clocks);
+    }
+}
+
+fn discarded_clear_cycles() {
+    for size in [Size::Byte, Size::Word, Size::Long] {
+        for operand in [(2, 0), (3, 0), (4, 7), (5, 0), (6, 0), (7, 0), (7, 1)] {
+            for waits in [0, 3] {
+                let (mut expected, mut direct, _) =
+                    seed(0x4200, size, operand, 0x201f, false, 0x8123_4567);
+                let mut actual = expected.clone();
+                let mut observed = direct.clone();
+                direct.wait = waits;
+                observed.wait = waits;
+                let expected_step = expected.step_instruction(&mut direct).unwrap();
+                let mut wrapper = Discarded {
+                    bus: &mut observed,
+                    reads: 0,
+                };
+                assert_eq!(
+                    actual.step_instruction(&mut wrapper).unwrap(),
+                    expected_step
+                );
+                assert_eq!(wrapper.reads, if size == Size::Long { 2 } else { 1 });
+                assert_eq!(actual, expected);
+                assert_eq!(observed, direct);
+            }
+        }
     }
 }
 
@@ -349,25 +419,103 @@ fn every_failure_preserves_address_and_alu_commits_completed_writes_and_freezes(
     }
 }
 
-#[test]
-fn illegal_forms_are_unsupported_before_any_callback() {
-    for family in [0x4000, 0x4200, 0x4400, 0x4600, 0x4a00] {
-        for size in [0, 0x40, 0x80] {
-            for operand in [8, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f] {
-                let mut timed = cpu(0x2000);
-                let opcode = family | size | operand;
-                timed.pipeline.as_mut().unwrap().words[0] = opcode;
-                let initial = timed.clone();
-                let mut bus = Bus::default();
-                assert!(matches!(
-                    timed.step(&mut bus),
-                    Err(TimingFault::UnsupportedInstruction { .. })
-                ));
-                assert_eq!(timed, initial);
-                assert!(bus.events.is_empty());
-            }
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn illegal_unary_effective_addresses_enter_exception_four() {
+    let mut count = 0;
+    for opcode in 0..=u16::MAX {
+        let expected = [0x4000, 0x4200, 0x4400, 0x4600, 0x4a00]
+            .into_iter()
+            .any(|family| {
+                [0, 0x40, 0x80].into_iter().any(|size| {
+                    (8..=15)
+                        .chain(0x3a..=0x3f)
+                        .any(|ea| opcode == (family | size | ea))
+                })
+            });
+        assert_eq!(super::super::control::illegal_unary_ea(opcode), expected);
+        if !expected {
+            continue;
+        }
+        count += 1;
+        for status in [0x001f, 0x801f, 0x271f, 0xa71f] {
+            let mut timed = cpu(status);
+            timed.pipeline.as_mut().unwrap().words = [opcode, 0x4c44];
+            let before = timed.registers;
+            let mut bus = Bus {
+                wait: 2,
+                ..Bus::default()
+            };
+            bus.handler(4);
+            let step = timed.step_boundary(&mut bus).unwrap();
+            assert_eq!(
+                step,
+                TimedOutcome::Instruction(TimedStep {
+                    opcode,
+                    clocks: 48,
+                    exception: Some(4)
+                })
+            );
+            assert_eq!(timed.registers.pc, 0x12345000);
+            assert_eq!(timed.registers.ssp, 0xffa);
+            assert_eq!(timed.registers.usp, before.usp);
+            assert_eq!(timed.registers.d, before.d);
+            assert_eq!(timed.registers.a, before.a);
+            assert_eq!(
+                timed.registers.status_register(),
+                (status | SUPERVISOR) & !TRACE
+            );
+            assert!(!timed.trace_pending());
+            assert_eq!(timed.queued_words(), Some([0x4e71, 0x7201]));
+            assert_eq!(
+                (bus.words[&0xffa], bus.words[&0xffc], bus.words[&0xffe]),
+                (status, 0x1234, 0x100)
+            );
+            assert_eq!(bus.transfers, 7);
+            let accesses: Vec<_> = bus
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Read(a, _) | Event::Write(a, _, _) => {
+                        Some((a.bus_address, a.function_code, a.kind))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                accesses.iter().map(|x| x.0).collect::<Vec<_>>(),
+                [0xffe, 0xffa, 0xffc, 0x10, 0x12, 0x345000, 0x345002]
+            );
+            assert!(
+                accesses[..5]
+                    .iter()
+                    .all(|x| x.1 == FunctionCode::SupervisorData)
+            );
+            assert!(
+                accesses[5..]
+                    .iter()
+                    .all(|x| x.1 == FunctionCode::SupervisorProgram)
+            );
+            assert_eq!(
+                accesses.iter().map(|x| x.2).collect::<Vec<_>>(),
+                [
+                    AccessKind::Stack,
+                    AccessKind::Stack,
+                    AccessKind::Stack,
+                    AccessKind::Vector,
+                    AccessKind::Vector,
+                    AccessKind::Prefetch,
+                    AccessKind::Prefetch
+                ]
+            );
+            assert!(bus.events.iter().all(|event| match event {
+                Event::Read(a, _) | Event::Write(a, _, _) => a.lanes == ByteLanes::Both,
+                _ => true,
+            }));
+            assert_eq!(timed.clock().0, bus.clock);
         }
     }
+    assert_eq!(count, 210);
 }
 
 #[test]

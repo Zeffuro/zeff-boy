@@ -59,7 +59,7 @@ impl PrefetchCpu {
             pc.wrapping_add(if size == Size::Long { 2 } else { 4 }),
             opcode,
         );
-        let first = self.physical_read(bus, phase)?;
+        let first = self.physical_fetch(bus, phase)?;
         let (immediate, next) = if size == Size::Long {
             let phase = self.prefetch_phase(
                 InstructionPhase::ImmediateSecond,
@@ -67,18 +67,18 @@ impl PrefetchCpu {
                 pc.wrapping_add(6),
                 opcode,
             );
-            let next = self.physical_read(bus, phase)?;
+            let next = self.physical_fetch(bus, phase)?;
             (
-                (u32::from(pipeline.words[1]) << 16) | u32::from(first),
+                (u32::from(pipeline.words[1]) << 16) | u32::from(first.value),
                 next,
             )
         } else {
             (u32::from(pipeline.words[1]), first)
         };
-        let operand_pipeline = Pipeline {
-            address: pc.wrapping_add(if size == Size::Long { 4 } else { 2 }),
-            words: [opcode, next],
-        };
+        let operand_pipeline = Pipeline::sampled(
+            pc.wrapping_add(if size == Size::Long { 4 } else { 2 }),
+            [pipeline.input(0), next],
+        );
         let (value, anchor, retained) = match profile.source {
             CmpiSource::Dn(register) => (
                 self.registers.d[register],
@@ -98,18 +98,15 @@ impl PrefetchCpu {
             InstructionPhase::OperandRefill,
             address,
             address,
-            if tail { opcode } else { retained },
+            if tail { opcode } else { retained.value },
         );
-        let fetched = self.physical_read(bus, phase)?;
+        let fetched = self.physical_fetch(bus, phase)?;
         if tail {
             self.entry_idle(bus, 2)
                 .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))?;
         }
         self.registers.pc = anchor;
-        self.pipeline = Some(Pipeline {
-            address: anchor,
-            words: [retained, fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(anchor, [retained, fetched]));
         Ok(())
     }
 }

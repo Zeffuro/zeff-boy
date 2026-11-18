@@ -16,7 +16,8 @@ pub fn write(index: u8, value: u8, at: u64) -> VdpRegisterWrite {
 }
 
 pub fn accepted(index: u8, value: u8) -> bool {
-    (index != 1 || value & 4 != 0) && (index != 12 || matches!(value & 0x81, 0 | 0x81))
+    (index != 1 || value & 4 != 0)
+        && (index != 12 || matches!(value & 0x81, 0 | 0x81) || value & 0x87 == 1)
 }
 
 pub fn known_phase_deadlines_and_boundaries() {
@@ -67,7 +68,7 @@ pub fn register_payload_partition() {
             }
         }
     }
-    assert_eq!((allowed, rejected), (5888, 256));
+    assert_eq!((allowed, rejected), (5904, 240));
 }
 
 pub fn copied_payload_and_chunk_invariance() {
@@ -133,7 +134,7 @@ pub fn busy_and_invalid_requests_are_atomic() {
         );
         assert_eq!(pipeline, saved);
     }
-    for (index, value) in [(1, 0), (1, 0xfb), (12, 1), (12, 0x80)] {
+    for (index, value) in [(1, 0), (1, 0xfb), (12, 3), (12, 0x80)] {
         assert_eq!(
             pipeline.queue_register(index, value),
             Err(VdpRegisterError::UnsupportedModeChange { index, value })

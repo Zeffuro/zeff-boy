@@ -50,6 +50,9 @@ fn step(
 fn finish(cpu: &mut Cpu, bus: &mut Bus, state: &mut BusState, opcode: u8, from: usize) {
     let phases = schedule(opcode);
     for (index, &(clocks, accesses)) in phases.iter().enumerate().skip(from) {
+        let classified =
+            index == 4 && matches!(opcode, 0x46 | 0x4e | 0x56 | 0x5e | 0x66 | 0x6e | 0x7e);
+        assert_eq!(state.next_memory_cycle(), classified.then_some(3));
         step(cpu, bus, state, clocks, accesses, index + 1 == phases.len());
     }
 }

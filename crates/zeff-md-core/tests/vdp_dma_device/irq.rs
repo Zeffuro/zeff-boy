@@ -81,7 +81,10 @@ pub fn irq_tie_phases_with(run: &mut Run<'_>) {
                         expected[0x2001] = if fill.is_some() { 0x90 } else { 0x34 };
                     }
                     assert_eq!(device.memory().vram(), &expected);
-                    assert_eq!(device.memory().cram(), before.cram());
+                    assert_eq!(
+                        device.memory().known_cram().unwrap(),
+                        before.known_cram().unwrap()
+                    );
                     assert_eq!(device.memory().vsram(), before.vsram());
                     assert_eq!(device.memory().vram().as_ptr(), pointer);
                     irq(&device, true, h_enable, v_enable);
@@ -175,7 +178,10 @@ pub fn zero_count_completion_with(run: &mut Run<'_>) {
         let mut expected = literal_fixture();
         expected[0x2001] = if fill.is_some() { 0x90 } else { 0xcd };
         assert_eq!(device.memory().vram(), &expected);
-        assert_eq!(device.memory().cram(), before.cram());
+        assert_eq!(
+            device.memory().known_cram().unwrap(),
+            before.known_cram().unwrap()
+        );
         assert_eq!(device.memory().vsram(), before.vsram());
         assert_eq!(device.memory().vram().as_ptr(), pointer);
         counters(&device, 0, 0xffff, mode);

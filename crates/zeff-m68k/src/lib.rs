@@ -1,8 +1,3 @@
-//! M68000 architectural execution with demand fetch and nominal clocks.
-//! `Cpu` omits prefetch, waits, trace, interrupts and group-0 fault processing.
-//! Faults restore CPU state; completed bus effects remain observable.
-//! `timing` provides persistent prefetch and physical transfer clocks.
-
 #![forbid(unsafe_code)]
 
 use crate::constants::{RESET_PC_VECTOR_ADDRESS, RESET_SSP_VECTOR_ADDRESS};
@@ -72,8 +67,7 @@ impl Cpu {
         Self::default()
     }
 
-    /// Undefined general-register/CCR reset values use deterministic zero policy.
-    /// CPU state commits after all vector reads; bus side effects are not rolled back.
+    /// CPU updates commit after both reset vectors are read.
     pub fn reset<B: M68kBus>(&mut self, bus: &mut B) -> Result<(), Fault<B::Error>> {
         let ssp = read_long(
             bus,

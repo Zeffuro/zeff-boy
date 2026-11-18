@@ -150,11 +150,7 @@ fn operator_pipeline_history_survives_channel_state() {
         let mut writer = StateWriter::new();
         channel.write_state(&mut writer);
         let bytes = writer.into_bytes();
-        let mut restored = Channel::read_state(
-            &mut StateReader::new(&bytes),
-            crate::save_state::STATE_VERSION,
-        )
-        .unwrap();
+        let mut restored = Channel::read_state(&mut StateReader::new(&bytes)).unwrap();
         assert_eq!(restored, channel);
         for _ in 0..512 {
             assert_eq!(restored.clock(None), channel.clock(None));

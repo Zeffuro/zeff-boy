@@ -210,10 +210,10 @@ pub fn publication_and_fifo() {
         memory.sample_composite(&unknown, 0, 0),
         Err(VdpRenderError::UnknownRegister(5))
     );
-    publish(&mut bank, 12, 2);
+    publish(&mut bank, 12, 4);
     assert_eq!(
         memory.sample_composite(&bank, 0, 0),
-        Err(VdpRenderError::UnsupportedRenderMode(2))
+        Err(VdpRenderError::UnsupportedRenderMode(4))
     );
     publish(&mut bank, 12, 0);
     assert_eq!(

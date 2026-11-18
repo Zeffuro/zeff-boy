@@ -13,7 +13,7 @@ fn current_position_survives_unrepresentable_future_field_edges() {
                 let position = timing.field_position_at(now, region, &registers).unwrap();
                 assert_eq!((position.id, position.start, position.line), (0, epoch, 0));
                 assert_eq!(position.lines, region.frame_lines());
-                assert!(!position.interlaced);
+                assert!(!position.mode.interlaced());
                 assert_eq!(position.end(), Err(VdpTimingError::ClockOverflow));
                 assert_eq!(timing.v_counter_at(now, region, &registers), Ok(0));
                 assert_eq!(timing.vblank_flag_at(now, region, &registers), Ok(false));
@@ -46,7 +46,7 @@ fn publication_at_clock_tail_does_not_require_a_future_latch() {
         .project(MasterTicks::new(u64::MAX), region, &registers)
         .unwrap();
     assert_eq!(calendar.start, epoch);
-    assert!(!calendar.interlaced);
+    assert!(!calendar.mode.interlaced());
     assert_eq!(
         projected.registers()[usize::from(DISPLAY_SIZE_REGISTER)],
         Some(INTERLACE_MODE_MASK)
@@ -76,7 +76,7 @@ fn progressed_sound_snapshot_keeps_past_pulses_and_pending_future_mode() {
                     (if h40 { H40_CLOCK_MASK } else { 0 }) | INTERLACE_MODE_MASK,
                 )
                 .unwrap();
-            let snapshot = interrupts.sound_interrupt(registers, region);
+            let snapshot = interrupts.sound_interrupt(&registers, region);
             let mode = VdpVerticalTiming::horizontal_mode(&registers).unwrap();
             let pulse = 224 * H32_LINE_TICKS + mode.vertical_interrupt();
             let enabled_length = if region == Region::Pal { 313 } else { 263 } * H32_LINE_TICKS;
@@ -120,7 +120,7 @@ fn backward_sound_queries_after_interlace_exit_stay_in_known_field() {
         region,
         &mut registers,
     );
-    let snapshot = interrupts.sound_interrupt(registers, region);
+    let snapshot = interrupts.sound_interrupt(&registers, region);
     let pulse = 224 * H32_LINE_TICKS + H32_DOT_TICKS;
     assert_eq!(snapshot.asserted_at(start + pulse), Ok(true));
     assert!(matches!(

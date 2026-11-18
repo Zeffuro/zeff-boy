@@ -8,6 +8,7 @@ use crate::symbols::SymbolSession;
 use zeff_emu_common::address::Address;
 
 mod commands;
+pub(crate) use commands::parse_hex;
 
 use commands::{CommandContext, complete_pending_read, completions, run_command};
 
@@ -58,6 +59,7 @@ pub(super) struct DebugConsoleViews<'a> {
 }
 
 pub(super) struct DebugConsoleContext<'a> {
+    pub(super) supports_rom_breakpoints: bool,
     pub(super) symbols: &'a SymbolSession,
     pub(super) cpu_debug: Option<&'a CpuDebugSnapshot>,
     pub(super) rom_debug: Option<&'a RomDebugInfo>,
@@ -127,6 +129,7 @@ pub(super) fn draw_debug_console_content(
             state,
             &input,
             CommandContext {
+                supports_rom_breakpoints: context.supports_rom_breakpoints,
                 symbols: context.symbols,
                 cpu_debug: context.cpu_debug,
                 rom_debug: context.rom_debug,
@@ -198,5 +201,7 @@ impl DebugConsoleState {
     }
 }
 
+#[cfg(test)]
+mod md_symbols;
 #[cfg(test)]
 mod tests;

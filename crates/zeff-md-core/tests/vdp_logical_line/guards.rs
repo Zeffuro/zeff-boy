@@ -21,7 +21,7 @@ fn schedule(error: VdpTimingError) -> VdpLineError {
 fn pointers(device: &Vdp) -> (*const u8, *const u16, *const u16) {
     (
         device.memory().vram().as_ptr(),
-        device.memory().cram().as_ptr(),
+        device.memory().known_cram().unwrap().as_ptr(),
         device.memory().vsram().as_ptr(),
     )
 }
@@ -198,13 +198,13 @@ pub fn pending_and_render_guards_with(mut snapshot: impl FnMut(&Vdp, u16, Region
     assert!(snapshot(&shadow, ROW, REGION).is_ok());
     let mut scroll = fixture();
     register(&mut scroll, 11, 1);
-    reject(
-        &mut snapshot,
-        &scroll,
-        ROW,
-        REGION,
-        render(VdpRenderError::UnsupportedScrollMode(1)),
-    );
+    let saved = scroll.clone();
+    let addresses = pointers(&scroll);
+    let row = snapshot(&scroll, ROW, REGION).unwrap();
+    assert_eq!(row.row(), ROW);
+    assert_eq!(row.colors(), &std::array::from_fn::<_, 256, _>(expected));
+    assert_eq!(scroll, saved);
+    assert_eq!(pointers(&scroll), addresses);
     let mut late = fixture();
     register(&mut late, 17, 1);
     words(&mut late, 0xf000, 1, &[1]);

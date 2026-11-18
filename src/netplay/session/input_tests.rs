@@ -56,7 +56,7 @@ fn reject_high_bits(mut backend: EmuBackend, mut peer: EmuBackend) {
         assert_eq!(backend.encode_state_bytes().unwrap(), before);
         assert_eq!(remote.timeline.retained_inputs(), retained);
     }
-    local.lease.validate_input(0xff).unwrap();
+    local.lease.validate_input(Player::One, 0xff).unwrap();
     local.restore(&mut backend).unwrap();
     remote.restore(&mut peer).unwrap();
 }

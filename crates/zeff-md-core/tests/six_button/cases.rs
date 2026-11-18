@@ -22,7 +22,7 @@ fn poll(program: &mut Vec<u16>, address: u32) {
 }
 
 fn six(machine: &mut Emulator, port: ControllerPort, buttons: u8, extra: u8) {
-    let input = machine.input_mut();
+    let mut input = machine.input_mut();
     input.set_controller_kind(port, ControllerKind::SixButton);
     input.set_controller_raw(port, buttons);
     input.set_controller_extra_raw(port, extra);

@@ -65,12 +65,15 @@ pub(crate) fn collect_gba_snapshot(
         data.cpu_debug = Some(cpu::gba_cpu_snapshot(emu));
     }
 
-    let disasm_target = snapshot.disasm_target.filter(|target| {
-        target.storage_offset.is_none_or(|storage_offset| {
-            (0x0800_0000..=0x0DFF_FFFF).contains(&target.cpu_address)
-                && storage_offset < rom_bytes.len() as u64
-        })
-    });
+    let disasm_target = snapshot
+        .disasm_target
+        .and_then(crate::debug::DisassemblyTarget::as_cpu)
+        .filter(|target| {
+            target.storage_offset.is_none_or(|storage_offset| {
+                (0x0800_0000..=0x0DFF_FFFF).contains(&target.cpu_address)
+                    && storage_offset < rom_bytes.len() as u64
+            })
+        });
     let static_disasm_target = disasm_target.filter(|target| target.storage_offset.is_some());
     let thumb = disasm_target
         .and_then(|target| target.thumb)
@@ -133,7 +136,7 @@ pub(crate) fn collect_gba_snapshot(
     data
 }
 
-fn target_rom_byte(rom: &[u8], target: crate::debug::DisassemblyTarget, address: u32) -> u8 {
+fn target_rom_byte(rom: &[u8], target: crate::debug::CpuDisassemblyTarget, address: u32) -> u8 {
     let offset = target
         .storage_offset
         .expect("static GBA targets have a ROM offset")

@@ -1,8 +1,3 @@
-//! Instruction-specific prefetch with full-transfer CPU clock boundaries.
-//! Bus adapters own device advancement during transfers; pin states are not modeled.
-//! Host faults freeze execution without retry; completed effects remain observable.
-//! Selected physical captures use a separately supplied exception-entry boundary.
-
 use crate::bus::{
     AccessKind, BUS_ADDRESS_MASK, BusAccess, BusResponse, ByteLanes, Direction, FunctionCode,
 };
@@ -14,9 +9,26 @@ mod bit;
 mod branch_conditions;
 mod control;
 mod control_address;
+mod control_events;
+pub use control_events::{
+    ControlFlowBatch, ControlFlowEntryKind, ControlFlowEvent, ControlFlowReturnKind, ControlStack,
+    ControlStackBank,
+};
+mod debug_call;
+mod debug_write;
+pub use debug_write::DebugDataWrite;
+mod dispatch;
+pub use debug_call::{DebugCallContext, DebugCallRejection};
 mod frame;
 mod immediate;
+mod instruction_origin;
+use instruction_origin::Pipeline;
+pub use instruction_origin::{
+    InstructionByteOrigin, InstructionInput, InstructionOriginCheckpoint,
+};
 mod interrupt;
+mod interrupt_sampling;
+pub use interrupt_sampling::{InterruptAperture, InterruptSamples, ObservedCycle};
 mod math;
 mod moves;
 mod operand;
@@ -25,6 +37,7 @@ mod paired;
 pub mod physical;
 pub mod physical_instruction;
 mod register;
+pub mod reset_boundary;
 mod shift;
 mod state;
 mod status;
@@ -50,12 +63,78 @@ impl<T, E> CycleResult<T, E> {
     }
 }
 
-/// Each transfer advances devices by four CPU clocks plus its returned waits.
-/// Data/effects commit within that callback; idle advances devices without a transfer.
-/// A callback error is a host failure, not a physical BERR signal.
+/// Transfers own four CPU clocks plus waits; callback errors are host failures.
 pub trait ClockedBus {
     type Error;
+    /// Reports consumed instruction input without advancing time.
+    fn instruction_word(&mut self, _address: u32, _value: u16) {}
+    fn instruction_input(&mut self, address: u32, input: InstructionInput) {
+        self.instruction_word(address, input.value);
+    }
+    fn read_instruction_cycle(
+        &mut self,
+        access: BusAccess,
+        start: CpuClocks,
+    ) -> CycleResult<InstructionInput, Self::Error> {
+        instruction_origin::unknown_cycle(self.read_cycle(access, start))
+    }
+    fn read_instruction_cycle_observed(
+        &mut self,
+        access: BusAccess,
+        start: CpuClocks,
+        aperture: InterruptAperture,
+    ) -> ObservedCycle<InstructionInput, Self::Error> {
+        instruction_origin::unknown_observed(self.read_cycle_observed(access, start, aperture))
+    }
     fn read_cycle(&mut self, access: BusAccess, start: CpuClocks) -> CycleResult<u16, Self::Error>;
+    fn read_cycle_observed(
+        &mut self,
+        access: BusAccess,
+        start: CpuClocks,
+        _aperture: InterruptAperture,
+    ) -> ObservedCycle<u16, Self::Error> {
+        ObservedCycle::unobserved(self.read_cycle(access, start))
+    }
+    fn write_cycle_observed(
+        &mut self,
+        access: BusAccess,
+        value: u16,
+        start: CpuClocks,
+    ) -> ObservedCycle<(), Self::Error> {
+        ObservedCycle::unobserved(self.write_cycle(access, value, start))
+    }
+    /// Previous storage bytes, upper then lower; failed, unknown or suppressed lanes stay None.
+    fn write_cycle_with_previous(
+        &mut self,
+        access: BusAccess,
+        value: u16,
+        start: CpuClocks,
+    ) -> (CycleResult<(), Self::Error>, [Option<u8>; 2]) {
+        (self.write_cycle(access, value, start), [None, None])
+    }
+    fn write_cycle_observed_with_previous(
+        &mut self,
+        access: BusAccess,
+        value: u16,
+        start: CpuClocks,
+    ) -> (ObservedCycle<(), Self::Error>, [Option<u8>; 2]) {
+        (
+            self.write_cycle_observed(access, value, start),
+            [None, None],
+        )
+    }
+    /// Performs a read whose data the instruction does not consume.
+    fn read_discarded_cycle(
+        &mut self,
+        access: BusAccess,
+        start: CpuClocks,
+    ) -> CycleResult<(), Self::Error> {
+        let cycle = self.read_cycle(access, start);
+        CycleResult {
+            result: cycle.result.map(|_| ()),
+            wait_clocks: cycle.wait_clocks,
+        }
+    }
     fn write_cycle(
         &mut self,
         access: BusAccess,
@@ -63,13 +142,12 @@ pub trait ClockedBus {
         start: CpuClocks,
     ) -> CycleResult<(), Self::Error>;
     fn idle(&mut self, start: CpuClocks, clocks: u32);
-    /// Complete acquires output until end; other outcomes return unowned. Neither edge advances time.
+    /// Acquires reset output without advancing time; failure leaves it unowned.
     fn begin_reset_output(&mut self, _start: CpuClocks) -> Result<BusResponse<()>, Self::Error> {
         Ok(BusResponse::Unsupported)
     }
-    /// Implement alongside a supported begin hook; release is infallible and takes no time.
     fn end_reset_output(&mut self, _end: CpuClocks) {}
-    /// Zero-time begin: Complete owns byte R/idle/W; other outcomes clean any acquisition.
+    /// Zero-time RMW acquisition; failure leaves no ownership.
     fn begin_rmw(
         &mut self,
         _access: BusAccess,
@@ -102,6 +180,7 @@ pub enum TimingFault<E> {
         pc: u32,
         opcode: u16,
     },
+    DebugCallRejected(DebugCallRejection),
     Unprimed,
     Frozen,
     ClockOverflow,
@@ -128,14 +207,8 @@ pub enum TimingFault<E> {
 pub struct TimedStep {
     pub opcode: u16,
     pub clocks: u64,
-    /// Last exception entered; a TRAP followed by trace reports vector9.
+    /// Last entered exception, including a following trace exception.
     pub exception: Option<u8>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Pipeline {
-    address: u32,
-    words: [u16; 2],
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -150,6 +223,7 @@ pub struct PrefetchCpu {
     physical_state: physical::PhysicalEntryState,
     physical_inspection: physical::PhysicalInspection,
     imported_boundary: Option<physical::ImportedGroup0Boundary>,
+    control_events: control_events::Mailbox,
 }
 
 impl PrefetchCpu {
@@ -161,7 +235,11 @@ impl PrefetchCpu {
         self.pipeline.map(|pipeline| pipeline.words)
     }
 
-    /// Imports an instruction-boundary witness, including words already fetched.
+    pub fn queued_instruction_inputs(&self) -> Option<[InstructionInput; 2]> {
+        self.pipeline
+            .map(|pipeline| [pipeline.input(0), pipeline.input(1)])
+    }
+
     pub fn from_prefetched(
         registers: Registers,
         words: [u16; 2],
@@ -171,10 +249,7 @@ impl PrefetchCpu {
             return None;
         }
         Some(Self {
-            pipeline: Some(Pipeline {
-                address: registers.pc,
-                words,
-            }),
+            pipeline: Some(Pipeline::unknown(registers.pc, words)),
             registers,
             clock,
             frozen: false,
@@ -184,10 +259,11 @@ impl PrefetchCpu {
             physical_state: physical::PhysicalEntryState::Idle,
             physical_inspection: physical::PhysicalInspection::DiagnosticCompleteValues,
             imported_boundary: None,
+            control_events: control_events::Mailbox::default(),
         })
     }
 
-    /// Primes two words explicitly; this is not the hardware reset exception.
+    /// Primes prefetch without running the reset sequence.
     pub fn prime<B: ClockedBus>(&mut self, bus: &mut B) -> Result<(), TimingFault<B::Error>> {
         self.execution_guard()?;
         if self.stopped {
@@ -196,14 +272,11 @@ impl PrefetchCpu {
         let address = self.registers.pc;
         let first = self.fetch(bus, address)?;
         let second = self.fetch(bus, address.wrapping_add(2))?;
-        self.pipeline = Some(Pipeline {
-            address,
-            words: [first, second],
-        });
+        self.pipeline = Some(Pipeline::sampled(address, [first, second]));
         Ok(())
     }
 
-    /// Executes an instruction; `step_boundary` also samples the interrupt input.
+    /// Leaves interrupt sampling to step_boundary.
     pub fn step<B: ClockedBus>(&mut self, bus: &mut B) -> Result<TimedStep, TimingFault<B::Error>> {
         let mut step = self.step_instruction(bus)?;
         if let Some(clocks) = self.service_pending_trace(bus)? {
@@ -213,7 +286,7 @@ impl PrefetchCpu {
         Ok(step)
     }
 
-    /// Stops at the instruction boundary before a pending trace exception is serviced.
+    /// Leaves pending trace handling to the caller.
     pub fn step_instruction<B: ClockedBus>(
         &mut self,
         bus: &mut B,
@@ -231,6 +304,7 @@ impl PrefetchCpu {
             .filter(|pipe| pipe.address == self.registers.pc)
             .ok_or(TimingFault::Unprimed)?;
         let opcode = pipeline.words[0];
+        bus.instruction_input(pipeline.address, pipeline.input(0));
         self.physical_state = physical::PhysicalEntryState::Idle;
         let start = self.clock.0;
         let pc = self.registers.pc;
@@ -244,12 +318,13 @@ impl PrefetchCpu {
                 crate::alu::logic(&mut self.registers, crate::ea::Size::Long, value);
             }
             self.registers.pc = pc.wrapping_add(2);
-            self.pipeline = Some(Pipeline {
-                address: self.registers.pc,
-                words: [pipeline.words[1], next],
-            });
+            self.pipeline = Some(Pipeline::sampled(
+                self.registers.pc,
+                [pipeline.input(1), next],
+            ));
         } else if opcode & 0xf000 == 0x6000 && opcode & 0x0f00 != 0x0100 {
             let displacement = if opcode as u8 == 0 {
+                bus.instruction_input(pc.wrapping_add(2), pipeline.input(1));
                 i32::from(pipeline.words[1] as i16)
             } else {
                 i32::from(opcode as u8 as i8)
@@ -260,10 +335,7 @@ impl PrefetchCpu {
                 let first = self.fetch(bus, target)?;
                 let second = self.fetch(bus, target.wrapping_add(2))?;
                 self.registers.pc = target;
-                self.pipeline = Some(Pipeline {
-                    address: target,
-                    words: [first, second],
-                });
+                self.pipeline = Some(Pipeline::sampled(target, [first, second]));
             } else {
                 self.idle(bus, 4)?;
                 let first = self.fetch(bus, pc.wrapping_add(4))?;
@@ -273,43 +345,20 @@ impl PrefetchCpu {
                         [first, self.fetch(bus, pc.wrapping_add(6))?],
                     )
                 } else {
-                    (pc.wrapping_add(2), [pipeline.words[1], first])
+                    (pc.wrapping_add(2), [pipeline.input(1), first])
                 };
                 self.registers.pc = next_pc;
-                self.pipeline = Some(Pipeline {
-                    address: next_pc,
-                    words,
-                });
+                self.pipeline = Some(Pipeline::sampled(next_pc, words));
             }
-        } else if let Some(completion) = self.control(bus, pipeline)? {
-            exception = completion.exception;
-            trace_allowed = completion.trace;
-        } else if let Some(completion) = self.frame_instruction(bus, pipeline)? {
-            exception = completion.exception;
-            trace_allowed = completion.trace;
-        } else if let Some(completion) = self.status_instruction(bus, pipeline)? {
-            exception = completion.exception;
-            trace_allowed = completion.trace;
-        } else if let Some(completion) = self.math_instruction(bus, pipeline)? {
-            exception = completion.exception;
-            trace_allowed = completion.trace;
-        } else if self.move_instruction(bus, pipeline)?
-            || self.branch_condition_instruction(bus, pipeline)?
-            || self.control_address_instruction(bus, pipeline)?
-            || self.transfer_instruction(bus, pipeline)?
-            || self.tas_instruction(bus, pipeline)?
-            || self.unary_instruction(bus, pipeline)?
-            || self.binary_instruction(bus, pipeline)?
-            || self.immediate_instruction(bus, pipeline)?
-            || self.bit_instruction(bus, pipeline)?
-            || self.memory_shift_instruction(bus, pipeline)?
-            || self.paired_instruction(bus, pipeline)?
-            || self.register_instruction(bus, pipeline)?
-        {
         } else {
-            return Err(TimingFault::UnsupportedInstruction { pc, opcode });
+            let completion = self.dispatch_instruction(bus, pipeline)?;
+            exception = completion.exception;
+            trace_allowed = completion.trace;
         }
         self.pending_trace = trace && trace_allowed;
+        if self.pending_trace || !matches!(opcode, 0x33fc | 0x4ef9) {
+            self.interrupts.clear_observation();
+        }
         Ok(TimedStep {
             opcode,
             clocks: self.clock.0 - start,
@@ -332,6 +381,7 @@ impl PrefetchCpu {
         let start = self.clock.0;
         self.short_exception(bus, VECTOR_TRACE, self.registers.pc)?;
         self.pending_trace = false;
+        self.interrupts.clear_observation();
         Ok(Some(self.clock.0 - start))
     }
 
@@ -353,13 +403,30 @@ impl PrefetchCpu {
         &mut self,
         bus: &mut B,
         address: u32,
-    ) -> Result<u16, TimingFault<B::Error>> {
-        self.read_word(
-            bus,
-            address,
-            crate::ea::program_space(&self.registers),
-            AccessKind::Prefetch,
-        )
+    ) -> Result<InstructionInput, TimingFault<B::Error>> {
+        self.fetch_with_fc(bus, address, crate::ea::program_space(&self.registers))
+    }
+
+    fn fetch_with_fc<B: ClockedBus>(
+        &mut self,
+        bus: &mut B,
+        address: u32,
+        function_code: FunctionCode,
+    ) -> Result<InstructionInput, TimingFault<B::Error>> {
+        if address & 1 != 0 {
+            self.frozen = true;
+            return Err(TimingFault::AddressError { address });
+        }
+        let access = BusAccess {
+            logical_address: address,
+            bus_address: address & BUS_ADDRESS_MASK,
+            function_code,
+            kind: AccessKind::Prefetch,
+            lanes: ByteLanes::Both,
+        };
+        self.reserve_transfer()?;
+        let response = bus.read_instruction_cycle(access, self.clock);
+        self.finish(response, access, Direction::Read)
     }
 
     fn read_word<B: ClockedBus>(
@@ -455,6 +522,8 @@ impl PrefetchCpu {
     }
 }
 
+#[cfg(test)]
+mod instruction_words;
 #[cfg(test)]
 mod test_bus;
 #[cfg(test)]

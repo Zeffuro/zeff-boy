@@ -129,3 +129,24 @@ fn packed_state_preserves_live_write_latches_and_rejects_unknown_bits() {
     }
     assert!(Ssg::read_state(&mut StateReader::new(&[])).is_err());
 }
+
+#[cfg_attr(test, test)]
+pub fn disabled_modes_clear_every_restorable_latch_combination() {
+    for flags in 0..64 {
+        let restored = Ssg::read_state(&mut StateReader::new(&[flags])).unwrap();
+        for mode in 0..=u8::MAX {
+            if mode & 8 != 0 {
+                continue;
+            }
+            for level in [0, 511, 512, 1023] {
+                for keyed in [false, true] {
+                    for sampled in [false, true] {
+                        let mut actual = restored;
+                        actual.clock(mode, level, keyed, sampled);
+                        assert_eq!(actual, Ssg::default());
+                    }
+                }
+            }
+        }
+    }
+}

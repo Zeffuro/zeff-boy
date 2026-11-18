@@ -125,7 +125,14 @@ pub fn dma_crosses_field_and_preserves_source_failure() {
             )
             .unwrap();
         assert_eq!(device.registers().registers()[19..24], [Some(0); 5]);
-        assert!(device.memory().cram().iter().all(|&word| word == 0x0eee));
+        assert!(
+            device
+                .memory()
+                .known_cram()
+                .unwrap()
+                .iter()
+                .all(|&word| word == 0x0eee)
+        );
         let mut device = fixture(h40, 128);
         device
             .advance_to(MasterTicks::new(PAL_FIELD_TICKS - 1000), Region::Pal)

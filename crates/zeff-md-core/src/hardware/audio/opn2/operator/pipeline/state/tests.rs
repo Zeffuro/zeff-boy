@@ -48,7 +48,7 @@ fn pending_operator_stages_round_trip_without_reconstruction() {
 
 #[test]
 fn invalid_pending_operator_values_reject_even_when_stage_is_invalid() {
-    let saved = bytes(Pipeline::migrated(false));
+    let saved = bytes(Pipeline::default());
     for (offset, replacement) in [
         (3, vec![64]),
         (4, 31_u16.to_le_bytes().to_vec()),

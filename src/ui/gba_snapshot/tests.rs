@@ -14,6 +14,8 @@ fn minimal_gba_rom() -> Vec<u8> {
 
 fn snapshot_request() -> SnapshotRequest {
     SnapshotRequest {
+        debug_target: crate::debug::DebugTarget::Primary,
+        debug_revision: 0,
         want_debug_info: true,
         want_perf_info: true,
         any_viewer_open: true,
@@ -26,7 +28,7 @@ fn snapshot_request() -> SnapshotRequest {
         memory_view_start: 0,
         show_rom_viewer: true,
         show_instruction_trace: false,
-        trace_after_sequence: None,
+        trace_cursor: Default::default(),
         rom_view_start: 0,
         last_disasm_pc: None,
         last_disasm_mapping: None,
@@ -145,12 +147,14 @@ fn gba_symbol_navigation_uses_the_symbol_instruction_set() {
     let emu = zeff_gba_core::emulator::Emulator::new(&rom, 48_000).unwrap();
     let mut request = snapshot_request();
     request.show_disassembler = true;
-    request.disasm_target = Some(crate::debug::DisassemblyTarget {
-        cpu_address: 0x0800_0000,
-        storage_offset: Some(0),
-        bank: None,
-        thumb: Some(true),
-    });
+    request.disasm_target = Some(crate::debug::DisassemblyTarget::Cpu(
+        crate::debug::CpuDisassemblyTarget {
+            cpu_address: 0x0800_0000,
+            storage_offset: Some(0),
+            bank: None,
+            thumb: Some(true),
+        },
+    ));
 
     let data = collect_gba_snapshot(
         &emu,

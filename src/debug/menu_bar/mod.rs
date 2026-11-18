@@ -97,7 +97,7 @@ pub(crate) struct MenuBarContext<'a> {
     pub(crate) supports_save_states: bool,
     pub(crate) supports_replay: bool,
     pub(crate) supports_audio: bool,
-    pub(crate) supports_debugger: bool,
+    pub(crate) supports_symbol_loading: bool,
     pub(crate) is_paused: bool,
     pub(crate) active_system: ActiveSystem,
     pub(crate) media_slot_snapshot: Option<&'a zeff_emu_common::media::MediaSlotSnapshot>,
@@ -172,7 +172,7 @@ pub(crate) fn draw_menu_bar(
                             external_debugger: mb.external_debugger,
                             debugger_window_open: mb.debugger_window_open,
                             presentation: mb.debug_presentation,
-                            supports_debugger: mb.supports_debugger,
+                            supports_symbol_loading: mb.supports_symbol_loading,
                         },
                     );
                 });

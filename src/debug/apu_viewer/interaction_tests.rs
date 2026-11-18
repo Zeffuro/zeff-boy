@@ -34,7 +34,7 @@ fn render(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
+                egui::vec2(800.0, 1600.0),
             )),
             events,
             ..Default::default()
@@ -111,4 +111,54 @@ fn populated_audio_viewer_unmute_still_emits_all_false() {
     assert!(action.is_none());
     let position = unmute_position(&output);
     assert_eq!(click(&context, &data, position), Some(vec![false, false]));
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn ten_channel_audio_viewer_buttons_emit_every_mute_solo_and_unmute_slot() {
+    let mut data = data(false);
+    data.channels = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+        .into_iter()
+        .map(|name| ApuChannelDebug {
+            name,
+            enabled: true,
+            muted: false,
+            register_lines: Vec::new(),
+            detail_line: String::new(),
+            waveform: Vec::new(),
+        })
+        .collect();
+    let context = egui::Context::default();
+    context.global_style_mut(|style| style.animation_time = 0.0);
+    render(&context, &data, Vec::new());
+    let (output, action) = render(&context, &data, Vec::new());
+    assert!(action.is_none());
+    for (label, solo) in [("M", false), ("S", true)] {
+        let positions: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.job.text == label
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(positions.len(), 10);
+        for (slot, position) in positions.into_iter().enumerate() {
+            let expected: Vec<_> = (0..10).map(|index| (index == slot) != solo).collect();
+            assert_eq!(click(&context, &data, position), Some(expected));
+        }
+    }
+    for channel in &mut data.channels {
+        channel.muted = true;
+    }
+    let (output, _) = render(&context, &data, Vec::new());
+    assert_eq!(
+        click(&context, &data, unmute_position(&output)),
+        Some(vec![false; 10])
+    );
 }

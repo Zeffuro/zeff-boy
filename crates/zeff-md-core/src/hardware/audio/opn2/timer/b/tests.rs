@@ -160,11 +160,7 @@ fn projection_settles_every_minimally_accepted_transient() {
     for subcounter in 0..16 {
         for bits in 0..16 {
             let bytes = [1, if bits & 4 == 0 { 255 } else { 0 }, subcounter, bits];
-            let timer = TimerB::read_state(
-                &mut StateReader::new(&bytes),
-                crate::save_state::STATE_VERSION,
-            )
-            .unwrap();
+            let timer = TimerB::read_state(&mut StateReader::new(&bytes)).unwrap();
             for cut in 0..SLOTS {
                 for mode in [0, 10] {
                     for slots in [0, 1, 25, 1009] {
@@ -185,125 +181,21 @@ fn projection_settles_every_minimally_accepted_transient() {
 }
 
 #[test]
-fn legacy_codec_rejects_invalid_and_truncated_records() {
-    for version in 1..=12 {
-        for (reload, remaining, running) in [(256, 1, 0), (0, 589825, 0), (0, 0, 1), (0, 1, 2)] {
-            let mut writer = StateWriter::new();
-            writer.write_u16(reload);
-            writer.write_u64(remaining);
-            writer.write_u8(running);
-            assert!(
-                TimerB::read_state(&mut StateReader::new(&writer.into_bytes()), version).is_err()
-            );
-        }
-        for len in 0..11 {
-            assert!(TimerB::read_state(&mut StateReader::new(&[0; 11][..len]), version).is_err());
-        }
-    }
-}
-
-#[test]
-fn running_legacy_first_flag_stays_inside_the_documented_residual_bound() {
-    for remaining in [1_u64, 143, 144, 145, 2303, 2304, 2305, 589824] {
-        for reload in [0, 1, 254, 255] {
-            let mut writer = StateWriter::new();
-            writer.write_u16(reload);
-            writer.write_u64(remaining);
-            writer.write_bool(true);
-            let bytes = writer.into_bytes();
-            let timer = TimerB::read_state(&mut StateReader::new(&bytes), 12).unwrap();
-            for cut in 0..SLOTS {
-                for fraction in 0..6 {
-                    for (clocks, expected) in
-                        [(remaining.saturating_sub(138), 0), (remaining + 149, 2)]
-                    {
-                        let mut projected = timer;
-                        let mut flags = 0;
-                        projected.advance_slots(cut, (clocks + fraction) / 6, 10, &mut flags);
-                        assert_eq!(
-                            flags, expected,
-                            "{remaining}/{reload}/{cut}/{fraction}/{clocks}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn old_countdowns_keep_scan_progress_without_claiming_stopped_phase_history() {
-    for remaining in [0, 1, 143, 144, 145, 2303, 2304, 2305, 256 * 2304] {
-        for running in [false, true] {
-            if running && remaining == 0 {
-                continue;
-            }
-            for version in 1..=12 {
-                let mut writer = StateWriter::new();
-                writer.write_u16(254);
-                writer.write_u64(remaining);
-                writer.write_bool(running);
-                let bytes = writer.into_bytes();
-                let timer = TimerB::read_state(&mut StateReader::new(&bytes), version).unwrap();
-                let scans = remaining.div_ceil(144) as u16;
-                if scans == 0 {
-                    assert_eq!((timer.counter, timer.subcounter), (0, 0));
-                } else {
-                    assert_eq!(
-                        (256 - u16::from(timer.counter)) * 16 - u16::from(timer.subcounter),
-                        scans
-                    );
-                }
-                assert_eq!(timer.load_lock, running);
-                assert!(!timer.reload_pending && !timer.overflow && !timer.clear);
-                let mut writer = StateWriter::new();
-                timer.write_state(&mut writer, crate::save_state::STATE_VERSION);
-                let saved = writer.into_bytes();
-                assert_eq!(
-                    TimerB::read_state(
-                        &mut StateReader::new(&saved),
-                        crate::save_state::STATE_VERSION
-                    )
-                    .unwrap(),
-                    timer
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn current_codec_retains_transients_and_rejects_invalid_phase_bits() {
     for subcounter in 0..16 {
         for bits in 0..16 {
             let counter = if bits & 4 != 0 { 0 } else { 255 };
             let bytes = [254, counter, subcounter, bits];
-            let timer = TimerB::read_state(
-                &mut StateReader::new(&bytes),
-                crate::save_state::STATE_VERSION,
-            )
-            .unwrap();
+            let timer = TimerB::read_state(&mut StateReader::new(&bytes)).unwrap();
             let mut writer = StateWriter::new();
-            timer.write_state(&mut writer, crate::save_state::STATE_VERSION);
+            timer.write_state(&mut writer);
             assert_eq!(writer.into_bytes(), bytes);
         }
     }
     for bytes in [[0, 0, 16, 0], [0, 0, 0, 16], [0, 1, 0, 4]] {
-        assert!(
-            TimerB::read_state(
-                &mut StateReader::new(&bytes),
-                crate::save_state::STATE_VERSION
-            )
-            .is_err()
-        );
+        assert!(TimerB::read_state(&mut StateReader::new(&bytes)).is_err());
     }
     for len in 0..4 {
-        assert!(
-            TimerB::read_state(
-                &mut StateReader::new(&[0; 4][..len]),
-                crate::save_state::STATE_VERSION
-            )
-            .is_err()
-        );
+        assert!(TimerB::read_state(&mut StateReader::new(&[0; 4][..len])).is_err());
     }
 }

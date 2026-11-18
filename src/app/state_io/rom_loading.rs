@@ -104,7 +104,7 @@ impl App {
         self.debug_windows.tas_editor.attach_execution(attachment);
     }
 
-    pub(super) fn backend_load_config(&self, system: ActiveSystem) -> BackendLoadConfig {
+    pub(in crate::app) fn backend_load_config(&self, system: ActiveSystem) -> BackendLoadConfig {
         #[cfg(not(target_arch = "wasm32"))]
         let configured_firmware_dir = self.settings.emulation.firmware_directory_path();
         #[cfg(not(target_arch = "wasm32"))]
@@ -122,7 +122,14 @@ impl App {
         BackendLoadConfig {
             gb_hardware_mode_preference: self.settings.emulation.hardware_mode_preference,
             md_region: self.settings.emulation.md_region.forced_region(),
-            md_controller: zeff_md_core::ControllerKind::SixButton,
+            md_timing: self.settings.emulation.md_timing.core_model(),
+            md_use_tmss: self.settings.emulation.md_use_tmss,
+            md_svp_functional_profile: self
+                .settings
+                .emulation
+                .md_svp_functional_profile
+                .map(|profile| profile.core_profile()),
+            md_controller: self.settings.emulation.md_controller.core_kind(),
             sample_rate: self
                 .audio
                 .as_ref()
@@ -137,6 +144,7 @@ impl App {
             nes_load_battery_sram: true,
             sega8_load_battery_sram: true,
             md_load_save_ram: true,
+            md_host_persistence: true,
             #[cfg(target_arch = "wasm32")]
             netplay_browser_media: None,
             pce_netplay: false,
@@ -266,8 +274,8 @@ impl App {
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
-        self.debug_windows.trace.clear();
-        self.debug_windows.execution_coverage.clear();
+        self.debug_windows.trace.reset_backend();
+        self.debug_windows.execution_coverage.reset_backend();
         self.recycled.clear();
         self.latest_frame = None;
         self.last_core_frame = None;
@@ -707,8 +715,19 @@ impl App {
         self.rom_info.source_path = Some(source_path_buf);
         self.rom_info.rom_hash = Some(backend.rom_hash());
         self.rom_info.pce_controller_profile_hash = backend.pce_controller_profile_hash();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.rom_info.md_tas_profile =
+                crate::emu_backend::loader::md_product::loaded_md_tas_profile(backend);
+        }
         self.rom_info.replay_metadata = Some(backend.replay_metadata());
         self.media_slot_snapshot = backend.media_slot_snapshot();
+        self.debug_windows.reset_target_sessions();
+        self.sound_symbols = if system == ActiveSystem::Md {
+            crate::symbols::SymbolSession::for_md_sound(backend.rom_hash())
+        } else {
+            crate::symbols::SymbolSession::default()
+        };
         #[cfg(not(target_arch = "wasm32"))]
         self.start_symbol_load(backend);
         #[cfg(target_arch = "wasm32")]

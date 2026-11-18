@@ -77,7 +77,12 @@ pub fn operation(device: &mut Vdp, interrupt_first: bool) -> Result<(), VdpSched
     if !interrupt_first {
         state.advance_to(tick(TIE), REGION)?;
     }
-    device.publish(state, writes);
+    device.publish(data::Prepared {
+        state,
+        writes,
+        level: None,
+        dma_activity: false,
+    });
     Ok(())
 }
 

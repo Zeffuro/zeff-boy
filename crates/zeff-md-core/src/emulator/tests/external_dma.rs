@@ -18,7 +18,7 @@ fn register(machine: &mut Emulator, index: u8, value: u8) {
         .unwrap();
 }
 
-fn fixture(concurrent: bool, h40: bool) -> Emulator {
+pub(super) fn fixture(concurrent: bool, h40: bool) -> Emulator {
     let mut machine = super::vdp_line::seed(concurrent, 0x4e71);
     for (index, value) in [
         (12, if h40 { 0x81 } else { 0 }),

@@ -1,19 +1,35 @@
 use crate::debug::BreakpointState;
 use crate::debug::common::{
     COLOR_CONTINUE_BUTTON, WatchType, color32, debug_colors, format_addr, parse_hex_u32,
+    parse_hex_u64,
 };
 use crate::debug::types::CpuDebugSnapshot;
 use crate::debug::ui::DebugUiActions;
 use crate::symbols::{ExecMode, SymbolRecord, SymbolSession};
 use zeff_emu_common::address::Address;
+use zeff_emu_common::system::CoreFamily;
+
+pub(super) struct BreakpointContext<'a> {
+    pub(super) core_family: Option<CoreFamily>,
+    pub(super) memory_watchpoints: bool,
+    pub(super) rom_breakpoints: bool,
+    pub(super) symbols: &'a SymbolSession,
+}
 
 pub(super) fn draw_breakpoints_content(
     ui: &mut egui::Ui,
     info: &CpuDebugSnapshot,
-    symbols: &SymbolSession,
+    context: BreakpointContext<'_>,
     state: &mut BreakpointState,
     actions: &mut DebugUiActions,
 ) {
+    let BreakpointContext {
+        core_family,
+        memory_watchpoints,
+        rom_breakpoints,
+        symbols,
+    } = context;
+    let m68000 = core_family == Some(CoreFamily::MegaDrive);
     let colors = debug_colors(ui);
     let breakpoint_color = color32(colors.breakpoint);
     let watchpoint_color = color32(colors.watchpoint);
@@ -21,12 +37,18 @@ pub(super) fn draw_breakpoints_content(
     let show_symbols = ui.available_width() >= 430.0;
 
     ui.heading("Breakpoints");
+    if rom_breakpoints && m68000 {
+        ui.weak("ROM offsets stop after an opcode with a known sampled source; state-imported queues may be unknown until refill.");
+    }
+    if m68000 {
+        ui.weak("PC boundaries stop before pending trace or interrupt service.");
+    }
     ui.horizontal_wrapped(|ui| {
         ui.label("Address:");
         let response = ui.add(
             egui::TextEdit::singleline(&mut state.input)
                 .desired_width(150.0)
-                .hint_text("hex or symbol"),
+                .hint_text("hex, symbol or rom:offset"),
         );
         if ui
             .checkbox(&mut state.breakpoint_one_shot, "One-shot")
@@ -53,6 +75,10 @@ pub(super) fn draw_breakpoints_content(
         if ui.button("Add").clicked() || enter {
             match resolve_breakpoint_input(&state.input, symbols) {
                 Ok(BreakpointInput::Cpu(address)) => {
+                    if m68000 && (address > 0xff_ffff || address & 1 != 0) {
+                        state.input_error = Some("Enter an even 24-bit PC address".into());
+                        return;
+                    }
                     if state.breakpoint_use_hit_count {
                         actions.add_breakpoint_after =
                             Some((address, state.breakpoint_hit_count.max(1)));
@@ -65,7 +91,9 @@ pub(super) fn draw_breakpoints_content(
                     state.input_error = None;
                 }
                 Ok(BreakpointInput::Rom(offset)) => {
-                    if state.breakpoint_use_hit_count {
+                    if !rom_breakpoints {
+                        state.input_error = Some("Physical ROM breakpoints are unavailable".into());
+                    } else if state.breakpoint_use_hit_count {
                         state.input_error = Some(
                             "Hit-count physical ROM breakpoints are not supported yet".to_owned(),
                         );
@@ -206,85 +234,97 @@ pub(super) fn draw_breakpoints_content(
         }
     }
 
-    ui.separator();
-    ui.heading("Watchpoints");
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Range:");
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut state.watchpoint_input)
-                .desired_width(170.0)
-                .hint_text("symbol or C000-C0FF"),
-        );
-        egui::ComboBox::from_id_salt("wp_type_bp_window")
-            .width(80.0)
-            .selected_text(watch_type_label(state.watchpoint_type))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.watchpoint_type, WatchType::Read, "Read");
-                ui.selectable_value(&mut state.watchpoint_type, WatchType::Write, "Write");
-                ui.selectable_value(&mut state.watchpoint_type, WatchType::ReadWrite, "R/W");
-            });
-        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if ui.button("Add").clicked() || enter {
-            match parse_watch_range(&state.watchpoint_input, symbols) {
-                Ok((start, end)) => {
-                    actions.add_watchpoint = Some((start, end, state.watchpoint_type));
-                    state.watchpoint_input.clear();
-                    state.watchpoint_error = None;
-                }
-                Err(error) => state.watchpoint_error = Some(error),
-            }
+    ui.add_enabled_ui(memory_watchpoints, |ui| {
+        ui.separator();
+        ui.heading("Watchpoints");
+        if memory_watchpoints && m68000 {
+            ui.weak("M68000 operand/stack accesses; stops after the CPU boundary.");
         }
-    });
-    if let Some(error) = &state.watchpoint_error {
-        ui.colored_label(watchpoint_color, error);
-    }
-
-    if info.watchpoints.is_empty() {
-        ui.weak("No watchpoints set.");
-    } else {
-        egui::Grid::new("wp_grid")
-            .striped(true)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                ui.strong("Range");
-                if show_symbols {
-                    ui.strong("Symbol");
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Range:");
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut state.watchpoint_input)
+                    .desired_width(170.0)
+                    .hint_text("symbol or C000-C0FF"),
+            );
+            egui::ComboBox::from_id_salt("wp_type_bp_window")
+                .width(80.0)
+                .selected_text(watch_type_label(state.watchpoint_type))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut state.watchpoint_type, WatchType::Read, "Read");
+                    ui.selectable_value(&mut state.watchpoint_type, WatchType::Write, "Write");
+                    ui.selectable_value(&mut state.watchpoint_type, WatchType::ReadWrite, "R/W");
+                });
+            let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.button("Add").clicked() || enter {
+                match parse_watch_range(&state.watchpoint_input, symbols) {
+                    Ok((start, end)) => {
+                        if m68000 && (start > 0xff_ffff || end > 0xff_ffff) {
+                            state.watchpoint_error = Some("Enter 24-bit byte addresses".into());
+                        } else {
+                            actions.add_watchpoint = Some((start, end, state.watchpoint_type));
+                            state.watchpoint_input.clear();
+                            state.watchpoint_error = None;
+                        }
+                    }
+                    Err(error) => state.watchpoint_error = Some(error),
                 }
-                ui.strong("Type");
-                ui.strong("Actions");
-                ui.end_row();
+            }
+        });
+        if let Some(error) = &state.watchpoint_error {
+            ui.colored_label(watchpoint_color, error);
+        }
 
-                for watch in &info.watchpoints {
-                    let hit = info.hit_watchpoint.as_ref().is_some_and(|hit| {
-                        (watch.address..=watch.end_address).contains(&hit.address)
-                    });
-                    ui.label(
-                        egui::RichText::new(format_watch_range(watch.address, watch.end_address))
+        if info.watchpoints.is_empty() {
+            ui.weak("No watchpoints set.");
+        } else {
+            egui::Grid::new("wp_grid")
+                .striped(true)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    ui.strong("Range");
+                    if show_symbols {
+                        ui.strong("Symbol");
+                    }
+                    ui.strong("Type");
+                    ui.strong("Actions");
+                    ui.end_row();
+
+                    for watch in &info.watchpoints {
+                        let hit = info.hit_watchpoint.as_ref().is_some_and(|hit| {
+                            (watch.address..=watch.end_address).contains(&hit.address)
+                        });
+                        ui.label(
+                            egui::RichText::new(format_watch_range(
+                                watch.address,
+                                watch.end_address,
+                            ))
                             .color(if hit {
                                 watchpoint_color
                             } else {
                                 ui.visuals().text_color()
                             })
                             .monospace(),
-                    );
-                    if show_symbols {
-                        ui.colored_label(
-                            symbol_color,
-                            watch_symbol_label(symbols, watch.address, watch.end_address),
                         );
+                        if show_symbols {
+                            ui.colored_label(
+                                symbol_color,
+                                watch_symbol_label(symbols, watch.address, watch.end_address),
+                            );
+                        }
+                        ui.colored_label(watchpoint_color, watch_type_label(watch.watch_type));
+                        if ui.small_button("Remove").clicked() {
+                            actions.remove_watchpoints.push((
+                                watch.address,
+                                watch.end_address,
+                                watch.watch_type,
+                            ));
+                        }
+                        ui.end_row();
                     }
-                    ui.colored_label(watchpoint_color, watch_type_label(watch.watch_type));
-                    if ui.small_button("Remove").clicked() {
-                        actions.remove_watchpoints.push((
-                            watch.address,
-                            watch.end_address,
-                            watch.watch_type,
-                        ));
-                    }
-                    ui.end_row();
-                }
-            });
-    }
+                });
+        }
+    });
 
     if let Some(address) = info.hit_breakpoint {
         ui.separator();
@@ -298,11 +338,10 @@ pub(super) fn draw_breakpoints_content(
         ui.colored_label(
             watchpoint_color,
             format!(
-                "Watchpoint {} at {}: {:02X} to {:02X}",
+                "Watchpoint {} at {}: {}",
                 watch_type_label(hit.watch_type),
                 format_addr(hit.address),
-                hit.old_value,
-                hit.new_value
+                hit.value_text()
             ),
         );
     }
@@ -333,6 +372,11 @@ fn resolve_breakpoint_input(
     symbols: &SymbolSession,
 ) -> Result<BreakpointInput, String> {
     let value = value.trim();
+    if let Some(offset) = value.strip_prefix("rom:") {
+        return parse_hex_u64(offset)
+            .map(BreakpointInput::Rom)
+            .ok_or_else(|| "Enter a physical ROM offset after rom:".into());
+    }
     if let Some(address) = parse_hex_u32(value) {
         return Ok(BreakpointInput::Cpu(address));
     }
@@ -482,6 +526,41 @@ mod tests {
             parse_watch_range("Start..End", &symbols),
             Ok((0xC000, 0xC00F))
         );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn md_imported_cpu_symbols_resolve_normal_breakpoint_and_watchpoint_inputs() {
+        use crate::symbols::import::{ImportContext, TargetInfo, import_symbols};
+        let module = import_symbols(
+            "game.sym",
+            b"00123400 T Entry\n00FF8040 B Counter\n00FF8041 B CounterEnd",
+            &ImportContext {
+                target: TargetInfo {
+                    system: zeff_emu_common::system::System::Md,
+                },
+                image: ImageId(0),
+                rom_region: RegionId(0),
+                cpu_space: AddressSpaceId(0),
+                source_name: None,
+            },
+        )
+        .unwrap();
+        let mut symbols = SymbolSession::default();
+        symbols.store.extend(module.symbols);
+        assert_eq!(
+            resolve_breakpoint_input("Entry", &symbols),
+            Ok(BreakpointInput::Cpu(0x123400))
+        );
+        assert_eq!(
+            parse_watch_range("counter..CounterEnd", &symbols),
+            Ok((0xFF8040, 0xFF8041))
+        );
+        assert_eq!(
+            watch_symbol_label(&symbols, 0xFF8040, 0xFF8041),
+            "Counter - CounterEnd"
+        );
+        assert_eq!(format_watch_range(0xFF8040, 0xFF8041), "00FF8040-00FF8041");
     }
 
     fn test_symbol(name: &str, address: u64, offset: Option<u64>) -> SymbolRecord {

@@ -237,3 +237,5 @@ mod chip_tests;
 mod tests;
 #[cfg(test)]
 mod timer_tests;
+#[cfg(test)]
+mod whole_witness;

@@ -15,9 +15,19 @@ pub(crate) struct WatchpointDisplay {
 #[derive(Clone, Debug)]
 pub(crate) struct WatchHitDisplay {
     pub(crate) address: Address,
-    pub(crate) old_value: u8,
-    pub(crate) new_value: u8,
+    pub(crate) old_value: Option<u8>,
+    pub(crate) new_value: Option<u8>,
     pub(crate) watch_type: WatchType,
+}
+
+impl WatchHitDisplay {
+    pub(crate) fn value_text(&self) -> String {
+        match (self.old_value, self.new_value) {
+            (Some(old), Some(new)) => format!("{old:02X} to {new:02X}"),
+            (None, Some(new)) => format!("value {new:02X}"),
+            (_, None) => "value unavailable".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -254,9 +264,9 @@ pub(crate) enum ConsoleGraphicsData {
 
 pub(crate) struct MdGraphicsData {
     pub(crate) vram: Vec<u8>,
-    pub(crate) cram: Vec<u8>,
+    pub(crate) cram: Vec<Option<u8>>,
     pub(crate) vsram: Vec<u8>,
-    pub(crate) palette: [[u8; 4]; 64],
+    pub(crate) palette: [Option<[u8; 4]>; 64],
     pub(crate) tile_height: Option<usize>,
 }
 

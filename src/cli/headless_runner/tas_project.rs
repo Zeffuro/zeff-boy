@@ -88,4 +88,6 @@ fn run_tas_project_headless_with_plan(
 }
 
 #[cfg(test)]
+mod md_tests;
+#[cfg(test)]
 mod tests;

@@ -1,10 +1,10 @@
 use crate::debug::ui_helpers::EnumLabel;
 use crate::emu_backend::ActiveSystem;
 use crate::settings::{
-    MdRegionPreference, PceArcadeCardPreference, PceCdArchiveMemoryLimit,
-    PceConsoleWiringPreference, PceControllerPreference, PceMemoryBasePreference,
-    PceMouseCursorMode, RewindMode, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference,
-    Settings,
+    MdControllerPreference, MdRegionPreference, MdTimingPreference, PceArcadeCardPreference,
+    PceCdArchiveMemoryLimit, PceConsoleWiringPreference, PceControllerPreference,
+    PceMemoryBasePreference, PceMouseCursorMode, RewindMode, Sega8ConsoleRegionPreference,
+    Sega8VideoStandardPreference, Settings,
 };
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -35,6 +35,32 @@ impl EnumLabel for MdRegionPreference {
 
     fn all_variants() -> &'static [Self] {
         &[Self::Auto, Self::NtscUs, Self::NtscJapan, Self::Pal]
+    }
+}
+
+impl EnumLabel for MdTimingPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::Precise => "Precise (slow)",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Standard, Self::Precise]
+    }
+}
+
+impl EnumLabel for MdControllerPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ThreeButton => "3-button",
+            Self::SixButton => "6-button",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::ThreeButton, Self::SixButton]
     }
 }
 
@@ -402,6 +428,34 @@ pub(super) fn draw(
         "emulation_md_region",
         None,
         &mut settings.emulation.md_region,
+    );
+    enum_combo(
+        ui,
+        Id::EmulationMdTiming,
+        "emulation_md_timing",
+        None,
+        &mut settings.emulation.md_timing,
+    );
+    enum_combo(
+        ui,
+        Id::EmulationMdController,
+        "emulation_md_controller",
+        None,
+        &mut settings.emulation.md_controller,
+    );
+    helper(
+        ui,
+        "Applies to both ports. Reload the ROM after changing the controller.",
+    );
+    checkbox(
+        ui,
+        Id::EmulationMdTmss,
+        None,
+        &mut settings.emulation.md_use_tmss,
+    );
+    helper(
+        ui,
+        "Requires recognized bios_MD.bin in Settings > Firmware and Standard timing. Reload the ROM after changing this setting.",
     );
 
     ui.add_space(22.0);

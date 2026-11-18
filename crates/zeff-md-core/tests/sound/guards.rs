@@ -1,7 +1,8 @@
 use super::cases::fixture::*;
 use zeff_emu_common::time::MachineTiming;
+use zeff_m68k::bus::Direction;
 use zeff_m68k::timing::TimingFault;
-use zeff_md_core::{BusError, SoundFault};
+use zeff_md_core::{BusError, Emulator, SoundFault};
 
 pub fn rejected_sound_steps_preserve_machine() {
     for reset in [true, false] {
@@ -44,7 +45,7 @@ pub fn rejected_sound_steps_preserve_machine() {
         );
         assert_eq!(machine, before);
     }
-    for program in [&[0x32, 4, 0x40][..], &[0xd3, 0x7f][..], &[0xdb, 0x7f][..]] {
+    for program in [&[0x32, 0, 0x7f][..], &[0xd3, 0x7f][..], &[0xdb, 0x7f][..]] {
         let mut machine = stopped(program, &[]);
         let before = machine.clone();
         if program[0] != 0x32 {
@@ -87,7 +88,7 @@ pub fn unavailable_main_access_is_host_fault() {
     for (address, kind) in [
         (SOUND_RAM, 0),
         (SOUND_RAM, 1),
-        (SOUND_RAM + 0x4004, 2),
+        (SOUND_RAM + 0x7f00, 2),
         (BUS_REQUEST + 1, 2),
         (RESET, 3),
     ] {
@@ -112,32 +113,41 @@ pub fn unavailable_main_access_is_host_fault() {
         if kind == 1 {
             assert!(machine.sound_bus_requested() && !machine.sound_bus_granted());
         }
-        assert!(matches!(
-            machine.step_instruction().map_err(main_fault),
-            Err(TimingFault::Bus {
-                source: BusError::UnsupportedAccess { .. },
-                ..
-            })
-        ));
-        let before = machine.clone();
-        assert_eq!(
-            machine.step_instruction().map_err(main_fault),
-            Err(TimingFault::Frozen)
-        );
-        assert_eq!(machine, before);
+        if kind < 2 {
+            instruction(&mut machine);
+            assert_eq!(machine.registers().d[0], 0x4e);
+            assert!(machine.sound_reset_asserted());
+            assert!(!machine.sound_bus_granted());
+            instruction(&mut machine);
+            continue;
+        }
+        if address == BUS_REQUEST + 1 || address == RESET {
+            let cpu = machine.sound_cpu().clone();
+            let bank = machine.sound_bank();
+            instruction(&mut machine);
+            assert_eq!(
+                machine.registers().d[0],
+                if address == BUS_REQUEST + 1 {
+                    0x71
+                } else {
+                    0x4e
+                }
+            );
+            assert!(machine.sound_bus_requested() && machine.sound_bus_granted());
+            assert!(!machine.sound_reset_asserted());
+            assert_eq!(machine.sound_cpu(), &cpu);
+            assert_eq!(machine.sound_bank(), bank);
+            instruction(&mut machine);
+            continue;
+        }
+        unsupported_main_access(&mut machine, address, Direction::Read);
     }
     for address in [BUS_REQUEST + 1, RESET + 1] {
         let mut program = Vec::new();
         store_byte(&mut program, address, 1);
         program.extend_from_slice(&[0x4e71, 0x4e71]);
         let mut machine = new(&program, &[]);
-        assert!(matches!(
-            machine.step_instruction().map_err(main_fault),
-            Err(TimingFault::Bus {
-                source: BusError::UnsupportedAccess { .. },
-                ..
-            })
-        ));
+        unsupported_main_access(&mut machine, address & !1, Direction::Write);
         assert!(!machine.sound_bus_requested());
         assert!(machine.sound_reset_asserted());
     }
@@ -176,9 +186,31 @@ pub fn independent_component_reset() {
     );
 }
 
+fn unsupported_main_access(machine: &mut Emulator, address: u32, direction: Direction) {
+    let fault = machine.step_instruction().map_err(main_fault);
+    assert!(
+        matches!(
+            fault,
+            Err(TimingFault::Bus {
+                source: BusError::UnsupportedAccess { address: actual, direction: actual_direction },
+                ..
+            }) if actual == address && actual_direction == direction
+        ),
+        "access={address:06x} direction={direction:?}: {fault:?}"
+    );
+    let frozen = machine.clone();
+    assert_eq!(
+        machine.step_instruction().map_err(main_fault),
+        Err(TimingFault::Frozen)
+    );
+    assert_eq!(*machine, frozen);
+}
+
 fn main_fault(fault: zeff_md_core::MachineFault) -> TimingFault<BusError> {
     match fault {
         zeff_md_core::MachineFault::Main(fault) => fault,
         zeff_md_core::MachineFault::Sound(fault) => panic!("sound fault: {fault:?}"),
+        zeff_md_core::MachineFault::Input(fault) => panic!("input fault: {fault:?}"),
+        zeff_md_core::MachineFault::PreciseTiming(fault) => panic!("precise timing fault: {fault}"),
     }
 }

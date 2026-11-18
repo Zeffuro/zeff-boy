@@ -174,48 +174,6 @@ fn silent_special_mode_changes_preserve_phase_and_key_wake() {
 }
 
 #[test]
-fn migrated_total_level_caches_resample_before_silent_skip_and_key_wake() {
-    use zeff_emu_common::save_state::{StateReader, StateWriter};
-    for mode in [0, 0x40, 0x80, 0xc0] {
-        for version in 1..=10 {
-            let mut original = quiet(15, 127, 93);
-            if version < crate::save_state::STATE_VERSION_WITH_FM_PIPELINE {
-                for channel in 0..6 {
-                    let bank = (channel / 3) * 2;
-                    original.write_port(bank, 0xb4 + channel % 3);
-                    original.write_port(bank + 1, 0xc0);
-                }
-                original.advance(144 * 4);
-            }
-            original.write_port(0, 0x27);
-            original.write_port(1, mode);
-            let mut writer = StateWriter::new();
-            original.write_state_version(&mut writer, version);
-            let bytes = writer.into_bytes();
-            let mut fast =
-                Opn2::read_state_version(&mut StateReader::new(&bytes), version).unwrap();
-            assert!((0..24).all(|slot| fast.slot(slot).pipeline.total_level == 128));
-            assert!(!fast.quiet_at_scan_boundary());
-            let mut writer = StateWriter::new();
-            fast.write_state(&mut writer);
-            let current = writer.into_bytes();
-            let mut slow = Opn2::read_state(&mut StateReader::new(&current)).unwrap();
-            fast.advance(144 * 33 + 17);
-            scalar(&mut slow, 144 * 33 + 17);
-            assert_eq!(fast, slow);
-            assert!((0..24).all(|slot| fast.slot(slot).pipeline.total_level < 128));
-            for chip in [&mut fast, &mut slow] {
-                chip.write_port(0, 0x28);
-                chip.write_port(1, 0xf2);
-            }
-            fast.advance(144 * 5 + 19);
-            scalar(&mut slow, 144 * 5 + 19);
-            assert_eq!(fast, slow);
-        }
-    }
-}
-
-#[test]
 fn running_timer_a_silent_skip_preserves_flags_phases_and_key_wake() {
     for mode in [1, 5, 0x41, 0x45, 0xc1, 0xc5] {
         for reload in [0, 1022, 1023] {

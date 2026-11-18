@@ -2,14 +2,14 @@ use super::*;
 
 pub(in crate::timing) struct Stream {
     pub(in crate::timing) cursor: u32,
-    word: Option<u16>,
+    word: Option<InstructionInput>,
 }
 
 impl Stream {
     pub(in crate::timing) fn new(pipeline: Pipeline) -> Self {
         Self {
             cursor: pipeline.address.wrapping_add(2),
-            word: Some(pipeline.words[1]),
+            word: Some(pipeline.input(1)),
         }
     }
 
@@ -20,6 +20,7 @@ impl Stream {
         delayed: bool,
     ) -> Result<u16, TimingFault<B::Error>> {
         let word = self.word.unwrap();
+        bus.instruction_input(self.cursor, word);
         let next = self.cursor.wrapping_add(2);
         self.word = if delayed {
             None
@@ -27,14 +28,14 @@ impl Stream {
             Some(cpu.fetch(bus, next)?)
         };
         self.cursor = next;
-        Ok(word)
+        Ok(word.value)
     }
 
     pub(in crate::timing) fn finish<B: ClockedBus>(
         &mut self,
         cpu: &mut PrefetchCpu,
         bus: &mut B,
-    ) -> Result<[u16; 2], TimingFault<B::Error>> {
+    ) -> Result<[InstructionInput; 2], TimingFault<B::Error>> {
         let first = match self.word {
             Some(word) => word,
             None => cpu.fetch(bus, self.cursor)?,

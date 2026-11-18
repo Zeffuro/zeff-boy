@@ -13,7 +13,6 @@ pub(crate) fn execute<B: M68kBus>(
     }
     let mode = (op >> 3) & 7;
     let reg = op & 7;
-    // Dynamic mode 1 belongs to MOVEP rather than the bit instructions.
     if !immediate && mode == 1 {
         return Ok(None);
     }

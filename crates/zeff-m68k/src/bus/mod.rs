@@ -43,7 +43,7 @@ pub enum BusOperation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// Unsupported means the operation was not started.
+/// Unsupported leaves the operation unstarted.
 pub enum BusResponse<T> {
     Complete(T),
     Unsupported,
@@ -77,23 +77,19 @@ impl BusAccess {
     }
 }
 
-/// Callbacks transfer selected lanes in their physical D15..D0 positions.
-/// Accesses may have side effects, including those preceding a later fault.
+/// Selected lanes use physical D15..D0 positions.
 pub trait M68kBus {
     type Error;
 
     fn read(&mut self, access: BusAccess) -> Result<u16, Self::Error>;
     fn write(&mut self, access: BusAccess, value: u16) -> Result<(), Self::Error>;
 
-    /// Requests an external reset pulse in CPU clocks; this is not a CPU reset.
-    /// Deasserts output before returning, including on error.
+    /// Pulses external reset; always deasserts before returning.
     fn reset_output(&mut self, _asserted_clocks: u32) -> Result<BusResponse<()>, Self::Error> {
         Ok(BusResponse::Unsupported)
     }
 
-    /// Holds bus ownership across the byte read/write and releases it on every outcome.
-    /// Sets bit7 in the selected byte, subject to device write policy, and returns the old word.
-    /// Unsupported performs no transfers.
+    /// Holds byte RMW ownership through completion or error.
     fn test_and_set(
         &mut self,
         _access: BusAccess,

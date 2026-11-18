@@ -103,6 +103,7 @@ impl App {
     ) -> Result<(), EmuCommandSendError> {
         self.preflight_emu_command(&command)?;
         let authority = command.authority_classification();
+        let changes_md_session = changes_md_timed_port_session(&command);
         #[cfg(not(target_arch = "wasm32"))]
         let invalidates_readiness = invalidates_tas_readiness(&command);
         #[cfg(not(target_arch = "wasm32"))]
@@ -150,6 +151,11 @@ impl App {
             self.tas_control.clear_readiness();
         }
 
+        if changes_md_session {
+            self.debug_windows
+                .md_timed_ports
+                .cancel_session("Session state changed");
+        }
         Ok(())
     }
 }
@@ -174,6 +180,24 @@ fn invalidates_tas_readiness(command: &EmuCommand) -> bool {
             | EmuCommand::DisconnectLink
             | EmuCommand::Rewind(_)
     )
+}
+
+fn changes_md_timed_port_session(command: &EmuCommand) -> bool {
+    match command {
+        EmuCommand::Reset
+        | EmuCommand::Shutdown
+        | EmuCommand::StartNetplay(_)
+        | EmuCommand::StopNetplay
+        | EmuCommand::Rewind(_)
+        | EmuCommand::LoadStateSlot { .. }
+        | EmuCommand::LoadStateFromPath { .. }
+        | EmuCommand::LoadStateBytes { .. }
+        | EmuCommand::InspectRecovery { resume: true, .. }
+        | EmuCommand::ApplyMediaEvent(_) => true,
+        #[cfg(target_arch = "wasm32")]
+        EmuCommand::LoadExternalStateBytes { .. } | EmuCommand::RestoreStateBackup(_) => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]

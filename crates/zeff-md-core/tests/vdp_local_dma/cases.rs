@@ -40,7 +40,8 @@ pub fn fill_trigger_and_lanes_with(step: &mut Step<'_>) {
         assert_eq!(memory.vram().as_ptr(), pointer);
         assert!(
             memory
-                .cram()
+                .known_cram()
+                .unwrap()
                 .iter()
                 .chain(memory.vsram())
                 .all(|&value| value == 0)

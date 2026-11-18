@@ -110,7 +110,6 @@ pub fn accepted_control_writes_require_another_fetch() {
         assert_eq!(cache.read(), Ok(0x2222));
         assert_eq!(current, command(4, 0));
     }
-    // Seeded component states, not physical fetches between control halves.
     for (first, second, old_code, raw, applied) in [
         (0x0002, 0, 0, command(2, 0), command(2, 0)),
         (0x4002, 0x8f02, 0, command(0x8002, 1), command(0x8002, 1)),
@@ -164,9 +163,10 @@ pub fn accepted_control_writes_require_another_fetch() {
 }
 
 pub fn accepted_data_writes_invalidate_after_capture() {
-    for code in [1, 3, 5, 0x11, 0x13, 0x15] {
+    for code in [0, 1, 3, 5, 9, 0x10, 0x11, 0x13, 0x15, 0x19] {
         let mut memory = VdpMemory::default();
         memory.write_word(command(0, 1), 0xabcd).unwrap();
+        let saved_memory = memory.clone();
         let mut fifo = VdpWriteFifo::default();
         let mut cache = VdpReadCache::default();
         let mut current = command(0, 0);
@@ -201,6 +201,9 @@ pub fn accepted_data_writes_invalidate_after_capture() {
         );
         assert_eq!(cache.buffered_word(), Some(0xabcd));
         assert_eq!(fifo.complete_write(&mut memory), Ok(Some(captured)));
+        if matches!(code & 0x0f, 0 | 9) {
+            assert_eq!(memory, saved_memory);
+        }
         let expected = if code & 0x0f == 1 { 0x1234 } else { 0 };
         assert_eq!(
             cache.complete_read(&memory, &fifo, &mut current, Some(2)),
@@ -214,10 +217,22 @@ pub fn accepted_data_writes_invalidate_after_capture() {
     for (current, increment, full, error) in [
         (command(2, 1), None, false, VdpWriteError::UnknownIncrement),
         (
-            command(2, 0),
+            command(2, 4),
             Some(2),
             false,
-            VdpWriteError::UnsupportedCommand(command(2, 0)),
+            VdpWriteError::UnsupportedCommand(command(2, 4)),
+        ),
+        (
+            command(2, 8),
+            Some(2),
+            false,
+            VdpWriteError::UnsupportedCommand(command(2, 8)),
+        ),
+        (
+            command(2, 0x0c),
+            Some(2),
+            false,
+            VdpWriteError::UnsupportedCommand(command(2, 0x0c)),
         ),
         (
             command(2, 0x80),

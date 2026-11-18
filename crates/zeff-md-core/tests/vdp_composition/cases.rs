@@ -213,7 +213,7 @@ pub fn composition_guards() {
             continue;
         }
         publish(&mut bank, 12, mode);
-        if matches!(mode & 6, 0 | 6) {
+        if matches!(mode & 6, 0 | 2 | 6) {
             assert_eq!(memory.sample_background(&bank, 0, 0), Ok(0));
             allowed += 1;
         } else {
@@ -224,7 +224,7 @@ pub fn composition_guards() {
             rejected += 1;
         }
     }
-    assert_eq!((allowed, rejected), (32, 32));
+    assert_eq!((allowed, rejected), (48, 16));
     publish(&mut bank, 12, 0);
     for (x, y) in [(256, 0), (0, 256), (65535, 65535)] {
         assert_eq!(
@@ -233,10 +233,19 @@ pub fn composition_guards() {
         );
     }
     publish(&mut bank, 11, 1);
-    assert_eq!(
-        memory.sample_background(&bank, 0, 0),
-        Err(VdpRenderError::UnsupportedScrollMode(1))
-    );
+    let saved = memory.clone();
+    let saved_bank = bank;
+    assert_eq!(memory.sample_background(&bank, 0, 0), Ok(0));
+    assert_eq!(memory, saved);
+    assert_eq!(bank, saved_bank);
+    for interlace in [2, 6] {
+        publish(&mut bank, 12, interlace);
+        assert_eq!(
+            memory.sample_background(&bank, 0, 0),
+            Err(VdpRenderError::UnsupportedScrollMode(1))
+        );
+    }
+    publish(&mut bank, 12, 0);
     publish(&mut bank, 11, 4);
     let mut memory = VdpMemory::default();
     write(&mut memory, 0xfc00, 1, 1);

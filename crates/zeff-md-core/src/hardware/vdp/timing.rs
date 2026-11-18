@@ -1,5 +1,5 @@
-use super::VdpRegisterPipeline;
 use super::constants::*;
+use super::{InterlaceMode, VdpRegisterPipeline};
 use crate::Region;
 use zeff_emu_common::time::MasterTicks;
 
@@ -7,7 +7,12 @@ mod calendar;
 mod field;
 mod horizontal;
 pub(crate) use field::FieldPosition;
+pub(in crate::hardware::vdp) mod blank_mode;
+mod register_view;
 mod state;
+use horizontal::horizontal_mode_byte;
+use register_view::CalendarRegisters;
+pub(in crate::hardware::vdp) use register_view::SoundRegisters;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VdpTimingError {
@@ -49,7 +54,9 @@ pub struct VdpInterruptEdge {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VdpVerticalTiming {
     horizontal: VdpH32Timing,
+    pub(super) history: Option<history::TimingHistory>,
     pub(super) field: field::FieldCalendar,
+    pub(in crate::hardware::vdp) blank: Option<blank_mode::BlankHistory>,
 }
 
 impl VdpVerticalTiming {
@@ -58,6 +65,22 @@ impl VdpVerticalTiming {
         at: MasterTicks,
         registers: &VdpRegisterPipeline,
     ) -> Result<bool, VdpTimingError> {
+        if let Some(blank) = self.blank.filter(|b| b.authoritative()) {
+            let mut view = *registers;
+            if blank.vertical.is_some() {
+                let projected = blank.advance_projection(at, Region::NtscUs, &mut view)?;
+                return projected.hblank(at, view.registers()[1].unwrap());
+            }
+            view.advance_to(at)
+                .map_err(|_| VdpTimingError::PendingModeChange)?;
+            return blank.hblank(
+                at,
+                view.registers()[1].ok_or(VdpTimingError::UnknownRegister(1))?,
+            );
+        }
+        if let Some(history) = self.history {
+            return history.cursor.clock.blank(history.cursor.phase(at)?);
+        }
         let phase = self.horizontal.elapsed(at)? % H32_LINE_TICKS;
         Ok(Self::horizontal_mode(registers)?.blank(phase))
     }
@@ -77,7 +100,9 @@ impl VdpVerticalTiming {
     pub fn at_counters_zero(epoch: MasterTicks) -> Self {
         Self {
             horizontal: VdpH32Timing::at_counter_zero(epoch),
+            history: None,
             field: field::FieldCalendar::new(epoch),
+            blank: None,
         }
     }
 
@@ -96,10 +121,35 @@ impl VdpVerticalTiming {
         region: Region,
         registers: &VdpRegisterPipeline,
     ) -> Result<u16, VdpTimingError> {
-        let mut vertical = self.counter_in_mode(at, region, registers, false)?;
-        if self.field_position_at(at, region, registers)?.interlaced {
-            vertical = u16::from((vertical as u8).rotate_left(1));
+        if let Some((history, _)) = self.vertical_at(at, region, registers)? {
+            let horizontal = if let Some(clock) = history.vertical {
+                clock.counter(at)?
+            } else {
+                history.core.h_counter(at)
+            };
+            return Ok(u16::from_be_bytes([
+                history.core.v as u8,
+                (horizontal >> HV_HCOUNTER_SHIFT) as u8,
+            ]));
         }
+        if self.blank.is_some_and(|b| b.authoritative()) {
+            let vertical = self.counter_in_mode(at, region, registers, false)?;
+            let horizontal = if let Some(vertical) = self.blank.unwrap().vertical {
+                vertical.counter(at)?
+            } else {
+                self.horizontal.h_counter_at(at)?
+            } >> HV_HCOUNTER_SHIFT;
+            return Ok(u16::from_be_bytes([vertical as u8, horizontal as u8]));
+        }
+        if self.uses_history(registers) {
+            return self.anchored_hv_counter_at(at, region, registers);
+        }
+        let mut vertical = self.counter_in_mode(at, region, registers, false)?;
+        vertical = match self.field_position_at(at, region, registers)?.mode {
+            InterlaceMode::Progressive => vertical,
+            InterlaceMode::Normal => (vertical & 0xfe) | ((vertical >> 8) & 1),
+            InterlaceMode::Double => u16::from((vertical as u8).rotate_left(1)),
+        };
         let phase = self.horizontal.elapsed(at)? % H32_LINE_TICKS;
         let horizontal = Self::horizontal_mode(registers)?.counter(phase) >> HV_HCOUNTER_SHIFT;
         Ok(u16::from_be_bytes([vertical as u8, horizontal as u8]))
@@ -112,7 +162,17 @@ impl VdpVerticalTiming {
         registers: &VdpRegisterPipeline,
         require_display: bool,
     ) -> Result<u16, VdpTimingError> {
+        if let Some((history, _)) = self.vertical_at(at, region, registers)? {
+            return Ok(history.core.v);
+        }
         self.elapsed_in_mode(at, region, registers, require_display)?;
+        if let Some(blank) = self.blank.filter(|b| b.authoritative()) {
+            let mut view = *registers;
+            return Ok(blank.advance_projection(at, region, &mut view)?.core.v);
+        }
+        if self.uses_history(registers) {
+            return self.anchored_counter_at(at, region, registers);
+        }
         let position = self.field_position_at(at, region, registers)?;
         let elapsed = at.get() - position.start.get();
         let vertical_clock = Self::horizontal_mode(registers)?.vertical_clock();
@@ -128,7 +188,7 @@ impl VdpVerticalTiming {
             } else {
                 (NTSC_V28_COUNTER_LOW_COUNT, NTSC_V28_COUNTER_HIGH_START)
             };
-        if position.interlaced {
+        if position.mode.interlaced() {
             if region == Region::Pal {
                 low_count -= 1;
             }
@@ -165,7 +225,20 @@ impl VdpVerticalTiming {
         registers: &VdpRegisterPipeline,
         require_display: bool,
     ) -> Result<bool, VdpTimingError> {
+        if let Some((history, regs)) = self.vertical_at(at, region, registers)? {
+            return Ok(regs.registers()[1].unwrap() & DISPLAY_ENABLE == 0
+                || !(history.core.active || history.core.last));
+        }
         self.elapsed_in_mode(at, region, registers, require_display)?;
+        if let Some(blank) = self.blank.filter(|b| b.authoritative()) {
+            let mut view = *registers;
+            let projected = blank.advance_projection(at, region, &mut view)?;
+            return Ok(view.registers()[1].unwrap() & DISPLAY_ENABLE == 0
+                || !(projected.core.last || projected.core.active));
+        }
+        if self.uses_history(registers) {
+            return self.anchored_vblank_at(at, region, registers);
+        }
         let position = self.field_position_at(at, region, registers)?;
         let phase = at.get() - position.start.get();
         let lines = position.lines;
@@ -177,14 +250,22 @@ impl VdpVerticalTiming {
         )
     }
 
-    /// Strictly next digital flag edge while mode remains stable.
     pub fn next_vblank_edge(
         &self,
         after: MasterTicks,
         region: Region,
         registers: &VdpRegisterPipeline,
     ) -> Result<VdpVBlankEdge, VdpTimingError> {
+        if let Some(history) = self.vertical_source(region, registers) {
+            return history.next_vertical_blank(after, region, *registers);
+        }
+        if self.blank.is_some_and(|b| b.authoritative()) {
+            return Err(VdpTimingError::ClockOverflow);
+        }
         self.qualified_elapsed(after, region, registers)?;
+        if self.uses_history(registers) {
+            return self.anchored_next_vblank(after, region, registers);
+        }
         let position = self.field_position_at(after, region, registers)?;
         let phase = after.get() - position.start.get();
         let mode = Self::horizontal_mode(registers)?;
@@ -233,7 +314,6 @@ impl VdpVerticalTiming {
         })
     }
 
-    /// Strictly next line-counter clock or VINT set edge in the current mode.
     pub fn next_interrupt_edge(
         &self,
         after: MasterTicks,
@@ -250,7 +330,34 @@ impl VdpVerticalTiming {
         registers: &VdpRegisterPipeline,
         require_display: bool,
     ) -> Result<VdpInterruptEdge, VdpTimingError> {
+        let mut position = None;
+        self.next_counter_edge_with_position(
+            after,
+            region,
+            registers,
+            require_display,
+            &mut position,
+        )
+    }
+
+    pub(in crate::hardware::vdp) fn next_counter_edge_with_position(
+        &self,
+        after: MasterTicks,
+        region: Region,
+        registers: &VdpRegisterPipeline,
+        require_display: bool,
+        position: &mut Option<FieldPosition>,
+    ) -> Result<VdpInterruptEdge, VdpTimingError> {
+        if let Some(history) = self.vertical_source(region, registers) {
+            return history.next_interrupt(after, region, registers);
+        }
+        if let Some(blank) = self.blank.filter(|b| b.authoritative()) {
+            return blank.next_interrupt(after, region, registers);
+        }
         let elapsed = self.elapsed_in_mode(after, region, registers, require_display)?;
+        if self.uses_history(registers) {
+            return self.anchored_next_interrupt(after, region, registers);
+        }
         let line_phase = elapsed % H32_LINE_TICKS;
         let mode = Self::horizontal_mode(registers)?;
         let horizontal = mode.vertical_clock();
@@ -259,7 +366,10 @@ impl VdpVerticalTiming {
         } else {
             H32_LINE_TICKS - line_phase + horizontal
         };
-        let position = self.field_position_at(after, region, registers)?;
+        let position = match position.take() {
+            Some(position) => position,
+            None => self.field_position_at(after, region, registers)?,
+        };
         let period = position.lines * H32_LINE_TICKS;
         let phase = after.get() - position.start.get();
         let vertical =
@@ -305,35 +415,46 @@ impl VdpVerticalTiming {
         require_display: bool,
     ) -> Result<u64, VdpTimingError> {
         let elapsed = self.horizontal.elapsed(at)?;
-        if registers.pending_memory_mode_change() {
+        if let Some(blank) = self.blank.filter(|b| b.authoritative()) {
+            if blank.vertical.is_some() {
+                if !blank.vertical_supported(registers, region) {
+                    return Err(VdpTimingError::UnqualifiedDisplayHistory);
+                }
+                return Ok(elapsed);
+            }
+            if !blank.eligible
+                || registers.registers()[1]
+                    .is_none_or(|r| r & (DISPLAY_ENABLE | V30_ENABLE | VRAM_128K_ENABLE) != 0)
+                || registers.registers()[0].is_none_or(|r| r & 1 != 0)
+                || registers.registers()[12] != Some(0)
+            {
+                return Err(VdpTimingError::UnqualifiedDisplayHistory);
+            }
+            return Ok(elapsed);
+        }
+        if registers.pending_memory_mode_change() && !self.uses_history(registers) {
             return Err(VdpTimingError::PendingModeChange);
         }
-        let display = if require_display { DISPLAY_ENABLE } else { 0 };
-        let value = registers.registers()[usize::from(MODE_REGISTER)]
-            .ok_or(VdpTimingError::UnknownRegister(MODE_REGISTER))?;
-        if value & (MODE5_ENABLE | display) != MODE5_ENABLE | display
-            || (region != Region::Pal && value & V30_ENABLE != 0)
-        {
-            return Err(VdpTimingError::UnsupportedMode {
-                index: MODE_REGISTER,
-                value,
-            });
+        validate_mode_byte(
+            registers.registers()[usize::from(MODE_REGISTER)],
+            region,
+            require_display,
+        )?;
+        if self.uses_history(registers) {
+            clock::LineClock::from_register(
+                registers.registers()[usize::from(DISPLAY_SIZE_REGISTER)]
+                    .ok_or(VdpTimingError::UnknownRegister(DISPLAY_SIZE_REGISTER))?,
+            )?;
+        } else {
+            Self::horizontal_mode(registers)?;
         }
-        Self::horizontal_mode(registers)?;
         Ok(elapsed)
     }
 }
 
 impl VdpRegisterPipeline {
     pub(crate) fn display_height(&self, region: Region) -> usize {
-        if region == Region::Pal
-            && self.registers()[usize::from(MODE_REGISTER)]
-                .is_some_and(|value| value & V30_ENABLE != 0)
-        {
-            V30_VBLANK_SET_LINE as usize
-        } else {
-            V28_VBLANK_SET_LINE as usize
-        }
+        display_height_byte(self.registers()[usize::from(MODE_REGISTER)], region)
     }
 }
 
@@ -343,7 +464,6 @@ pub struct VdpHBlankEdge {
     pub active: bool,
 }
 
-/// Conventional H32 timing anchored at a known internal counter-zero edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VdpH32Timing {
     epoch: MasterTicks,
@@ -366,13 +486,11 @@ impl VdpH32Timing {
         Ok(counter as u16)
     }
 
-    /// Digital HBlank flag; analog blanking, sprite fetches and buffer clearing are separate.
     pub fn hblank_flag_at(&self, at: MasterTicks) -> Result<bool, VdpTimingError> {
         let counter = self.h_counter_at(at)?;
         Ok(!(H32_HBLANK_CLEAR_COUNTER..H32_HBLANK_SET_COUNTER).contains(&counter))
     }
 
-    /// Strictly next digital flag edge on the known H32 phase.
     pub fn next_hblank_edge(&self, after: MasterTicks) -> Result<VdpHBlankEdge, VdpTimingError> {
         let phase = self.elapsed(after)? % H32_LINE_TICKS;
         let clear = u64::from(H32_HBLANK_CLEAR_COUNTER) * H32_DOT_TICKS;
@@ -394,7 +512,6 @@ impl VdpH32Timing {
         })
     }
 
-    /// Strictly next opportunity in a nonactive H32 interval; caller handles arrivals and subslots.
     pub fn next_nonactive_write_slot(
         &self,
         after: MasterTicks,
@@ -417,7 +534,6 @@ impl VdpH32Timing {
         Ok(MasterTicks::new(next))
     }
 
-    /// Strictly next stable active H32 opportunity; caller handles raster transitions and CPU arrival.
     pub fn next_active_write_slot(
         &self,
         after: MasterTicks,
@@ -460,3 +576,47 @@ impl VdpH32Timing {
             })
     }
 }
+
+fn display_height_byte(value: Option<u8>, region: Region) -> usize {
+    if region == Region::Pal && value.is_some_and(|value| value & V30_ENABLE != 0) {
+        V30_VBLANK_SET_LINE as usize
+    } else {
+        V28_VBLANK_SET_LINE as usize
+    }
+}
+
+fn validate_mode_byte(
+    value: Option<u8>,
+    region: Region,
+    require_display: bool,
+) -> Result<(), VdpTimingError> {
+    let display = if require_display { DISPLAY_ENABLE } else { 0 };
+    let value = value.ok_or(VdpTimingError::UnknownRegister(MODE_REGISTER))?;
+    if value & (MODE5_ENABLE | display) != MODE5_ENABLE | display
+        || (region != Region::Pal && value & V30_ENABLE != 0)
+    {
+        return Err(VdpTimingError::UnsupportedMode {
+            index: MODE_REGISTER,
+            value,
+        });
+    }
+    Ok(())
+}
+
+impl VdpVerticalTiming {
+    pub(in crate::hardware::vdp) fn sound_mode_at(
+        &self,
+        at: MasterTicks,
+        region: Region,
+        registers: &SoundRegisters,
+    ) -> Result<super::mode::HorizontalMode, VdpTimingError> {
+        self.horizontal.elapsed(at)?;
+        validate_mode_byte(registers.mode_byte(), region, false)?;
+        horizontal_mode_byte(registers.size_byte())
+    }
+}
+
+mod anchored;
+pub(super) mod clock;
+pub(super) mod cursor;
+pub(super) mod history;

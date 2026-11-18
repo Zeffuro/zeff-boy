@@ -89,16 +89,18 @@ pub fn control_faults_and_reset_preserve_progress() {
             Direction::Write,
         ),
         (
-            &[0x31, 3, 0x40, 0xc9][..],
+            &[0x31, 0xff, 0x7e, 0xc9][..],
             3,
             17,
             4,
-            0x4004,
-            0x4004,
+            0x7f00,
+            0x7f00,
             Direction::Read,
         ),
     ] {
-        let mut machine = start(sound, nops, &[(0x1fff, 0x34)], &[]);
+        let mut sources = multi::bank_sources(0x80);
+        sources.push((0x1fff, 0x34));
+        let mut machine = start(sound, nops, &sources, &[]);
         assert_eq!(machine.sound_cpu().cycles(), clocks);
         assert_eq!(machine.sound_cpu().regs().pc, pc);
         assert_eq!(machine.sound_cpu().regs().sp, sp);

@@ -29,6 +29,8 @@ mod direct_gb;
 mod direct_gb_loader;
 mod direct_gba_loader;
 mod direct_gbc;
+mod direct_md;
+mod direct_md_loader;
 mod direct_nes_loader;
 mod direct_pce;
 mod direct_pce_cd;
@@ -40,6 +42,8 @@ mod direct_sg1000;
 mod direct_sg1000_loader;
 mod direct_sms;
 mod direct_sms_loader;
+pub(crate) mod md_product;
+pub(crate) use direct_md_loader::DirectMdTasExecutionLoader;
 mod direct_ws;
 mod direct_ws_loader;
 mod gb_rtc;
@@ -255,6 +259,7 @@ fn direct_nes_devices_for_backend(backend: &EmuBackend) -> Result<Vec<TasDeviceI
 #[derive(Clone, Debug)]
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum PrivateTasExecutionLoader {
+    DirectMd(DirectMdTasExecutionLoader),
     DirectNes(DirectNesTasExecutionLoader),
     DirectFds(DirectFdsTasExecutionLoader),
     DirectGb(DirectGbTasExecutionLoader),
@@ -281,6 +286,7 @@ impl PrivateTasExecutionLoader {
         branch_id: &str,
     ) -> Result<()> {
         match self {
+            Self::DirectMd(_) => md_product::validate_md_tas_branch_scope(project, branch_id),
             Self::DirectNes(_) => {
                 DirectNesTasExecutionLoader::validate_project_branch_scope(project, branch_id)
             }
@@ -322,6 +328,7 @@ impl PrivateTasExecutionLoader {
 
     pub(crate) fn create_project_file(&self, path: &Path) -> Result<TasProject> {
         match self {
+            Self::DirectMd(loader) => loader.create_project_file(path),
             Self::DirectNes(loader) => loader.create_project_file(path),
             Self::DirectFds(loader) => loader.create_project_file(path),
             Self::DirectGb(loader) => loader.create_project_file(path),
@@ -339,6 +346,15 @@ impl PrivateTasExecutionLoader {
 
     pub(crate) fn replace_project_file(&self, path: &Path) -> Result<TasProject> {
         match self {
+            Self::DirectMd(loader) => {
+                ensure!(
+                    TasProject::is_project_path(path) && path.exists(),
+                    "MD project replacement requires an existing .ztas"
+                );
+                let project = loader.create_project()?;
+                project.save_atomic(path)?;
+                Ok(project)
+            }
             Self::DirectNes(loader) => loader.replace_project_file(path),
             Self::DirectFds(loader) => loader.replace_project_file(path),
             Self::DirectGb(loader) => loader.replace_project_file(path),
@@ -370,6 +386,7 @@ impl PrivateTasExecutionLoader {
                     return loader.replay_import_witness(start_state);
                 }
                 let (prefix, session) = match self {
+                    Self::DirectMd(loader) => ("md", loader.load_session(start_state)?),
                     Self::DirectNes(loader) => ("nes", loader.load_session(start_state)?),
                     Self::DirectFds(_) => unreachable!("FDS replay import handled above"),
                     Self::DirectGb(loader) => ("gb", loader.load_session(start_state)?),
@@ -397,6 +414,9 @@ impl PrivateTasExecutionLoader {
         for branch in project.branches() {
             self.validate_project_branch_scope(&project, branch.id())?;
         }
+        if let Self::DirectMd(loader) = self {
+            loader.validate_project(&project)?;
+        }
         if replace_existing {
             ensure!(
                 project_path.exists(),
@@ -420,6 +440,9 @@ impl PrivateTasExecutionLoader {
         session: &mut TasEditorSession,
         replay_path: &Path,
     ) -> Result<PathBuf> {
+        if let Self::DirectMd(loader) = self {
+            loader.validate_project(session.project())?;
+        }
         let start_state = session.project().start_state().to_vec();
         let witness_session = self.load_session(&start_state)?;
         let witness = TasExecutionWitness {
@@ -438,6 +461,9 @@ impl PrivateTasExecutionLoader {
         progress: &mut impl FnMut(TasVerifiedReplayExportPhase),
     ) -> Result<PathBuf> {
         progress(TasVerifiedReplayExportPhase::Preparing);
+        if let Self::DirectMd(loader) = self {
+            loader.validate_project(session.project())?;
+        }
         let start_state = session.project().start_state().to_vec();
         let witness_session = self.load_session(&start_state)?;
         let witness = TasExecutionWitness {
@@ -454,6 +480,7 @@ impl PrivateTasExecutionLoader {
 
     pub(crate) fn load_session(&self, start_state: &[u8]) -> Result<TasExecutionSession> {
         match self {
+            Self::DirectMd(loader) => loader.load_session(start_state),
             Self::DirectNes(loader) => loader.load_session(start_state),
             Self::DirectFds(loader) => loader.load_session(start_state),
             Self::DirectGb(loader) => loader.load_session(start_state),
@@ -473,6 +500,7 @@ impl PrivateTasExecutionLoader {
 impl TasEditorExecutionProvider for PrivateTasExecutionLoader {
     fn load_editor_engine(&self, project: &TasProject) -> Result<TasEditorExecutionEngine> {
         match self {
+            Self::DirectMd(loader) => loader.load_editor_engine(project),
             Self::DirectNes(loader) => loader.load_editor_engine(project),
             Self::DirectFds(loader) => loader.load_editor_engine(project),
             Self::DirectGb(loader) => loader.load_editor_engine(project),

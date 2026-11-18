@@ -57,6 +57,18 @@ pub(in crate::cli::headless_runner) fn format_ws_bus_trace_line(
 ) -> String {
     let access = match event {
         WsBusTraceEvent::Read {
+            space: TraceWriteKind::Bus,
+            addr,
+            value,
+            ..
+        } => format!("busread addr={addr:X} value={value:X}"),
+        WsBusTraceEvent::Write {
+            space: TraceWriteKind::Bus,
+            addr,
+            written_value,
+            ..
+        } => format!("buswrite addr={addr:X} value={written_value:X}"),
+        WsBusTraceEvent::Read {
             space: TraceWriteKind::Memory,
             addr,
             value,

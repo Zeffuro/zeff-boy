@@ -297,7 +297,9 @@ fn execute(
         while let Some(response) = next(worker)? {
             let mut progress = control.progress.lock().unwrap();
             match response {
-                EmuResponse::Netplay(NetResponse::Ready) => progress.ready = true,
+                EmuResponse::Netplay(NetResponse::Ready { md_input: None }) => {
+                    progress.ready = true
+                }
                 EmuResponse::Netplay(NetResponse::Presented {
                     frame,
                     step_complete,

@@ -1,4 +1,5 @@
 use super::constants::OUTPUT_CHANNELS;
+mod frontend;
 mod kernel;
 use kernel::KERNEL;
 
@@ -40,14 +41,18 @@ impl Output {
         let index = (position / master) as usize;
         let fraction = (((position % master) << INTERPOLATION_BITS) / master) as i64;
         let mut sum = 0;
-        for (tap, (&first, &second)) in KERNEL[index].iter().zip(&KERNEL[index + 1]).enumerate() {
+        let start = (self.cursor + offset) % HISTORY;
+        let (head, tail) = self.pending.split_at_mut(start);
+        let targets = tail.iter_mut().chain(head.iter_mut());
+        for ((&first, &second), pending) in
+            KERNEL[index].iter().zip(&KERNEL[index + 1]).zip(targets)
+        {
             let first = i64::from(first);
             let second = i64::from(second);
             let weight = first + (((second - first) * fraction) >> INTERPOLATION_BITS);
             sum += weight;
-            let slot = (self.cursor + offset + tap) % HISTORY;
             for (side, delta) in delta.into_iter().enumerate() {
-                self.pending[slot][side] += delta * weight;
+                pending[side] += delta * weight;
             }
         }
         // Fractional interpolation must retain an exact unit step to prevent DC drift.

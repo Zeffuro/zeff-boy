@@ -71,20 +71,20 @@ impl PrefetchCpu {
             if size == Size::Long {
                 pipeline.words[0]
             } else {
-                operand.retained
+                operand.retained.value
             },
         );
-        let fetched = self.physical_read(bus, phase)?;
+        let fetched = self.physical_fetch(bus, phase)?;
         if size == Size::Long {
             self.registers.d[profile.destination] = result;
             self.entry_idle(bus, 2)
                 .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))?;
         }
         self.registers.pc = operand.anchor;
-        self.pipeline = Some(Pipeline {
-            address: operand.anchor,
-            words: [operand.retained, fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(
+            operand.anchor,
+            [operand.retained, fetched],
+        ));
         Ok(())
     }
 }

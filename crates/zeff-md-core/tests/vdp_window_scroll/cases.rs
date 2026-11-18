@@ -195,40 +195,35 @@ pub fn scroll_tables_and_modes() {
     let saved = memory.clone();
     for mode in 0..=255u8 {
         publish(&mut bank, 11, mode);
-        for line in [0, 7, 8, 239, 255] {
+        for line in [0, 1, 7, 8, 9, 15, 16, 223, 224, 239, 255] {
             for column in [0, 15] {
                 for (plane, b) in [(VdpPlane::A, false), (VdpPlane::B, true)] {
-                    if mode % 4 == 1 {
-                        assert_eq!(
-                            memory.scroll_offsets(&bank, plane, line, column),
-                            Err(VdpRenderError::UnsupportedScrollMode(mode))
-                        );
+                    let row = match mode % 4 {
+                        0 => 0,
+                        1 => line & 7,
+                        2 => line / 8 * 8,
+                        _ => line,
+                    };
+                    let col = if mode / 4 % 2 == 0 { 0 } else { column };
+                    let expected = if b {
+                        (u16::from(255 - row), 1023 - u16::from(col) * 17)
                     } else {
-                        let row = match mode % 4 {
-                            0 => 0,
-                            2 => line / 8 * 8,
-                            _ => line,
-                        };
-                        let col = if mode / 4 % 2 == 0 { 0 } else { column };
-                        let expected = if b {
-                            (u16::from(255 - row), 1023 - u16::from(col) * 17)
-                        } else {
-                            (u16::from(row), u16::from(col) * 31)
-                        };
-                        assert_eq!(
-                            memory.scroll_offsets(&bank, plane, line, column),
-                            Ok(expected)
-                        );
-                    }
+                        (u16::from(row), u16::from(col) * 31)
+                    };
+                    assert_eq!(
+                        memory.scroll_offsets(&bank, plane, line, column),
+                        Ok(expected)
+                    );
                 }
             }
         }
     }
-    for mode in [0, 2, 3, 4, 6, 7] {
+    for mode in 0..8 {
         publish(&mut bank, 11, mode);
         for line in 0..=255u8 {
             let row = match mode % 4 {
                 0 => 0,
+                1 => line & 7,
                 2 => line / 8 * 8,
                 _ => line,
             };
@@ -366,13 +361,21 @@ pub fn scroll_guards() {
     publish(&mut bank, 11, 1);
     assert_eq!(
         memory.sample_scrolled_plane(&bank, VdpPlane::B, 0, 0),
-        Err(VdpRenderError::UnsupportedScrollMode(1))
+        Ok(pixel(0, 0, false))
     );
+    for interlace in [2, 6] {
+        publish(&mut bank, 12, interlace);
+        assert_eq!(
+            memory.sample_scrolled_plane(&bank, VdpPlane::B, 0, 0),
+            Err(VdpRenderError::UnsupportedScrollMode(1))
+        );
+    }
+    publish(&mut bank, 12, 0);
     publish(&mut bank, 11, 0);
     publish(&mut bank, 16, 0x22);
     assert_eq!(
         memory.sample_scrolled_plane(&bank, VdpPlane::A, 0, 0),
-        Err(VdpRenderError::UnsupportedPlaneSize(0x22))
+        Ok(pixel(0, 0, false))
     );
 }
 

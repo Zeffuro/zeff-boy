@@ -1,3 +1,6 @@
+mod md;
+pub use md::firmware_plan_for_mega_drive_tmss;
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -440,6 +443,8 @@ pub fn catalog_specs() -> &'static [FirmwareSpec] {
 }
 
 const CATALOG_SPECS: &[FirmwareSpec] = &[
+    md::TMSS_SPEC,
+    md::SVP_SPEC,
     FirmwareSpec {
         id: "nintendo.gb.boot.dmg",
         display_name: "Game Boy DMG boot ROM",
@@ -884,6 +889,7 @@ mod tests {
 
     #[test]
     fn catalog_uses_stable_semantic_ids_not_filenames() {
+        md::assert_svp_spec();
         let gba = catalog_specs()
             .iter()
             .find(|spec| spec.id == "nintendo.gba.bios")

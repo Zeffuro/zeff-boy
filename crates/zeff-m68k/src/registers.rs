@@ -26,7 +26,6 @@ impl Registers {
         self.sr
     }
 
-    /// Reserved bits and later-family status fields are discarded.
     pub fn set_status_register(&mut self, value: u16) {
         self.sr = value & STATUS_MASK;
     }

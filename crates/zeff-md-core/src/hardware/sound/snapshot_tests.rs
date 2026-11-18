@@ -18,7 +18,7 @@ fn memory(program: &[u8]) -> SoundMemory {
 
 #[test]
 fn prepared_ram_overwrites_the_whole_live_image_and_retains_value_isolation() {
-    let cartridge = cartridge();
+    let mut cartridge = cartridge();
     for (opcode, address, initial) in [
         (0x3a, 0x0100_u16, 0x17),
         (0x32, 0x0100, 0x17),
@@ -33,7 +33,7 @@ fn prepared_ram_overwrites_the_whole_live_image_and_retains_value_isolation() {
         let mut audio = Audio::default();
         PendingSound::prepare(&cpu, &memory, &cartridge, 0)
             .unwrap()
-            .publish(&mut cpu, &mut memory, &mut [], &mut audio);
+            .publish(&mut cpu, &mut memory, &mut [], &mut audio, &mut cartridge);
         let mut pending = PendingSound::prepare(&cpu, &memory, &cartridge, 105).unwrap();
         let index = usize::from(address) & SOUND_RAM_MASK;
         assert_eq!(memory.ram[index], initial);
@@ -49,7 +49,7 @@ fn prepared_ram_overwrites_the_whole_live_image_and_retains_value_isolation() {
         memory.request(true);
         memory.irq_asserted = true;
         memory.set_reset(opcode == 0x3a);
-        pending.publish(&mut cpu, &mut memory, &mut [], &mut audio);
+        pending.publish(&mut cpu, &mut memory, &mut [], &mut audio, &mut cartridge);
         assert_eq!(&memory.ram[..], prepared);
         assert_eq!(memory.bank, 0x140);
         assert!(memory.requested);
@@ -67,7 +67,7 @@ fn prepared_ram_overwrites_the_whole_live_image_and_retains_value_isolation() {
 
 #[test]
 fn status_refresh_uses_live_ram_sampled_inputs_and_rejects_transactionally() {
-    let cartridge = cartridge();
+    let mut cartridge = cartridge();
     let cpu = Cpu::new();
     let mut memory = memory(&[0x3a, 0, 0xc0, 0x76]);
     memory.bank = 0x140;
@@ -82,7 +82,7 @@ fn status_refresh_uses_live_ram_sampled_inputs_and_rejects_transactionally() {
     memory.irq_asserted = false;
     let mut refreshed = pending.clone();
     refreshed
-        .refresh_opn2(&cpu, &memory, &cartridge, &audio)
+        .refresh_reads(&cpu, &memory, &cartridge, &audio)
         .unwrap();
     assert_eq!(refreshed.cpu.regs().a, 0x80);
     assert_eq!(refreshed.memory.ram[0x0777], 0xa6);
@@ -91,7 +91,13 @@ fn status_refresh_uses_live_ram_sampled_inputs_and_rejects_transactionally() {
     assert!(refreshed.memory.irq_asserted);
     assert_eq!(audio, original_audio);
     let mut published_cpu = cpu.clone();
-    refreshed.publish(&mut published_cpu, &mut memory, &mut [], &mut audio);
+    refreshed.publish(
+        &mut published_cpu,
+        &mut memory,
+        &mut [],
+        &mut audio,
+        &mut cartridge,
+    );
     assert_eq!(memory.ram[0x0777], 0xa6);
     assert_eq!(memory.bank, 0x140);
     assert!(!memory.irq_asserted);
@@ -101,14 +107,14 @@ fn status_refresh_uses_live_ram_sampled_inputs_and_rejects_transactionally() {
         let mut source = memory.clone();
         match failure {
             0 => source.ram[0] = 0,
-            1 => source.ram[..3].copy_from_slice(&[0x3a, 4, 0x40]),
+            1 => source.ram[..3].copy_from_slice(&[0x3a, 0, 0x7f]),
             _ => rejected.deadline += 1,
         }
         let original = rejected.clone();
         let original_source = source.clone();
         let original_audio = audio.clone();
         let error = rejected
-            .refresh_opn2(&cpu, &source, &cartridge, &audio)
+            .refresh_reads(&cpu, &source, &cartridge, &audio)
             .unwrap_err();
         assert!(matches!(
             (failure, error),
@@ -116,7 +122,7 @@ fn status_refresh_uses_live_ram_sampled_inputs_and_rejects_transactionally() {
                 | (
                     1,
                     SoundFault::UnsupportedAccess {
-                        address: 0x4004,
+                        address: 0x7f00,
                         ..
                     }
                 )

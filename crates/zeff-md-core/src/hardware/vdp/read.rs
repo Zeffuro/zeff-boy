@@ -8,6 +8,7 @@ pub enum VdpReadError {
     Empty,
     UnknownIncrement,
     UnknownFifoHistory,
+    UnknownCram(u8),
     PrefetchPending,
     PendingIncrement,
     UnsupportedIncrement(u8),
@@ -30,12 +31,10 @@ impl VdpReadCache {
         self.data
     }
 
-    /// Settled control/data writes clear readiness, retaining the buffered word.
     pub fn invalidate(&mut self) {
         self.ready = false;
     }
 
-    /// Publishes a completed fetch after FIFO drain; byte-slot timing is separate.
     pub fn complete_read(
         &mut self,
         memory: &VdpMemory,

@@ -17,6 +17,8 @@ const USER_VERSION: u32 = 1;
 const ZDBG_VERSION: u32 = 2;
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 
+mod md;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct UserSymbolFile {
     format: String,
@@ -108,7 +110,8 @@ fn load_file(path: &Path, identity: RomIdentity) -> anyhow::Result<UserSymbolFil
         "user symbol file is larger than 16 MiB"
     );
     let data = std::fs::read(path)?;
-    let file: UserSymbolFile = serde_json::from_slice(&data).context("invalid user symbol JSON")?;
+    let mut file: UserSymbolFile =
+        serde_json::from_slice(&data).context("invalid user symbol JSON")?;
     anyhow::ensure!(file.format == FORMAT, "unsupported user symbol format");
     anyhow::ensure!(
         file.system == system_code(identity.system),
@@ -118,6 +121,9 @@ fn load_file(path: &Path, identity: RomIdentity) -> anyhow::Result<UserSymbolFil
         file.rom_sha256 == encode_hash(identity.sha256),
         "ROM hash mismatch"
     );
+    if identity.system == System::Md {
+        md::validate_file(&mut file)?;
+    }
 
     Ok(file)
 }

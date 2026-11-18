@@ -11,6 +11,7 @@ impl PrefetchCpu {
     ) -> Result<bool, TimingFault<B::Error>> {
         let opcode = pipeline.words[0];
         if matches!(opcode, 0x003c | 0x023c | 0x0a3c) {
+            bus.instruction_input(pipeline.address.wrapping_add(2), pipeline.input(1));
             self.fetch(bus, pipeline.address.wrapping_add(4))?;
             self.idle(bus, 6)?;
             let sr = self.registers.status_register();
@@ -28,10 +29,7 @@ impl PrefetchCpu {
             let first = self.fetch(bus, pc)?;
             let second = self.fetch(bus, pc.wrapping_add(2))?;
             self.registers.pc = pc;
-            self.pipeline = Some(Pipeline {
-                address: pc,
-                words: [first, second],
-            });
+            self.pipeline = Some(Pipeline::sampled(pc, [first, second]));
             return Ok(true);
         }
         let family = opcode & 0xff00;
@@ -90,10 +88,7 @@ impl PrefetchCpu {
             }
         }
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: stream.cursor,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         Ok(true)
     }
 }

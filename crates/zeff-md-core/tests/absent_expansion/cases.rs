@@ -12,6 +12,8 @@ const PRIOR_WRITE: u32 = 0xff_8004;
 
 pub fn absent_views_reject_main_transfers_and_preserve_completed_effects() {
     let mut rows = 0;
+    let mut ignored_writes = 0;
+    let mut crossing_writes = 0;
     for concurrent_sound in [false, true] {
         for high in [0, 0x1200_0000] {
             for base in ABSENT_VIEWS {
@@ -53,17 +55,35 @@ pub fn absent_views_reject_main_transfers_and_preserve_completed_effects() {
                             .set_controller_extra_raw(ControllerPort::One, 5);
                         let before = machine.timing_snapshot().now().get();
                         let clock = machine.cpu_clock().0;
+                        let pc = machine.registers().pc;
                         let mut copied = machine.clone();
                         let result = machine.step_instruction();
                         assert_eq!(result, copied.step_instruction());
                         assert_eq!(machine, copied);
-                        assert!(matches!(
-                            result,
-                            Err(MachineFault::Main(TimingFault::Bus {
-                                source: BusError::UnsupportedAccess { address, direction: actual },
-                                ..
-                            })) if address == base && actual == direction
-                        ));
+                        let unused_cartridge_write =
+                            direction == Direction::Write && matches!(base, 0x40_0000 | 0x7f_fffe);
+                        let crossing =
+                            unused_cartridge_write && base == 0x7f_fffe && opcode == 0x23c0;
+                        let ignored = unused_cartridge_write && !crossing;
+                        if ignored {
+                            assert!(result.is_ok(), "{address:#010x} {opcode:#06x}: {result:?}");
+                            assert_eq!(machine.registers().pc, pc + 6);
+                            assert_eq!(machine.queued_words(), Some([0x4e71, 0x4e71]));
+                            ignored_writes += 1;
+                        } else {
+                            let fault_address = if crossing { 0x80_0000 } else { base };
+                            assert!(
+                                matches!(
+                                    result,
+                                    Err(MachineFault::Main(TimingFault::Bus {
+                                        source: BusError::UnsupportedAccess { address, direction: actual },
+                                        ..
+                                    })) if address == fault_address && actual == direction
+                                ),
+                                "{address:#010x} {opcode:#06x}: {result:?}"
+                            );
+                            crossing_writes += usize::from(crossing);
+                        }
                         assert!(machine.cpu_clock().0 > clock);
                         assert_eq!(
                             machine.timing_snapshot().now().get() - before,
@@ -76,12 +96,29 @@ pub fn absent_views_reject_main_transfers_and_preserve_completed_effects() {
                         assert_eq!(machine.peek(PRIOR_WRITE + 1), Some(0));
                         assert_eq!(machine.input().controller_extra_raw(ControllerPort::One), 5);
                         assert!(machine.sound_reset_asserted());
-                        let saved = machine.clone();
-                        assert_eq!(
-                            machine.step_instruction(),
-                            Err(MachineFault::Main(TimingFault::Frozen))
-                        );
-                        assert_eq!(machine, saved);
+                        if unused_cartridge_write {
+                            let bytes = if opcode == 0x23c0 {
+                                4
+                            } else if byte {
+                                1
+                            } else {
+                                2
+                            };
+                            for offset in 0..bytes {
+                                assert_eq!(machine.peek(address + offset), None);
+                            }
+                        }
+                        if ignored {
+                            fixture::instruction(&mut machine);
+                            assert_eq!(machine.registers().pc, pc + 8);
+                        } else {
+                            let saved = machine.clone();
+                            assert_eq!(
+                                machine.step_instruction(),
+                                Err(MachineFault::Main(TimingFault::Frozen))
+                            );
+                            assert_eq!(machine, saved);
+                        }
                         rows += 1;
                     }
                 }
@@ -89,6 +126,8 @@ pub fn absent_views_reject_main_transfers_and_preserve_completed_effects() {
         }
     }
     assert_eq!(rows, 256);
+    assert_eq!(ignored_writes, 28);
+    assert_eq!(crossing_writes, 4);
 }
 
 pub fn absent_views_do_not_supply_peek_backing() {

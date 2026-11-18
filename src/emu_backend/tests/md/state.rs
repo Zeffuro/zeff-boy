@@ -152,7 +152,7 @@ fn md_backend_restore_recovers_suspend_and_fault_only_after_success() {
     };
     md.debug_suspend();
     let before = machine(&backend).clone();
-    assert!(backend.encode_state_bytes().is_err());
+    assert_eq!(backend.encode_state_bytes().unwrap(), saved);
     assert!(backend.load_state_from_bytes(vec![0; 64]).is_err());
     assert_eq!(machine(&backend), &before);
     assert!(backend.is_suspended());
@@ -180,6 +180,7 @@ fn md_backend_restore_recovers_suspend_and_fault_only_after_success() {
             .unwrap()
             .contains("machine fault")
     );
+    assert!(faulted.encode_state_bytes().is_err());
     faulted.reset();
     faulted.step_frame();
     faulted.load_state_from_bytes(recover.clone()).unwrap();
@@ -212,12 +213,12 @@ fn md_backend_state_preserves_target_audio_policy() {
 }
 
 #[test]
-fn md_backend_direct_trait_admits_only_ordinary_save_state_capability() {
+fn md_backend_direct_trait_admits_save_states_and_rewind() {
     let backend = load(rom(b'U', &LOOP), BackendLoadConfig::default());
     let EmuBackend::Md(backend) = backend else {
         unreachable!()
     };
     assert!(backend.supports_save_states() && backend.supports_state_capture());
     assert!(backend.state_restores_framebuffer());
-    assert!(!backend.supports_rewind() && !backend.supports_replay());
+    assert!(backend.supports_rewind() && backend.supports_replay());
 }

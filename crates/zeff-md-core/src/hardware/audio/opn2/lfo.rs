@@ -102,6 +102,9 @@ pub(super) fn amplitude(counter: u8, sensitivity: u8) -> u16 {
 }
 
 pub(super) fn frequency(fnum: u16, counter: u8, sensitivity: u8) -> u16 {
+    if sensitivity == 0 {
+        return (fnum << 1) & 0xfff;
+    }
     let step = counter >> 2;
     let quarter = (step & 7) ^ if step & 8 == 0 { 0 } else { 7 };
     let depth = sensitivity.min(5);

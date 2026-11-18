@@ -13,10 +13,26 @@ pub(crate) fn collect_md_snapshot(
     snapshot: &SnapshotRequest,
     reusable_memory: Option<Vec<(Address, u8)>>,
 ) -> super::UiFrameData {
-    super::UiFrameData {
+    let mut data = super::UiFrameData {
+        debug_target: snapshot.debug_target,
+        debug_revision: snapshot.debug_revision,
         apu_debug: snapshot.show_apu_viewer.then(|| apu::snapshot(emu)),
-        cpu_debug: snapshot.want_debug_info.then(|| cpu::snapshot(emu)),
-        disassembly_view: disassembly::snapshot(emu, snapshot.show_disassembler),
+        cpu_debug: snapshot
+            .want_debug_info
+            .then(|| cpu::snapshot_target(emu, snapshot.debug_target)),
+        md_timed_ports: Some(crate::debug::md_timed_ports::MdTimedPortView {
+            can_submit: false,
+            sound_requested: emu.sound_bus_requested(),
+            sound_granted: emu.sound_bus_granted(),
+            sound_reset_asserted: emu.sound_reset_asserted(),
+            save: emu.debug_save_ports(),
+        }),
+        disassembly_view: disassembly::snapshot_target(
+            snapshot.debug_target,
+            emu,
+            snapshot.show_disassembler,
+            snapshot.disasm_target,
+        ),
         palette_debug: snapshot.any_viewer_open.then(|| graphics::palette(emu)),
         graphics_data: snapshot
             .any_vram_viewer_open
@@ -31,16 +47,24 @@ pub(crate) fn collect_md_snapshot(
         rom_size: emu.rom_bytes().len() as u32,
         rom_search_results: super::build_rom_search(snapshot.rom_search.as_ref(), emu.rom_bytes()),
         memory_page: memory_page(emu, snapshot, reusable_memory),
-        memory_search_results: super::build_memory_search_ranges(
+        memory_search_results: super::build_known_memory_search_ranges(
             snapshot.memory_search.as_ref(),
             &[
-                (0, emu.rom_bytes().len() as Address - 1),
+                (0, 0x7f_ffff),
+                (0xa0_0000, 0xa0_1fff),
+                (0xa0_4000, 0xa0_4003),
+                (0xa1_0000, 0xa1_001f),
+                (0xa1_5000, 0xa1_5005),
                 (0xff_0000, 0xff_ffff),
             ],
-            |address| emu.peek(address).unwrap_or(0xff),
+            |address| emu.peek(address),
         ),
         ..Default::default()
+    };
+    if snapshot.debug_target == crate::debug::DebugTarget::Sound {
+        data.md_timed_ports = None;
     }
+    data
 }
 
 fn memory_page(
@@ -92,6 +116,7 @@ fn rom_info(emu: &Emulator) -> RomDebugInfo {
         heading: "Mega Drive Cartridge",
         fields: vec![
             ("Selected console region", region_label(emu.region()).into()),
+            ("Timing", format!("{:?}", emu.timing_model())),
             ("ROM size", format!("{} bytes", emu.rom_bytes().len())),
         ],
     }];

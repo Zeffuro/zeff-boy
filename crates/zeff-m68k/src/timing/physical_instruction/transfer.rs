@@ -47,6 +47,17 @@ impl PrefetchCpu {
             .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))
     }
 
+    pub(super) fn physical_fetch<B: InstructionBus>(
+        &mut self,
+        bus: &mut B,
+        phase: TransferPhase,
+    ) -> Result<InstructionInput, TransferExit<B::Error>> {
+        self.physical_reserve()?;
+        self.physical_detect(bus, phase)?;
+        let report = bus.read_instruction_fetch(phase.access, self.clock);
+        self.physical_report(bus, phase, report)
+    }
+
     pub(super) fn physical_read<B: InstructionBus>(
         &mut self,
         bus: &mut B,

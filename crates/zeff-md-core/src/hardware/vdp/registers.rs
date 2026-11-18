@@ -1,5 +1,7 @@
 use super::constants::*;
 use zeff_emu_common::time::MasterTicks;
+#[cfg(test)]
+mod clock_fixture;
 mod state;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +29,6 @@ pub enum VdpRegisterError {
     ClockOverflow,
 }
 
-/// Publishes mode-5 payloads on the known internal phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VdpRegisterPipeline {
     epoch: MasterTicks,
@@ -37,6 +38,11 @@ pub struct VdpRegisterPipeline {
 }
 
 impl VdpRegisterPipeline {
+    pub(in crate::hardware::vdp) fn advance_interval_clock(&mut self, at: MasterTicks) {
+        debug_assert!(self.pending.is_none() && at > self.now);
+        self.now = at;
+    }
+
     pub(super) fn publish_dma_counters(&mut self, dma: super::VdpDmaRegisters) {
         let [low, high] = dma.length().to_le_bytes();
         self.registers[usize::from(DMA_LENGTH_LOW_REGISTER)] = Some(low);
@@ -82,8 +88,8 @@ impl VdpRegisterPipeline {
                 .is_none_or(|previous| (previous ^ value) & MEMORY_MODE_MASK != 0),
             DISPLAY_SIZE_REGISTER => {
                 self.registers[usize::from(DISPLAY_SIZE_REGISTER)].is_none_or(|previous| {
-                    let deferred = if matches!(previous & INTERLACE_MODE_MASK, 0 | 6)
-                        && matches!(value & INTERLACE_MODE_MASK, 0 | 6)
+                    let deferred = if matches!(previous & INTERLACE_MODE_MASK, 0 | 2 | 6)
+                        && matches!(value & INTERLACE_MODE_MASK, 0 | 2 | 6)
                     {
                         INTERLACE_MODE_MASK
                     } else {
@@ -107,12 +113,10 @@ impl VdpRegisterPipeline {
                 .is_some_and(|previous| (previous ^ value) & MEMORY_MODE_MASK == DISPLAY_ENABLE)
     }
 
-    /// Published raw payloads for inspection; None denotes an unknown value.
     pub fn registers(&self) -> &[Option<u8>; REGISTER_COUNT as usize] {
         &self.registers
     }
 
-    /// The published R15 setting; unknown until its first write completes.
     pub fn auto_increment(&self) -> Option<u8> {
         self.registers[usize::from(AUTO_INCREMENT_REGISTER)]
     }
@@ -173,7 +177,7 @@ impl VdpRegisterPipeline {
         index: u8,
         value: u8,
     ) -> Result<VdpRegisterWrite, VdpRegisterError> {
-        self.queue_register_at(index, value, false)
+        self.queue_register_at(index, value, false, false)
     }
 
     pub(super) fn queue_control_register(
@@ -181,7 +185,16 @@ impl VdpRegisterPipeline {
         index: u8,
         value: u8,
     ) -> Result<VdpRegisterWrite, VdpRegisterError> {
-        self.queue_register_at(index, value, true)
+        self.queue_register_at(index, value, true, false)
+    }
+
+    pub(super) fn queue_qualified_blank(
+        &mut self,
+        index: u8,
+        value: u8,
+        allow_edge: bool,
+    ) -> Result<VdpRegisterWrite, VdpRegisterError> {
+        self.queue_register_at(index, value, allow_edge, true)
     }
 
     fn queue_register_at(
@@ -189,13 +202,14 @@ impl VdpRegisterPipeline {
         index: u8,
         value: u8,
         allow_edge: bool,
+        qualified_blank: bool,
     ) -> Result<VdpRegisterWrite, VdpRegisterError> {
         if index >= REGISTER_COUNT {
             return Err(VdpRegisterError::UnsupportedRegister(index));
         }
-        if (index == MODE_REGISTER && value & MODE5_ENABLE == 0)
-            || (index == DISPLAY_SIZE_REGISTER
-                && super::mode::HorizontalMode::from_register(value).is_none())
+        if index == MODE_REGISTER && value & MODE5_ENABLE == 0 && !qualified_blank
+            || index == DISPLAY_SIZE_REGISTER
+                && super::mode::HorizontalMode::from_register(value).is_none()
         {
             return Err(VdpRegisterError::UnsupportedModeChange { index, value });
         }

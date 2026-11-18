@@ -1,4 +1,5 @@
 use super::*;
+pub(in crate::emu_backend) mod md;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NetplayRomMedia {
@@ -28,6 +29,9 @@ fn authenticated_media(
 ) -> bool {
     let extension = match system {
         ActiveSystem::Nes => "nes",
+        ActiveSystem::Md if has_extension(rom, "gen") => "gen",
+        ActiveSystem::Md if has_extension(rom, "bin") => "bin",
+        ActiveSystem::Md => "md",
         ActiveSystem::MasterSystem => "sms",
         ActiveSystem::Sg1000 => "sg",
         ActiveSystem::Pce => "pce",
@@ -88,6 +92,18 @@ pub(super) fn capture(
         && config
             .netplay_browser_media
             .is_some_and(|media| Some(media.hash) == hash && media.len == len as u64);
+    if let EmuBackend::Md(md) = backend
+        && let Some(hash) = hash
+    {
+        md::capture(
+            md,
+            hash,
+            len,
+            authenticated,
+            unmodified,
+            config.initial_input.unwrap_or_default() == (0, 0),
+        )?;
+    }
     if let EmuBackend::Nes(nes) = backend {
         nes.set_netplay_media(authenticated.then(|| NetplayRomMedia {
             hash: hash.expect("NES source hash must exist"),

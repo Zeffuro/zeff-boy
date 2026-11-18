@@ -24,6 +24,7 @@ mod netplay;
 pub(in crate::emu_thread) mod tas_control;
 mod tas_repair;
 mod tcp_link;
+mod timed_ports;
 
 const PENDING_LINK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -52,9 +53,11 @@ pub(super) struct EmuLoop {
     speculation: SpeculationBoundary,
     save_recovery_on_shutdown: bool,
     tas_control: TasControl,
+    md_tas: Option<tas_control::md::MdLiveControl>,
     tas_repair: tas_repair::TasRepairWorkerState,
     netplay: Option<crate::netplay::session::Session>,
     netplay_restore_failed: bool,
+    md_netplay_baseline: Option<netplay::MdWorkerBaseline>,
 }
 
 pub(super) struct EmuLoopConfig {
@@ -112,9 +115,11 @@ impl EmuLoop {
             speculation: SpeculationBoundary::default(),
             save_recovery_on_shutdown: config.save_recovery_on_shutdown,
             tas_control: TasControl::new(),
+            md_tas: None,
             tas_repair: tas_repair::TasRepairWorkerState::default(),
             netplay: None,
             netplay_restore_failed: false,
+            md_netplay_baseline: None,
         }
     }
 
@@ -130,7 +135,7 @@ impl EmuLoop {
             self.clear_disconnected_tcp_link();
             self.flush_battery_sram_if_due(std::time::Instant::now());
 
-            let command = if self.uncapped_mode {
+            let command = if self.uncapped_mode && !self.backend.is_suspended() {
                 match self.cmd_rx.try_recv() {
                     Ok(cmd) => Some(cmd),
                     Err(crossbeam_channel::TryRecvError::Empty) => None,
@@ -174,9 +179,10 @@ impl EmuLoop {
                     }
                     break;
                 }
-            } else if self.uncapped_mode {
+            } else if self.uncapped_mode && !self.backend.is_suspended() {
                 self.speculation.invalidate();
                 let frame_count = self.backend.frame_count();
+                let md_time_before = self.backend.md_execution_time();
                 EmuThread::run_uncapped_batch(
                     &mut self.backend,
                     &self.last_cheats,
@@ -190,7 +196,9 @@ impl EmuLoop {
                     &mut self.runtime_fault,
                     self.uncapped_batch_size,
                 );
-                if self.backend.frame_count() != frame_count {
+                if self.backend.frame_count() != frame_count
+                    || md_time_before != self.backend.md_execution_time()
+                {
                     self.battery_flush.mark_potentially_dirty();
                 }
                 if !self.runtime_fault.can_step() {
@@ -201,6 +209,8 @@ impl EmuLoop {
     }
 
     fn handle_command(&mut self, command: EmuCommand) -> bool {
+        #[cfg(test)]
+        super::audio_timing::worker_dequeue(&command);
         let command = match self.dispatch_netplay(command) {
             std::ops::ControlFlow::Continue(command) => command,
             std::ops::ControlFlow::Break(alive) => return alive,
@@ -257,9 +267,29 @@ impl EmuLoop {
             }
 
             EmuCommand::StepFrames(input) => {
+                if input.debug_actions.md_timed_ports.is_some() {
+                    return self.deliver_md_timed_ports(*input);
+                }
+                #[cfg(test)]
+                let trace_id = input.audio_timing_request;
+                #[cfg(test)]
+                super::audio_timing::record(trace_id, "worker_start", 0, input.frames as u64, 0, 0);
                 let input = *input;
                 self.audio_recording_capture = input.audio.recording_capture;
-                let debugger_mutation = !input.debug_actions.memory_writes.is_empty();
+                let debugger_mutation = match self
+                    .backend
+                    .debugger_memory_mutation(&input.debug_actions, self.runtime_fault.can_step())
+                {
+                    Ok(accepted) => accepted,
+                    Err(error) => {
+                        if !self.send_resp(EmuResponse::MemoryWriteRejected(error)) {
+                            return false;
+                        }
+                        false
+                    }
+                };
+                let instruction_step_requested = input.debug_step && !input.debug_continue;
+                let md_time_before = self.backend.md_execution_time();
                 let local_context = self.game_boy_replay_link.is_none()
                     && self.wonder_swan_replay_link.is_none()
                     && self.tcp_link.is_none();
@@ -306,6 +336,8 @@ impl EmuLoop {
                     self.clear_disconnected_tcp_link();
                     result
                 };
+                #[cfg(test)]
+                super::audio_timing::result(trace_id, "result_built", &result);
                 let detached_frame = self.speculation.run_detached_frame(
                     &self.backend,
                     detached_request,
@@ -321,6 +353,8 @@ impl EmuLoop {
                 if super::commands::finalize_step_result(
                     &mut result,
                     debugger_mutation,
+                    instruction_step_requested
+                        || md_time_before != self.backend.md_execution_time(),
                     self.audio_recording_capture,
                     &mut self.pending_audio_discontinuities,
                     &self.runtime_fault,
@@ -328,6 +362,8 @@ impl EmuLoop {
                 ) {
                     self.battery_flush.mark_potentially_dirty();
                 }
+                #[cfg(test)]
+                super::audio_timing::ready(trace_id, &mut result);
                 let preserve_delivery = EmuThread::frame_requires_preserved_delivery(
                     &result,
                     self.audio_recording_capture.active,
@@ -370,8 +406,7 @@ impl EmuLoop {
                 if !self.finalize_load_state(
                     result.map(|(_, outcome)| outcome),
                     label,
-                    buttons_pressed,
-                    dpad_pressed,
+                    Some((buttons_pressed, dpad_pressed)),
                 ) {
                     return false;
                 }
@@ -395,7 +430,7 @@ impl EmuLoop {
             } => {
                 let label = path.display().to_string();
                 let result = self.backend.load_state_from_path(&path);
-                if !self.finalize_load_state(result, label, buttons_pressed, dpad_pressed) {
+                if !self.finalize_load_state(result, label, Some((buttons_pressed, dpad_pressed))) {
                     return false;
                 }
             }
@@ -452,6 +487,12 @@ impl EmuLoop {
                         )
                     })
                 });
+                let input = if matches!(&self.backend, EmuBackend::Md(_)) && replay_events.is_some()
+                {
+                    None
+                } else {
+                    Some((buttons_pressed, dpad_pressed))
+                };
                 let replay_load = replay_events.is_some()
                     || has_game_boy_link
                     || has_wonder_swan_link
@@ -597,12 +638,7 @@ impl EmuLoop {
                     self.game_boy_replay_link = staged_game_boy_replay_link;
                     self.wonder_swan_replay_link = staged_wonder_swan_replay_link;
                 }
-                if !self.finalize_load_state(
-                    result,
-                    "(replay)".to_string(),
-                    buttons_pressed,
-                    dpad_pressed,
-                ) {
+                if !self.finalize_load_state(result, "(replay)".to_string(), input) {
                     return false;
                 }
             }
@@ -705,15 +741,13 @@ impl EmuLoop {
         &mut self,
         result: anyhow::Result<zeff_emu_common::StateRestoreOutcome>,
         label: String,
-        buttons_pressed: u8,
-        dpad_pressed: u8,
+        input: Option<(u8, u8)>,
     ) -> bool {
         let resp = EmuThread::respond_load_state(
             &mut self.backend,
             result,
             label,
-            buttons_pressed,
-            dpad_pressed,
+            input,
             &self.shared_framebuffer,
         );
         let loaded = (super::commands::LoadFinalizationContext {
@@ -723,6 +757,7 @@ impl EmuLoop {
             cheats: &self.last_cheats,
             audio_recording_capture: self.audio_recording_capture,
             pending_audio_discontinuities: &mut self.pending_audio_discontinuities,
+            runtime_fault: &mut self.runtime_fault,
         })
         .finalize(&resp, |frame_duration_ns| {
             self.frame_duration_ns
@@ -762,8 +797,7 @@ impl EmuLoop {
                 self.finalize_load_state(
                     result,
                     path.display().to_string(),
-                    buttons_pressed,
-                    dpad_pressed,
+                    Some((buttons_pressed, dpad_pressed)),
                 )
             }
             RecoveryCandidate::Available { freshness, .. } => {

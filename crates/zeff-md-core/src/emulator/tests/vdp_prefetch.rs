@@ -44,11 +44,11 @@ fn access(address: u32, lanes: ByteLanes) -> BusAccess {
 pub fn transfer(machine: &mut Emulator, access: BusAccess) -> CycleResult<u16, BusError> {
     let clock = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .read_cycle(access, clock)
     } else {
         machine.bus.read_cycle(access, clock)
@@ -91,12 +91,12 @@ pub fn mapped_reads_with(
             (0xd8ff03, ByteLanes::Lower),
         ] {
             let mut machine = fixture(concurrent, 0x4e71, TARGET as u16);
-            machine.bus.prefetch_upper = Some(0xaa);
+            machine.bus.prefetch = Prefetch::UpperOnly(0xaa);
             let response = read(&mut machine, access(address, lanes));
             assert_eq!(response.result, Ok(WORDS[0]));
             assert_eq!(response.wait_clocks, 24);
             assert_eq!(machine.bus.now.get(), 252);
-            assert_eq!(machine.bus.prefetch_upper, None);
+            assert_eq!(machine.bus.prefetch.upper(), None);
             assert!(!machine.vdp().read_cache().is_ready());
             assert_eq!(machine.vdp().command().address, TARGET as u32 + 2);
         }
@@ -208,11 +208,11 @@ pub fn reserved_read_with(
     assert_eq!(pending.bank_access.unwrap().address, 0xff8001);
     assert!(pending.start >= machine.bus.now.get());
     assert!(pending.deadline > machine.bus.now.get());
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(60)
     .unwrap();
     assert_eq!(machine.peek(0xff8001), Some(0x5a));

@@ -35,7 +35,6 @@ fn advance_all(vdp: &mut Vdp, copies: &mut [Vdp], at: u64, region: Region) {
 
 #[test]
 fn publication_splits_literal_old_and_new_slot_timelines() {
-    // These offsets specify the existing logical calendar, not physical DE latency.
     for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
         for size in [0, H40_CLOCK_MASK] {
             for v30 in [false, true] {
@@ -126,7 +125,7 @@ fn half_served_odd_word_preserves_overwritten_first_byte_and_captured_address() 
                 let mut vdp = fixture(region, size, display, false, accept);
                 write(&mut vdp, 0x101, VRAM_WRITE_CODE, 0xcafe, region);
                 vdp.advance_to(tick(LINE + first), region).unwrap();
-                assert_eq!(&vdp.memory.vram()[0x100..0x102], &[0, 0xca]);
+                assert_eq!(&vdp.memory.vram()[0x100..0x102], &[0xfe, 0]);
                 vdp.memory
                     .write_word(
                         ControlCommand {
@@ -145,7 +144,7 @@ fn half_served_odd_word_preserves_overwritten_first_byte_and_captured_address() 
                 advance_all(&mut vdp, &mut copies, publication - 1, region);
                 assert_eq!(&vdp.memory.vram()[0x100..0x102], &[0x12, 0x5a]);
                 advance_all(&mut vdp, &mut copies, second, region);
-                assert_eq!(&vdp.memory.vram()[0x100..0x102], &[0xfe, 0x5a]);
+                assert_eq!(&vdp.memory.vram()[0x100..0x102], &[0x12, 0xca]);
                 assert!(vdp.fifo().is_empty());
                 assert_eq!(vdp.command().address, 0x103);
                 assert_eq!(vdp.registers().auto_increment(), Some(2));
@@ -347,7 +346,7 @@ fn display_exception_preserves_read_dma_unknown_and_structural_guards() {
         (MODE_REGISTER, mode ^ (DISPLAY_ENABLE | MODE5_ENABLE)),
         (MODE_REGISTER, mode ^ (DISPLAY_ENABLE | V30_ENABLE)),
         (MODE_REGISTER, mode ^ (DISPLAY_ENABLE | VRAM_128K_ENABLE)),
-        (DISPLAY_SIZE_REGISTER, H40_CLOCK_MASK),
+        (DISPLAY_SIZE_REGISTER, H40_CLOCK_MASK | INTERLACE_MODE_MASK),
         (DISPLAY_SIZE_REGISTER, 1),
     ] {
         let mut vdp = fixture.clone();

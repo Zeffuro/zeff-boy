@@ -10,6 +10,17 @@ pub enum VdpStatusError {
 
 impl State {
     pub(super) fn read_cpu_status(&mut self, region: Region) -> Result<u16, VdpPortError> {
+        if self.interrupts.staged_blank() {
+            return Err(VdpPortError::Status(VdpStatusError::UnknownBusHistory));
+        }
+        let word = self.read_cpu_status_internal(region)?;
+        if let Some(mut blank) = self.interrupts.blank_history() {
+            blank.retire_port();
+            self.interrupts.set_blank_history(Some(blank));
+        }
+        Ok(word)
+    }
+    pub(super) fn read_cpu_status_internal(&mut self, region: Region) -> Result<u16, VdpPortError> {
         self.validate_runtime_configuration(region)
             .map_err(VdpPortError::Schedule)?;
         let mut word = self.fifo.status_bits() | self.interrupts.status_bits();
@@ -38,6 +49,9 @@ impl State {
         Ok(word)
     }
     pub(super) fn read_status(&mut self, region: Region) -> Result<u16, VdpPortError> {
+        if self.interrupts.staged_blank() {
+            return Err(VdpPortError::Status(VdpStatusError::UnknownBusHistory));
+        }
         self.validate_transfer_mode(region)
             .map_err(|error| match error {
                 VdpPortError::Schedule(VdpScheduleError::Interrupt(VdpInterruptError::Timing(
@@ -66,6 +80,10 @@ impl State {
             word |= HBLANK_STATUS;
         }
         self.control.cancel_pending();
+        if let Some(mut blank) = self.interrupts.blank_history() {
+            blank.retire_port();
+            self.interrupts.set_blank_history(Some(blank));
+        }
         Ok(word)
     }
 }

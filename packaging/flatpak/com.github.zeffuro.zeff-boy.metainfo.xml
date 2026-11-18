@@ -8,7 +8,7 @@
   <description>
     <p>
       zeff-boy emulates Game Boy, Game Boy Color, Game Boy Advance, NES,
-      WonderSwan, and Sega 8-bit systems.
+      WonderSwan, Sega 8-bit, and experimental Mega Drive systems.
     </p>
   </description>
   <launchable type="desktop-id">com.github.zeffuro.zeff-boy.desktop</launchable>

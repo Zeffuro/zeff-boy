@@ -1,13 +1,51 @@
+mod rollback_memory;
 use super::*;
 use crate::constants::SOUND_CPU_DIVISOR;
 use crate::hardware::bus::ownership::{Requester, Reservation};
 use crate::hardware::vdp::SoundInterrupt;
 use zeff_z80::{BusState, Cpu, FetchedInstruction, PrefixState};
+mod advance;
+#[cfg(test)]
+mod banked_reads;
+#[cfg(test)]
+mod banked_writes;
+mod download;
+mod epoch;
 #[cfg(test)]
 mod irq_tests;
+#[cfg(test)]
+mod mixed_reservation_tests;
+#[cfg(feature = "sound-shadow-observer")]
+mod observer_traits;
+#[cfg(test)]
+mod or_bank_tests;
+mod prepare;
+#[cfg(test)]
+mod register_tests;
+mod replay;
+mod rmw;
+#[cfg(test)]
+mod sf001_fetch_tests;
+#[cfg(test)]
+mod sf001_tests;
+#[cfg(test)]
+mod sf002_tests;
+#[cfg(test)]
+mod sf004_tests;
+#[cfg(test)]
+mod split_serial_reads;
+#[cfg(test)]
+mod ssf2_tests;
 mod state;
+mod svp;
+mod svp_history;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+const CARTRIDGE_READ_CYCLES: u32 = 3;
+
+#[cfg_attr(
+    not(feature = "sound-shadow-observer"),
+    derive(Clone, Debug, PartialEq, Eq)
+)]
 pub(crate) struct PendingSound {
     pub cpu: Cpu,
     pub memory: SoundMemory,
@@ -15,25 +53,32 @@ pub(crate) struct PendingSound {
     pub deadline: u64,
     pub state: BusState,
     pub writes: WorkWrites,
+    pub register_writes: RegisterWrites,
+    pub sf001_writes: Sf001Writes,
+    pub sf002_writes: Sf002Writes,
     pub psg_writes: PsgWrites,
     pub opn2_writes: Opn2Writes,
     pub bank_access: Option<BankAccess>,
+    observed_bank_access: Option<BankAccess>,
+    svp_history: Option<Box<svp_history::SoundHistory>>,
     pub any_bank_access: bool,
     pub start: u64,
-    replay: Option<Opn2Replay>,
+    replay: Option<ReadReplay>,
     pub trace_origin: Option<zeff_emu_common::audio_trace::MdTraceOrigin>,
+    #[cfg(feature = "sound-shadow-observer")]
+    observer: observer::Token,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Preparation {
-    now: u64,
-    state: BusState,
-    bounded: bool,
-    opn2_status: u8,
+pub(crate) struct Preparation {
+    pub(crate) now: u64,
+    pub(crate) state: BusState,
+    pub(crate) bounded: bool,
+    pub(crate) opn2_status: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Opn2Replay {
+struct ReadReplay {
     preparation: Preparation,
     bank: u16,
     irq_asserted: bool,
@@ -42,209 +87,21 @@ struct Opn2Replay {
     bank_identity: Option<(u32, Direction)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RelativeReplay {
+    Jr,
+    Djnz,
+}
+
+pub(crate) struct PreparationPolicy {
+    pub(crate) irq_asserted: bool,
+    pub(crate) legacy_relative: Option<RelativeReplay>,
+}
+
 impl PendingSound {
-    pub fn prepare(
-        cpu: &Cpu,
-        memory: &SoundMemory,
-        cartridge: &Cartridge,
-        now: u64,
-    ) -> Result<Self, SoundFault> {
-        Self::prepare_with(
-            cpu,
-            memory,
-            cartridge,
-            Preparation {
-                now,
-                state: BusState::default(),
-                bounded: false,
-                opn2_status: 0,
-            },
-            memory.irq_asserted,
-        )
-    }
-
-    fn prepare_with(
-        cpu: &Cpu,
-        memory: &SoundMemory,
-        cartridge: &Cartridge,
-        preparation: Preparation,
-        irq_asserted: bool,
-    ) -> Result<Self, SoundFault> {
-        let mut pending = None;
-        Self::prepare_into(
-            &mut pending,
-            cpu,
-            memory,
-            cartridge,
-            preparation,
-            irq_asserted,
-        )?;
-        Ok(pending.unwrap())
-    }
-
-    fn prepare_into(
-        destination: &mut Option<Self>,
-        cpu: &Cpu,
-        memory: &SoundMemory,
-        cartridge: &Cartridge,
-        preparation: Preparation,
-        irq_asserted: bool,
-    ) -> Result<(), SoundFault> {
-        let Preparation {
-            now,
-            mut state,
-            bounded,
-            opn2_status,
-        } = preparation;
-        // Prepare in the final slot to keep the RAM snapshot from moving.
-        *destination = Some(Self {
-            cpu: cpu.clone(),
-            memory: memory.snapshot(),
-            instruction: FetchedInstruction {
-                pc: 0,
-                opcode: 0,
-                cycles: 0,
-            },
-            deadline: 0,
-            state,
-            writes: WorkWrites::default(),
-            psg_writes: PsgWrites::default(),
-            opn2_writes: Opn2Writes::default(),
-            bank_access: None,
-            any_bank_access: false,
-            start: now / SOUND_CPU_DIVISOR * SOUND_CPU_DIVISOR,
-            replay: None,
-            trace_origin: None,
-        });
-        let pending = destination.as_mut().unwrap();
-        let memory_cycle = bounded.then(|| state.next_memory_cycle()).flatten();
-        let mut candidate = CandidateBus::new(&mut pending.memory, cartridge);
-        candidate.memory.irq_asserted = irq_asserted;
-        candidate.opn2_status = opn2_status;
-        let instruction = if bounded {
-            pending
-                .cpu
-                .step_bus_segment(&mut candidate, &mut state)
-                .expect("owned sound CPU cannot be suspended")
-                .instruction
-        } else {
-            let step = pending
-                .cpu
-                .step_bounded(&mut candidate, &mut PrefixState::default())
-                .expect("owned sound CPU cannot be suspended");
-            if !step.complete {
-                return Err(SoundFault::UnsupportedOpcode {
-                    pc: step.instruction.pc,
-                    opcode: step.instruction.opcode,
-                });
-            }
-            step.instruction
-        };
-        if let Some(fault) = candidate.fault.get() {
-            return Err(fault);
-        }
-        if let Some(trap) = pending.cpu.trap() {
-            return Err(SoundFault::CpuTrap(trap));
-        }
-        let expected = cpu
-            .cycles()
-            .checked_add(u64::from(instruction.cycles))
-            .ok_or(SoundFault::ClockOverflow)?;
-        if pending.cpu.cycles() != expected {
-            return Err(SoundFault::ClockOverflow);
-        }
-        let deadline = (now / SOUND_CPU_DIVISOR)
-            .checked_add(u64::from(instruction.cycles))
-            .and_then(|cycles| cycles.checked_mul(SOUND_CPU_DIVISOR))
-            .ok_or(SoundFault::ClockOverflow)?;
-        let CandidateBus {
-            writes,
-            psg_writes,
-            opn2_writes,
-            bank_access,
-            accesses,
-            opn2_read,
-            ..
-        } = candidate;
-        let bank_access = bank_access.get();
-        let accesses = accesses.get();
-        pending.instruction = instruction;
-        pending.deadline = deadline;
-        pending.state = state;
-        pending.writes = writes;
-        pending.psg_writes = psg_writes;
-        pending.opn2_writes = opn2_writes;
-        pending.bank_access = memory_cycle
-            .filter(|cycles| *cycles == instruction.cycles && accesses == 1)
-            .and(bank_access);
-        pending.any_bank_access = bank_access.is_some();
-        pending.replay = opn2_read.get().then_some(Opn2Replay {
-            preparation,
-            bank: memory.bank,
-            irq_asserted,
-            cycles: instruction.cycles,
-            accesses,
-            bank_identity: bank_access.map(|access| (access.address, access.direction)),
-        });
-        pending.extend_bus_segment(0)?;
-        Ok(())
-    }
-
-    pub fn refresh_opn2(
-        &mut self,
-        cpu: &Cpu,
-        memory: &SoundMemory,
-        cartridge: &Cartridge,
-        audio: &Audio,
-    ) -> Result<(), SoundFault> {
-        let Some(replay) = self.replay else {
-            return Ok(());
-        };
-        // CPU and RAM remain unpublished; bank and interrupt inputs were sampled at preparation.
-        let mut source = memory.snapshot();
-        source.bank = replay.bank;
-        source.irq_asserted = replay.irq_asserted;
-        let mut refreshed = Self::prepare_with(
-            cpu,
-            &source,
-            cartridge,
-            Preparation {
-                opn2_status: audio.opn2_status_at(self.deadline),
-                ..replay.preparation
-            },
-            replay.irq_asserted,
-        )?;
-        let stable = refreshed.replay.is_some_and(|next| {
-            next.cycles == replay.cycles
-                && next.accesses == replay.accesses
-                && next.bank_identity == replay.bank_identity
-        }) && refreshed.instruction.pc == self.instruction.pc
-            && refreshed.instruction.opcode == self.instruction.opcode
-            && refreshed
-                .bank_access
-                .map(|access| (access.address, access.direction))
-                == self
-                    .bank_access
-                    .map(|access| (access.address, access.direction));
-        if !stable {
-            return Err(SoundFault::UnstableOpn2Read {
-                pc: self.instruction.pc,
-            });
-        }
-        let waits = self
-            .instruction
-            .cycles
-            .checked_sub(replay.cycles)
-            .ok_or(SoundFault::ClockOverflow)?;
-        refreshed.extend_bus_segment(u64::from(waits))?;
-        if refreshed.deadline != self.deadline {
-            return Err(SoundFault::ClockOverflow);
-        }
-        refreshed.start = self.start;
-        refreshed.trace_origin = self.trace_origin;
-        refreshed.replay = None;
-        *self = refreshed;
-        Ok(())
+    #[cfg(test)]
+    pub(crate) fn has_read_replay(&self) -> bool {
+        self.replay.is_some()
     }
 
     pub fn reservation(&self) -> Option<Reservation> {
@@ -261,9 +118,23 @@ impl PendingSound {
         let waits = if let Some(reservation) = self.reservation() {
             reservation.wait_after(occupied, SOUND_CPU_DIVISOR)
         } else {
-            self.vdp_waits(occupied)
+            self.exclusive_waits(occupied)
         }
         .ok_or(SoundFault::ClockOverflow)?;
+        self.apply_reservation_waits(waits)
+    }
+
+    fn apply_reservation_waits(&mut self, waits: u64) -> Result<(), SoundFault> {
+        let next_waits = self
+            .svp_history
+            .as_ref()
+            .map(|history| {
+                history
+                    .reservation_waits
+                    .checked_add(waits)
+                    .ok_or(SoundFault::ClockOverflow)
+            })
+            .transpose()?;
         let start = self
             .start
             .checked_add(
@@ -274,10 +145,13 @@ impl PendingSound {
             .ok_or(SoundFault::ClockOverflow)?;
         self.extend_bus_segment(waits)?;
         self.start = start;
+        if let Some(waits) = next_waits {
+            self.svp_history.as_mut().unwrap().reservation_waits = waits;
+        }
         Ok(())
     }
 
-    fn vdp_waits(&self, occupied: &[Reservation]) -> Option<u64> {
+    fn exclusive_waits(&self, occupied: &[Reservation]) -> Option<u64> {
         let mut reservation = Reservation {
             requester: Requester::SOUND,
             ticks: self.start..self.deadline,
@@ -286,7 +160,7 @@ impl PendingSound {
             let before = reservation.ticks.start;
             for slot in occupied
                 .iter()
-                .filter(|slot| slot.requester == Requester::VDP)
+                .filter(|slot| matches!(slot.requester, Requester::VDP | Requester::MAIN_RMW))
             {
                 let elapsed = reservation
                     .wait_after(std::slice::from_ref(slot), SOUND_CPU_DIVISOR)?
@@ -319,12 +193,15 @@ impl PendingSound {
         memory: &mut SoundMemory,
         ram: &mut [u8],
         audio: &mut Audio,
+        cartridge: &mut Cartridge,
     ) {
         assert!(
             self.replay.is_none(),
-            "OPN2 reads refreshed before publication"
+            "timed reads refreshed before publication"
         );
-        audio.advance_to(self.deadline);
+        audio.request_advance_to(self.deadline);
+        #[cfg(feature = "sound-shadow-observer")]
+        observer::publication(&self.observer);
         let trace_origin = audio.trace_origin;
         if audio.trace.is_enabled() {
             audio.trace_origin = self.trace_origin;
@@ -336,22 +213,37 @@ impl PendingSound {
         memory.ram = self.memory.ram.snapshot();
         memory.bank = self.memory.bank;
         self.writes.publish(ram);
+        self.register_writes.publish(cartridge);
+        self.sf001_writes.publish(cartridge);
+        self.sf002_writes.publish(cartridge);
+        if let Some(board) = &mut cartridge.download
+            && let Some(access) = self.bank_access
+            && access.direction == Direction::Write
+            && crate::cartridge::download::memory(access.address)
+        {
+            assert!(
+                board.write(access.address, access.value),
+                "qualified Download store"
+            );
+        }
         memory.complete_boundary();
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct SoundSchedule {
     pub pending: Option<PendingSound>,
+    pub(crate) rmw_checkpoint: Option<Box<PendingSound>>,
     pub fault: Option<SoundFault>,
     pub state: BusState,
+    pub epoch: Option<epoch::LocalEpoch>,
 }
 
 pub(crate) struct SoundInterval<'a> {
     pub ticks: std::ops::Range<u64>,
     pub occupied: &'a [Reservation],
     pub audio: &'a mut Audio,
-    pub sound_irq: Option<SoundInterrupt>,
+    pub sound_irq: Option<&'a SoundInterrupt>,
 }
 
 impl<'a> SoundInterval<'a> {
@@ -366,89 +258,99 @@ impl<'a> SoundInterval<'a> {
 }
 
 impl SoundSchedule {
+    pub(crate) fn rollback_boundary_ready(&self) -> bool {
+        let Self {
+            pending,
+            rmw_checkpoint,
+            fault,
+            state: _,
+            epoch,
+        } = self;
+        rmw_checkpoint.is_none()
+            && fault.is_none()
+            && epoch.is_none()
+            && pending.as_ref().is_none_or(|pending| {
+                let PendingSound {
+                    cpu: _,
+                    memory: _,
+                    instruction: _,
+                    deadline: _,
+                    state: _,
+                    writes: _,
+                    register_writes: _,
+                    sf001_writes: _,
+                    sf002_writes: _,
+                    psg_writes: _,
+                    opn2_writes: _,
+                    bank_access: _,
+                    observed_bank_access: _,
+                    svp_history,
+                    any_bank_access: _,
+                    start: _,
+                    replay: _,
+                    trace_origin,
+                    #[cfg(feature = "sound-shadow-observer")]
+                        observer: _,
+                } = pending;
+                trace_origin.is_none() && svp_history.is_none()
+            })
+    }
+
+    pub(crate) fn local_pending_after(&self, end: u64) -> bool {
+        if self.fault.is_some() {
+            return false;
+        }
+        match (self.epoch_deadline(), self.pending.as_ref()) {
+            (Some(deadline), None) => deadline > end,
+            (None, Some(pending)) => {
+                pending.deadline > end && pending.bank_access.is_none() && !pending.any_bank_access
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
     pub fn advance(
         &mut self,
         cpu: &mut Cpu,
         memory: &mut SoundMemory,
-        cartridge: &Cartridge,
+        cartridge: &mut Cartridge,
         ram: &mut [u8],
         interval: SoundInterval<'_>,
     ) {
-        let SoundInterval {
-            ticks,
-            occupied,
-            audio,
-            sound_irq,
-        } = interval;
-        if self.fault.is_some() {
-            audio.advance_to(ticks.end);
-            return;
-        }
-        let mut cursor = ticks.start;
-        while cursor < ticks.end {
-            if self.pending.is_none() {
-                if memory.reset_asserted || memory.requested {
-                    memory.complete_boundary();
-                    break;
-                }
-                let irq = match sound_irq.map(|irq| irq.asserted_at(cursor)).transpose() {
-                    Ok(irq) => memory.irq_asserted || irq.unwrap_or(false),
-                    Err(error) => {
-                        self.fault = Some(SoundFault::VdpTiming(error));
-                        break;
-                    }
-                };
-                if let Err(fault) = PendingSound::prepare_into(
-                    &mut self.pending,
-                    cpu,
-                    memory,
-                    cartridge,
-                    Preparation {
-                        now: cursor,
-                        state: self.state,
-                        bounded: true,
-                        opn2_status: 0,
-                    },
-                    irq,
-                ) {
-                    self.pending = None;
-                    self.fault = Some(fault);
-                    break;
-                }
-                if audio.trace.is_enabled() {
-                    self.pending.as_mut().unwrap().trace_origin =
-                        Some(crate::hardware::audio::trace::sound_origin(
-                            cpu.regs().pc,
-                            memory.bank,
-                            cartridge,
-                        ));
-                }
-            }
-            if let Err(fault) = self.pending.as_mut().unwrap().reserve_after(occupied) {
-                self.pending = None;
-                self.fault = Some(fault);
-                break;
-            }
-            let deadline = self.pending.as_ref().unwrap().deadline;
-            if deadline > ticks.end {
-                break;
-            }
-            let completed = self.pending.as_mut().unwrap();
-            if let Err(fault) = completed.refresh_opn2(cpu, memory, cartridge, audio) {
-                self.pending = None;
-                self.fault = Some(fault);
-                break;
-            }
-            self.state = completed.state;
-            completed.publish(cpu, memory, ram, audio);
-            self.pending = None;
-            cursor = deadline;
-        }
-        audio.advance_to(ticks.end);
+        self.advance_observed(cpu, memory, cartridge, ram, interval);
     }
 
-    pub fn reset_cpu(&mut self, cpu: &mut Cpu, memory: &mut SoundMemory) {
+    #[cfg(test)]
+    pub(crate) fn advance_observed(
+        &mut self,
+        cpu: &mut Cpu,
+        memory: &mut SoundMemory,
+        cartridge: &mut Cartridge,
+        ram: &mut [u8],
+        interval: SoundInterval<'_>,
+    ) -> bool {
+        self.advance_owned(
+            cpu,
+            memory,
+            cartridge,
+            ram,
+            (interval, &mut crate::sound_trace::NoSoundCapture),
+        )
+    }
+
+    pub(crate) fn reset_cpu<C: crate::sound_trace::SoundCapture>(
+        &mut self,
+        cpu: &mut Cpu,
+        memory: &mut SoundMemory,
+        capture: &mut C,
+    ) {
+        capture.reset();
+        {
+            self.epoch = None;
+        }
         self.pending = None;
+        self.rmw_checkpoint = None;
         self.fault = None;
         self.state = BusState::default();
         cpu.reset();

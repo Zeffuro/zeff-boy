@@ -1,5 +1,6 @@
 use super::*;
 
+mod cycle;
 mod state;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,6 +14,10 @@ enum Phase {
 }
 
 impl IndexedCb {
+    pub(super) fn is_terminal_fetch(self) -> bool {
+        matches!(self.0, Phase::Terminal(_))
+    }
+
     pub(super) fn new(cpu: &Cpu, prefix: u8) -> Self {
         Self(Phase::Displacement(if prefix == Z80_PREFIX_FD {
             cpu.regs.iy
@@ -31,6 +36,7 @@ impl IndexedCb {
             Phase::Terminal(address) => {
                 // The terminal byte is a memory read, with two internal clocks and no refresh.
                 let opcode = cpu.fetch_u8(bus);
+                cpu.set_memptr(address);
                 (
                     Phase::Memory(rmw::Rmw::indexed_cb(address, opcode)),
                     CYCLES_INDEX_CB_TERMINAL,

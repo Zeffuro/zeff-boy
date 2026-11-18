@@ -400,6 +400,7 @@ impl EmulatorCore for GbBackend {
             MemoryRegionKind::PaletteRam
             | MemoryRegionKind::Oam
             | MemoryRegionKind::IoRegisters
+            | MemoryRegionKind::VideoScrollRam
             | MemoryRegionKind::ExternalWorkRam
             | MemoryRegionKind::InternalWorkRam => {
                 return Err(anyhow::anyhow!(

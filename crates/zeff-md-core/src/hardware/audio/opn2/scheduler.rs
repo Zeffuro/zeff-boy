@@ -7,6 +7,21 @@ pub(super) const CLOCK_PREFIX: u32 = 98;
 pub(super) const CLOCK_PERIOD: u32 = 72 * (constants::ENVELOPE_COUNTER_MAX as u32);
 pub(super) const CLOCK_END: u32 = CLOCK_PREFIX + CLOCK_PERIOD;
 pub(super) const OPERATOR_ORDER: [usize; 4] = [0, 2, 1, 3];
+const SHIFTED_OPERATORS: [u16; SLOTS] = {
+    let offsets = [SLOTS - 5, SLOTS - 4, SLOTS - 2, SLOTS - 1, 1];
+    let mut rows = [0; SLOTS];
+    let mut cycle = 0;
+    while cycle < SLOTS {
+        let mut field = 0;
+        while field < offsets.len() {
+            let slot = (cycle + offsets[field]) % SLOTS;
+            rows[cycle] |= (OPERATOR_ORDER[slot / CHANNELS] as u16) << (field * 2);
+            field += 1;
+        }
+        cycle += 1;
+    }
+    rows
+};
 pub(super) const ALL_OPERATORS: u8 = (1 << constants::OPERATORS) - 1;
 pub(super) const CARRIERS_AT_BOUNDARY: u8 = ALL_OPERATORS >> 1;
 
@@ -72,6 +87,13 @@ impl Scheduler {
         })
     }
 
+    pub(super) fn clock(&mut self) {
+        self.step += 1;
+        if self.step == CLOCK_END {
+            self.step = CLOCK_PREFIX;
+        }
+    }
+
     pub(super) fn advance_clock(&mut self, steps: u64) {
         let prefix = u64::from(CLOCK_PREFIX.saturating_sub(self.step));
         if steps < prefix {
@@ -86,9 +108,12 @@ impl Scheduler {
 }
 
 impl Opn2 {
+    #[cfg(test)]
     pub(super) fn accumulate_slot(&mut self, slot: usize) {
-        let channel = slot % CHANNELS;
-        let physical = slot / CHANNELS;
+        self.accumulate_operator(slot % CHANNELS, slot / CHANNELS);
+    }
+
+    fn accumulate_operator(&mut self, channel: usize, physical: usize) {
         let (raw, valid) = self.channels[channel].raw_operator(OPERATOR_ORDER[physical]);
         let algorithm = self.channels[channel].algorithm();
         if physical == 0 {
@@ -123,19 +148,24 @@ impl Opn2 {
     }
 
     pub(super) fn slot_frequency(&self, slot: usize) -> (u16, u8) {
-        let channel = slot % CHANNELS;
+        self.operator_frequency(slot % CHANNELS, OPERATOR_ORDER[slot / CHANNELS])
+    }
+
+    fn operator_frequency(&self, channel: usize, logical: usize) -> (u16, u8) {
         self.channels[channel]
-            .frequencies((channel == 2 && self.mode & 0xc0 != 0).then_some(self.special))
-            [OPERATOR_ORDER[slot / CHANNELS]]
+            .frequencies((channel == 2 && self.mode & 0xc0 != 0).then_some(self.special))[logical]
     }
 
     pub(super) fn clock_slot(&mut self) {
         let cycle = self.scheduler.step as usize % SLOTS;
+        let channel = cycle % CHANNELS;
+        let group = cycle / CHANNELS;
+        let logical = OPERATOR_ORDER[group];
         self.timer_a.clock(cycle, self.mode, &mut self.flags);
         self.timer_b.clock(cycle, self.mode, &mut self.flags);
         self.lfo.clock_slot(cycle);
-        let csm = cycle % CHANNELS == 2 && self.timer_a.csm();
-        self.slot_mut(cycle).sample_key(csm);
+        let csm = channel == 2 && self.timer_a.csm();
+        self.channels[channel].operator_mut(logical).sample_key(csm);
         let command = self.scheduler.command;
         if cycle == usize::from(command.channel) {
             for (group, logical) in OPERATOR_ORDER.into_iter().enumerate() {
@@ -144,41 +174,72 @@ impl Opn2 {
             }
         }
         self.publish_slot(cycle);
-        let consumed = (cycle + SLOTS - CHANNELS) % SLOTS;
-        self.accumulate_slot(consumed);
-        let prepared = (cycle + CHANNELS) % SLOTS;
-        self.channels[prepared % CHANNELS].prepare_modulation(OPERATOR_ORDER[prepared / CHANNELS]);
-        self.channels[consumed % CHANNELS].consume_history(OPERATOR_ORDER[consumed / CHANNELS]);
-        let rendered = (cycle + SLOTS - 5) % SLOTS;
-        self.slot_mut(rendered).capture_sample();
-        self.channels[rendered % CHANNELS].render_operator(OPERATOR_ORDER[rendered / CHANNELS]);
-        self.slot_mut((cycle + SLOTS - 4) % SLOTS).mask_increment();
-        self.slot_mut(rendered).advance_phase();
+        let consumed = (group + constants::OPERATORS - 1) % constants::OPERATORS;
+        self.accumulate_operator(channel, consumed);
+        let prepared = (group + 1) % constants::OPERATORS;
+        self.channels[channel].prepare_modulation(OPERATOR_ORDER[prepared]);
+        self.channels[channel].consume_history(OPERATOR_ORDER[consumed]);
+        let shifted = SHIFTED_OPERATORS[cycle];
+        let next_channel = if channel == CHANNELS - 1 {
+            0
+        } else {
+            channel + 1
+        };
+        let rendered = usize::from(shifted & 3);
+        self.channels[next_channel]
+            .operator_mut(rendered)
+            .capture_sample();
+        self.channels[next_channel].render_operator(rendered);
+        let mask_channel = if channel >= 4 {
+            channel - 4
+        } else {
+            channel + 2
+        };
+        self.channels[mask_channel]
+            .operator_mut(usize::from((shifted >> 2) & 3))
+            .mask_increment();
+        self.channels[next_channel]
+            .operator_mut(rendered)
+            .advance_phase();
         let frequency = self.scheduler.frequency;
-        let modulated = lfo::frequency(
-            frequency.0,
-            self.lfo.sampled,
-            self.channels[cycle % CHANNELS].pms(),
-        );
+        let modulated = lfo::frequency(frequency.0, self.lfo.sampled, self.channels[channel].pms());
         let valid = self.scheduler.frequency_valid;
-        self.slot_mut(cycle)
+        self.channels[channel]
+            .operator_mut(logical)
             .prepare_phase(frequency, modulated, valid);
-        self.slot_mut((cycle + SLOTS - 2) % SLOTS)
+        let envelope_channel = if channel < 2 {
+            channel + 4
+        } else {
+            channel - 2
+        };
+        self.channels[envelope_channel]
+            .operator_mut(usize::from((shifted >> 4) & 3))
             .clock_pipeline_envelope();
-        let generated = (cycle + SLOTS - 1) % SLOTS;
-        let omit_total_level = generated % CHANNELS == 2 && self.mode & 0xc0 == 0x80;
-        self.slot_mut(generated).generate_level(omit_total_level);
+        let generated_channel = if channel == 0 {
+            CHANNELS - 1
+        } else {
+            channel - 1
+        };
+        let generated = usize::from((shifted >> 6) & 3);
+        let omit_total_level = generated_channel == 2 && self.mode & 0xc0 == 0x80;
+        self.channels[generated_channel]
+            .operator_mut(generated)
+            .generate_level(omit_total_level);
         let counter = Scheduler::counter_at(self.scheduler.step + 1);
-        self.slot_mut((cycle + SLOTS - 1) % SLOTS)
+        self.channels[generated_channel]
+            .operator_mut(generated)
             .prepare_envelope(counter);
-        let am = lfo::amplitude(self.lfo.sampled, self.channels[cycle % CHANNELS].ams());
-        self.slot_mut(cycle).select_rate(frequency, am, valid);
-        self.scheduler.frequency = self.slot_frequency((cycle + 1) % SLOTS);
+        let am = lfo::amplitude(self.lfo.sampled, self.channels[channel].ams());
+        self.channels[channel]
+            .operator_mut(logical)
+            .select_rate(frequency, am, valid);
+        self.scheduler.frequency =
+            self.operator_frequency(next_channel, usize::from((shifted >> 8) & 3));
         self.scheduler.frequency_valid = true;
         if let Some(command) = self.scheduler.pending.take() {
             self.scheduler.command = command;
         }
-        self.scheduler.advance_clock(1);
+        self.scheduler.clock();
         if cycle == SLOTS - 1 {
             self.envelope_clock.clock();
         }
@@ -189,3 +250,9 @@ impl Opn2 {
 mod csm_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod geometry_tests;
+
+#[cfg(test)]
+mod clock_tests;

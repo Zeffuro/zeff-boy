@@ -48,7 +48,7 @@ pub extern "C" fn retro_set_environment(cb: retro_environment_t) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_video_refresh(cb: retro_video_refresh_t) {
-    *lock(&CB_VIDEO_REFRESH) = Some(cb);
+    lock(&CB_VIDEO_REFRESH).install(Some(cb));
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn retro_set_audio_sample(cb: retro_audio_sample_t) {
@@ -169,7 +169,7 @@ pub extern "C" fn retro_set_controller_port_device(port: c_uint, device: c_uint)
     if let Some(state) = core.as_mut()
         && (port as usize) < state.port_device.len()
     {
-        state.port_device[port as usize] = device;
+        state.set_port_device(port as usize, device);
     }
 }
 
@@ -219,24 +219,31 @@ pub extern "C" fn retro_run() {
             unsafe { poll() };
         }
 
-        let (buttons, dpad) = input::poll_joypad_port(0);
-        state.set_input(buttons, dpad);
+        if !state.poll_md_input() {
+            let (buttons, dpad) = input::poll_joypad_port(0);
+            state.set_input(buttons, dpad);
 
-        if state.supports_p2_lightgun() && state.port_device[1] == RETRO_DEVICE_LIGHTGUN {
-            let (trigger, hit) = input::poll_lightgun_port(1);
-            state.set_zapper_state(trigger, hit);
-        } else if state.supports_p2_joypad() {
-            let (b2, d2) = input::poll_joypad_port(1);
-            state.set_input_p2(b2, d2);
+            if state.supports_p2_lightgun() && state.port_device[1] == RETRO_DEVICE_LIGHTGUN {
+                let (trigger, hit) = input::poll_lightgun_port(1);
+                state.set_zapper_state(trigger, hit);
+            } else if state.supports_p2_joypad() {
+                let (b2, d2) = input::poll_joypad_port(1);
+                state.set_input_p2(b2, d2);
+            }
         }
-
         if let Err(error) = sram::import_external(state) {
             retro_log_error(&format!("retro_run: save RAM import failed: {error:#}"));
             return;
         }
         state.step_frame();
+        if let Some(mut av) = state.take_md_av_change() {
+            env_cmd(
+                RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,
+                std::ptr::from_mut(&mut av).cast(),
+            );
+        }
         if let Some(fault) = state.take_runtime_fault() {
-            retro_log_error(&format!("PC Engine runtime fault: {fault}"));
+            retro_log_error(&format!("Core runtime fault: {fault}"));
         }
         if let Some(dimensions) = state.pending_pce_native_output_dimensions() {
             let mut geometry = core::CoreState::pce_output_geometry(dimensions);
@@ -251,25 +258,13 @@ pub extern "C" fn retro_run() {
             return;
         }
 
-        let geometry = state.video_geometry();
-        let w = geometry.base_width;
-        let h = geometry.base_height;
-        let use_xrgb = USE_XRGB8888.load(Ordering::Relaxed);
-
-        if use_xrgb {
-            let xrgb = state.framebuffer_as_xrgb8888();
-            let pitch = w as usize * zeff_emu_common::system::RGBA_BYTES_PER_PIXEL;
-            if let Some(cb) = *lock(&CB_VIDEO_REFRESH) {
-                unsafe { cb(xrgb.as_ptr() as *const c_void, w, h, pitch) };
-            }
-        } else {
-            let rgb565 = state.framebuffer_as_rgb565();
-            let pitch = w as usize * core::LIBRETRO_RGB565_BYTES_PER_PIXEL;
-            if let Some(cb) = *lock(&CB_VIDEO_REFRESH) {
-                unsafe { cb(rgb565.as_ptr() as *const c_void, w, h, pitch) };
-            }
+        let (video_callback, generation) = {
+            let installed = lock(&CB_VIDEO_REFRESH);
+            installed.snapshot()
+        };
+        if let Some(cb) = video_callback {
+            state.present_video(cb, generation, USE_XRGB8888.load(Ordering::Relaxed));
         }
-
         state.drain_audio();
         let samples = &state.audio_buf;
 
@@ -318,19 +313,25 @@ pub extern "C" fn retro_cheat_reset() {
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub extern "C" fn retro_cheat_set(_index: c_uint, enabled: bool, code: *const c_char) {
+pub extern "C" fn retro_cheat_set(index: c_uint, enabled: bool, code: *const c_char) {
     let _ = catch_unwind(|| {
-        if !enabled || code.is_null() {
-            return;
-        }
-        let code_str = unsafe { CStr::from_ptr(code) };
-        let Ok(code_str) = code_str.to_str() else {
-            return;
+        let code = if enabled {
+            if code.is_null() {
+                return;
+            }
+            let Ok(code) = (unsafe { CStr::from_ptr(code) }).to_str() else {
+                return;
+            };
+            Some(code)
+        } else {
+            None
         };
         let mut core = lock(&CORE);
         if let Some(state) = core.as_mut() {
-            retro_log_info(&format!("retro_cheat_set: '{code_str}'"));
-            state.cheat_set(code_str);
+            if let Some(code) = code {
+                retro_log_info(&format!("retro_cheat_set: '{code}'"));
+            }
+            state.set_indexed_cheat(index, code);
         }
     });
 }

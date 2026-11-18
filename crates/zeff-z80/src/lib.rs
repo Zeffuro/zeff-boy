@@ -9,7 +9,16 @@ mod alu;
 mod bounded;
 pub use bounded::{BoundedStep, PrefixState};
 mod bus_segment;
-pub use bus_segment::BusState;
+pub use bus_segment::{
+    BusState, CopyCycleCompletion, CopyCycleKind, CopyCycleRequest, CopyReceipt, CycleCompletion,
+    CycleError, CycleInterrupts, CycleKind, CycleRequest, CycleSample, DjnzCompletion, DjnzKind,
+    DjnzPhase, DjnzReceipt, DjnzRequest, DjnzRetirement, DjnzTail, EdWordCompletion, EdWordKind,
+    EdWordPhase, EdWordRequest, Im1CycleCompletion, Im1CycleKind, Im1CycleRequest, Im1Receipt,
+    IndexedCbCycleCompletion, IndexedCbCycleKind, IndexedCbCycleRequest, IndexedMemoryCompletion,
+    IndexedMemoryKind, IndexedMemoryReceipt, IndexedMemoryRequest, JrCycleCompletion, JrCycleKind,
+    JrCycleRequest, JrReceipt, JrRetirement, JrTail, WordAddCompletion, WordAddKind, WordAddPhase,
+    WordAddReceipt, WordAddRequest, WordAddRetirement, WordAddTail,
+};
 mod cb;
 mod constants;
 pub use constants::*;
@@ -17,11 +26,21 @@ mod ed;
 mod exchange;
 mod flags;
 mod index;
+mod index_cycle;
 mod indexed_cb;
 mod indexed_memory;
 mod interrupt;
 mod load;
+mod m1_register;
+mod memptr;
 mod misc;
+pub use memptr::MemptrProfile;
+mod operand_cycle;
+mod register_cycle;
+mod retirement_evidence;
+pub use retirement_evidence::{
+    ConsumedInstructionByte, InstructionByteClass, RetirementEvidence, RetirementKind,
+};
 mod rmw;
 mod rotate;
 mod stack;
@@ -30,6 +49,12 @@ mod unprefixed;
 
 pub trait Z80Bus {
     fn cpu_read(&self, addr: u16) -> u8;
+
+    // Only classified instruction bytes use this read; HALT polls and IRQ operands do not.
+    #[inline]
+    fn cpu_read_instruction(&self, addr: u16) -> u8 {
+        self.cpu_read(addr)
+    }
     fn cpu_write(&mut self, addr: u16, value: u8);
 
     fn io_read(&mut self, port: u8) -> u8;
@@ -178,6 +203,8 @@ impl Registers {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cpu {
+    memptr: Option<u16>,
+    memptr_profile: MemptrProfile,
     reset_state: ResetState,
     regs: Registers,
     shadow: ShadowRegisters,
@@ -202,7 +229,13 @@ impl Cpu {
     }
 
     pub fn new_with_reset(reset_state: ResetState) -> Self {
+        Self::new_with_memptr_profile(reset_state, MemptrProfile::Legacy)
+    }
+
+    pub fn new_with_memptr_profile(reset_state: ResetState, profile: MemptrProfile) -> Self {
         let mut cpu = Self {
+            memptr: None,
+            memptr_profile: profile,
             reset_state,
             regs: Registers::default(),
             shadow: ShadowRegisters::default(),
@@ -225,6 +258,7 @@ impl Cpu {
     }
 
     pub fn reset(&mut self) {
+        self.memptr = None;
         self.regs = Registers {
             sp: self.reset_state.sp,
             pc: self.reset_state.pc,
@@ -291,6 +325,10 @@ impl Cpu {
         self.interrupt_flip_flop_2
     }
 
+    pub fn interrupt_enable_pending(&self) -> bool {
+        self.enable_interrupts_delay != 0
+    }
+
     pub fn cycles(&self) -> u64 {
         self.cycles
     }
@@ -350,6 +388,7 @@ impl Cpu {
             self.enable_interrupts_delay,
         );
         self.push_u16(bus, self.regs.pc);
+        self.memptr = None;
         self.regs.pc = target;
         self.interrupt_flip_flop_1 = false;
         self.interrupt_flip_flop_2 = false;
@@ -359,6 +398,7 @@ impl Cpu {
     }
 
     pub fn finish_guest_call(&mut self, iff1: bool, iff2: bool, delay: u8) {
+        self.memptr = None;
         self.interrupt_flip_flop_1 = iff1;
         self.interrupt_flip_flop_2 = iff2;
         self.enable_interrupts_delay = delay;
@@ -380,6 +420,22 @@ impl Cpu {
     }
 
     pub fn read_state(
+        &mut self,
+        r: &mut zeff_emu_common::save_state::StateReader<'_>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.memptr_profile == MemptrProfile::Legacy,
+            "legacy Z80 state cannot restore NMOS history"
+        );
+        let mut candidate = self.clone();
+        candidate.read_legacy_state_fields(r)?;
+        candidate.memptr = None;
+        candidate.memptr_profile = MemptrProfile::Legacy;
+        *self = candidate;
+        Ok(())
+    }
+
+    fn read_legacy_state_fields(
         &mut self,
         r: &mut zeff_emu_common::save_state::StateReader<'_>,
     ) -> anyhow::Result<()> {

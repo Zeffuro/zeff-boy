@@ -168,6 +168,9 @@ impl Z80Bus for MemoryIrq {
     fn cpu_read(&self, address: u16) -> u8 {
         self.0.cpu_read(address)
     }
+    fn cpu_read_instruction(&self, address: u16) -> u8 {
+        self.0.cpu_read_instruction(address)
+    }
     fn cpu_write(&mut self, address: u16, value: u8) {
         self.0.cpu_write(address, value);
     }

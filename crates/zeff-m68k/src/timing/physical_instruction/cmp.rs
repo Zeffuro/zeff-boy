@@ -76,7 +76,7 @@ impl PrefetchCpu {
         bus: &mut B,
         pipeline: Pipeline,
         size: Size,
-    ) -> Result<(u32, u32, u16), TransferExit<B::Error>> {
+    ) -> Result<(u32, u32, InstructionInput), TransferExit<B::Error>> {
         let pc = pipeline.address;
         let opcode = pipeline.words[0];
         let phase = self.prefetch_phase(
@@ -85,7 +85,7 @@ impl PrefetchCpu {
             pc.wrapping_add(if size == Size::Long { 2 } else { 4 }),
             opcode,
         );
-        let first = self.physical_read(bus, phase)?;
+        let first = self.physical_fetch(bus, phase)?;
         if size == Size::Long {
             let phase = self.prefetch_phase(
                 InstructionPhase::ImmediateSecond,
@@ -93,9 +93,9 @@ impl PrefetchCpu {
                 pc.wrapping_add(6),
                 opcode,
             );
-            let retained = self.physical_read(bus, phase)?;
+            let retained = self.physical_fetch(bus, phase)?;
             Ok((
-                (u32::from(pipeline.words[1]) << 16) | u32::from(first),
+                (u32::from(pipeline.words[1]) << 16) | u32::from(first.value),
                 pc.wrapping_add(6),
                 retained,
             ))
@@ -114,12 +114,12 @@ impl PrefetchCpu {
             Source::Data(register) => (
                 self.registers.d[register],
                 pipeline.address.wrapping_add(2),
-                pipeline.words[1],
+                pipeline.input(1),
             ),
             Source::Address(register) => (
                 self.registers.address_register(register).unwrap(),
                 pipeline.address.wrapping_add(2),
-                pipeline.words[1],
+                pipeline.input(1),
             ),
             Source::Immediate => self.physical_cmp_immediate(bus, pipeline, profile.size)?,
             Source::Memory(memory) => {
@@ -144,18 +144,19 @@ impl PrefetchCpu {
             InstructionPhase::OperandRefill,
             address,
             address,
-            if tail { pipeline.words[0] } else { retained },
+            if tail {
+                pipeline.words[0]
+            } else {
+                retained.value
+            },
         );
-        let fetched = self.physical_read(bus, phase)?;
+        let fetched = self.physical_fetch(bus, phase)?;
         if tail {
             self.entry_idle(bus, 2)
                 .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))?;
         }
         self.registers.pc = anchor;
-        self.pipeline = Some(Pipeline {
-            address: anchor,
-            words: [retained, fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(anchor, [retained, fetched]));
         Ok(())
     }
 }

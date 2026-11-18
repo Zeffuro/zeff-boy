@@ -61,7 +61,8 @@ fn main_program() -> Vec<u16> {
     program
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn main_cpu_ports_preserve_lanes_latches_reset_and_master_time() {
     for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
         for concurrent in [false, true] {
@@ -160,7 +161,8 @@ fn same_hardware(a: &mut Emulator, b: &mut Emulator) {
     assert_eq!(a.drain_audio_samples(), b.drain_audio_samples());
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn observation_and_overflow_preserve_whole_machine_and_future_output() {
     for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
         for concurrent in [false, true] {

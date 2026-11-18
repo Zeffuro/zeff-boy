@@ -35,6 +35,7 @@ impl HorizontalMode {
     pub fn from_register(value: u8) -> Option<Self> {
         match value & H40_CLOCK_MASK {
             0 => Some(Self::H32),
+            1 if value & INTERLACE_MODE_MASK == 0 => Some(Self::H40),
             H40_CLOCK_MASK => Some(Self::H40),
             _ => None,
         }
@@ -69,6 +70,47 @@ impl HorizontalMode {
         match self {
             Self::H32 => PLANE_AXIS_SMALL,
             Self::H40 => PLANE_AXIS_MEDIUM,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InterlaceMode {
+    Progressive,
+    Double,
+    Normal,
+}
+
+impl InterlaceMode {
+    pub(crate) fn from_register(value: u8) -> Option<Self> {
+        match value & INTERLACE_MODE_MASK {
+            0 => Some(Self::Progressive),
+            2 => Some(Self::Normal),
+            6 => Some(Self::Double),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn interlaced(self) -> bool {
+        self != Self::Progressive
+    }
+
+    pub(crate) fn write_state(self, writer: &mut zeff_emu_common::save_state::StateWriter) {
+        writer.write_u8(match self {
+            Self::Progressive => 0,
+            Self::Double => 1,
+            Self::Normal => 2,
+        });
+    }
+
+    pub(crate) fn read_state(
+        reader: &mut zeff_emu_common::save_state::StateReader<'_>,
+    ) -> anyhow::Result<Self> {
+        match reader.read_u8()? {
+            0 => Ok(Self::Progressive),
+            1 => Ok(Self::Double),
+            2 => Ok(Self::Normal),
+            _ => anyhow::bail!("invalid VDP interlace mode"),
         }
     }
 }

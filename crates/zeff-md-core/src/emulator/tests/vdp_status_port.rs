@@ -3,6 +3,9 @@ use crate::hardware::vdp::{VdpPortError, VdpStatusError};
 use zeff_m68k::bus::{AccessKind, BusAccess, ByteLanes, FunctionCode};
 use zeff_m68k::timing::{ClockedBus, CycleResult};
 
+#[path = "vdp_status_port/timed.rs"]
+mod timed;
+
 const STATUS: u32 = 0xc00004;
 const NEXT: u16 = 0x4e71;
 const FLOAT_MASK: u16 = 0xfc00;
@@ -32,11 +35,11 @@ fn fixture(concurrent: bool, program: &[u16]) -> Emulator {
 pub fn transfer(machine: &mut Emulator, access: BusAccess) -> CycleResult<u16, BusError> {
     let clock = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .read_cycle(access, clock)
     } else {
         machine.bus.read_cycle(access, clock)
@@ -72,7 +75,7 @@ pub fn upper_history_and_mirrors_with(
         for upper in 0..=u8::MAX {
             for (address, lanes) in [(STATUS, ByteLanes::Both), (0xd8ff06, ByteLanes::Upper)] {
                 let mut machine = fixture(concurrent, &[NEXT; 3]);
-                machine.bus.prefetch_upper = Some(upper);
+                machine.bus.prefetch = Prefetch::UpperOnly(upper);
                 let response = read(&mut machine, access(address, lanes));
                 assert_eq!(
                     response.result,
@@ -81,7 +84,7 @@ pub fn upper_history_and_mirrors_with(
                 assert_eq!(response.wait_clocks, 0);
                 assert_eq!(machine.bus.now.get(), 84);
                 assert_eq!(machine.vdp().control().pending_word(), None);
-                assert_eq!(machine.bus.prefetch_upper, None);
+                assert_eq!(machine.bus.prefetch.upper(), None);
             }
         }
     }
@@ -93,7 +96,7 @@ pub fn unknown_upper_and_low_lane_with(
     for concurrent in [false, true] {
         for lanes in [ByteLanes::Both, ByteLanes::Upper] {
             let mut machine = fixture(concurrent, &[NEXT; 3]);
-            machine.bus.prefetch_upper = None;
+            machine.bus.prefetch = Prefetch::Empty;
             let command = machine.vdp().command();
             assert_eq!(read(&mut machine, access(STATUS, lanes)).result, Ok(0x020c));
             assert_eq!(machine.bus.now.get(), 84);
@@ -177,7 +180,7 @@ pub fn completed_transfer_and_overflow_with(
         assert_eq!(machine.vdp().registers().registers()[15], Some(2));
         assert!(machine.vdp().registers().pending().is_none());
         machine.bus.now = MasterTicks::new(u64::MAX - 1);
-        machine.bus.prefetch_upper = Some(0xa5);
+        machine.bus.prefetch = Prefetch::UpperOnly(0xa5);
         let saved = machine.clone();
         assert_eq!(
             read(&mut machine, access(STATUS, ByteLanes::Both)).result,
@@ -297,8 +300,10 @@ fn unknown_upper_and_low_lane() {
 fn active_sound_history_fault() {
     active_sound_history_fault_with(Emulator::step_instruction);
 }
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn completed_transfer_and_overflow() {
+    timed::checks();
     completed_transfer_and_overflow_with(transfer);
 }
 #[test]

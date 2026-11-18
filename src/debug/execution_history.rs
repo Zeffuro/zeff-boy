@@ -204,12 +204,17 @@ pub(super) fn draw_execution_history_content(
                 let clicked = response.clicked();
                 response.on_hover_text(hover.join("\n"));
                 if clicked {
-                    actions.disasm_target = Some(DisassemblyTarget {
-                        cpu_address: entry.address,
-                        storage_offset: entry.storage_offset,
-                        bank: None,
-                        thumb: entry.thumb,
-                    });
+                    let target = if symbols.exec_mode() == crate::symbols::ExecMode::M68000 {
+                        crate::debug::CpuDisassemblyTarget::m68000(entry.address)
+                    } else {
+                        crate::debug::CpuDisassemblyTarget {
+                            cpu_address: entry.address,
+                            storage_offset: entry.storage_offset,
+                            bank: None,
+                            thumb: entry.thumb,
+                        }
+                    };
+                    actions.disasm_target = Some(DisassemblyTarget::Cpu(target));
                     actions.focus_tab = Some(DebugTab::Disassembler);
                 }
             }

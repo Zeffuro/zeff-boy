@@ -462,6 +462,12 @@ impl Z80Bus for TracingBus<'_> {
         value
     }
 
+    fn cpu_read_instruction(&self, addr: u16) -> u8 {
+        let value = self.0.cpu_read_instruction(addr);
+        self.0.record_cpu_read(addr, value);
+        value
+    }
+
     fn cpu_write(&mut self, addr: u16, value: u8) {
         let old_value = self.0.cpu_peek(addr);
         self.0.cpu_write(addr, value);

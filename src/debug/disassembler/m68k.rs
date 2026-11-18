@@ -18,6 +18,7 @@ pub(crate) fn disassemble_forward(
         );
         let next = address.wrapping_add(instruction.bytes.len() as u32);
         lines.push(DisassembledLine {
+            decode_status: None,
             address: address & ADDRESS_MASK,
             storage_offset: None,
             bank: None,

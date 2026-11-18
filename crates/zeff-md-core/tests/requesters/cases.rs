@@ -1,3 +1,7 @@
+#[expect(
+    dead_code,
+    reason = "The shared module also defines the TAS requester."
+)]
 #[path = "../../src/hardware/bus/ownership.rs"]
 mod ownership;
 

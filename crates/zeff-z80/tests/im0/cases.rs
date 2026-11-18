@@ -27,6 +27,9 @@ impl Z80Bus for IrqBus {
         self.memory.cpu_read(address)
     }
 
+    fn cpu_read_instruction(&self, address: u16) -> u8 {
+        self.memory.cpu_read_instruction(address)
+    }
     fn cpu_write(&mut self, address: u16, value: u8) {
         self.memory.cpu_write(address, value);
     }

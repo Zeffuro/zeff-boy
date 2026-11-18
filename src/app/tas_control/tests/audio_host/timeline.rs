@@ -1,5 +1,8 @@
 use super::*;
 
+mod requests;
+pub(super) use requests::report as request_report;
+
 #[derive(serde::Serialize)]
 pub(super) struct PumpRecord {
     begin_ns: u64,

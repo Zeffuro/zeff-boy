@@ -163,7 +163,7 @@ pub(super) struct MemoryOperand {
     pub(super) value: u32,
     pub(super) address: u32,
     pub(super) anchor: u32,
-    pub(super) retained: u16,
+    pub(super) retained: InstructionInput,
 }
 
 impl PrefetchCpu {
@@ -182,7 +182,7 @@ impl PrefetchCpu {
             value: 0,
             address: 0,
             anchor: pipeline.address.wrapping_add(2),
-            retained: pipeline.words[1],
+            retained: pipeline.input(1),
         };
         if profile.mode.extensions() != 0 {
             let phase = self.prefetch_phase(
@@ -197,10 +197,10 @@ impl PrefetchCpu {
                     }),
                 pipeline.words[0],
             );
-            let first = self.physical_read(bus, phase)?;
+            let first = self.physical_fetch(bus, phase)?;
             operand.retained = first;
             if profile.mode == SourceMode::AbsoluteLong {
-                address = profile.address(self, pipeline, first);
+                address = profile.address(self, pipeline, first.value);
                 let next_address = pipeline.address.wrapping_add(6);
                 let phase = self.prefetch_phase(
                     InstructionPhase::ExtensionSecond,
@@ -208,7 +208,7 @@ impl PrefetchCpu {
                     next_address,
                     pipeline.words[0],
                 );
-                operand.retained = self.physical_read(bus, phase)?;
+                operand.retained = self.physical_fetch(bus, phase)?;
             }
             operand.anchor = operand.anchor.wrapping_add(2 * profile.mode.extensions());
         }

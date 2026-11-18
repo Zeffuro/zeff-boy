@@ -47,10 +47,7 @@ impl PrefetchCpu {
                 self.idle(bus, result.cycles - TRANSFER_CLOCKS)?;
             }
             self.registers.pc = stream.cursor;
-            self.pipeline = Some(Pipeline {
-                address: stream.cursor,
-                words,
-            });
+            self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         }
         Ok(Some(Completion {
             exception: result.exception,

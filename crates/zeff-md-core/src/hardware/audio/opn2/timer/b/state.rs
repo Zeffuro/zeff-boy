@@ -1,19 +1,10 @@
-use super::super::super::chip_constants::{FM_CLOCK_DIVIDER, TIMER_B_DIVIDER};
-use super::super::LegacyTimer;
 use super::*;
 use anyhow::{Result, ensure};
 use zeff_emu_common::save_state::{StateReader as Reader, StateWriter as Writer};
 
 impl TimerB {
-    pub(crate) fn write_state(&self, writer: &mut Writer, version: u32) {
-        if version < crate::save_state::STATE_VERSION_WITH_TIMER_B_PHASE {
-            let scans = (TIMER_B_STEPS - u16::from(self.counter))
-                * u16::from(TIMER_B_SUBCOUNTER_STEPS)
-                - u16::from(self.subcounter);
-            writer.write_u16(u16::from(self.reload));
-            writer.write_u64(u64::from(scans) * FM_CLOCK_DIVIDER);
-            writer.write_bool(self.load_lock);
-        } else {
+    pub(crate) fn write_state(&self, writer: &mut Writer) {
+        {
             writer.write_u8(self.reload);
             writer.write_u8(self.counter);
             writer.write_u8(self.subcounter);
@@ -26,23 +17,7 @@ impl TimerB {
         }
     }
 
-    pub(crate) fn read_state(reader: &mut Reader<'_>, version: u32) -> Result<Self> {
-        if version < crate::save_state::STATE_VERSION_WITH_TIMER_B_PHASE {
-            let old = LegacyTimer::read_state(reader, TIMER_B_STEPS, TIMER_B_DIVIDER)?;
-            let scans = old.remaining.div_ceil(FM_CLOCK_DIVIDER) as u16;
-            let steps = scans.div_ceil(u16::from(TIMER_B_SUBCOUNTER_STEPS));
-            return Ok(Self {
-                reload: old.reload as u8,
-                counter: if scans == 0 {
-                    0
-                } else {
-                    (TIMER_B_STEPS - steps) as u8
-                },
-                subcounter: (steps * u16::from(TIMER_B_SUBCOUNTER_STEPS) - scans) as u8,
-                load_lock: old.running,
-                ..Self::default()
-            });
-        }
+    pub(crate) fn read_state(reader: &mut Reader<'_>) -> Result<Self> {
         let reload = reader.read_u8()?;
         let counter = reader.read_u8()?;
         let subcounter = reader.read_u8()?;

@@ -64,7 +64,7 @@ pub fn transfer_samples_and_longword_with(
                     ByteLanes::Lower
                 };
                 let mut machine = fixture(concurrent, NEXT, 2922);
-                machine.bus.prefetch_upper = None;
+                machine.bus.prefetch = Prefetch::Empty;
                 let command = machine.vdp().command();
                 let first = read(&mut machine, access(base + offset, lanes));
                 assert_eq!(first.result, Ok(0x0193));

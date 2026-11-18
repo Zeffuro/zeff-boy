@@ -129,8 +129,8 @@ impl App {
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
-        self.debug_windows.trace.clear();
-        self.debug_windows.execution_coverage.clear();
+        self.debug_windows.trace.reset_backend();
+        self.debug_windows.execution_coverage.reset_backend();
         self.recycled.clear();
         self.latest_frame = None;
         self.last_core_frame = None;
@@ -147,11 +147,19 @@ impl App {
         self.rom_info.rom_hash = None;
         self.set_loaded_input_game(None, None);
         self.rom_info.pce_controller_profile_hash = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.rom_info.md_tas_profile = None;
+        }
         self.rom_info.replay_metadata = None;
         self.symbols = crate::symbols::SymbolSession::default();
+        self.sound_symbols = crate::symbols::SymbolSession::default();
+        self.debug_windows.reset_target_sessions();
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pending_symbol_load = None;
+            self.pending_sound_symbol_load = None;
+            self.symbol_load_owner = self.symbol_load_owner.saturating_add(1);
         }
         self.rom_info.is_mbc7 = false;
         self.rom_info.is_gba_tilt = false;

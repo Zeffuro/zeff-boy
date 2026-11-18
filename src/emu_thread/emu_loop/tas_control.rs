@@ -10,9 +10,11 @@ use crate::tas_project::{MAX_EDITOR_SEEK_EXECUTION_FRAMES, TasDigest};
 
 use super::EmuLoop;
 
+mod acquisition;
 mod advance;
 mod checkpoint;
 pub(super) mod execution;
+pub(super) mod md;
 mod retirement;
 mod state_cache;
 pub(in crate::emu_thread) mod witness;
@@ -101,6 +103,10 @@ impl EmuLoop {
         &mut self,
         command: EmuCommand,
     ) -> ControlFlow<bool, EmuCommand> {
+        let command = match self.dispatch_md_tas(command) {
+            ControlFlow::Continue(command) => command,
+            ControlFlow::Break(response) => return ControlFlow::Break(self.send_resp(response)),
+        };
         let context = self.tas_control_context();
         let cheats_present = !self.last_cheats.is_empty();
         let dispatch = match command {
@@ -310,74 +316,6 @@ impl TasControl {
         }
     }
 
-    fn acquire<F>(
-        &mut self,
-        request_id: u64,
-        profile: TasExecutionProfile,
-        context: TasControlContext,
-        build_witness: F,
-    ) -> EmuResponse
-    where
-        F: FnOnce(
-            TasExecutionProfile,
-            &mut Vec<f32>,
-        ) -> Result<TasControlLeaseWitness, TasControlAcquireRejectedReason>,
-    {
-        if let Some(reason) = self.acquire_blocker(&context) {
-            return EmuResponse::TasControlAcquireRejected { request_id, reason };
-        }
-
-        let lease_id = self.next_lease_id;
-        let Some(next_lease_id) = lease_id.checked_add(1) else {
-            return EmuResponse::TasControlAcquireRejected {
-                request_id,
-                reason: TasControlAcquireRejectedReason::LeaseIdExhausted,
-            };
-        };
-        let witness = match build_witness(profile, &mut self.discarded_audio_samples) {
-            Ok(witness) => witness,
-            Err(reason) => {
-                return EmuResponse::TasControlAcquireRejected { request_id, reason };
-            }
-        };
-        if witness.profile != profile {
-            return EmuResponse::TasControlAcquireRejected {
-                request_id,
-                reason: TasControlAcquireRejectedReason::StateWitnessUnavailable,
-            };
-        }
-        let checkpoint_sha256 = TasDigest::from_bytes(&witness.current_state_bytes);
-        if checkpoint_sha256 != witness.current_state_sha256 {
-            return EmuResponse::TasControlAcquireRejected {
-                request_id,
-                reason: TasControlAcquireRejectedReason::StateWitnessUnavailable,
-            };
-        }
-        self.next_lease_id = next_lease_id;
-        let checkpoint = TasControlCheckpoint {
-            profile,
-            state_bytes: witness.current_state_bytes.clone(),
-            state_sha256: checkpoint_sha256,
-            frame_count: witness.frame_count,
-        };
-        let state_format_compatibility_id = witness.state_format_compatibility_id;
-        self.authority = BackendAuthority::Leased {
-            lease_id,
-            profile,
-            state_format_compatibility_id,
-            checkpoint: Box::new(checkpoint),
-            attempted_run_id: None,
-            execution_failed: false,
-            candidate: None,
-            intermediate_cache_proofs: Vec::new(),
-        };
-        EmuResponse::TasControlAcquired {
-            request_id,
-            lease_id,
-            witness: Box::new(witness),
-        }
-    }
-
     fn execute<F>(&mut self, mut request: TasExecutionRequest, execute: F) -> EmuResponse
     where
         F: FnOnce(
@@ -437,6 +375,7 @@ impl TasControl {
             attempted_run_id,
             execution_failed,
             candidate,
+            intermediate_cache_proofs: prior_cache_proofs,
             ..
         } = &mut self.authority
         else {
@@ -467,6 +406,7 @@ impl TasControl {
         }
         *attempted_run_id = Some(run_id);
         *candidate = None;
+        *prior_cache_proofs = Vec::new();
         let execution = execute(&request, &mut self.discarded_audio_samples);
         let intermediate_cache_proofs = std::mem::take(&mut request.intermediate_cache_proofs);
         let BackendAuthority::Leased {

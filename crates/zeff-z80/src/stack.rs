@@ -1,5 +1,7 @@
 use super::*;
 
+mod call_exchange;
+mod cycle;
 mod state;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,9 +54,13 @@ impl Pair {
             Self::Register(pair) => cpu.write_stack_reg16(pair, value),
             Self::Index(false) => cpu.regs.ix = value,
             Self::Index(true) => cpu.regs.iy = value,
-            Self::ProgramCounter => cpu.regs.pc = value,
+            Self::ProgramCounter => {
+                cpu.regs.pc = value;
+                cpu.set_memptr(value);
+            }
             Self::InterruptReturn => {
                 cpu.regs.pc = value;
+                cpu.set_memptr(value);
                 cpu.interrupt_flip_flop_1 = cpu.interrupt_flip_flop_2;
             }
         }
@@ -62,6 +68,146 @@ impl Pair {
 }
 
 impl Stack {
+    pub(super) fn is_jump_phase(&self) -> bool {
+        matches!(self.phase, Phase::JumpLow(_) | Phase::JumpHigh(_, _))
+    }
+
+    pub(super) fn index_cycle(&self, cpu: &Cpu, opcode: u8, prefix: u8) -> Option<u16> {
+        if !matches!(prefix, Z80_PREFIX_DD | Z80_PREFIX_FD)
+            || self.fetch != access::Fetch::Memory
+            || self.target.is_some()
+            || self.address != cpu.regs.sp
+        {
+            return None;
+        }
+        let pair = if opcode == 0xc9 {
+            Pair::ProgramCounter
+        } else if ((opcode >> 4) & 3) == 2 {
+            Pair::Index(prefix == Z80_PREFIX_FD)
+        } else {
+            Pair::Register((opcode >> 4) & 3)
+        };
+        if self.pair != pair {
+            return None;
+        }
+        let valid = match self.phase {
+            Phase::JumpLow(condition) if Self::is_jump(opcode) => {
+                cpu.instruction_byte_count == 2
+                    && condition == (opcode != 0xc3).then_some((opcode >> 3) & 7)
+            }
+            Phase::JumpHigh(condition, low) if Self::is_jump(opcode) => {
+                cpu.instruction_byte_count == 3
+                    && low == cpu.instruction_bytes[2]
+                    && condition == (opcode != 0xc3).then_some((opcode >> 3) & 7)
+            }
+            Phase::PopLow | Phase::PopHigh(_) if Self::is_pop(opcode) => {
+                cpu.instruction_byte_count == 2
+            }
+            _ => false,
+        };
+        valid.then_some(if Self::is_jump(opcode) {
+            cpu.regs.pc
+        } else {
+            self.address
+        })
+    }
+
+    pub(super) fn is_pop(opcode: u8) -> bool {
+        matches!(opcode, 0xc1 | 0xd1 | 0xe1 | 0xf1 | 0xc9)
+    }
+
+    pub(super) fn is_ed_return(opcode: u8) -> bool {
+        matches!(
+            opcode,
+            0x45 | 0x4d | 0x55 | 0x5d | 0x65 | 0x6d | 0x75 | 0x7d
+        )
+    }
+
+    pub(super) fn pop_cycle(&self, cpu: &Cpu, opcode: u8, ed: bool) -> Option<u16> {
+        let pair = if ed && Self::is_ed_return(opcode) {
+            Pair::InterruptReturn
+        } else if !ed && opcode == 0xc9 {
+            Pair::ProgramCounter
+        } else if !ed && Self::is_pop(opcode) {
+            Pair::Register((opcode >> 4) & 3)
+        } else {
+            return None;
+        };
+        (self.pair == pair
+            && self.fetch == access::Fetch::Memory
+            && self.target.is_none()
+            && self.address == cpu.regs.sp
+            && matches!(self.phase, Phase::PopLow | Phase::PopHigh(_)))
+        .then_some(self.address)
+    }
+
+    pub(super) fn complete_pop(mut self, cpu: &mut Cpu, value: u8) -> Result<Option<Self>, ()> {
+        match self.phase {
+            Phase::PopLow => {
+                self.address = self.address.wrapping_add(1);
+                cpu.regs.sp = self.address;
+                self.phase = Phase::PopHigh(value);
+                Ok(Some(self))
+            }
+            Phase::PopHigh(low) => {
+                cpu.regs.sp = self.address.wrapping_add(1);
+                self.pair.write(cpu, u16::from_le_bytes([low, value]));
+                Ok(None)
+            }
+            _ => Err(()),
+        }
+    }
+
+    pub(super) fn is_jump(opcode: u8) -> bool {
+        matches!(
+            opcode,
+            0xc3 | 0xc2 | 0xca | 0xd2 | 0xda | 0xe2 | 0xea | 0xf2 | 0xfa
+        )
+    }
+
+    pub(super) fn jump_cycle(&self, cpu: &Cpu, opcode: u8) -> Option<u16> {
+        if !Self::is_jump(opcode)
+            || self.fetch != access::Fetch::Memory
+            || self.pair != Pair::Register((opcode >> 4) & 3)
+            || self.target.is_some()
+        {
+            return None;
+        }
+        let expected = (opcode != 0xc3).then_some((opcode >> 3) & 7);
+        match self.phase {
+            Phase::JumpLow(condition) | Phase::JumpHigh(condition, _) if condition == expected => {
+                Some(cpu.regs.pc)
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn complete_jump<C: retirement_evidence::Capture>(
+        mut self,
+        cpu: &mut Cpu,
+        value: u8,
+        capture: &C,
+    ) -> Result<Option<Self>, ()> {
+        if !matches!(self.phase, Phase::JumpLow(_) | Phase::JumpHigh(_, _)) {
+            return Err(());
+        }
+        if self.fetch == access::Fetch::Memory {
+            cpu.accept_instruction_input(value, InstructionByteClass::Operand, capture);
+        }
+        match self.phase {
+            Phase::JumpLow(condition) => self.phase = Phase::JumpHigh(condition, value),
+            Phase::JumpHigh(condition, low) => {
+                cpu.set_memptr(u16::from_le_bytes([low, value]));
+                if condition.is_none_or(|condition| cpu.condition_is_true(condition)) {
+                    cpu.regs.pc = u16::from_le_bytes([low, value]);
+                }
+                return Ok(None);
+            }
+            _ => return Err(()),
+        }
+        Ok(Some(self))
+    }
+
     pub(super) fn memory_cycle(&self) -> Option<u32> {
         (self.fetch == access::Fetch::Memory
             && self.pair != Pair::InterruptReturn
@@ -176,84 +322,60 @@ impl Stack {
         }
     }
 
-    pub(super) fn step<B: Z80Bus>(mut self, cpu: &mut Cpu, bus: &mut B) -> (Option<Self>, u32) {
-        let mut cycles = CYCLES_MEMORY_TRANSFER;
-        self.phase = match self.phase {
-            Phase::JumpLow(condition) => Phase::JumpHigh(condition, self.fetch.read(cpu, bus)),
-            Phase::JumpHigh(condition, low) => {
-                let high = self.fetch.read(cpu, bus);
-                if condition.is_none_or(|condition| cpu.condition_is_true(condition)) {
-                    cpu.regs.pc = u16::from_le_bytes([low, high]);
-                }
-                return (None, cycles);
+    pub(super) fn step<B: Z80Bus>(self, cpu: &mut Cpu, bus: &mut B) -> (Option<Self>, u32) {
+        if matches!(self.phase, Phase::ReturnPrepare(_) | Phase::PushPrepare(_)) {
+            return (
+                self.prepare(cpu).expect("matching stack preparation"),
+                CYCLES_STACK_INTERNAL,
+            );
+        }
+        if let Some((address, value)) = self.write_cycle() {
+            bus.cpu_write(address, value);
+            return (
+                self.complete_push(cpu).expect("matching stack write"),
+                CYCLES_MEMORY_TRANSFER,
+            );
+        }
+        if matches!(self.phase, Phase::PopLow | Phase::PopHigh(_)) {
+            let value = bus.cpu_read(self.address);
+            return (
+                self.complete_pop(cpu, value).expect("matching pop phase"),
+                CYCLES_MEMORY_TRANSFER,
+            );
+        }
+        if matches!(self.phase, Phase::JumpLow(_) | Phase::JumpHigh(_, _)) {
+            let value = match self.fetch {
+                access::Fetch::Memory => bus.cpu_read_instruction(cpu.regs.pc),
+                access::Fetch::Interrupt => bus.read_interrupt_instruction(cpu.regs.pc),
+            };
+            return (
+                self.complete_jump(cpu, value, &retirement_evidence::NoCapture)
+                    .expect("matching jump phase"),
+                CYCLES_MEMORY_TRANSFER,
+            );
+        }
+        let sample = match self.phase {
+            Phase::CallLow(_) | Phase::CallHigh(_, _) => load::LoadSample::Read(match self.fetch {
+                access::Fetch::Memory => bus.cpu_read_instruction(cpu.regs.pc),
+                access::Fetch::Interrupt => bus.read_interrupt_instruction(cpu.regs.pc),
+            }),
+            Phase::ExchangeLow(_) => load::LoadSample::Read(bus.cpu_read(self.address)),
+            Phase::ExchangeHigh(_, _) => {
+                load::LoadSample::Read(bus.cpu_read(self.address.wrapping_add(1)))
             }
-            Phase::CallLow(taken) => Phase::CallHigh(taken, self.fetch.read(cpu, bus)),
-            Phase::CallHigh(taken, low) => {
-                let high = self.fetch.read(cpu, bus);
-                if !taken {
-                    return (None, cycles);
-                }
-                self.target = Some(u16::from_le_bytes([low, high]));
-                Phase::PushPrepare(cpu.regs.pc)
+            Phase::ExchangeWriteHigh(word, _) => {
+                bus.cpu_write(self.address.wrapping_add(1), word.to_le_bytes()[1]);
+                load::LoadSample::Written
             }
-            Phase::ReturnPrepare(taken) => {
-                cycles = CYCLES_STACK_INTERNAL;
-                if !taken {
-                    return (None, cycles);
-                }
-                Phase::PopLow
-            }
-            Phase::PushPrepare(value) => {
-                self.address = self.address.wrapping_sub(1);
-                cpu.regs.sp = self.address;
-                cycles = CYCLES_STACK_INTERNAL;
-                Phase::PushHigh(value)
-            }
-            Phase::PushHigh(value) => {
-                let [low, high] = value.to_le_bytes();
-                bus.cpu_write(self.address, high);
-                self.address = self.address.wrapping_sub(1);
-                cpu.regs.sp = self.address;
-                Phase::PushLow(low)
-            }
-            Phase::PushLow(low) => {
+            Phase::ExchangeWriteLow(low, _) => {
                 bus.cpu_write(self.address, low);
-                if let Some(target) = self.target {
-                    cpu.regs.pc = target;
-                }
-                return (None, cycles);
+                load::LoadSample::Written
             }
-            Phase::PopLow => {
-                let low = bus.cpu_read(self.address);
-                self.address = self.address.wrapping_add(1);
-                cpu.regs.sp = self.address;
-                Phase::PopHigh(low)
-            }
-            Phase::PopHigh(low) => {
-                let high = bus.cpu_read(self.address);
-                cpu.regs.sp = self.address.wrapping_add(1);
-                self.pair.write(cpu, u16::from_le_bytes([low, high]));
-                return (None, cycles);
-            }
-            Phase::ExchangeLow(value) => Phase::ExchangeHigh(value, bus.cpu_read(self.address)),
-            Phase::ExchangeHigh(value, low) => {
-                let high = bus.cpu_read(self.address.wrapping_add(1));
-                cycles = CYCLES_EXCHANGE_READ_HIGH;
-                Phase::ExchangeWriteHigh(value, u16::from_le_bytes([low, high]))
-            }
-            Phase::ExchangeWriteHigh(value, result) => {
-                let [low, high] = value.to_le_bytes();
-                bus.cpu_write(self.address.wrapping_add(1), high);
-                Phase::ExchangeWriteLow(low, result)
-            }
-            Phase::ExchangeWriteLow(low, result) => {
-                bus.cpu_write(self.address, low);
-                self.pair.write(cpu, result);
-                return (None, CYCLES_EXCHANGE_WRITE_LOW);
-            }
+            _ => unreachable!("stack phase handled above"),
         };
         // Publish architectural phases; EX's temporary electrical SP change is not exposed.
-        (Some(self), cycles)
+        self.complete_call_exchange(cpu, sample, false, &retirement_evidence::NoCapture)
+            .expect("matching call or exchange phase")
     }
 
     pub(super) fn execute<B: Z80Bus>(self, cpu: &mut Cpu, bus: &mut B) -> u32 {

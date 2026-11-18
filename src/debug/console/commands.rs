@@ -11,7 +11,9 @@ use super::{ConsoleReadSpace, DebugConsoleState, DebugConsoleViews, PendingConso
 
 const HISTORY_LIMIT: usize = 100;
 const READ_LIMIT: usize = 64;
-const COMMANDS: [&str; 20] = [
+mod disassembly;
+
+const COMMANDS: [&str; 21] = [
     "help",
     "clear",
     "find",
@@ -19,6 +21,7 @@ const COMMANDS: [&str; 20] = [
     "peek",
     "romread",
     "goto",
+    "disasm",
     "mem",
     "rom",
     "break",
@@ -35,6 +38,7 @@ const COMMANDS: [&str; 20] = [
 ];
 
 pub(super) struct CommandContext<'a> {
+    pub(super) supports_rom_breakpoints: bool,
     pub(super) symbols: &'a SymbolSession,
     pub(super) cpu_debug: Option<&'a CpuDebugSnapshot>,
     pub(super) rom_debug: Option<&'a RomDebugInfo>,
@@ -78,6 +82,7 @@ pub(super) fn run_command(state: &mut DebugConsoleState, input: &str, context: C
             ConsoleReadSpace::Rom,
             context.views,
         ),
+        "disasm" => disassembly::open(state, context.symbols, &args, context.actions),
         "goto" => goto_target(
             state,
             context.symbols,
@@ -101,6 +106,7 @@ pub(super) fn run_command(state: &mut DebugConsoleState, input: &str, context: C
         ),
         "break" => toggle_breakpoint(
             state,
+            context.supports_rom_breakpoints,
             context.symbols,
             args.first().copied(),
             context.actions,
@@ -156,12 +162,13 @@ fn show_help(state: &mut DebugConsoleState) {
         "peek <addr|symbol> [n] Read CPU memory",
         "romread <off|symbol> [n] Read physical ROM",
         "goto <symbol>          Open code or memory",
+        "disasm rom:<offset>    Inspect MD original ROM code",
         "mem <addr|symbol>      Open Memory Viewer",
         "rom <off|symbol>       Open ROM Viewer",
-        "break <addr|symbol>    Toggle breakpoint",
+        "break <addr|symbol|rom:offset> Toggle breakpoint",
         "breakonce <addr|symbol> Break once",
         "breakafter <addr|symbol> <hits> Break after N hits",
-        "breakevent <interrupt|dma> Toggle event breakpoint",
+        "breakevent <interrupt|dma|exception> Toggle event breakpoint",
         "nextframe             Run to next frame",
         "call <symbol> [limit] Execute a function while suspended",
         "callundo              Undo the last successful call",
@@ -303,6 +310,10 @@ fn queue_label(
     args: &[&str],
     actions: &mut DebugUiActions,
 ) {
+    if args.len() == 1 && disassembly.is_some_and(|view| view.cursor.is_source()) {
+        disassembly::label_storage(state, disassembly.unwrap(), args[0], actions);
+        return;
+    }
     let (address, name) = match args {
         [] => {
             state.push("Usage: label <name> or label <address> <name>".to_owned());
@@ -313,7 +324,10 @@ fn queue_label(
                 state.push("Current code location is unavailable".to_owned());
                 return;
             };
-            (u64::from(view.pc), (*name).to_owned())
+            (
+                u64::from(view.cursor.cpu_address().unwrap()),
+                (*name).to_owned(),
+            )
         }
         [value, name @ ..] => {
             let Some(address) = resolve_cpu(value, symbols) else {
@@ -323,12 +337,14 @@ fn queue_label(
             (address, name.join(" "))
         }
     };
-    let storage_offset = disassembly.and_then(|view| {
-        view.lines
-            .iter()
-            .find(|line| u64::from(line.address) == address)
-            .and_then(|line| line.storage_offset)
-    });
+    let storage_offset = disassembly
+        .filter(|view| !view.cursor.is_source())
+        .and_then(|view| {
+            view.lines
+                .iter()
+                .find(|line| u64::from(line.address) == address)
+                .and_then(|line| line.storage_offset)
+        });
     let exec_mode = symbols.exec_mode();
     actions.user_symbol = Some(UserSymbolDraft {
         name: name.clone(),
@@ -438,7 +454,11 @@ fn goto_target(
     };
     if let Some((symbol, cpu_address)) = exact_symbols(symbols, value)
         .into_iter()
-        .filter(|symbol| symbol.location.storage.is_some() || symbol.location.bank.is_some())
+        .filter(|symbol| {
+            symbol.location.storage.is_some()
+                || symbol.location.bank.is_some()
+                || symbol.location.exec_mode == ExecMode::M68000
+        })
         .find_map(|symbol| {
             let cpu = symbol
                 .location
@@ -449,16 +469,24 @@ fn goto_target(
         })
         && let Ok(cpu_address) = u32::try_from(cpu_address)
     {
-        actions.disasm_target = Some(DisassemblyTarget {
+        actions.disasm_target = Some(DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
             cpu_address,
-            storage_offset: symbol.location.storage.map(|storage| storage.offset),
-            bank: symbol.location.bank,
+            storage_offset: if symbol.location.exec_mode == ExecMode::M68000 {
+                None
+            } else {
+                symbol.location.storage.map(|storage| storage.offset)
+            },
+            bank: if symbol.location.exec_mode == ExecMode::M68000 {
+                None
+            } else {
+                symbol.location.bank
+            },
             thumb: match symbol.location.exec_mode {
                 ExecMode::Thumb => Some(true),
                 ExecMode::Arm => Some(false),
                 _ => None,
             },
-        });
+        }));
         actions.focus_tab = Some(DebugTab::Disassembler);
         state.push(format!("Opened {} in Disassembler", symbol.name));
         return;
@@ -512,16 +540,28 @@ fn open_rom(
 
 fn toggle_breakpoint(
     state: &mut DebugConsoleState,
+    supports_rom_breakpoints: bool,
     symbols: &SymbolSession,
     value: Option<&str>,
     actions: &mut DebugUiActions,
 ) {
     let Some(value) = value else {
-        state.push("Usage: break <address|symbol>".to_owned());
+        state.push("Usage: break <address|symbol|rom:offset>".to_owned());
         return;
     };
+    if let Some(offset) = value.strip_prefix("rom:") {
+        if !supports_rom_breakpoints {
+            state.push("Physical ROM breakpoints are unavailable".into());
+        } else if let Some(offset) = crate::debug::common::parse_hex_u64(offset) {
+            actions.toggle_rom_breakpoints.push(offset);
+            state.push(format!("Toggled ROM breakpoint at +{offset:X}"));
+        } else {
+            state.push("Enter a physical ROM offset after rom:".into());
+        }
+        return;
+    }
     let exact = exact_symbols(symbols, value);
-    if symbols.exec_mode() == ExecMode::Sm83 {
+    if symbols.exec_mode() == ExecMode::Sm83 && supports_rom_breakpoints {
         let mut offsets = exact
             .iter()
             .filter_map(|symbol| symbol.location.storage.map(|storage| storage.offset))
@@ -646,7 +686,7 @@ fn toggle_event_breakpoint(
     actions: &mut DebugUiActions,
 ) {
     let Some(value) = value else {
-        state.push("Usage: breakevent <interrupt|dma>".to_owned());
+        state.push("Usage: breakevent <interrupt|dma|exception>".to_owned());
         return;
     };
     let Some(event) = parse_debug_event(value) else {
@@ -677,6 +717,7 @@ pub(super) fn parse_debug_event(value: &str) -> Option<zeff_emu_common::debug::D
     match value.to_ascii_lowercase().as_str() {
         "interrupt" | "irq" | "nmi" => Some(zeff_emu_common::debug::DebugEvent::Interrupt),
         "dma" => Some(zeff_emu_common::debug::DebugEvent::Dma),
+        "exception" => Some(zeff_emu_common::debug::DebugEvent::Exception),
         _ => None,
     }
 }
@@ -757,6 +798,7 @@ pub(super) fn completions(input: &str, symbols: &SymbolSession) -> Vec<String> {
         return COMMANDS
             .iter()
             .filter(|command| command.starts_with(&needle))
+            .filter(|command| **command != "disasm" || symbols.exec_mode() == ExecMode::M68000)
             .map(|command| (*command).to_owned())
             .collect();
     };
@@ -792,7 +834,7 @@ fn resolve_rom(value: &str, symbols: &SymbolSession) -> Option<u64> {
     symbols.resolve_rom_name(value).or_else(|| parse_hex(value))
 }
 
-pub(super) fn parse_hex(value: &str) -> Option<u64> {
+pub(crate) fn parse_hex(value: &str) -> Option<u64> {
     let value = value
         .strip_prefix('$')
         .or_else(|| value.strip_prefix("0x"))

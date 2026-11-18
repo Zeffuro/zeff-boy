@@ -49,10 +49,10 @@ impl PrefetchCpu {
                     address,
                     pipeline.words[0],
                 );
-                let fetched = self.physical_read(bus, phase)?;
+                let fetched = self.physical_fetch(bus, phase)?;
                 self.entry_idle(bus, 2)
                     .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))?;
-                (pipeline.address.wrapping_add(2), pipeline.words[1], fetched)
+                (pipeline.address.wrapping_add(2), pipeline.input(1), fetched)
             }
             FromSrProfile::Memory(profile) => {
                 let operand = self.physical_memory_read(bus, pipeline, profile)?;
@@ -63,7 +63,7 @@ impl PrefetchCpu {
                     address,
                     pipeline.words[0],
                 );
-                let fetched = self.physical_read(bus, phase)?;
+                let fetched = self.physical_fetch(bus, phase)?;
                 let phase = TransferPhase {
                     phase: InstructionPhase::OperandWriteHigh,
                     access: BusAccess {
@@ -75,17 +75,14 @@ impl PrefetchCpu {
                     },
                     direction: Direction::Write,
                     internal_pc: address,
-                    ird: operand.retained,
+                    ird: operand.retained.value,
                 };
                 self.physical_write(bus, phase, sr)?;
                 (operand.anchor, operand.retained, fetched)
             }
         };
         self.registers.pc = anchor;
-        self.pipeline = Some(Pipeline {
-            address: anchor,
-            words: [retained, fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(anchor, [retained, fetched]));
         Ok(())
     }
 }

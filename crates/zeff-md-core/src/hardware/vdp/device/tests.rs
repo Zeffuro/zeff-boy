@@ -82,16 +82,18 @@ fn overflow_horizon() {
 
 #[test]
 fn unused_targets_retire_without_memory_writes_and_retain_fifo_data() {
-    for target in [2, 6, 7, 9, 0xa, 0xb, 0xd, 0xe, 0xf] {
+    for target in [0, 2, 6, 7, 9, 0xa, 0xb, 0xd, 0xe, 0xf] {
         for code in [target, target | COMMAND_CD4] {
             let mut device = Vdp::bootstrap_mode5();
             device.advance_to(tick(1), Region::NtscUs).unwrap();
+            device.invalidate_interval();
             device
                 .state
                 .registers
                 .queue_register(AUTO_INCREMENT_REGISTER, 2)
                 .unwrap();
             device.advance_to(tick(21), Region::NtscUs).unwrap();
+            device.invalidate_interval();
             device.state.command = ControlCommand {
                 address: 0x1fffd,
                 code,
@@ -108,10 +110,20 @@ fn unused_targets_retire_without_memory_writes_and_retain_fifo_data() {
                 Err(VdpPortError::Data(VdpWriteError::Full))
             );
             assert_eq!(device, saved);
-            assert_eq!(device.data_write_wait(Region::NtscUs), Ok(Some(tick(30))));
+            let (first, stride) = if matches!(target, 0 | 9) {
+                (50, 40)
+            } else {
+                (30, 20)
+            };
+            assert_eq!(
+                device.data_write_wait(Region::NtscUs),
+                Ok(Some(tick(first)))
+            );
             let mut split = device.clone();
-            device.advance_to(tick(90), Region::NtscUs).unwrap();
-            for (at, remaining) in [(30, 3), (50, 2), (70, 1), (90, 0)] {
+            let drained = first + 3 * stride;
+            device.advance_to(tick(drained), Region::NtscUs).unwrap();
+            for (index, remaining) in [3, 2, 1, 0].into_iter().enumerate() {
+                let at = first + index as u64 * stride;
                 split.advance_to(tick(at), Region::NtscUs).unwrap();
                 assert_eq!(split.fifo().len(), remaining);
                 assert_eq!(split.memory(), &memory);
@@ -124,7 +136,9 @@ fn unused_targets_retire_without_memory_writes_and_retain_fifo_data() {
             );
             device.write_control(0, Region::NtscUs).unwrap();
             device.write_control(0x20, Region::NtscUs).unwrap();
-            device.advance_to(tick(110), Region::NtscUs).unwrap();
+            device
+                .advance_to(tick(drained + 20), Region::NtscUs)
+                .unwrap();
             assert_eq!(device.read_data(Region::NtscUs), Ok(0x1111));
         }
     }
@@ -145,7 +159,7 @@ fn idle_advancement_matches_prepared_transactions() {
                 let expected = prepared
                     .state
                     .prepare_to_from(at, region, false, &prepared.memory, None)
-                    .map(|(state, writes, _)| prepared.publish(state, writes));
+                    .map(|next| prepared.publish(next));
                 assert_eq!(device.advance_to(at, region), expected);
                 assert_eq!(device, prepared);
             }

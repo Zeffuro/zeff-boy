@@ -342,6 +342,8 @@ pub(super) fn test_gb_loop_with_tcp() -> (
 
 pub(super) fn semantic_result() -> FrameResult {
     FrameResult {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_requests: Vec::new(),
         advanced_frames: 1,
         completed_step_requests: 1,
         staged_input_frames: 0,
@@ -378,6 +380,10 @@ pub(super) fn semantic_result() -> FrameResult {
 
 pub(super) fn frame_input(frames: usize) -> FrameInput {
     FrameInput {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_request: 0,
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_pacing: (0, 0),
         frames,
         speculation_blockers: SpeculationBlockers::from_app_for_test(false, false),
         replay_joypad_frames: None,
@@ -408,6 +414,8 @@ pub(super) fn frame_input(frames: usize) -> FrameInput {
         },
         debug_actions: crate::debug::DebugUiActions::none(),
         snapshot: SnapshotRequest {
+            debug_target: crate::debug::DebugTarget::Primary,
+            debug_revision: 0,
             want_debug_info: false,
             want_perf_info: false,
             any_viewer_open: false,
@@ -420,7 +428,7 @@ pub(super) fn frame_input(frames: usize) -> FrameInput {
             memory_view_start: 0,
             show_rom_viewer: false,
             show_instruction_trace: false,
-            trace_after_sequence: None,
+            trace_cursor: Default::default(),
             rom_view_start: 0,
             last_disasm_pc: None,
             last_disasm_mapping: None,

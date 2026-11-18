@@ -1,5 +1,8 @@
 use super::ActiveSystem;
 
+mod md;
+pub(crate) use md::{resolve_md_svp_with_manifest, resolve_md_tmss_with_manifest};
+
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedFirmwareBytes {
     pub(crate) bytes: Vec<u8>,

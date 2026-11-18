@@ -40,12 +40,21 @@ pub(super) fn section21() -> (u32, u32) {
                 let mut bus = device::Device::new(11);
                 bus.put(r.pc, opcode);
                 bus.put(r.pc + 2, 0x8000);
-                let c = cpu.clone();
-                let b = bus.clone();
-                let result = cpu.step_instruction(&mut bus);
-                let good = result == Err(TimingFault::UnsupportedInstruction { pc: r.pc, opcode })
-                    && cpu == c
-                    && bus == b;
+                let good = if size < 3 && (mode == 1 || mode == 7 && reg >= 2) {
+                    model::handler(&mut bus, 4);
+                    let actions = model::entry(r, 4, false);
+                    let expected =
+                        model::predict(r, [opcode, 0x8000], &bus, &actions, Some(4), false);
+                    cpu.step_instruction(&mut bus) == expected.result
+                        && model::matches(&mut cpu, &bus, &expected, 0)
+                } else {
+                    let c = cpu.clone();
+                    let b = bus.clone();
+                    cpu.step_instruction(&mut bus)
+                        == Err(TimingFault::UnsupportedInstruction { pc: r.pc, opcode })
+                        && cpu == c
+                        && bus == b
+                };
                 report(&mut count, &mut bad, good, opcode, u32::from(supervisor));
             }
         }

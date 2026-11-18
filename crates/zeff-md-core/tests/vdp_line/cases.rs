@@ -102,7 +102,7 @@ pub fn owned_snapshot_and_replay_with(mut snapshot: impl FnMut(&Vdp, Region) -> 
     assert_eq!(row.at(), tick(ROW_AT));
     assert_eq!(row.colors(), &std::array::from_fn::<_, 256, _>(expected));
     assert_eq!(next.colors()[255], color(14));
-    assert_eq!(device.memory().cram()[15], 0x0eee);
+    assert_eq!(device.memory().known_cram().unwrap()[15], 0x0eee);
 }
 
 pub fn publication_and_cached_layout() {
@@ -313,11 +313,11 @@ pub fn pending_inputs_and_render_guards_with(mut snapshot: impl FnMut(&Vdp, Regi
     assert!(snapshot(&shadow, REGION).is_ok());
     let mut scroll = fixture();
     register(&mut scroll, 11, 1);
-    reject(
-        &mut snapshot,
-        &scroll,
-        render(VdpRenderError::UnsupportedScrollMode(1)),
-    );
+    let saved = scroll.clone();
+    let row = snapshot(&scroll, REGION).unwrap();
+    assert_eq!(row.row(), ROW);
+    assert_eq!(row.colors(), &std::array::from_fn::<_, 256, _>(expected));
+    assert_eq!(scroll, saved);
     let mut late = fixture();
     register(&mut late, 17, 1);
     words(&mut late, 0xf000, 1, &[1]);

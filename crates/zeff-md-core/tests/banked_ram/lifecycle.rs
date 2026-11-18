@@ -147,6 +147,13 @@ pub fn banked_ram_grant_fault_clone_reset_and_guards() {
             let mut machine = stopped_ram(&[0x21, 0x04, 0x80, opcode], bank, &[(0xe00004, 0xde)]);
             assert_eq!(machine.step_sound_instruction().unwrap().cycles, 10);
             let saved = machine.clone();
+            if bank == 0x080 && direction == Direction::Read {
+                assert_eq!(machine.step_sound_instruction().unwrap().cycles, 7);
+                assert_eq!(machine.sound_cpu().regs().a, 0xff);
+                assert_eq!(machine.sound_cpu().regs().pc, 4);
+                assert_eq!(machine.peek(0xe00004), Some(0xde));
+                continue;
+            }
             assert_eq!(
                 machine.step_sound_instruction(),
                 Err(SoundFault::UnsupportedAccess {
@@ -158,17 +165,23 @@ pub fn banked_ram_grant_fault_clone_reset_and_guards() {
             assert_eq!(machine.peek(0xe00004), Some(0xde));
         }
     }
-    let mut rom_write = stopped_ram(&[0x21, 0x04, 0x80, 0x77], 0, &[(0xe00004, 0xde)]);
-    assert_eq!(rom_write.step_sound_instruction().unwrap().cycles, 10);
-    let saved = rom_write.clone();
-    assert_eq!(
-        rom_write.step_sound_instruction(),
-        Err(SoundFault::UnsupportedAccess {
-            address: 0x8004,
-            direction: Direction::Write
-        })
+    let mut rom_write = stopped_ram(
+        &[0x21, 0x04, 0x80, 0x3e, 0x55, 0x77, 0x76],
+        0,
+        &[(0xe00004, 0xde)],
     );
-    assert_eq!(rom_write, saved);
+    assert_eq!(rom_write.step_sound_instruction().unwrap().cycles, 10);
+    assert_eq!(rom_write.step_sound_instruction().unwrap().cycles, 7);
+    let original_rom = rom_write.rom_bytes().to_vec();
+    assert_eq!(rom_write.peek(4), Some(0));
+    assert_eq!(rom_write.step_sound_instruction().unwrap().cycles, 7);
+    assert_eq!(rom_write.sound_cpu().regs().pc, 6);
+    assert_eq!(rom_write.sound_cpu().regs().a, 0x55);
+    assert_eq!(rom_write.sound_cpu().cycles(), 24);
+    assert_eq!(rom_write.peek(4), Some(0));
+    assert_eq!(rom_write.rom_bytes(), original_rom);
+    assert_eq!(rom_write.peek(0xe00004), Some(0xde));
+    assert!(rom_write.sound_fault().is_none());
     let mut absent_rom = stopped_ram(&[0x21, 0x04, 0x80, 0x7e], 1, &[]);
     assert_eq!(absent_rom.step_sound_instruction().unwrap().cycles, 10);
     assert_eq!(absent_rom.step_sound_instruction().unwrap().cycles, 7);

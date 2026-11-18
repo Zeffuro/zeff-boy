@@ -191,6 +191,18 @@ impl EmuLoop {
             return Err(TasRepairSuspendRejectedReason::StateChangedDuringCapture);
         }
         match identity.profile {
+            crate::emu_thread::TasExecutionProfile::DirectMdThreeButton
+            | crate::emu_thread::TasExecutionProfile::DirectMdSixButton => {
+                let witness = crate::emu_backend::loader::md_product::build_md_tas_witness(
+                    &self.backend,
+                    !self.last_cheats.is_empty(),
+                    identity.profile,
+                )
+                .map_err(|_| TasRepairSuspendRejectedReason::StateCaptureFailed)?;
+                if witness.current_state_bytes != state_bytes {
+                    return Err(TasRepairSuspendRejectedReason::StateChangedDuringCapture);
+                }
+            }
             crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg => {
                 crate::emu_backend::loader::validate_direct_gb_tas_state(&state_bytes)
                     .map_err(|_| TasRepairSuspendRejectedReason::StateCaptureFailed)?;
@@ -556,6 +568,10 @@ fn validate_suspend_profile(
     if observation.profile != identity.profile
         || observation.system
             != match identity.profile {
+                crate::emu_thread::TasExecutionProfile::DirectMdThreeButton
+                | crate::emu_thread::TasExecutionProfile::DirectMdSixButton => {
+                    crate::emu_backend::ActiveSystem::Md
+                }
                 crate::emu_thread::TasExecutionProfile::DirectNesCartridge
                 | crate::emu_thread::TasExecutionProfile::DirectFdsDisk => {
                     crate::emu_backend::ActiveSystem::Nes

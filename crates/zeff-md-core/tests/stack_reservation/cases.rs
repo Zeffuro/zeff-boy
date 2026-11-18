@@ -128,7 +128,6 @@ pub fn exchange_start(prefix: Option<u8>) -> Emulator {
 }
 
 pub fn exchange_reserves_fixed_phases_and_retains_mixed_tails() {
-    // EX read-high (4T) and write-low (5T) remain unqualified mixed tails.
     for prefix in [None, Some(0xdd), Some(0xfd)] {
         let mut machine = exchange_start(prefix);
         assert!(finish(&mut machine) > 0);

@@ -85,7 +85,9 @@ fn md_nonvolatile_ram_roundtrips_all_cells_through_direct_and_archive_paths() ->
                 TasPersistentStateIdentity::from_save_ram_kind(backend.save_ram_kind()),
                 TasPersistentStateIdentity::ExternalPersistent { size }
             );
-            md_mut(&mut backend).emu.load_save_ram(&expected)?;
+            md_mut(&mut backend)
+                .test_normal_core_mut()?
+                .load_save_ram(&expected)?;
             assert_eq!(backend.rom_hash(), identity);
             assert_eq!(
                 backend.battery_components(),
@@ -155,7 +157,9 @@ fn md_save_read_and_write_failures_preserve_existing_target() -> anyhow::Result<
             std::fs::write(&marker, b"keep")?;
             assert!(load_at(save_rom(size), &source, &path, true).is_err());
             let mut backend = load_at(save_rom(size), &source, &path, false)?;
-            md_mut(&mut backend).emu.load_save_ram(&pattern(size))?;
+            md_mut(&mut backend)
+                .test_normal_core_mut()?
+                .load_save_ram(&pattern(size))?;
             assert!(backend.flush_battery_sram().is_err());
             assert_eq!(std::fs::read(marker)?, b"keep");
         }
@@ -169,7 +173,9 @@ fn md_disabled_publication_and_absent_ram_do_not_create_saves() -> anyhow::Resul
     for size in [512, 8192, 32768] {
         for (source, path) in paths(directory.path(), size, "disabled") {
             let mut backend = load_at(save_rom(size), &source, &path, true)?;
-            md_mut(&mut backend).emu.load_save_ram(&pattern(size))?;
+            md_mut(&mut backend)
+                .test_normal_core_mut()?
+                .load_save_ram(&pattern(size))?;
             md_mut(&mut backend).set_host_persistence_enabled(false);
             assert_eq!(backend.flush_battery_sram()?, None);
             assert!(!source.with_extension("sav").exists());

@@ -73,7 +73,7 @@ impl PrefetchCpu {
             capture_pc,
             pipeline.words[0],
         );
-        let fetched = self.physical_read(bus, phase)?;
+        let fetched = self.physical_fetch(bus, phase)?;
         if size == Size::Long {
             self.physical_reserve()?;
             self.registers.set_status_register(full.status_register());
@@ -91,7 +91,7 @@ impl PrefetchCpu {
             operand.address,
             size,
             capture_pc,
-            operand.retained,
+            operand.retained.value,
         );
         let high = if size == Size::Long {
             (result >> 16) as u16
@@ -102,10 +102,10 @@ impl PrefetchCpu {
         };
         self.physical_write(bus, phase, high)?;
         self.registers.pc = operand.anchor;
-        self.pipeline = Some(Pipeline {
-            address: operand.anchor,
-            words: [operand.retained, fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(
+            operand.anchor,
+            [operand.retained, fetched],
+        ));
         Ok(())
     }
 
@@ -136,17 +136,17 @@ impl PrefetchCpu {
                 pipeline.words[1]
             },
         );
-        let fetched = self.physical_read(bus, phase)?;
+        let fetched = self.physical_fetch(bus, phase)?;
         if profile.size == Size::Long {
             self.registers.d[profile.register] = result;
             self.entry_idle(bus, 2)
                 .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))?;
         }
         self.registers.pc = pipeline.address.wrapping_add(2);
-        self.pipeline = Some(Pipeline {
-            address: self.registers.pc,
-            words: [pipeline.words[1], fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(
+            self.registers.pc,
+            [pipeline.input(1), fetched],
+        ));
         Ok(())
     }
 

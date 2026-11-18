@@ -8,11 +8,11 @@ pub(super) struct DebugMenuState {
     pub(super) external_debugger: bool,
     pub(super) debugger_window_open: bool,
     pub(super) presentation: DebugPresentation,
-    pub(super) supports_debugger: bool,
+    pub(super) supports_symbol_loading: bool,
 }
 
-const fn symbol_file_action_available(supports_debugger: bool) -> bool {
-    supports_debugger
+const fn symbol_file_action_available(supports_symbol_loading: bool) -> bool {
+    supports_symbol_loading
 }
 
 pub(super) fn draw(
@@ -22,7 +22,7 @@ pub(super) fn draw(
     state: DebugMenuState,
 ) {
     #[cfg(target_arch = "wasm32")]
-    let _ = state.supports_debugger;
+    let _ = state.supports_symbol_loading;
     ui.menu_button("Presentation", |ui| {
         for &mode in DebugPresentation::all_variants() {
             if ui
@@ -120,7 +120,7 @@ pub(super) fn draw(
         ui.close();
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if symbol_file_action_available(state.supports_debugger)
+    if symbol_file_action_available(state.supports_symbol_loading)
         && ui.button("Load Symbol File...").clicked()
     {
         actions.push(MenuAction::LoadSymbolFile);
@@ -201,7 +201,7 @@ mod tests {
     use super::symbol_file_action_available;
 
     #[test]
-    fn symbol_file_action_requires_debugger_support() {
+    fn symbol_file_action_requires_symbol_loading_support() {
         assert!(!symbol_file_action_available(false));
         assert!(symbol_file_action_available(true));
     }

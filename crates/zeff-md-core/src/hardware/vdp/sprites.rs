@@ -54,7 +54,6 @@ impl VdpSpritePattern {
         Some(row * TILE_ROW_BYTES as u16)
     }
 
-    /// Reads current pattern VRAM using previously prepared row metadata.
     pub fn tile_row(
         &self,
         memory: &VdpMemory,
@@ -101,7 +100,6 @@ impl VdpSprite {
 }
 
 impl VdpMemory {
-    /// Composes one H32 row from ordered patterns, without masking history, overflow or timing.
     pub fn compose_sprite_line(
         &self,
         patterns: &[VdpSpritePattern],
@@ -191,7 +189,6 @@ impl VdpMemory {
         Ok(line)
     }
 
-    /// 64-KiB mode-5 entry; caller supplies SAT cache coherence.
     pub fn sprite_entry(
         &self,
         registers: &VdpRegisterPipeline,
@@ -256,7 +253,6 @@ impl VdpMemory {
         self.sprite_pixel(self.sprite_entry(registers, index)?, x, y)
     }
 
-    /// Requires a coherent row below mode limits, without masking, overflow or cyclic lists.
     pub fn sample_sprite_layer(
         &self,
         registers: &VdpRegisterPipeline,

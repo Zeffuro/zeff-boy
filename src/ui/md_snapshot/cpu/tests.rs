@@ -54,7 +54,7 @@ fn assert_no_execution_data(cpu: &CpuDebugSnapshot) {
     assert_eq!(cpu.last_opcode_line, "Instruction history unavailable");
     assert!(cpu.recent_opcodes.is_empty());
     assert!(cpu.call_stack.is_empty());
-    assert!(!cpu.call_stack_available);
+    assert!(cpu.call_stack_available);
     assert!(cpu.breakpoints.is_empty());
     assert!(cpu.one_shot_breakpoints.is_empty());
     assert!(cpu.breakpoint_hit_conditions.is_empty());
@@ -66,7 +66,22 @@ fn assert_no_execution_data(cpu: &CpuDebugSnapshot) {
     assert_eq!(cpu.hit_rom_breakpoint, None);
     assert!(cpu.hit_watchpoint.is_none());
     assert_eq!(cpu.hit_event, None);
-    assert!(cpu.io_registers.is_empty());
+    assert_eq!(cpu.io_registers.len(), 7);
+    assert_eq!(
+        cpu.io_registers
+            .iter()
+            .map(|register| (register.address, register.writable_mask))
+            .collect::<Vec<_>>(),
+        [
+            (0xa10001, 0),
+            (0xa10003, 0),
+            (0xa10005, 0),
+            (0xa10007, 0),
+            (0xa10009, 0x7f),
+            (0xa1000b, 0x7f),
+            (0xa1000d, 0x7f),
+        ]
+    );
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
@@ -113,8 +128,14 @@ fn md_register_snapshot_formats_all_registers_stacks_and_status_bits() {
                     for (index, name) in flags.into_iter().enumerate() {
                         assert_eq!(cpu.flags[index], (name, ccr & (16 >> index) != 0));
                     }
-                    assert_eq!(cpu.sections.len(), 1);
+                    assert_eq!(cpu.sections.len(), 4);
                     assert_eq!(cpu.sections[0].heading, "Status register");
+                    assert_eq!(cpu.sections[1].heading, "VDP registers");
+                    assert_eq!(cpu.sections[2].heading, "Bus and interrupts");
+                    assert_eq!(
+                        cpu.sections[3].heading,
+                        "SOUND Z80 (read-only published state)"
+                    );
                     assert_eq!(
                         cpu.sections[0].lines,
                         [format!(
@@ -167,3 +188,5 @@ fn md_register_snapshot_request_is_opt_in_and_preserves_future_frame_pcm() {
         }
     }
 }
+
+mod sound;

@@ -7,7 +7,19 @@ pub(crate) use super::menu_bar::{MenuAction, MenuBarContext, MenuBarResult, draw
 pub(crate) use super::settings_window::draw_settings_window;
 pub(crate) use super::settings_window::{SettingsContext, draw_settings_content};
 
+#[derive(Default)]
+pub(crate) struct SoundTraceActions {
+    pub(crate) enabled: Option<bool>,
+    pub(crate) capacity: Option<usize>,
+    pub(crate) clear: bool,
+    pub(crate) watch: Option<super::sound_watchpoints::SoundWatchRequest>,
+}
+
 pub(crate) struct DebugUiActions {
+    pub(crate) target: super::DebugTarget,
+    pub(crate) target_revision: Option<u64>,
+    pub(crate) select_target: Option<super::DebugTarget>,
+    pub(crate) sound_trace: SoundTraceActions,
     pub(crate) add_breakpoint: Option<Address>,
     pub(crate) add_one_shot_breakpoint: Option<Address>,
     pub(crate) add_breakpoint_after: Option<(Address, u64)>,
@@ -20,6 +32,7 @@ pub(crate) struct DebugUiActions {
     pub(crate) add_rom_breakpoints: Vec<u64>,
     pub(crate) toggle_rom_breakpoints: Vec<u64>,
     pub(crate) memory_writes: Vec<(Address, u8)>,
+    pub(crate) md_timed_ports: Option<crate::emu_thread::MdTimedPortRequest>,
     pub(crate) apu_channel_mutes: Option<Vec<bool>>,
     pub(crate) step_requested: bool,
     pub(crate) next_frame_requested: bool,
@@ -46,6 +59,10 @@ pub(crate) struct DebugUiActions {
 impl DebugUiActions {
     pub(crate) fn none() -> Self {
         Self {
+            target: super::DebugTarget::Primary,
+            target_revision: None,
+            select_target: None,
+            sound_trace: SoundTraceActions::default(),
             add_breakpoint: None,
             add_one_shot_breakpoint: None,
             add_breakpoint_after: None,
@@ -58,6 +75,7 @@ impl DebugUiActions {
             add_rom_breakpoints: Vec::new(),
             toggle_rom_breakpoints: Vec::new(),
             memory_writes: Vec::new(),
+            md_timed_ports: None,
             apu_channel_mutes: None,
             step_requested: false,
             next_frame_requested: false,
@@ -83,7 +101,11 @@ impl DebugUiActions {
     }
 
     pub(crate) fn has_pending(&self) -> bool {
-        self.add_breakpoint.is_some()
+        self.sound_trace.watch.is_some()
+            || self.sound_trace.enabled.is_some()
+            || self.sound_trace.capacity.is_some()
+            || self.sound_trace.clear
+            || self.add_breakpoint.is_some()
             || self.add_one_shot_breakpoint.is_some()
             || self.add_breakpoint_after.is_some()
             || !self.event_breakpoint_changes.is_empty()
@@ -95,6 +117,7 @@ impl DebugUiActions {
             || !self.add_rom_breakpoints.is_empty()
             || !self.toggle_rom_breakpoints.is_empty()
             || !self.memory_writes.is_empty()
+            || self.md_timed_ports.is_some()
             || self.apu_channel_mutes.is_some()
             || self.layer_toggles.is_some()
             || self.gba_bg_layer_toggles.is_some()
@@ -243,11 +266,10 @@ fn draw_cpu_debug_rows(
         ui.colored_label(
             watchpoint,
             egui::RichText::new(format!(
-                "Watch hit {:?} at {}: {:02X} to {:02X}",
+                "Watch hit {:?} at {}: {}",
                 hit.watch_type,
                 format_addr(hit.address),
-                hit.old_value,
-                hit.new_value
+                hit.value_text()
             ))
             .font(mono.clone()),
         );
@@ -315,5 +337,40 @@ mod tests {
         actions.backstep_requested = false;
         actions.trace_clear = true;
         assert!(actions.requires_emulator_authority());
+    }
+}
+
+#[cfg(test)]
+mod sound_watch_tests {
+    use super::*;
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn sound_watch_request_is_a_target_bound_debugger_mutation_with_primary_controls_unset() {
+        let mut actions = DebugUiActions::none();
+        actions.target = crate::debug::DebugTarget::Sound;
+        actions.target_revision = Some(7);
+        actions.sound_trace.watch = Some(crate::debug::sound_watchpoints::SoundWatchRequest {
+            binding: crate::debug::sound_watchpoints::SoundWatchBinding {
+                owner: crate::ui::TraceStreamId::allocate(),
+                branch: crate::ui::TraceStreamId::allocate(),
+                policy: crate::ui::TraceStreamId::allocate(),
+                revision: 7,
+            },
+            request: crate::ui::TraceStreamId::allocate(),
+            rule: zeff_md_core::sound_trace::SoundWatchRule {
+                space: zeff_md_core::sound_trace::SoundWatchSpace::Io,
+                start: 0x12,
+                end: 0x12,
+                kind: WatchType::ReadWrite,
+            },
+            add: true,
+        });
+        assert!(actions.has_pending() && actions.requires_emulator_authority());
+        assert!(
+            !actions.step_requested
+                && !actions.continue_requested
+                && actions.add_breakpoint.is_none()
+                && actions.memory_writes.is_empty()
+        );
     }
 }

@@ -1,7 +1,7 @@
 use super::ea::{alterable, data, memory};
 use super::{Decoder, Error, Result, Size, condition, require};
 
-impl<F: Fn(u32) -> Option<u8>> Decoder<F> {
+impl<F: Fn(usize) -> Option<u8>> Decoder<F> {
     pub(super) fn move_operand(&mut self, op: u16) -> Result<String> {
         let size = match op >> 12 {
             1 => Size::Byte,
@@ -89,12 +89,8 @@ impl<F: Fn(u32) -> Option<u8>> Decoder<F> {
             let condition = condition((op >> 8) & 15);
             if mode == 1 {
                 let displacement = i32::from(self.word()? as i16);
-                let target = self
-                    .address
-                    .wrapping_add(2)
-                    .wrapping_add_signed(displacement);
-                self.target = Some(target);
-                return Ok(format!("DB{condition} D{reg},${target:08X}"));
+                let target = self.branch_target(displacement);
+                return Ok(format!("DB{condition} D{reg},{target}"));
             }
             require(alterable(mode, reg))?;
             let destination = self.ea(mode, reg, Size::Byte)?;

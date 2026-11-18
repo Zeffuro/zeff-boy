@@ -41,7 +41,10 @@ fn partitioned(run: &mut Run<'_>, source: u16, destination: u32, increment: u8, 
     assert_eq!(one, split);
     assert_eq!(one.memory().vram(), &expected);
     assert_eq!(one.memory().vram().as_ptr(), pointer);
-    assert_eq!(one.memory().cram(), before.cram());
+    assert_eq!(
+        one.memory().known_cram().unwrap(),
+        before.known_cram().unwrap()
+    );
     assert_eq!(one.memory().vsram(), before.vsram());
     counters(&one, 0, source.wrapping_add(LONG_LENGTH), mode);
     assert_eq!(
@@ -113,7 +116,10 @@ pub fn zero_length_continuation_with(run: &mut Run<'_>) {
         assert_eq!(one.command(), command(0x2000, code));
         assert_eq!(one.memory().vram(), &expected);
         assert_eq!(one.memory().vram().as_ptr(), pointer);
-        assert_eq!(one.memory().cram(), before.cram());
+        assert_eq!(
+            one.memory().known_cram().unwrap(),
+            before.known_cram().unwrap()
+        );
         assert_eq!(one.memory().vsram(), before.vsram());
         for chunk in [9, 16, 33, 997] {
             let mut split = seeded.clone();

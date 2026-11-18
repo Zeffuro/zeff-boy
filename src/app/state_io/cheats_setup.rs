@@ -24,6 +24,7 @@ impl App {
         backend: &EmuBackend,
     ) {
         self.save_current_cheats();
+        reset_libretro_requests(&mut self.debug_windows.cheat);
 
         self.debug_windows.cheat.active_system = system;
 
@@ -109,6 +110,8 @@ impl App {
                 rom_title,
                 Some(ws.emu.rom_crc32()),
             );
+        } else if let EmuBackend::Md(md) = backend {
+            apply_md_cheat_rom_info(&mut self.debug_windows.cheat, system, path, md);
         } else if let EmuBackend::Pce(pce) = backend {
             apply_pce_cheat_rom_info(&mut self.debug_windows.cheat, system, path, pce);
         } else {
@@ -122,9 +125,6 @@ impl App {
             self.debug_windows.cheat.libretro_codes.clear();
         }
 
-        self.debug_windows.cheat.libretro_results.clear();
-        self.debug_windows.cheat.libretro_file_list = None;
-        self.debug_windows.cheat.libretro_status = None;
         self.debug_windows.cheat.cheats_dirty = true;
     }
 
@@ -138,6 +138,34 @@ impl App {
         self.debug_windows.mod_state.status_message =
             (!warnings.is_empty()).then(|| warnings.join("\n"));
     }
+}
+
+fn reset_libretro_requests(cheat: &mut CheatState) {
+    cheat.libretro_results.clear();
+    cheat.libretro_file_list = None;
+    cheat.libretro_status = None;
+    cheat.libretro_rx = None;
+    cheat.libretro_busy = false;
+}
+
+fn apply_md_cheat_rom_info(
+    cheat: &mut CheatState,
+    system: ActiveSystem,
+    path: &Path,
+    md: &crate::emu_backend::MdBackend,
+) {
+    let title = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Mega Drive ROM")
+        .to_string();
+    apply_cheat_rom_info(
+        cheat,
+        system,
+        title,
+        Some(crc32fast::hash(md.core().rom_bytes())),
+        LibretroPlatform::Md,
+    );
 }
 
 fn apply_pce_cheat_rom_info(
@@ -298,3 +326,107 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod md_database_tests {
+    use super::*;
+
+    #[test]
+    fn md_cheat_setup_uses_source_crc_title_and_clears_previous_rom_state() {
+        let mut rom = vec![0; 0x400];
+        rom[..8].copy_from_slice(&[0, 0xff, 0xff, 0xfc, 0, 0, 2, 0]);
+        rom[0x100..0x110].copy_from_slice(b"SEGA MEGA DRIVE ");
+        rom[0x1f0] = b'U';
+        rom[0x200..0x204].copy_from_slice(&[0x60, 0xfe, 0x4e, 0x71]);
+        let crc = crc32fast::hash(&rom);
+        let path = Path::new("Synthetic MD setup.md");
+        let backend = crate::emu_backend::load_backend_from_rom_source(
+            ActiveSystem::Md,
+            path,
+            path,
+            Some(rom),
+            crate::emu_backend::BackendLoadConfig {
+                md_load_save_ram: false,
+                md_host_persistence: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .backend;
+        let EmuBackend::Md(md) = backend else {
+            unreachable!()
+        };
+        let expected_codes = crate::cheats::load_game_cheats(
+            ActiveSystem::Md,
+            Some("Synthetic MD setup"),
+            Some(crc),
+        );
+        let expected_metadata = crate::libretro_metadata::lookup_cached(crc, LibretroPlatform::Md);
+        let expected_hints = crate::libretro_metadata::build_cheat_search_hints(
+            "Synthetic MD setup",
+            expected_metadata.as_ref(),
+        );
+        let mut state = CheatState::new();
+        state.active_system = ActiveSystem::Md;
+        state.rom_metadata_title = Some("Previous metadata".into());
+        state.rom_metadata_rom_name = Some("Previous.gbc".into());
+        state.libretro_search_hints = vec!["Previous hint".into()];
+        state.libretro_search = "Previous query".into();
+        state.libretro_file_list = Some(vec!["Previous.cht".into()]);
+        state.libretro_results = vec!["Previous.cht".into()];
+        state.libretro_status = Some("Previous status".into());
+        state.user_codes = crate::cheats::parse_cht_file_for_system(
+            "cheat0_code = \"FF0100:11\"\n",
+            ActiveSystem::Md,
+        );
+        state.libretro_codes = state.user_codes.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        state.libretro_rx = Some(rx);
+        state.libretro_busy = true;
+        tx.send(crate::debug::LibretroAsyncResult::Downloaded {
+            filename: "Previous.cht".into(),
+            result: Ok("cheat0_code = \"FF0100:22\"\n".into()),
+        })
+        .unwrap();
+        reset_libretro_requests(&mut state);
+        apply_md_cheat_rom_info(&mut state, ActiveSystem::Md, path, &md);
+        assert_eq!(state.rom_title.as_deref(), Some("Synthetic MD setup"));
+        assert_eq!(state.rom_crc32, Some(crc));
+        assert_eq!(state.libretro_platform, LibretroPlatform::Md);
+        assert_eq!(
+            state.rom_metadata_title,
+            expected_metadata.as_ref().map(|meta| meta.title.clone())
+        );
+        assert_eq!(
+            state.rom_metadata_rom_name,
+            expected_metadata.as_ref().map(|meta| meta.rom_name.clone())
+        );
+        assert_eq!(state.libretro_search_hints, expected_hints);
+        assert_eq!(
+            state.libretro_search,
+            expected_hints
+                .first()
+                .map(String::as_str)
+                .unwrap_or("Synthetic MD setup")
+        );
+        assert_eq!(
+            crate::cheats::export_cht_file(&state.user_codes),
+            crate::cheats::export_cht_file(&expected_codes.0)
+        );
+        assert_eq!(
+            crate::cheats::export_cht_file(&state.libretro_codes),
+            crate::cheats::export_cht_file(&expected_codes.1)
+        );
+        assert!(state.libretro_results.is_empty() && state.libretro_file_list.is_none());
+        assert!(
+            state.libretro_rx.is_none() && !state.libretro_busy && state.libretro_status.is_none()
+        );
+        assert!(
+            tx.send(crate::debug::LibretroAsyncResult::FileList(Ok(vec![])))
+                .is_err()
+        );
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_database_native_tests;

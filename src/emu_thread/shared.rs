@@ -2,8 +2,10 @@ use crate::emu_backend::{BackendRuntimeConfig, EmuBackend};
 use crate::ui;
 
 mod md_audio;
+mod md_timed_ports;
+mod rewind;
 
-use super::types::{publish_backend_framebuffer, publish_owned_framebuffer};
+use super::types::publish_backend_framebuffer;
 use super::{
     EmuResponse, EmuThread, FrameInput, FrameResult, ReplayJoypadFrame, SharedFramebuffer,
     WorkerRuntimeFault,
@@ -224,6 +226,10 @@ impl EmuThread {
                 runtime_fault,
             );
         }
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        if advance.advanced_frames == 1 {
+            super::audio_timing::step_end(0, 1);
+        }
         let replay_events = tcp_link
             .as_mut()
             .map(|link| link.take_replay_events())
@@ -292,14 +298,18 @@ impl EmuThread {
                     backend.nominal_frame_duration_ns(),
                 );
             }
-            Self::capture_rewind_snapshot(
-                backend,
-                rewind_buffer,
-                input.rewind_enabled,
-                advanced_frames,
-            );
+            if !matches!(backend, EmuBackend::Md(_)) {
+                Self::capture_rewind_snapshot(
+                    backend,
+                    rewind_buffer,
+                    input.rewind_enabled,
+                    advanced_frames,
+                );
+            }
         }
 
+        let capture_md_rewind = runtime_fault.can_step() && matches!(backend, EmuBackend::Md(_));
+        let rewind_enabled = input.rewind_enabled;
         let audio_playback_speed = input.audio.playback_speed;
         let staged_input_frames = input
             .replay_joypad_frames
@@ -320,6 +330,10 @@ impl EmuThread {
         if let Some(mut samples) = audio_samples {
             samples.append(&mut result.audio_samples);
             result.audio_samples = samples;
+        }
+        if capture_md_rewind {
+            Self::capture_rewind_snapshot(backend, rewind_buffer, rewind_enabled, advanced_frames);
+            result.rewind_fill = rewind_buffer.fill_ratio();
         }
         result.staged_input_frames = staged_input_frames;
         result
@@ -385,31 +399,18 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn reset_rewind_for_loaded_state(
-        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
-        rewind_seconds: usize,
-        backend: &EmuBackend,
-    ) -> u64 {
-        let frame_duration_ns = backend.nominal_frame_duration_ns();
-        *rewind_buffer = zeff_emu_common::rewind::RewindBuffer::new_with_frame_duration(
-            rewind_seconds,
-            super::REWIND_CAPTURE_INTERVAL_FRAMES,
-            frame_duration_ns,
-        );
-        frame_duration_ns
-    }
-
     pub(crate) fn respond_load_state(
         backend: &mut EmuBackend,
         result: anyhow::Result<zeff_emu_common::StateRestoreOutcome>,
         path_label: String,
-        buttons_pressed: u8,
-        dpad_pressed: u8,
+        input: Option<(u8, u8)>,
         shared_fb: &SharedFramebuffer,
     ) -> EmuResponse {
         match result {
             Ok(outcome) => {
-                backend.set_input(buttons_pressed, dpad_pressed);
+                if let Some((buttons, dpad)) = input {
+                    backend.set_input(buttons, dpad);
+                }
                 publish_backend_framebuffer(shared_fb, backend);
                 EmuResponse::LoadStateOk {
                     path: path_label,
@@ -430,70 +431,8 @@ impl EmuThread {
         }
     }
 
-    pub(crate) fn handle_rewind(
-        backend: &mut EmuBackend,
-        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
-        shared_fb: &SharedFramebuffer,
-        steps: usize,
-    ) -> EmuResponse {
-        if !backend.supports_rewind() {
-            return EmuResponse::RewindFailed("rewind is not supported by this core".to_string());
-        }
-        let rewind_rollback = rewind_buffer.clone();
-        // Only the first rewind request can land on the current snapshot.
-        if rewind_buffer.latest_snapshot_frame_matches_current() && rewind_buffer.len() > 1 {
-            let current_state = Self::encode_current_state(backend).ok();
-            if current_state.as_ref().is_some_and(|current| {
-                rewind_buffer
-                    .peek()
-                    .is_some_and(|frame| frame.state_bytes == *current)
-            }) {
-                rewind_buffer.discard_latest();
-            }
-        }
-        if let Some(rewind_frame) = rewind_buffer.pop_steps(steps.max(1)) {
-            match backend.load_state_from_bytes(rewind_frame.state_bytes) {
-                Ok(_) => {
-                    if rewind_frame.framebuffer.is_empty() {
-                        publish_backend_framebuffer(shared_fb, backend);
-                    } else {
-                        publish_owned_framebuffer(shared_fb, rewind_frame.framebuffer);
-                    }
-                    return EmuResponse::RewindOk {
-                        media_slot_snapshot: backend.media_slot_snapshot(),
-                        game_boy_serial_device: backend.game_boy_serial_device(),
-                        rewound_frames: rewind_frame.rewound_frames,
-                    };
-                }
-                Err(err) => {
-                    *rewind_buffer = rewind_rollback;
-                    log::warn!("Rewind restore failed: {}", err);
-                    return EmuResponse::RewindFailed("rewind restore failed".to_string());
-                }
-            }
-        }
-
-        *rewind_buffer = rewind_rollback;
-        EmuResponse::RewindFailed("no rewind data".to_string())
-    }
-
     pub(crate) fn encode_current_state(backend: &EmuBackend) -> anyhow::Result<Vec<u8>> {
         backend.encode_state_bytes()
-    }
-
-    pub(crate) fn capture_rewind_snapshot(
-        backend: &EmuBackend,
-        rewind_buffer: &mut zeff_emu_common::rewind::RewindBuffer,
-        enabled: bool,
-        advanced_frames: usize,
-    ) {
-        if enabled
-            && backend.supports_rewind()
-            && rewind_buffer.advance_frames(advanced_frames)
-            && let Ok(bytes) = Self::encode_current_state(backend)
-        {
-            rewind_buffer.push(&bytes, backend.rewind_framebuffer());
-        }
     }
 
     pub(crate) fn configure_system(
@@ -502,6 +441,7 @@ impl EmuThread {
         uncapped_mode: bool,
     ) {
         let runtime_config = BackendRuntimeConfig {
+            debug_view: (input.snapshot.debug_target, input.snapshot.debug_revision),
             opcode_log_enabled: input.snapshot.want_debug_info,
             debug_continue: input.debug_continue,
             debug_step: input.debug_step,
@@ -807,7 +747,7 @@ impl EmuThread {
         backend: &mut EmuBackend,
         runtime_fault: &mut WorkerRuntimeFault,
         reusable_audio: Option<Vec<f32>>,
-        ui_data: ui::UiFrameData,
+        mut ui_data: ui::UiFrameData,
         audio_semantic_frames: Vec<AudioSemanticFrame>,
         rewind_fill: f32,
         advanced_frames: usize,
@@ -817,6 +757,8 @@ impl EmuThread {
         let mut audio_samples = reusable_audio.unwrap_or_default();
         audio_samples.clear();
         backend.drain_audio_samples_into(&mut audio_samples);
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        super::audio_timing::single_field(advanced_frames, audio_samples.len());
         let is_mbc7 = backend.is_mbc7();
         let is_gba_tilt = backend.is_gba_tilt();
         let is_pocket_camera = backend.is_pocket_camera();
@@ -824,9 +766,25 @@ impl EmuThread {
         let game_boy_printer_jobs = Self::take_game_boy_printer_jobs(backend);
         let media_slot_snapshot = backend.media_slot_snapshot();
         runtime_fault.latch(backend.take_runtime_fault());
+        if !runtime_fault.can_step()
+            && let Some(view) = &mut ui_data.md_timed_ports
+        {
+            view.can_submit = false;
+        }
+        if !runtime_fault.can_step()
+            && matches!(backend, EmuBackend::Md(_))
+            && let Some(editing) = ui_data
+                .core_features
+                .as_mut()
+                .and_then(|features| features.memory_editing.as_mut())
+        {
+            editing.enabled = false;
+        }
         let runtime_fault = runtime_fault.take_pending_delivery();
 
         FrameResult {
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            audio_timing_requests: Vec::new(),
             advanced_frames,
             completed_step_requests: 1,
             staged_input_frames: 0,
@@ -878,6 +836,34 @@ impl EmuThread {
 }
 
 #[cfg(test)]
+mod load_recovery_tests;
+#[cfg(test)]
 mod md_audio_tests;
+#[cfg(test)]
+mod md_cheat_tests;
+#[cfg(test)]
+mod md_debugging_tests;
+#[cfg(test)]
+mod md_event_tests;
+#[cfg(test)]
+mod md_execution_tests;
+#[cfg(test)]
+mod md_instruction_trace_tests;
+#[cfg(test)]
+mod md_mapper_cheat_tests;
+#[cfg(test)]
+mod md_pc_breakpoint_tests;
+#[cfg(test)]
+mod md_replay_tests;
+#[cfg(test)]
+mod md_rom_cheat_tests;
+#[cfg(test)]
+pub(super) mod md_step_persistence_tests;
+#[cfg(test)]
+mod md_symbol_tests;
+#[cfg(test)]
+mod md_watchpoint_tests;
+#[cfg(test)]
+mod rewind_tests;
 #[cfg(test)]
 mod tests;

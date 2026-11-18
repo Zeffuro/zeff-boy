@@ -75,6 +75,9 @@ impl App {
                 Some(crate::emu_thread::EmuResponsePoll::Response(response)) => *response,
                 Some(crate::emu_thread::EmuResponsePoll::Empty) | None => break,
                 Some(crate::emu_thread::EmuResponsePoll::Disconnected) => {
+                    self.debug_windows
+                        .md_timed_ports
+                        .cancel_session("Emulator worker disconnected");
                     self.netplay_worker_lost();
                     self.terminalize_tas_control_response_loss();
                     break;
@@ -126,6 +129,21 @@ impl App {
                 None => continue,
             };
             match resp {
+                EmuResponse::MdTimedPortsFinished(reply) => {
+                    self.consume_md_timed_ports(reply);
+                    continue;
+                }
+                EmuResponse::MemoryWriteRejected(error) => {
+                    self.toast_manager
+                        .error(format!("Memory edit rejected: {error}"));
+                    continue;
+                }
+                EmuResponse::CheatsUpdateFailed(error) => {
+                    self.debug_windows.cheat.parse_error = Some(error.clone());
+                    self.toast_manager
+                        .error(format!("Cheats rejected: {error}"));
+                    continue;
+                }
                 #[cfg(target_arch = "wasm32")]
                 EmuResponse::SaveStateOk {
                     path,
@@ -273,10 +291,16 @@ impl App {
         self.frames_in_flight = self
             .frames_in_flight
             .saturating_sub(result.completed_step_requests);
+        if result.completed_step_requests != 0 {
+            self.debug_windows.md_timed_ports.ordinary_delivery();
+        }
         let runtime_fault = result.runtime_fault.take();
         self.record_replay_events(result.replay_events);
         self.commit_replay_batch(result.staged_input_frames);
         if let Some(fault) = runtime_fault {
+            self.debug_windows
+                .md_timed_ports
+                .cancel_session("Emulator worker faulted");
             log::error!("Emulation stopped: {fault}");
             #[cfg(not(target_arch = "wasm32"))]
             self.terminalize_tas_control_runtime_fault();
@@ -338,7 +362,25 @@ impl App {
             gamepad.set_rumble(result.rumble);
         }
 
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        crate::emu_thread::audio_timing::delivery(
+            &result.audio_timing_requests,
+            "app_queue_begin",
+            result.advanced_frames,
+            result.audio_samples.len(),
+            u64::from(result.delivery_merged),
+        );
         self.queue_emulator_audio(&result.audio_samples, result.audio_playback_speed);
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        crate::emu_thread::audio_timing::delivery(
+            &result.audio_timing_requests,
+            "app_queue_end",
+            result.advanced_frames,
+            result.audio_samples.len(),
+            self.audio
+                .as_ref()
+                .map_or(0, |audio| audio.test_queue_levels().0 as u64),
+        );
 
         if let Some(recorder) = &mut self.recording.audio_recorder {
             recorder.write_samples(&result.audio_samples);
@@ -359,12 +401,31 @@ impl App {
     pub(in crate::app) fn process_ui_frame_data(&mut self, mut ui_data: crate::ui::UiFrameData) {
         if let Some(batch) = ui_data.instruction_trace.take() {
             self.debug_windows
-                .execution_coverage
-                .merge(&batch, &self.symbols);
+                .merge_primary_coverage(&batch, &self.symbols);
             self.debug_windows.trace.merge(batch);
         }
 
+        if self.debug_windows.debug_revision == u64::MAX
+            || ui_data.debug_revision == u64::MAX
+            || ui_data.debug_target != self.debug_windows.debug_target
+            || ui_data.debug_revision != self.debug_windows.debug_revision
+        {
+            ui_data.cpu_debug = None;
+            ui_data.md_sound_watch = None;
+            ui_data.disassembly_view = None;
+            ui_data.debug_target = self.debug_windows.debug_target;
+            ui_data.debug_revision = self.debug_windows.debug_revision;
+        }
         if let Some(ref mut cached) = self.cached_ui_data {
+            if cached.debug_revision == u64::MAX
+                || ui_data.debug_revision == u64::MAX
+                || cached.debug_target != ui_data.debug_target
+                || cached.debug_revision != ui_data.debug_revision
+            {
+                cached.cpu_debug = None;
+                cached.md_sound_watch = None;
+                cached.disassembly_view = None;
+            }
             if ui_data.cpu_debug.is_none() {
                 ui_data.cpu_debug = cached.cpu_debug.take();
             }
@@ -447,8 +508,13 @@ impl App {
         }
 
         if let Some(ref mut disasm) = ui_data.disassembly_view {
-            self.symbols.annotate_disassembly(disasm);
-            self.debug_windows.last_disasm_pc = Some(disasm.pc);
+            let symbols = if ui_data.debug_target == crate::debug::DebugTarget::Sound {
+                &self.sound_symbols
+            } else {
+                &self.symbols
+            };
+            symbols.annotate_disassembly(disasm);
+            self.debug_windows.last_disasm_pc = disasm.cursor.cpu_address();
             self.debug_windows.last_disasm_mapping = disasm.mapping;
         }
 

@@ -13,11 +13,11 @@ pub(super) fn fixture(concurrent: bool, opcode: u16) -> Emulator {
 
 pub(super) fn advance(machine: &mut Emulator, ticks: u64) -> Result<(), BusError> {
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .advance_machine(ticks)
     } else {
         machine.bus.advance_machine(ticks)

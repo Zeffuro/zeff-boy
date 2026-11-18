@@ -19,6 +19,7 @@ pub(super) const CURRENT_FIRMWARE_IDS: &[&str] = &[
     "coleco.vision.bios",
     "sega.sms.boot",
     "sega.gg.boot",
+    "sega.md.tmss",
 ];
 
 pub(super) fn draw(ui: &mut egui::Ui, settings: &mut Settings, state: &mut DebugWindowState) {
@@ -384,6 +385,7 @@ enum FirmwareRequirement {
 
 fn requirement(settings: &Settings, firmware_id: &str) -> FirmwareRequirement {
     match firmware_id {
+        "sega.md.tmss" if settings.emulation.md_use_tmss => FirmwareRequirement::Required,
         "nintendo.gba.bios"
             if settings.emulation.gba_bios_mode == crate::settings::GbaBiosMode::External =>
         {
@@ -419,15 +421,13 @@ fn draw_configured_readiness(
     ui.add_space(6.0);
     ui.strong("Configured-mode readiness");
 
-    if requirement(settings, "nintendo.gba.bios") == FirmwareRequirement::Required
-        && !has_usable(rows, "nintendo.gba.bios")
-    {
+    if ["nintendo.gba.bios", "sega.md.tmss"].into_iter().any(|id| {
+        requirement(settings, id) == FirmwareRequirement::Required && !has_usable(rows, id)
+    }) {
         let (_, color) = status_label(ui, FirmwareInventoryStatusKind::UnknownHash);
         ui.label(
-            egui::RichText::new(
-                "Game Boy Advance needs a usable BIOS for the selected firmware mode.",
-            )
-            .color(color),
+            egui::RichText::new("The selected firmware mode needs a recognized BIOS or boot ROM.")
+                .color(color),
         );
     } else {
         let (_, color) = status_label(ui, FirmwareInventoryStatusKind::Recognized);
@@ -538,6 +538,10 @@ mod tests {
     #[test]
     fn built_in_modes_leave_external_images_optional() {
         let settings = Settings::default();
+        assert!(matches!(
+            requirement(&settings, "sega.md.tmss"),
+            FirmwareRequirement::Optional
+        ));
 
         assert!(matches!(
             requirement(&settings, "nintendo.gba.bios"),
@@ -559,6 +563,11 @@ mod tests {
         settings.emulation.gba_bios_mode = GbaBiosMode::External;
         settings.emulation.gb_boot_rom_mode = GbBootRomMode::External;
         settings.emulation.sega_boot_rom_mode = SegaBootRomMode::External;
+        settings.emulation.md_use_tmss = true;
+        assert!(matches!(
+            requirement(&settings, "sega.md.tmss"),
+            FirmwareRequirement::Required
+        ));
 
         assert!(matches!(
             requirement(&settings, "nintendo.gba.bios"),

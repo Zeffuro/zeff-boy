@@ -10,10 +10,22 @@ use crate::platform::Instant;
 
 mod input;
 mod nes_palette;
+mod render;
 mod search;
+#[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
+use super::browser_speculation_test;
 mod snapshot;
 mod timing;
 mod zapper;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_pc_breakpoint_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_ram_tas_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_replay_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AudioSampleRateChange {
@@ -80,6 +92,10 @@ impl App {
     }
 
     pub(super) fn tick(&mut self) {
+        if self.tick_md_timed_ports() {
+            self.render_tick();
+            return;
+        }
         if let Some(notice) = self.settings.take_persistence_notification() {
             self.toast_manager.warning(notice);
         }
@@ -348,10 +364,13 @@ impl App {
                         live_control_active,
                     )
                 };
+                let md_flush = self.debug_windows.md_timed_ports.ordinary_flush_required();
                 let debug_request_pending = self.debug_requests.has_pending();
                 let debug_actions_pending = self.pending_debug_actions.has_pending();
-                let has_pending =
-                    debug_request_pending || debug_actions_pending || remote_capture_pending;
+                let has_pending = debug_request_pending
+                    || debug_actions_pending
+                    || remote_capture_pending
+                    || md_flush;
                 #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
                 {
                     let perf_requirement = self.debug_workspace_visible()
@@ -492,6 +511,14 @@ impl App {
                     };
 
                     let input = FrameInput {
+                        #[cfg(all(test, not(target_arch = "wasm32")))]
+                        audio_timing_request: 0,
+                        #[cfg(all(test, not(target_arch = "wasm32")))]
+                        audio_timing_pacing: (
+                            self.frames_in_flight as u64,
+                            now.saturating_duration_since(self.timing.last_frame_time)
+                                .as_nanos() as u64,
+                        ),
                         frames: frames_to_step,
                         speculation_blockers,
                         replay_joypad_frames,
@@ -587,7 +614,13 @@ impl App {
                         && self
                             .send_emu_command_checked(EmuCommand::StepFrames(Box::new(input)))
                             .is_ok();
+                    if md_flush && !frame_sent {
+                        self.debug_windows
+                            .md_timed_ports
+                            .cancel_session("Ordinary delivery failed; deferred actions canceled");
+                    }
                     if commit_frame_send(&mut self.frames_in_flight, frame_sent) {
+                        self.debug_windows.md_timed_ports.ordinary_flush_sent();
                         #[cfg(not(target_arch = "wasm32"))]
                         if frames_to_step > 0 {
                             self.advance_live_button_releases(frames_to_step);
@@ -601,89 +634,7 @@ impl App {
             }
         }
 
-        let should_render = match self.speed_mode() {
-            SpeedMode::Normal | SpeedMode::SlowMotion => {
-                let background_ui = self.emu_thread.is_none() || {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        self.show_settings_window
-                            || self.show_mods_window
-                            || self.show_cheats_window
-                            || self.show_audio_explorer
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        false
-                    }
-                };
-                !background_ui
-                    || Instant::now().duration_since(self.timing.last_render_time)
-                        >= VIEWER_UPDATE_INTERVAL
-            }
-            SpeedMode::FastForward | SpeedMode::Uncapped => {
-                let now = Instant::now();
-                if now.duration_since(self.timing.last_render_time) >= UI_RENDER_INTERVAL {
-                    self.timing.last_render_time = now;
-                    true
-                } else {
-                    false
-                }
-            }
-        };
-
-        if !should_render {
-            return;
-        }
-        self.timing.last_render_time = Instant::now();
-
-        self.update_debug_cache_edges();
-
-        if let Some(frame) = self.latest_frame.take() {
-            self.last_core_frame = Some(frame.clone());
-            let Some(display_frame) = self.display_frame_for_upload(frame) else {
-                log::warn!(
-                    "Skipping frame upload with unexpected WonderSwan size for {:?}",
-                    self.active_system
-                );
-                return;
-            };
-
-            let Some((native_w, native_h)) = self.display_size_for_frame(&display_frame) else {
-                log::warn!(
-                    "Skipping frame upload with unexpected size: {} bytes for {:?}",
-                    display_frame.len(),
-                    self.active_system
-                );
-                return;
-            };
-
-            if let Some(gfx) = self.gfx.as_mut() {
-                gfx.set_native_size(native_w, native_h);
-                let (width, height) =
-                    crate::app::display::presentation_size(self.active_system, native_w, native_h);
-                gfx.set_presentation_size(width, height);
-                gfx.upload_framebuffer(&display_frame);
-            }
-            self.last_displayed_frame = Some(display_frame);
-        }
-
-        self.debug_windows.memory.enable_editing = self.settings.ui.enable_memory_editing;
-
-        let ui_frame_data = self.cached_ui_data.take();
-        let rendered = self.render_frame(ui_frame_data.as_ref());
-        #[cfg(not(target_arch = "wasm32"))]
-        self.render_native_auxiliary_windows(ui_frame_data.as_ref());
-        self.cached_ui_data = ui_frame_data;
-        #[cfg(all(test, target_arch = "wasm32", feature = "wasm-browser-tests"))]
-        super::browser_speculation_test::observe_app_tick(self, rendered);
-        if !rendered {
-            return;
-        }
-
-        self.debug_windows.tile_viewer_was_open =
-            is_tab_open(&self.debug_dock, DebugTab::TileViewer);
-        self.debug_windows.tilemap_viewer_was_open =
-            is_tab_open(&self.debug_dock, DebugTab::TilemapViewer);
+        self.render_tick();
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -13,3 +13,6 @@ zeff-emu-common = { path = "../zeff-emu-common" }
 
 [dev-dependencies]
 zeff-test-support = { path = "../zeff-test-support" }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "=0.3.76"

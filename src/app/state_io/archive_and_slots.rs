@@ -81,30 +81,38 @@ pub(crate) fn extract_rom_from_zip_bytes(
             names.insert(name.clone()),
             "ZIP contains duplicate member {name:?}"
         );
-        if crate::rom_archive::probe_rom_reader(Path::new(&name), &mut entry)?.is_some() {
+        if let Some(system) = crate::rom_archive::probe_rom_reader(Path::new(&name), &mut entry)? {
+            let member_limit = if system == ActiveSystem::MegaDrive {
+                zeff_md_core::constants::MAX_BANKED_CARTRIDGE_SIZE as u64
+            } else {
+                64 * 1024 * 1024
+            };
             anyhow::ensure!(entry.enclosed_name().is_some(), "ZIP member path is unsafe");
             anyhow::ensure!(
-                entry.size() <= 64 * 1024 * 1024,
-                "ZIP member exceeds the 64 MiB limit"
+                entry.size() <= member_limit,
+                "ZIP member exceeds the {} MiB limit",
+                member_limit / (1024 * 1024)
             );
-            selected.push(index);
+            selected.push((index, member_limit));
         }
     }
     if selected.len() != 1 {
         return extract_rom_entries(&mut archive, Path::new(source_name));
     }
-    let mut entry = archive.by_index(selected[0])?;
+    let (index, member_limit) = selected[0];
+    let mut entry = archive.by_index(index)?;
     let virtual_root = PathBuf::from(source_name);
     let virtual_path =
         virtual_root.join(entry.enclosed_name().context("ZIP member path is unsafe")?);
     let mut bytes = Vec::with_capacity(usize::try_from(entry.size())?);
     std::io::Read::read_to_end(
-        &mut std::io::Read::take(&mut entry, 64 * 1024 * 1024 + 1),
+        &mut std::io::Read::take(&mut entry, member_limit + 1),
         &mut bytes,
     )?;
     anyhow::ensure!(
-        bytes.len() <= 64 * 1024 * 1024,
-        "ZIP member exceeds the 64 MiB limit"
+        bytes.len() as u64 <= member_limit,
+        "ZIP member exceeds the {} MiB limit",
+        member_limit / (1024 * 1024)
     );
     Ok((virtual_path, bytes))
 }
@@ -193,11 +201,11 @@ fn extract_rom_entry_by_index<R: std::io::Read + std::io::Seek>(
         anyhow::bail!("Archive entry '{name}' is not a supported ROM");
     }
     anyhow::ensure!(entry.enclosed_name().is_some(), "ZIP member path is unsafe");
-    let md_limit = zeff_md_core::constants::MAX_CARTRIDGE_SIZE as u64;
+    let md_limit = zeff_md_core::constants::MAX_BANKED_CARTRIDGE_SIZE as u64;
     if system == Some(ActiveSystem::MegaDrive) {
         anyhow::ensure!(
             entry.size() <= md_limit,
-            "MD ZIP member exceeds the 4 MiB limit"
+            "MD ZIP member exceeds the 128 MiB image limit"
         );
     }
     drop(entry);
@@ -211,7 +219,7 @@ fn extract_rom_entry_by_index<R: std::io::Read + std::io::Seek>(
         .with_context(|| format!("Failed to decompress '{name}'"))?;
         anyhow::ensure!(
             data.len() as u64 <= md_limit,
-            "MD ZIP member exceeds the 4 MiB limit"
+            "MD ZIP member exceeds the 128 MiB image limit"
         );
     } else {
         std::io::Read::read_to_end(&mut entry, &mut data)
@@ -426,6 +434,13 @@ mod tests {
         let (_, bytes) = extract_rom_entry_path_from_zip(&archive, &archive.join("other.nes"))?;
         assert_eq!(bytes, b"NES\x1a");
         assert!(extract_rom_entry_path_from_zip(&archive, &archive.join("track.bin")).is_err());
+        let mut large = vec![0; 64 * 1024 * 1024 + 0x200];
+        large[0x100..0x108].copy_from_slice(b"SEGA SSF");
+        crate::test_support::write_zip(&archive, &[("large.md", &large)])?;
+        let (_, bytes) = extract_rom_entry_path_from_zip(&archive, &archive.join("large.md"))?;
+        assert_eq!(bytes, large);
+        let (_, bytes) = extract_rom_from_zip_bytes(&std::fs::read(&archive)?, "large.zip")?;
+        assert_eq!(bytes, large);
         Ok(())
     }
 

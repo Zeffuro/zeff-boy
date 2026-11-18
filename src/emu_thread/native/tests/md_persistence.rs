@@ -31,7 +31,7 @@ fn cells(backend: &EmuBackend) -> Vec<u8> {
     let EmuBackend::Md(md) = backend else {
         panic!("MD backend expected");
     };
-    md.emu.dump_save_ram().unwrap()
+    md.core().dump_save_ram().unwrap()
 }
 
 fn terminal(

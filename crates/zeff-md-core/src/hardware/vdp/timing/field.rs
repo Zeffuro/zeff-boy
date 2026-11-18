@@ -6,17 +6,24 @@ pub(crate) struct FieldPosition {
     pub start: MasterTicks,
     pub lines: u64,
     pub line: u16,
-    pub interlaced: bool,
+    pub line_start: MasterTicks,
+    pub line_ticks: u64,
+    pub projected_end: Option<MasterTicks>,
+    pub mode: InterlaceMode,
     pub odd: bool,
-    pub active_interlaced: bool,
+    pub active_mode: InterlaceMode,
     pub active_odd: bool,
 }
 
 impl FieldPosition {
     pub(crate) fn end(self) -> Result<MasterTicks, VdpTimingError> {
-        self.start
+        self.projected_end.ok_or(VdpTimingError::ClockOverflow)
+    }
+
+    pub(crate) fn next_line(self) -> Result<MasterTicks, VdpTimingError> {
+        self.line_start
             .get()
-            .checked_add(self.lines * H32_LINE_TICKS)
+            .checked_add(self.line_ticks)
             .map(MasterTicks::new)
             .ok_or(VdpTimingError::ClockOverflow)
     }
@@ -27,9 +34,9 @@ pub(in crate::hardware::vdp) struct FieldCalendar {
     pub start: MasterTicks,
     pub id: u64,
     pub updated_at: MasterTicks,
-    pub interlaced: bool,
+    pub mode: InterlaceMode,
     pub odd: bool,
-    pub active_interlaced: bool,
+    pub active_mode: InterlaceMode,
     pub active_odd: bool,
 }
 
@@ -39,15 +46,15 @@ impl FieldCalendar {
             start: epoch,
             id: 0,
             updated_at: epoch,
-            interlaced: false,
+            mode: InterlaceMode::Progressive,
             odd: false,
-            active_interlaced: false,
+            active_mode: InterlaceMode::Progressive,
             active_odd: false,
         }
     }
 
     pub(in crate::hardware::vdp) fn lines(self, region: Region) -> u64 {
-        if self.interlaced {
+        if self.mode.interlaced() {
             (if region == Region::Pal { 312 } else { 262 }) + u64::from(self.odd)
         } else {
             region.frame_lines()
@@ -86,9 +93,12 @@ impl FieldCalendar {
             start: self.start,
             lines: self.lines(region),
             line: (elapsed / H32_LINE_TICKS) as u16,
-            interlaced: self.interlaced,
+            line_start: MasterTicks::new(at.get() - elapsed % H32_LINE_TICKS),
+            line_ticks: H32_LINE_TICKS,
+            projected_end: self.end(region).ok(),
+            mode: self.mode,
             odd: self.odd,
-            active_interlaced: self.active_interlaced,
+            active_mode: self.active_mode,
             active_odd: self.active_odd,
         })
     }
@@ -98,7 +108,7 @@ impl FieldCalendar {
         &mut self,
         at: MasterTicks,
         region: Region,
-        registers: &VdpRegisterPipeline,
+        registers: &impl CalendarRegisters,
     ) -> Result<bool, VdpTimingError> {
         if at < self.updated_at {
             return Err(VdpTimingError::BeforeEpoch {
@@ -109,9 +119,10 @@ impl FieldCalendar {
         if at == self.updated_at {
             return Ok(true);
         }
-        if !self.interlaced
-            && registers.pending().is_none()
-            && registers.registers()[usize::from(DISPLAY_SIZE_REGISTER)]
+        if !self.mode.interlaced()
+            && registers.pending_publication().is_none()
+            && registers
+                .size_byte()
                 .is_some_and(|value| value & INTERLACE_MODE_MASK == 0)
         {
             let count = (at.get() - self.start.get()) / (region.frame_lines() * H32_LINE_TICKS);
@@ -121,7 +132,7 @@ impl FieldCalendar {
                     .id
                     .checked_add(count)
                     .ok_or(VdpTimingError::ClockOverflow)?;
-                self.active_interlaced = false;
+                self.active_mode = InterlaceMode::Progressive;
                 self.active_odd = false;
             }
             self.updated_at = at;
@@ -145,32 +156,31 @@ impl FieldCalendar {
     }
 
     #[inline]
-    pub(in crate::hardware::vdp) fn project(
+    pub(in crate::hardware::vdp) fn project<R: CalendarRegisters>(
         mut self,
         at: MasterTicks,
         region: Region,
-        registers: &VdpRegisterPipeline,
-    ) -> Result<(Self, VdpRegisterPipeline), VdpTimingError> {
+        registers: &R,
+    ) -> Result<(Self, R), VdpTimingError> {
         if self.project_current(at, region, registers)? {
             return Ok((self, *registers));
         }
         self.project_events(at, region, registers)
     }
 
-    fn project_events(
+    fn project_events<R: CalendarRegisters>(
         mut self,
         at: MasterTicks,
         region: Region,
-        registers: &VdpRegisterPipeline,
-    ) -> Result<(Self, VdpRegisterPipeline), VdpTimingError> {
+        registers: &R,
+    ) -> Result<(Self, R), VdpTimingError> {
         let mut registers = *registers;
         loop {
-            let published = registers.published_state().1;
-            let mode = VdpVerticalTiming::horizontal_mode(&published)?;
-            let requested = published.registers()[usize::from(DISPLAY_SIZE_REGISTER)].unwrap();
+            let mode = horizontal_mode_byte(registers.size_byte())?;
+            let requested = registers.size_byte().unwrap();
             let end = self.end(region).ok();
-            let publication = registers.pending().map(|write| write.publish_at);
-            if !self.interlaced
+            let publication = registers.pending_publication();
+            if !self.mode.interlaced()
                 && requested & INTERLACE_MODE_MASK == 0
                 && end.is_some_and(|end| at >= end)
             {
@@ -183,18 +193,18 @@ impl FieldCalendar {
                         .id
                         .checked_add(count)
                         .ok_or(VdpTimingError::ClockOverflow)?;
-                    self.active_interlaced = false;
+                    self.active_mode = InterlaceMode::Progressive;
                     self.active_odd = false;
                     self.updated_at = self.start;
                     if publication.is_some_and(|tick| tick <= self.start) {
                         registers
-                            .advance_to(self.start)
+                            .advance_calendar_to(self.start)
                             .map_err(|_| VdpTimingError::PendingModeChange)?;
                     }
                     continue;
                 }
             }
-            let height = published.display_height(region) as u64;
+            let height = display_height_byte(registers.mode_byte(), region) as u64;
             let latch = self
                 .tick(VdpVerticalTiming::blank_offset(
                     height,
@@ -214,13 +224,14 @@ impl FieldCalendar {
                 return Ok((self, registers));
             };
             if Some(next) == latch {
-                let enabled = requested & INTERLACE_MODE_MASK == INTERLACE_MODE_MASK;
-                if enabled != self.interlaced {
+                let mode = InterlaceMode::from_register(requested).unwrap();
+                let enabled = mode.interlaced();
+                if enabled != self.mode.interlaced() {
                     self.odd = false;
                 }
-                self.interlaced = enabled;
+                self.mode = mode;
             }
-            if Some(next) == toggle && self.interlaced {
+            if Some(next) == toggle && self.mode.interlaced() {
                 self.odd = !self.odd;
             }
             if Some(next) == end {
@@ -229,13 +240,13 @@ impl FieldCalendar {
                     .id
                     .checked_add(1)
                     .ok_or(VdpTimingError::ClockOverflow)?;
-                self.active_interlaced = self.interlaced;
+                self.active_mode = self.mode;
                 self.active_odd = self.odd;
             }
             // The published image at the edge owns a coincident field latch.
             if publication == Some(next) {
                 registers
-                    .advance_to(next)
+                    .advance_calendar_to(next)
                     .map_err(|_| VdpTimingError::PendingModeChange)?;
             }
             self.updated_at = next;
@@ -244,18 +255,22 @@ impl FieldCalendar {
 }
 
 impl VdpVerticalTiming {
-    pub(in crate::hardware::vdp) fn sound_calendar_at(
+    pub(in crate::hardware::vdp) fn sound_calendar_at<R: CalendarRegisters>(
         &self,
         at: MasterTicks,
         region: Region,
-        registers: &VdpRegisterPipeline,
-    ) -> Result<(FieldCalendar, VdpRegisterPipeline), VdpTimingError> {
+        registers: &R,
+    ) -> Result<(FieldCalendar, R), VdpTimingError> {
         self.horizontal.elapsed(at)?;
+        if self.history.is_some() {
+            return Err(VdpTimingError::UnqualifiedDisplayHistory);
+        }
         let mut field = self.field;
         if at < field.updated_at
-            && !field.interlaced
-            && !field.active_interlaced
-            && registers.registers()[usize::from(DISPLAY_SIZE_REGISTER)]
+            && !field.mode.interlaced()
+            && !field.active_mode.interlaced()
+            && registers
+                .size_byte()
                 .is_some_and(|value| value & INTERLACE_MODE_MASK == 0)
         {
             let period = region.frame_lines() * H32_LINE_TICKS;
@@ -279,6 +294,23 @@ impl VdpVerticalTiming {
         registers: &VdpRegisterPipeline,
     ) -> Result<FieldPosition, VdpTimingError> {
         self.horizontal.elapsed(at)?;
+        if let Some((history, _)) = self.vertical_at(at, region, registers)?
+            && history.vertical.is_some()
+        {
+            return history.vertical_position();
+        }
+        if let Some(blank) = self.blank.filter(|b| b.authoritative()) {
+            let mut view = *registers;
+            let projected = blank.advance_projection(at, region, &mut view)?;
+            return if projected.vertical.is_some() {
+                projected.vertical_position()
+            } else {
+                Ok(projected.field_position(region))
+            };
+        }
+        if self.uses_history(registers) {
+            return self.anchored_field_position_at(at, region, registers);
+        }
         self.field
             .project_field(at, region, registers)?
             .position(at, region)
@@ -290,6 +322,12 @@ impl VdpVerticalTiming {
         region: Region,
         registers: &VdpRegisterPipeline,
     ) -> Result<(), VdpTimingError> {
+        if self.blank.is_some_and(|b| b.authoritative()) {
+            return Ok(());
+        }
+        if self.uses_history(registers) {
+            return self.advance_anchored_calendar(at, region, registers);
+        }
         self.field = self.field.project_field(at, region, registers)?;
         Ok(())
     }
@@ -297,3 +335,10 @@ impl VdpVerticalTiming {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(in crate::hardware::vdp) mod oracle;
+
+#[cfg(test)]
+mod projection_tests;

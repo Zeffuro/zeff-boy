@@ -8,13 +8,14 @@ use crate::symbols::{
 };
 
 fn disassembly_location(
+    space: AddressSpaceId,
     address: zeff_emu_common::address::Address,
     storage_offset: Option<u64>,
     bank: Option<u32>,
 ) -> ResolvedDebugLocation {
     ResolvedDebugLocation {
         cpu: CpuLocation {
-            space: AddressSpaceId(0),
+            space,
             address: address.into(),
         },
         storage: storage_offset.map(|offset| StorageLocation {
@@ -29,12 +30,46 @@ fn disassembly_location(
 }
 
 impl SymbolSession {
+    fn annotate_storage_disassembly(&self, view: &mut crate::debug::DisassemblyView) {
+        for line in &mut view.lines {
+            line.bank = None;
+            line.control_target = None;
+            line.control_target_storage = None;
+            line.control_target_bank = None;
+            line.control_target_symbol = None;
+            line.symbol = line
+                .storage_offset
+                .and_then(|offset| self.symbol_name_at_rom_offset(offset))
+                .map(str::to_owned);
+            line.source = line
+                .storage_offset
+                .and_then(|offset| {
+                    self.source_at_storage(StorageLocation {
+                        image: ImageId(0),
+                        region: RegionId(0),
+                        offset,
+                    })
+                })
+                .and_then(|source| self.format_source_line(source));
+        }
+        view.location_symbol = view.selected_line().and_then(|line| {
+            line.symbol.clone().or_else(|| {
+                line.storage_offset
+                    .and_then(|offset| self.symbol_context_at_rom_offset(offset))
+            })
+        });
+    }
+
     pub(crate) fn annotate_disassembly(&self, view: &mut crate::debug::DisassemblyView) {
+        if view.cursor.is_source() {
+            self.annotate_storage_disassembly(view);
+            return;
+        }
         for line in &mut view.lines {
             if line.storage_offset.is_none() {
                 line.storage_offset = self
                     .resolve_load_instance(CpuLocation {
-                        space: AddressSpaceId(0),
+                        space: self.target.cpu_space(),
                         address: line.address.into(),
                     })
                     .map(|resolved| resolved.storage.offset);
@@ -42,7 +77,7 @@ impl SymbolSession {
             if line.control_target_storage.is_none() {
                 line.control_target_storage = line.control_target.and_then(|address| {
                     self.resolve_load_instance(CpuLocation {
-                        space: AddressSpaceId(0),
+                        space: self.target.cpu_space(),
                         address: address.into(),
                     })
                     .map(|resolved| resolved.storage.offset)
@@ -57,6 +92,7 @@ impl SymbolSession {
                     },
                     |_| {
                         self.symbol_name_at_debug_location(disassembly_location(
+                            self.target.cpu_space(),
                             line.address,
                             line.storage_offset,
                             line.bank,
@@ -76,6 +112,7 @@ impl SymbolSession {
                         },
                         |_| {
                             self.symbol_name_at_debug_location(disassembly_location(
+                                self.target.cpu_space(),
                                 address,
                                 line.control_target_storage,
                                 line.control_target_bank,
@@ -99,7 +136,7 @@ impl SymbolSession {
                     })
                     .or_else(|| {
                         self.source_at_cpu(CpuLocation {
-                            space: AddressSpaceId(0),
+                            space: self.target.cpu_space(),
                             address: line.address.into(),
                         })
                     })
@@ -107,23 +144,19 @@ impl SymbolSession {
                 line.source = self.format_source_line(source);
             }
         }
-        view.location_symbol = view
-            .lines
-            .iter()
-            .find(|line| line.address == view.pc)
-            .and_then(|line| {
-                line.symbol.clone().or_else(|| {
-                    line.storage_offset
-                        .and_then(|offset| self.symbol_context_at_rom_offset(offset))
-                })
-            });
+        view.location_symbol = view.selected_line().and_then(|line| {
+            line.symbol.clone().or_else(|| {
+                line.storage_offset
+                    .and_then(|offset| self.symbol_context_at_rom_offset(offset))
+            })
+        });
     }
 
     pub(crate) fn source_reference_for_disassembly(
         &self,
         view: &crate::debug::DisassemblyView,
     ) -> Option<SourceReference> {
-        let line = view.lines.iter().find(|line| line.address == view.pc)?;
+        let line = view.selected_line()?;
         let source = line
             .storage_offset
             .and_then(|offset| {
@@ -134,8 +167,11 @@ impl SymbolSession {
                 })
             })
             .or_else(|| {
+                if view.cursor.is_source() {
+                    return None;
+                }
                 self.source_at_cpu(CpuLocation {
-                    space: AddressSpaceId(0),
+                    space: self.target.cpu_space(),
                     address: line.address.into(),
                 })
             })?;
@@ -304,7 +340,7 @@ impl SymbolSession {
             .then_some(source)
     }
 
-    fn source_at_cpu(&self, location: CpuLocation) -> Option<&SourceLine> {
+    pub(super) fn source_at_cpu(&self, location: CpuLocation) -> Option<&SourceLine> {
         let (start, source) = self.source_by_cpu.range(..=location).next_back()?;
         (start.space == location.space
             && location.address.saturating_sub(start.address) < source.size)

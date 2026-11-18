@@ -12,8 +12,7 @@ impl State {
             return Err(VdpPortError::Read(VdpReadError::PendingIncrement));
         }
         let command = self.command;
-        let increment = self
-            .registers
+        self.registers
             .auto_increment()
             .ok_or(VdpPortError::Read(VdpReadError::UnknownIncrement))?;
         if command.address > COMMAND_ADDRESS_MASK
@@ -21,19 +20,12 @@ impl State {
                 command.code,
                 VRAM_READ_CODE | CRAM_READ_CODE | VSRAM_READ_CODE
             )
-            || (command.code == VRAM_READ_CODE
-                && command.address & u32::from(WORD_ODD_ADDRESS_BIT) != 0)
             || (command.code == VSRAM_READ_CODE
                 && (command.address as usize & usize::from(COLOR_WORD_ADDRESS_MASK)) >> 1
                     >= VSRAM_WORDS)
         {
             return Err(VdpPortError::Read(VdpReadError::UnsupportedCommand(
                 command,
-            )));
-        }
-        if command.code == VRAM_READ_CODE && increment & WORD_ODD_ADDRESS_BIT as u8 != 0 {
-            return Err(VdpPortError::Read(VdpReadError::UnsupportedIncrement(
-                increment,
             )));
         }
         Ok(())
@@ -77,7 +69,7 @@ impl State {
             self.read_phase = Some(true);
             return Ok(());
         }
-        let word = memory.read_after_writes(
+        let word = memory.read_after_transfers(
             self.command,
             self.fifo.next_slot_data(),
             writes.iter().flatten().copied(),

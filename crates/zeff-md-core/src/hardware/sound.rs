@@ -1,3 +1,6 @@
+mod candidate_bus;
+mod rollback_memory;
+mod svp_reads;
 use crate::cartridge::Cartridge;
 use crate::constants::*;
 use crate::hardware::audio::Audio;
@@ -8,6 +11,8 @@ use zeff_z80::{CpuTrap, Z80Bus};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SoundFault {
     ConcurrentSchedulingEnabled,
+    ExpansionUnavailable,
+    InputBlocked(crate::InputFault),
     MainCpuRunning,
     MainInterruptPending,
     ResetAsserted,
@@ -16,14 +21,25 @@ pub enum SoundFault {
     UnsupportedAccess { address: u16, direction: Direction },
     UnsupportedPort { port: u8, direction: Direction },
     UnstableOpn2Read { pc: u16 },
+    UnstableCartridgeRead { pc: u16 },
     CpuTrap(CpuTrap),
     VdpTiming(crate::VdpTimingError),
     ClockOverflow,
 }
 
+#[cfg(feature = "sound-shadow-observer")]
+pub(crate) mod observer;
+#[cfg(test)]
+mod observer_contract_tests;
 #[cfg(test)]
 mod opn2_tests;
 mod ram;
+mod registers;
+use registers::RegisterWrites;
+mod sf001;
+use sf001::Sf001Writes;
+mod sf002;
+use sf002::Sf002Writes;
 pub(crate) mod schedule;
 mod state;
 use ram::SoundRam;
@@ -110,12 +126,21 @@ pub(crate) struct CandidateBus<'a> {
     pub fault: Cell<Option<SoundFault>>,
     pub cartridge: &'a Cartridge,
     pub writes: WorkWrites,
+    pub register_writes: RegisterWrites,
+    pub sf001_writes: Sf001Writes,
+    pub sf002_writes: Sf002Writes,
     pub psg_writes: PsgWrites,
     pub opn2_writes: Opn2Writes,
-    pub opn2_read: Cell<bool>,
+    pub timed_read: Cell<bool>,
+    pub cartridge_read: Cell<Option<u16>>,
     pub opn2_status: u8,
     pub accesses: Cell<u32>,
     pub bank_access: Cell<Option<BankAccess>>,
+    svp_reads: std::cell::RefCell<svp_reads::RomReads>,
+    historical_rom: Option<&'a [svp_reads::RomRead]>,
+    historical_cursor: Cell<usize>,
+    #[cfg(feature = "first-failure-diagnostic")]
+    pub diagnostic_access: Cell<Option<crate::diagnostic::SoundCandidateAccess>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,12 +214,21 @@ impl<'a> CandidateBus<'a> {
             cartridge,
             fault: Cell::new(None),
             writes: WorkWrites::default(),
+            register_writes: RegisterWrites::default(),
+            sf001_writes: Sf001Writes::default(),
+            sf002_writes: Sf002Writes::default(),
             psg_writes: PsgWrites::default(),
             opn2_writes: Opn2Writes::default(),
-            opn2_read: Cell::new(false),
+            timed_read: Cell::new(false),
+            cartridge_read: Cell::new(None),
             opn2_status: 0,
             accesses: Cell::new(0),
             bank_access: Cell::new(None),
+            svp_reads: std::cell::RefCell::new(svp_reads::RomReads::default()),
+            historical_rom: None,
+            historical_cursor: Cell::new(0),
+            #[cfg(feature = "first-failure-diagnostic")]
+            diagnostic_access: Cell::new(None),
         }
     }
 
@@ -202,8 +236,24 @@ impl<'a> CandidateBus<'a> {
         self.accesses.set(self.accesses.get().saturating_add(1));
     }
 
+    #[cfg(feature = "first-failure-diagnostic")]
+    fn diagnostic_access(&self, address: u16, direction: Direction, write_value: Option<u8>) {
+        if self.fault.get().is_none() && crate::diagnostic::enabled() {
+            self.diagnostic_access
+                .set(Some(crate::diagnostic::SoundCandidateAccess {
+                    ordinal: self.accesses.get(),
+                    local_address: address,
+                    direction,
+                    write_value,
+                    bank: self.memory.bank,
+                    translated_main: (address >= SOUND_BANK_WINDOW)
+                        .then(|| self.bank_address(address)),
+                }));
+        }
+    }
+
     fn read_opn2(&self, port: u8) -> u8 {
-        self.opn2_read.set(true);
+        self.timed_read.set(true);
         if port == 0 { self.opn2_status } else { 0 }
     }
 
@@ -229,7 +279,7 @@ impl<'a> CandidateBus<'a> {
     fn bank_opn2_port(address: u32) -> Option<u8> {
         let port = (address & SOUND_MAIN_MASK) as u16;
         ((SOUND_APERTURE_START..=SOUND_APERTURE_END).contains(&address)
-            && (SOUND_OPN2_START..=SOUND_OPN2_END).contains(&port))
+            && (SOUND_OPN2_START..=SOUND_BANK_OPN2_END).contains(&port))
         .then_some((port & 3) as u8)
     }
     fn fail(&self, fault: SoundFault) {
@@ -239,111 +289,14 @@ impl<'a> CandidateBus<'a> {
     }
 }
 
-impl Z80Bus for CandidateBus<'_> {
-    fn cpu_read(&self, address: u16) -> u8 {
-        self.record();
-        if let Some(value) = self.memory.read(address) {
-            return value;
-        }
-        if (SOUND_OPN2_START..=SOUND_OPN2_END).contains(&address) {
-            return self.read_opn2((address - SOUND_OPN2_START) as u8);
-        }
-        if address >= SOUND_BANK_WINDOW {
-            let target = self.bank_address(address);
-            if let Some(port) = Self::bank_opn2_port(target) {
-                return self.bank_read(target, self.read_opn2(port));
-            }
-            if target <= CARTRIDGE_END {
-                if self
-                    .cartridge
-                    .save
-                    .as_ref()
-                    .is_some_and(|save| save.contains(target))
-                {
-                    // Mutable bank reads need publication-time sampling.
-                    self.fail(SoundFault::UnsupportedAccess {
-                        address,
-                        direction: Direction::Read,
-                    });
-                    return UNPOPULATED_ROM_BYTE;
-                }
-                return self.bank_read(
-                    target,
-                    self.cartridge
-                        .bytes
-                        .get(target as usize)
-                        .copied()
-                        .unwrap_or(UNPOPULATED_ROM_BYTE),
-                );
-            }
-            if (WORK_RAM_START..=BUS_ADDRESS_MASK).contains(&target) {
-                return self.bank_read(target, SOUND_DISCONNECTED_BYTE);
+fn svp_access_allowed(cartridge: &Cartridge, address: u32, direction: Direction) -> bool {
+    cartridge.svp.is_none()
+        || match direction {
+            Direction::Read => address < 0x200000 && (address as usize) < cartridge.bytes.len(),
+            Direction::Write => {
+                address > CARTRIDGE_UNUSED_END
+                    && !(0xa13000..0xa13100).contains(&address)
+                    && !(0xa15000..0xa15100).contains(&address)
             }
         }
-        self.fail(SoundFault::UnsupportedAccess {
-            address,
-            direction: Direction::Read,
-        });
-        UNPOPULATED_ROM_BYTE
-    }
-    fn cpu_write(&mut self, address: u16, value: u8) {
-        self.record();
-        if self.memory.write(address, value) {
-            return;
-        }
-        if (SOUND_OPN2_START..=SOUND_OPN2_END).contains(&address)
-            && self
-                .opn2_writes
-                .push((address - SOUND_OPN2_START) as u8, value)
-        {
-            return;
-        }
-        if (SOUND_PSG_START..=SOUND_PSG_END).contains(&address)
-            && (address & 1 == 0 || self.psg_writes.push(value))
-        {
-            return;
-        }
-        if address >= SOUND_BANK_WINDOW {
-            let target = self.bank_address(address);
-            if let Some(port) = Self::bank_opn2_port(target)
-                && self.opn2_writes.push(port, value)
-            {
-                self.capture_bank(target, Direction::Write, value);
-                return;
-            }
-            if target & VDP_DECODE_MASK == VDP_DECODE_VALUE
-                && (PSG_PORT_START..=PSG_PORT_END).contains(&(target & VDP_PORT_MASK))
-                && (target & 1 == 0 || self.psg_writes.push(value))
-            {
-                self.capture_bank(target, Direction::Write, value);
-                return;
-            }
-            if (WORK_RAM_START..=BUS_ADDRESS_MASK).contains(&target)
-                && self.writes.push(target, value)
-            {
-                self.capture_bank(target, Direction::Write, value);
-                return;
-            }
-        }
-        self.fail(SoundFault::UnsupportedAccess {
-            address,
-            direction: Direction::Write,
-        });
-    }
-    fn io_read(&mut self, _: u8) -> u8 {
-        self.record();
-        SOUND_DISCONNECTED_BYTE
-    }
-    fn io_write(&mut self, _: u8, _: u8) {
-        self.record();
-    }
-    fn maskable_interrupt_pending(&self) -> bool {
-        self.memory.irq_asserted
-    }
-    fn non_maskable_interrupt_pending(&self) -> bool {
-        false
-    }
-    fn acknowledge_non_maskable_interrupt(&mut self) -> bool {
-        false
-    }
 }

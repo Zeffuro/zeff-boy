@@ -1,7 +1,15 @@
 use super::flags::sz53_flags;
 use super::*;
 
+mod copy_cycle;
 mod state;
+
+pub(super) fn is_neg(opcode: u8) -> bool {
+    matches!(
+        opcode,
+        0x44 | 0x4c | 0x54 | 0x5c | 0x64 | 0x6c | 0x74 | 0x7c
+    )
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Io {
@@ -31,6 +39,7 @@ impl Io {
     }
 
     pub(super) fn execute<B: Z80Bus>(self, cpu: &mut Cpu, bus: &mut B, offset: u32) {
+        let port_address = cpu.regs.bc();
         if let Some(value) = self.output {
             cpu.write_io(bus, self.port, value, offset);
         } else {
@@ -40,6 +49,7 @@ impl Io {
             }
             cpu.set_szp_flags_preserving_carry(value);
         }
+        cpu.set_memptr(port_address.wrapping_add(1));
     }
 }
 
@@ -50,6 +60,18 @@ pub(super) struct Internal {
 }
 
 impl Internal {
+    pub(super) fn word_pending(self) -> bool {
+        self.word_phase(self.opcode).is_some()
+    }
+    pub(super) fn word_phase(self, opcode: u8) -> Option<bool> {
+        (self.opcode == opcode
+            && matches!(
+                opcode,
+                0x42 | 0x52 | 0x62 | 0x72 | 0x4a | 0x5a | 0x6a | 0x7a
+            ))
+        .then_some(self.final_phase)
+    }
+
     pub(super) fn decode(opcode: u8) -> Option<Self> {
         let final_phase = match opcode {
             0x42 | 0x52 | 0x62 | 0x72 | 0x4a | 0x5a | 0x6a | 0x7a => false,
@@ -117,6 +139,16 @@ impl Block {
                 BlockPhase::Read
             },
         })
+    }
+
+    pub(super) fn memory_cycle(&self) -> Option<u32> {
+        match self.phase {
+            BlockPhase::Read if self.opcode & 3 != 2 => Some(CYCLES_MEMORY_TRANSFER),
+            BlockPhase::Write(_) if matches!(self.opcode & 3, 0 | 2) => {
+                Some(CYCLES_MEMORY_TRANSFER)
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn step<B: Z80Bus>(
@@ -195,31 +227,36 @@ impl Block {
                 },
             ),
             BlockPhase::Repeat(value) => {
-                cpu.regs.pc = self.pc;
-                let xy = Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3;
-                cpu.regs.f = (cpu.regs.f & !xy) | ((self.pc >> 8) as u8 & xy);
-                if self.opcode & 2 != 0 {
-                    let carry = cpu.regs.f & Z80_FLAG_CARRY != 0;
-                    let negative = value & Z80_FLAG_SIGN != 0;
-                    let b = cpu.regs.b;
-                    let adjusted = if !carry {
-                        b
-                    } else if negative {
-                        b.wrapping_sub(1)
-                    } else {
-                        b.wrapping_add(1)
-                    };
-                    let parity = (adjusted & 7).count_ones().is_multiple_of(2);
-                    let overflow = cpu.regs.f & Z80_FLAG_PARITY_OVERFLOW != 0;
-                    cpu.regs.f &= !(Z80_FLAG_HALF_CARRY | Z80_FLAG_PARITY_OVERFLOW);
-                    if parity == overflow {
-                        cpu.regs.f |= Z80_FLAG_PARITY_OVERFLOW;
-                    }
-                    if carry && b & 0x0f == if negative { 0 } else { 0x0f } {
-                        cpu.regs.f |= Z80_FLAG_HALF_CARRY;
-                    }
-                }
+                self.repeat(cpu, value);
                 (None, CYCLES_ED_BLOCK_REPEAT_INTERNAL)
+            }
+        }
+    }
+
+    fn repeat(self, cpu: &mut Cpu, value: u8) {
+        cpu.regs.pc = self.pc;
+        cpu.set_memptr(self.pc.wrapping_add(1));
+        let xy = Z80_FLAG_BIT_5 | Z80_FLAG_BIT_3;
+        cpu.regs.f = (cpu.regs.f & !xy) | ((self.pc >> 8) as u8 & xy);
+        if self.opcode & 2 != 0 {
+            let carry = cpu.regs.f & Z80_FLAG_CARRY != 0;
+            let negative = value & Z80_FLAG_SIGN != 0;
+            let b = cpu.regs.b;
+            let adjusted = if !carry {
+                b
+            } else if negative {
+                b.wrapping_sub(1)
+            } else {
+                b.wrapping_add(1)
+            };
+            let parity = (adjusted & 7).count_ones().is_multiple_of(2);
+            let overflow = cpu.regs.f & Z80_FLAG_PARITY_OVERFLOW != 0;
+            cpu.regs.f &= !(Z80_FLAG_HALF_CARRY | Z80_FLAG_PARITY_OVERFLOW);
+            if parity == overflow {
+                cpu.regs.f |= Z80_FLAG_PARITY_OVERFLOW;
+            }
+            if carry && b & 0x0f == if negative { 0 } else { 0x0f } {
+                cpu.regs.f |= Z80_FLAG_HALF_CARRY;
             }
         }
     }
@@ -242,6 +279,7 @@ impl Block {
                 cpu.regs.bc() != 0
             }
             1 => {
+                cpu.memptr_relative(delta);
                 let result = cpu.regs.a.wrapping_sub(value);
                 let half = (cpu.regs.a & 0x0f) < (value & 0x0f);
                 cpu.regs.set_bc(cpu.regs.bc().wrapping_sub(1));
@@ -258,7 +296,13 @@ impl Block {
                 cpu.regs.bc() != 0 && result != 0
             }
             _ => {
+                let input_port_address = cpu.regs.bc();
                 cpu.regs.b = cpu.regs.b.wrapping_sub(1);
+                cpu.set_memptr(if kind == 2 {
+                    input_port_address.wrapping_add_signed(delta)
+                } else {
+                    cpu.regs.bc().wrapping_add_signed(delta)
+                });
                 let addend = if kind == 2 {
                     self.port.wrapping_add_signed(delta as i8)
                 } else {
@@ -317,6 +361,9 @@ impl Cpu {
         pc: u16,
         opcode: u8,
     ) -> u32 {
+        if self.execute_ed_neg(opcode).is_some() {
+            return CYCLES_ED_NEG;
+        }
         if let Some(load) = load::Load::decode_ed(self, opcode) {
             return load.execute(self, bus) + CYCLES_M1;
         }
@@ -339,10 +386,6 @@ impl Cpu {
                 let pair = (opcode >> 4) & 0x03;
                 self.sbc_hl(self.read_reg16(pair));
                 CYCLES_ED_16BIT_ALU
-            }
-            0x44 | 0x4C | 0x54 | 0x5C | 0x64 | 0x6C | 0x74 | 0x7C => {
-                self.neg_a();
-                CYCLES_ED_NEG
             }
             0x46 | 0x4E | 0x66 | 0x6E => {
                 self.interrupt_mode = InterruptMode::Im0;
@@ -381,8 +424,17 @@ impl Cpu {
         }
     }
 
+    pub(super) fn execute_ed_neg(&mut self, opcode: u8) -> Option<()> {
+        if !is_neg(opcode) {
+            return None;
+        }
+        self.neg_a();
+        Some(())
+    }
+
     fn adc_hl(&mut self, value: u16) {
         let hl = self.regs.hl();
+        self.set_memptr(hl.wrapping_add(1));
         let carry_in = u16::from(self.regs.f & Z80_FLAG_CARRY != 0);
         let result = hl.wrapping_add(value).wrapping_add(carry_in);
         let half_carry = (hl & 0x0FFF) + (value & 0x0FFF) + carry_in > 0x0FFF;
@@ -402,6 +454,7 @@ impl Cpu {
 
     fn sbc_hl(&mut self, value: u16) {
         let hl = self.regs.hl();
+        self.set_memptr(hl.wrapping_add(1));
         let carry_in = u16::from(self.regs.f & Z80_FLAG_CARRY != 0);
         let result = hl.wrapping_sub(value).wrapping_sub(carry_in);
         let half_borrow = (hl & 0x0FFF) < ((value & 0x0FFF) + carry_in);

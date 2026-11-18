@@ -53,7 +53,6 @@ pub(crate) fn calculate(
         }
         0x4180 => {
             let value = dividend as i16;
-            // CHK sets N/Z from Dn and clears V/C before its comparisons.
             crate::alu::logic(regs, Size::Word, dividend);
             let difference = i32::from(source as i16) - i32::from(value);
             // Bounds failure precedes the negative-Dn check and traps two clocks sooner.
@@ -114,7 +113,6 @@ pub(crate) fn calculate(
 }
 
 fn division_overflow(regs: &mut Registers) {
-    // Division overflow selects N=1 and Z=0.
     regs.set_status_register(
         (regs.status_register() & !(NEGATIVE | ZERO | OVERFLOW | CARRY)) | NEGATIVE | OVERFLOW,
     );

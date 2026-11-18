@@ -139,7 +139,7 @@ pub fn unsupported_sound_latches_after_prior_progress() {
     }
     assert_eq!(machine.sound_cpu().regs().a, 0xff);
     assert!(machine.sound_fault().is_none());
-    let mut machine = start(&[0x3e, 0x55, 0x3a, 4, 0x40], &[]);
+    let mut machine = start(&[0x3e, 0x55, 0x3a, 0, 0x7f], &[]);
     let mut fault = None;
     for _ in 0..8 {
         if let Err(error) = machine.step_instruction() {
@@ -150,7 +150,7 @@ pub fn unsupported_sound_latches_after_prior_progress() {
     assert_eq!(
         fault,
         Some(MachineFault::Sound(SoundFault::UnsupportedAccess {
-            address: 0x4004,
+            address: 0x7f00,
             direction: zeff_m68k::bus::Direction::Read
         }))
     );

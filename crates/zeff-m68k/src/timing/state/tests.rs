@@ -55,6 +55,7 @@ fn ordinary_boundary_codec_has_explicit_stable_bytes() {
     assert_eq!(bytes(&source), golden);
     assert_eq!(bytes(&restored(&source)), golden);
     restored(&PrefetchCpu::default());
+    crate::timing::interrupt::sampling_tests::sampled_state_contract();
 }
 
 #[test]

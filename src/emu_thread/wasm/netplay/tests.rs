@@ -227,7 +227,7 @@ impl Observation {
     fn drain(&mut self, thread: &EmuThread) {
         while let Some(response) = thread.try_recv_response() {
             match response {
-                EmuResponse::Netplay(Response::Ready) => self.ready = true,
+                EmuResponse::Netplay(Response::Ready { md_input: None }) => self.ready = true,
                 EmuResponse::Netplay(Response::Presented {
                     frame,
                     step_complete,

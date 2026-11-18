@@ -1,7 +1,7 @@
 use super::ea::{alterable, control, data};
 use super::{Decoder, Error, Result, Size, require};
 
-impl<F: Fn(u32) -> Option<u8>> Decoder<F> {
+impl<F: Fn(usize) -> Option<u8>> Decoder<F> {
     pub(super) fn system(&mut self, op: u16) -> Result<String> {
         let (mode, reg, dn) = ((op >> 3) & 7, op & 7, (op >> 9) & 7);
         match op {

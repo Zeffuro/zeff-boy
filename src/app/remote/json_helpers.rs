@@ -116,6 +116,17 @@ pub(super) fn buffer_summary_json(bytes: &[u8]) -> Value {
     })
 }
 
+pub(super) fn optional_buffer_summary_json(bytes: &[Option<u8>]) -> Value {
+    if let Some(known) = bytes.iter().copied().collect::<Option<Vec<_>>>() {
+        return buffer_summary_json(&known);
+    }
+    json!({
+        "bytes": bytes.len(),
+        "digest": null,
+        "unknown_bytes": bytes.iter().filter(|byte| byte.is_none()).count(),
+    })
+}
+
 pub(super) fn gb_ppu_json(ppu: zeff_gb_core::debug::PpuSnapshot) -> Value {
     json!({
         "lcdc": ppu.lcdc,
@@ -206,8 +217,8 @@ mod tests {
             hit_rom_breakpoint: Some(0x81234),
             hit_watchpoint: Some(WatchHitDisplay {
                 address: 0xC000,
-                old_value: 0x11,
-                new_value: 0x22,
+                old_value: Some(0x11),
+                new_value: Some(0x22),
                 watch_type: WatchType::Write,
             }),
             hit_event: Some(zeff_emu_common::debug::DebugEvent::Interrupt),
@@ -233,5 +244,21 @@ mod tests {
         assert_eq!(json["hit_watchpoint"]["type"], "Write");
         assert_eq!(json["call_stack"][0]["target_hex"], "4567");
         assert_eq!(json["call_stack"][0]["return_address_hex"], "1237");
+
+        let mut discarded = cpu;
+        discarded.hit_watchpoint = Some(WatchHitDisplay {
+            address: 0xff0041,
+            old_value: None,
+            new_value: None,
+            watch_type: WatchType::Read,
+        });
+        assert_eq!(
+            discarded.hit_watchpoint.as_ref().unwrap().value_text(),
+            "value unavailable"
+        );
+        let json = cpu_debug_json(&discarded);
+        assert!(json["hit_watchpoint"]["old_value"].is_null());
+        assert!(json["hit_watchpoint"]["new_value"].is_null());
+        assert_eq!(json["hit_watchpoint"]["address"], 0xff0041);
     }
 }

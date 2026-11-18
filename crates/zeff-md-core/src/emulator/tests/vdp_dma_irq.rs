@@ -65,6 +65,7 @@ pub fn cpu_crossing_with(
     for concurrent in [false, true] {
         for copy in [false, true] {
             let mut machine = fixture(concurrent, copy, if copy { 1 } else { 2 }, TIE - 21, 1);
+            super::interrupt_sampling::cycle_equivalence(&machine, false);
             assert_eq!(machine.vdp().interrupt_level(), 0);
             assert!(!machine.vdp().interrupts().vertical_pending());
             let pointer = machine.vdp().memory().vram().as_ptr();
@@ -195,7 +196,8 @@ pub fn interrupt_entry_with(
     }
 }
 
-#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn cpu_crossing() {
     cpu_crossing_with(
         Emulator::step_instruction,

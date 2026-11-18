@@ -1,5 +1,5 @@
 use super::*;
-use zeff_emu_common::save_state::{StateReader, StateWriter};
+use zeff_emu_common::save_state::StateReader;
 
 fn scalar(timer: &mut TimerA, cycle: usize, slots: u64, mode: u8, flags: &mut u8) {
     for offset in 0..slots {
@@ -127,40 +127,6 @@ fn huge_timer_projection_composes_at_every_scan_phase() {
 }
 
 #[test]
-fn old_countdowns_keep_coarse_progress_without_inventing_csm_or_reload_edges() {
-    for remaining in [0, 1, 143, 144, 145, 1024 * 144] {
-        for running in [false, true] {
-            if remaining == 0 && running {
-                continue;
-            }
-            for version in 1..=11 {
-                let mut writer = StateWriter::new();
-                writer.write_u16(1022);
-                writer.write_u64(remaining);
-                writer.write_bool(running);
-                let bytes = writer.into_bytes();
-                let timer = TimerA::read_state(&mut StateReader::new(&bytes), version).unwrap();
-                let scans = remaining.div_ceil(144) as u16;
-                assert_eq!(timer.counter, if scans == 0 { 0 } else { 1024 - scans });
-                assert_eq!(timer.load_lock, running);
-                assert!(!timer.reload_pending && !timer.overflow && !timer.clear && !timer.csm);
-                let mut writer = StateWriter::new();
-                timer.write_state(&mut writer, crate::save_state::STATE_VERSION);
-                let current = writer.into_bytes();
-                assert_eq!(
-                    TimerA::read_state(
-                        &mut StateReader::new(&current),
-                        crate::save_state::STATE_VERSION
-                    )
-                    .unwrap(),
-                    timer
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn timer_codec_rejects_invalid_counters_latches_and_overflow() {
     for bytes in [
         vec![0, 4, 0, 0, 0],
@@ -168,21 +134,9 @@ fn timer_codec_rejects_invalid_counters_latches_and_overflow() {
         vec![0, 0, 0, 0, 32],
         vec![0, 0, 1, 0, 4],
     ] {
-        assert!(
-            TimerA::read_state(
-                &mut StateReader::new(&bytes),
-                crate::save_state::STATE_VERSION
-            )
-            .is_err()
-        );
+        assert!(TimerA::read_state(&mut StateReader::new(&bytes)).is_err());
     }
     for len in 0..5 {
-        assert!(
-            TimerA::read_state(
-                &mut StateReader::new(&[0; 5][..len]),
-                crate::save_state::STATE_VERSION
-            )
-            .is_err()
-        );
+        assert!(TimerA::read_state(&mut StateReader::new(&[0; 5][..len])).is_err());
     }
 }

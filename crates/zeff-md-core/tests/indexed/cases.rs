@@ -101,9 +101,9 @@ pub fn pending_prefix_clone_and_reset() {
 }
 
 pub fn terminal_fault_preserves_prefixes() {
-    let mut machine = start(&[0xdd, 0x21, 0x34, 0x12, 0xdd, 0x22, 3, 0x40], &[], &[]);
+    let mut machine = start(&[0xdd, 0x21, 0x34, 0x12, 0xdd, 0x22, 0x17, 0x7f], &[], &[]);
     let expected = SoundFault::UnsupportedAccess {
-        address: 0x4004,
+        address: 0x7f18,
         direction: Direction::Write,
     };
     let mut error = None;
@@ -118,7 +118,7 @@ pub fn terminal_fault_preserves_prefixes() {
     assert_eq!(machine.sound_cpu().regs().pc, 8);
     assert_eq!(machine.sound_cpu().cycles(), 31);
     assert!(machine.sound_prefix_pending());
-    assert_eq!(machine.opn2_snapshot().status & 0x80, 0x80);
+    assert_eq!(machine.psg_snapshot().periods[0], 0x340);
     let saved = machine.clone();
     assert_eq!(
         machine.step_instruction(),

@@ -4,7 +4,7 @@ version = "0.4.2"
 edition = "2024"
 authors = ["Zeffuro"]
 license = "MIT OR Apache-2.0"
-description = "Libretro core for zeff-boy (GB/GBC/GBA/NES/PC Engine/WonderSwan/Sega 8-bit emulator)"
+description = "Libretro core for zeff-boy (GB/GBC/GBA/NES/PC Engine/WonderSwan/Sega 8-bit/Mega Drive emulator)"
 
 [lib]
 crate-type = ["cdylib"]
@@ -17,6 +17,7 @@ zeff-nes-core = { path = "../zeff-nes-core" }
 zeff-pce-core = { path = "../zeff-pce-core" }
 zeff-sega8-core = { path = "../zeff-sega8-core" }
 zeff-ws-core = { path = "../zeff-ws-core" }
+zeff-md-core = { path = "../zeff-md-core" }
 anyhow = "1.0.104"
 chrono = "0.4.45"
 log = "0.4.33"

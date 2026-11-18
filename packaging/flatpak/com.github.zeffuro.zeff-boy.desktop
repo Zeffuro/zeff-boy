@@ -2,7 +2,7 @@
 Type=Application
 Name=zeff-boy
 GenericName=Multi-system Emulator
-Comment=A Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust
+Comment=A Game Boy, Game Boy Advance, NES, WonderSwan, Sega 8-bit, and experimental Mega Drive emulator written in Rust
 Exec=zeff-boy %f
 Icon=com.github.zeffuro.zeff-boy
 Terminal=false

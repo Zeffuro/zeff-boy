@@ -7,6 +7,8 @@ use zeff_sega8_core::hardware::cartridge::SystemHint;
 
 fn snapshot_request() -> SnapshotRequest {
     SnapshotRequest {
+        debug_target: crate::debug::DebugTarget::Primary,
+        debug_revision: 0,
         want_debug_info: true,
         want_perf_info: true,
         any_viewer_open: true,
@@ -19,7 +21,7 @@ fn snapshot_request() -> SnapshotRequest {
         memory_view_start: 0,
         show_rom_viewer: true,
         show_instruction_trace: false,
-        trace_after_sequence: None,
+        trace_cursor: Default::default(),
         rom_view_start: 0,
         last_disasm_pc: None,
         last_disasm_mapping: None,
@@ -134,7 +136,7 @@ fn sega8_snapshot_exposes_z80_disassembly() {
         .disassembly_view
         .expect("Sega8 snapshot should include Z80 disassembly");
 
-    assert_eq!(disassembly.pc, 0);
+    assert_eq!(disassembly.cursor.cpu_address().unwrap(), 0);
     assert!(disassembly.breakpoints.contains(&2));
     assert!(
         disassembly

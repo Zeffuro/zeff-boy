@@ -155,12 +155,9 @@ pub fn delivery_faults_with(
         ordinary.bus.video = Default::default();
         advance(&mut machine, 30).unwrap();
         advance(&mut ordinary, 30).unwrap();
-        assert_eq!(
-            take(&mut machine),
-            Some(Err(VdpLineError::Render(
-                VdpRenderError::UnsupportedScrollMode(1)
-            )))
-        );
+        let row = take(&mut machine).unwrap().unwrap();
+        assert_eq!(row.at(), tick(write.publish_at.get() + 1));
+        assert_eq!(row.colors(), &[0; 256]);
         assert_eq!(machine, ordinary);
 
         let mut machine = super::vdp_row_delivery::fixture(concurrent, NEXT);
@@ -234,11 +231,11 @@ fn acknowledge(
     };
     let clock = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .acknowledge_cycle(access, clock)
     } else {
         machine.bus.acknowledge_cycle(access, clock)
@@ -247,11 +244,11 @@ fn acknowledge(
 
 fn advance(machine: &mut Emulator, ticks: u64) -> Result<(), BusError> {
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .advance_machine(ticks)
     } else {
         machine.bus.advance_machine(ticks)

@@ -316,6 +316,10 @@ pub(super) fn assert_app_snapshot_core_features(
     );
     assert_eq!(features.supports_guest_calls, features.supports_debugger);
     assert!(features.supports_debugger);
+    let editing = features.memory_editing.expect("peer memory editing");
+    assert!(editing.enabled && !editing.requires_pause);
+    let bits = expected_cpu_address_bits(expected_system);
+    assert_eq!(editing.ranges, &[(0, u32::MAX >> (32 - bits))]);
     assert_eq!(
         features.supports_opcode_history,
         expected_opcode_history_support(expected_system)
@@ -566,6 +570,8 @@ fn step_frames(backend: &mut EmuBackend, count: usize) {
 
 fn snapshot_request() -> SnapshotRequest {
     SnapshotRequest {
+        debug_target: crate::debug::DebugTarget::Primary,
+        debug_revision: 0,
         want_debug_info: false,
         want_perf_info: false,
         any_viewer_open: false,
@@ -578,7 +584,7 @@ fn snapshot_request() -> SnapshotRequest {
         memory_view_start: 0,
         show_rom_viewer: false,
         show_instruction_trace: false,
-        trace_after_sequence: None,
+        trace_cursor: Default::default(),
         rom_view_start: 0,
         last_disasm_pc: None,
         last_disasm_mapping: None,

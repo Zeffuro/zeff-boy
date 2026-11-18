@@ -60,6 +60,45 @@ fn unchanged(
     }
 }
 
+fn first_status_read(
+    device: &mut Vdp,
+    region: Region,
+    expected: u16,
+    read: &mut impl FnMut(&mut Vdp, Region) -> Result<u16, VdpPortError>,
+) {
+    let saved = device.clone();
+    assert_eq!(saved.control().pending_word(), None);
+    assert_eq!(read(device, region), Ok(expected));
+    assert_eq!(device.now(), saved.now());
+    assert_eq!(device.registers(), saved.registers());
+    assert_eq!(device.control(), saved.control());
+    assert_eq!(device.command(), saved.command());
+    assert_eq!(device.fifo(), saved.fifo());
+    assert_eq!(device.read_cache(), saved.read_cache());
+    assert_eq!(device.memory(), saved.memory());
+    assert_eq!(device.sprite_cache(), saved.sprite_cache());
+    assert_eq!(device.read_hv(region), saved.read_hv(region));
+    assert_eq!(device.interrupt_level(), saved.interrupt_level());
+    assert_eq!(
+        device.interrupts().line_counter(),
+        saved.interrupts().line_counter()
+    );
+    assert_eq!(
+        device.interrupts().horizontal_pending(),
+        saved.interrupts().horizontal_pending()
+    );
+    assert_eq!(
+        device.interrupts().vertical_pending(),
+        saved.interrupts().vertical_pending()
+    );
+    assert_eq!(
+        device.interrupts().status_bits(),
+        saved.interrupts().status_bits()
+    );
+    // An accepted untimed read retires software port history.
+    unchanged(device, region, Ok(expected), read);
+}
+
 macro_rules! read_case {
     ($name:ident, $with:ident) => {
         pub fn $name() {
@@ -77,9 +116,13 @@ pub fn bootstrap_driven_bits_and_ntsc_regions_with(
 ) {
     for region in [REGION, Region::NtscJapan] {
         let mut device = Vdp::bootstrap_mode5();
-        unchanged(&mut device, region, Ok(EMPTY | 4), &mut read);
+        let mut deferred = device.clone();
+        first_status_read(&mut device, region, EMPTY | 4, &mut read);
         device.advance_to(tick(101), region).unwrap();
         unchanged(&mut device, region, Ok(EMPTY), &mut read);
+        deferred.advance_to(tick(101), region).unwrap();
+        assert_eq!(read(&mut deferred, region), Ok(EMPTY));
+        assert_eq!(device, deferred);
     }
 }
 
@@ -91,6 +134,7 @@ pub fn hblank_edges_and_slot_boundary_with(
     mut advance: impl FnMut(&mut Vdp, MasterTicks, Region) -> Result<(), VdpScheduleError>,
 ) {
     let mut device = Vdp::bootstrap_mode5();
+    let mut deferred = device.clone();
     for (now, blank) in [
         (10, true),
         (99, true),
@@ -105,13 +149,20 @@ pub fn hblank_edges_and_slot_boundary_with(
         (3520, false),
     ] {
         advance(&mut device, tick(now), REGION).unwrap();
-        unchanged(
-            &mut device,
-            REGION,
-            Ok(EMPTY | if blank { 4 } else { 0 }),
-            &mut read,
-        );
+        if now == 10 {
+            first_status_read(&mut device, REGION, EMPTY | 4, &mut read);
+        } else {
+            unchanged(
+                &mut device,
+                REGION,
+                Ok(EMPTY | if blank { 4 } else { 0 }),
+                &mut read,
+            );
+        }
     }
+    advance(&mut deferred, tick(3520), REGION).unwrap();
+    assert_eq!(read(&mut deferred, REGION), Ok(EMPTY));
+    assert_eq!(device, deferred);
 }
 
 pub fn status_cancels_only_parser_half_and_restarts_command() {
@@ -206,9 +257,16 @@ pub fn vertical_pending_survives_status_until_acknowledge_with(
     advance(&mut disabled, tick(224 * 3420 + 11), REGION).unwrap();
     assert_eq!(disabled.interrupt_level(), 0);
     assert!(disabled.interrupts().vertical_pending());
-    unchanged(&mut disabled, REGION, Ok(EMPTY | 0x84), &mut read);
+    let mut deferred = disabled.clone();
+    first_status_read(&mut disabled, REGION, EMPTY | 0x84, &mut read);
     assert_eq!(disabled.interrupt_level(), 0);
     assert!(disabled.interrupts().vertical_pending());
+    let next = tick(224 * 3420 + 12);
+    advance(&mut disabled, next, REGION).unwrap();
+    unchanged(&mut disabled, REGION, Ok(EMPTY | 0x84), &mut read);
+    advance(&mut deferred, next, REGION).unwrap();
+    assert_eq!(read(&mut deferred, REGION), Ok(EMPTY | 0x84));
+    assert_eq!(disabled, deferred);
 
     let mut device = at(101);
     register(&mut device, 1, 0x24);

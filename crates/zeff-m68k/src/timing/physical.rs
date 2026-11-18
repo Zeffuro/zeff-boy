@@ -1,7 +1,4 @@
-//! Imported group-0 boundaries and a selected warm-reset profile only.
-//! No instruction BERR capture, abort overhead or physical partial-register model.
-
-use super::{CpuClocks, Pipeline, PrefetchCpu};
+use super::{CpuClocks, InstructionInput, Pipeline, PrefetchCpu};
 use crate::Registers;
 use crate::bus::{AccessKind, BusAccess, ByteLanes, Direction, FunctionCode};
 use crate::constants::{
@@ -25,12 +22,16 @@ pub struct EntryReport<T, E> {
     pub outcome: EntryOutcome<T, E>,
 }
 
-/// Callbacks advance devices by TOTAL elapsed, not four clocks plus waits.
-/// CriticalAbortReleased ends at a qualified abort-release/halt boundary.
-/// TimingUnavailable is a known critical fault with an unqualified terminal boundary.
-/// Complete word transfers require at least four clocks; detection has no transfer minimum.
+/// Callbacks own total elapsed time, including qualified abort release.
 pub trait EntryBus {
     type Error;
+    fn read_entry_instruction(
+        &mut self,
+        access: BusAccess,
+        start: CpuClocks,
+    ) -> EntryReport<InstructionInput, Self::Error> {
+        super::instruction_origin::unknown_entry(self.read_entry(access, start))
+    }
     fn read_entry(&mut self, access: BusAccess, start: CpuClocks) -> EntryReport<u16, Self::Error>;
     fn write_entry(
         &mut self,
@@ -39,7 +40,7 @@ pub trait EntryBus {
         start: CpuClocks,
     ) -> EntryReport<(), Self::Error>;
     fn idle_entry(&mut self, start: CpuClocks, clocks: u32);
-    /// Detection only: no aligned memory transfer or data strobes. Default supplies no timing.
+    /// Detects misalignment without issuing a memory transfer.
     fn detect_address_error(
         &mut self,
         _access: BusAccess,
@@ -110,7 +111,7 @@ impl Group0Capture {
     }
 }
 
-/// Caller-supplied bser1/aser1 witness, with prior ownership released and abort time included.
+/// Includes abort time after prior ownership is released.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImportedGroup0Boundary {
     pub registers: Registers,
@@ -124,7 +125,7 @@ pub enum ResetQualification {
     Unqualified,
 }
 
-/// Hold time has already advanced devices; sampled release must not precede CPU clock.
+/// Hold time is already accounted for at the release clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExternalResetBoundary {
     pub sampled_release: CpuClocks,
@@ -226,7 +227,6 @@ impl PrefetchCpu {
         self.physical_state
     }
 
-    /// Registers retain diagnostic whole values; physical partials are unavailable on abort.
     pub fn physical_inspection(&self) -> PhysicalInspection {
         self.physical_inspection
     }
@@ -277,7 +277,7 @@ impl PrefetchCpu {
         })
     }
 
-    /// Selected I14/six-read/I2 profile, not a reset-pin timing model. Host freezes persist.
+    /// Runs the selected I14/six-read/I2 warm-reset profile.
     pub fn external_warm_reset<B: EntryBus>(
         &mut self,
         bus: &mut B,
@@ -329,9 +329,9 @@ impl PrefetchCpu {
         self.physical_state = PhysicalEntryState::Critical(kind);
     }
 
-    fn commit_entry(&mut self, pc: u32, words: [u16; 2]) {
+    fn commit_entry(&mut self, pc: u32, words: [InstructionInput; 2]) {
         self.registers.pc = pc;
-        self.pipeline = Some(Pipeline { address: pc, words });
+        self.pipeline = Some(Pipeline::sampled(pc, words));
         self.physical_inspection = PhysicalInspection::DiagnosticCompleteValues;
     }
 
@@ -524,24 +524,30 @@ impl PrefetchCpu {
         Ok((u32::from(high) << 16) | u32::from(low))
     }
 
+    fn entry_fetch<B: EntryBus>(
+        &mut self,
+        bus: &mut B,
+        address: u32,
+    ) -> Result<InstructionInput, EntryFault<B::Error>> {
+        let access = self.entry_access(
+            bus,
+            address,
+            FunctionCode::SupervisorProgram,
+            AccessKind::Prefetch,
+            Direction::Read,
+        )?;
+        let report = bus.read_entry_instruction(access, self.clock);
+        self.entry_finish(report, access, Direction::Read)
+    }
+
     fn entry_refill<B: EntryBus>(
         &mut self,
         bus: &mut B,
         target: u32,
-    ) -> Result<[u16; 2], EntryFault<B::Error>> {
-        let first = self.entry_read(
-            bus,
-            target,
-            FunctionCode::SupervisorProgram,
-            AccessKind::Prefetch,
-        )?;
+    ) -> Result<[InstructionInput; 2], EntryFault<B::Error>> {
+        let first = self.entry_fetch(bus, target)?;
         self.entry_idle(bus, ENTRY_REFILL_IDLE_CLOCKS)?;
-        let second = self.entry_read(
-            bus,
-            target.wrapping_add(2),
-            FunctionCode::SupervisorProgram,
-            AccessKind::Prefetch,
-        )?;
+        let second = self.entry_fetch(bus, target.wrapping_add(2))?;
         Ok([first, second])
     }
 }

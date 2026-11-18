@@ -90,10 +90,7 @@ impl PrefetchCpu {
             }
         };
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: stream.cursor,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         Ok(true)
     }
 

@@ -3,16 +3,73 @@ use crate::debug::DebugUiActions;
 use crate::emu_thread::{EmuCommand, TasControlCommandKind};
 
 impl App {
-    pub(super) fn merge_debug_actions(&mut self, actions: DebugUiActions) {
+    pub(in crate::app) fn merge_debug_actions(&mut self, actions: DebugUiActions) {
+        self.merge_debug_actions_in_order(actions, false);
+    }
+
+    pub(in crate::app) fn merge_deferred_debug_actions(&mut self, actions: DebugUiActions) {
+        self.merge_debug_actions_in_order(actions, true);
+    }
+
+    fn merge_debug_actions_in_order(&mut self, mut actions: DebugUiActions, deferred: bool) {
+        if actions.target != self.debug_windows.debug_target
+            || actions.target_revision.is_some_and(|revision| {
+                revision == u64::MAX || revision != self.debug_windows.debug_revision
+            })
+            || self.debug_windows.debug_revision == u64::MAX
+                && actions.target != crate::debug::DebugTarget::Primary
+        {
+            return;
+        }
+        if let Some(target) = actions.select_target {
+            if target == crate::debug::DebugTarget::Primary
+                || self.active_system == crate::emu_backend::ActiveSystem::Md
+            {
+                self.debug_windows.select_debug_target(target);
+            }
+            return;
+        }
+        if actions.target == crate::debug::DebugTarget::Sound {
+            let sound_trace = std::mem::take(&mut actions.sound_trace);
+            let trace_enabled = actions.trace_enabled.take();
+            let trace_capacity = actions.trace_capacity.take();
+            let trace_clear = std::mem::take(&mut actions.trace_clear);
+            if actions.requires_emulator_authority() {
+                self.toast_manager
+                    .info("SOUND execution controls are unavailable");
+                return;
+            }
+            actions.sound_trace = sound_trace;
+            actions.trace_enabled = trace_enabled;
+            actions.trace_capacity = trace_capacity;
+            actions.trace_clear = trace_clear;
+        }
         let mut authority_allowed = true;
         if actions.requires_emulator_authority()
             && let Err(error) =
                 self.preflight_emu_command_kind(TasControlCommandKind::DebuggerMutation)
         {
             self.toast_manager.error(error.to_string());
+            if actions.md_timed_ports.is_some() {
+                self.debug_windows.md_timed_ports.refused(error.to_string());
+            }
             authority_allowed = false;
         }
 
+        if authority_allowed
+            && let Some(request) = actions.md_timed_ports.take()
+            && let Err(error) = self.debug_windows.md_timed_ports.queue(request)
+        {
+            self.debug_windows.md_timed_ports.refused(error);
+        }
+        if authority_allowed
+            && !deferred
+            && self.debug_windows.md_timed_ports.ordering_pending()
+            && actions.requires_emulator_authority()
+        {
+            self.debug_windows.md_timed_ports.defer(actions);
+            return;
+        }
         if authority_allowed && self.core_supports_guest_calls() {
             if let Some(request) = actions.guest_call.clone()
                 && let Err(error) =
@@ -45,6 +102,33 @@ impl App {
 
     fn merge_authorized_debug_mutations(&mut self, actions: &DebugUiActions) {
         let pending = &mut self.pending_debug_actions;
+        if actions.requires_emulator_authority() {
+            if pending.target != actions.target
+                || pending.target_revision != actions.target_revision
+            {
+                let mut sound_trace = std::mem::take(&mut pending.sound_trace);
+                sound_trace.watch = None;
+                *pending = DebugUiActions {
+                    sound_trace,
+                    trace_enabled: pending.trace_enabled,
+                    trace_clear: pending.trace_clear,
+                    trace_capacity: pending.trace_capacity,
+                    ..DebugUiActions::none()
+                };
+            }
+            pending.target = actions.target;
+            pending.target_revision = actions.target_revision;
+        }
+        if actions.sound_trace.watch.is_some() {
+            pending.sound_trace.watch = actions.sound_trace.watch;
+        }
+        if actions.sound_trace.enabled.is_some() {
+            pending.sound_trace.enabled = actions.sound_trace.enabled;
+        }
+        if actions.sound_trace.capacity.is_some() {
+            pending.sound_trace.capacity = actions.sound_trace.capacity;
+        }
+        pending.sound_trace.clear |= actions.sound_trace.clear;
         if actions.add_breakpoint.is_some() {
             pending.add_breakpoint = actions.add_breakpoint;
         }
@@ -126,6 +210,12 @@ impl App {
             );
         }
         let mut symbol_changed = false;
+        if self.debug_windows.debug_target == crate::debug::DebugTarget::Sound
+            && (actions.user_symbol.is_some() || !actions.remove_user_symbols.is_empty())
+        {
+            self.toast_manager.info("SOUND symbols are read-only");
+            return;
+        }
         for name in &actions.remove_user_symbols {
             match self.symbols.remove_user_symbol(name) {
                 Ok(Some(path)) => self
@@ -155,7 +245,9 @@ impl App {
             self.debug_windows.last_disasm_pc = None;
             self.debug_windows.last_disasm_mapping = None;
         }
-        if let Some(address) = actions.memory_target {
+        if let Some(address) = actions.memory_target
+            && self.debug_windows.debug_target == crate::debug::DebugTarget::Primary
+        {
             let memory = &mut self.debug_windows.memory;
             memory.view_start = memory.address_space.clamp_start(address);
             memory.jump_input = memory.address_space.format(memory.view_start);
@@ -172,36 +264,22 @@ impl App {
     }
 
     fn navigate_disassembly(&mut self, target: Option<crate::debug::DisassemblyTarget>) {
-        if self.debug_windows.disasm_target == target {
+        if self.debug_windows.debug_target == crate::debug::DebugTarget::Sound
+            && target.is_some_and(|target| {
+                target.as_cpu().is_none_or(|target| {
+                    target.cpu_address > 0xffff
+                        || target.storage_offset.is_some()
+                        || target.bank.is_some()
+                        || target.thumb.is_some()
+                })
+            })
+        {
             return;
         }
-        self.debug_windows
-            .disasm_back
-            .push(self.debug_windows.disasm_target);
-        self.debug_windows.disasm_forward.clear();
-        self.debug_windows.disasm_target = target;
-        self.debug_windows.last_disasm_pc = None;
-        self.debug_windows.last_disasm_mapping = None;
+        self.debug_windows.navigate_disassembly(target);
     }
 
     fn navigate_disassembly_history(&mut self, back: bool) {
-        let (from, to) = if back {
-            (
-                &mut self.debug_windows.disasm_back,
-                &mut self.debug_windows.disasm_forward,
-            )
-        } else {
-            (
-                &mut self.debug_windows.disasm_forward,
-                &mut self.debug_windows.disasm_back,
-            )
-        };
-        let Some(target) = from.pop() else {
-            return;
-        };
-        to.push(self.debug_windows.disasm_target);
-        self.debug_windows.disasm_target = target;
-        self.debug_windows.last_disasm_pc = None;
-        self.debug_windows.last_disasm_mapping = None;
+        self.debug_windows.navigate_disassembly_history(back);
     }
 }

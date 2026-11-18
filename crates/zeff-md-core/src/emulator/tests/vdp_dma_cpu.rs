@@ -55,8 +55,11 @@ pub fn command_and_trigger_with(
     mut advance: impl FnMut(&mut Emulator, u64) -> Result<(), BusError>,
 ) {
     for concurrent in [false, true] {
-        for copy in [false, true] {
+        for (copy, alias) in [(false, false), (true, false), (true, true)] {
             let mut machine = fixture(copy, concurrent);
+            if alias {
+                machine.cpu.registers.d[0] = 0x410000c0;
+            }
             let mut clone = machine.clone();
             let pointer = machine.vdp().memory().vram().as_ptr();
             let result = step(&mut machine).unwrap();
@@ -89,7 +92,10 @@ pub fn command_and_trigger_with(
                 machine.vdp().command().address,
                 if copy { 0x102 } else { 0x104 }
             );
-            assert_eq!(machine.vdp().command().code, if copy { 0x10 } else { 1 });
+            assert_eq!(
+                machine.vdp().command().code,
+                if copy { 0x10 | u8::from(alias) } else { 1 }
+            );
             assert_eq!(machine.vdp().memory().vram().as_ptr(), pointer);
         }
     }

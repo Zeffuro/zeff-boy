@@ -30,10 +30,7 @@ impl PrefetchCpu {
         let words = stream.finish(self, bus)?;
         self.write_data(bus, address, false, result as u16)?;
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: stream.cursor,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         Ok(true)
     }
 }

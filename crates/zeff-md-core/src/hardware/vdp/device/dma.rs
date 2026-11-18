@@ -1,4 +1,5 @@
 use super::*;
+use crate::hardware::vdp::memory::MemoryTransfer;
 use crate::hardware::vdp::{VdpDmaCopy, VdpDmaError, VdpDmaRegisters, VdpMemory, VdpWrite};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6,6 +7,7 @@ pub(super) enum Phase {
     External,
     FillWaiting,
     Fill(u16),
+    FillUnknownCram,
     Copy(Option<VdpDmaCopy>),
 }
 
@@ -33,8 +35,13 @@ impl State {
             return Err(VdpPortError::Dma(VdpDmaError::PendingInputs));
         }
         let mut fifo = self.fifo.clone();
+        let vram_fill = mode == DMA_FILL_MODE
+            && self.command.code & !(COMMAND_CD4 | COMMAND_CD5) == VRAM_WRITE_CODE;
         while let Some((write, _)) = fifo.take_slot() {
-            if write.command.code & !COMMAND_CD4 != VRAM_WRITE_CODE {
+            let target = write.command.code & !COMMAND_CD4;
+            if target != VRAM_WRITE_CODE
+                && !(vram_fill && matches!(target, CRAM_WRITE_CODE | VSRAM_WRITE_CODE))
+            {
                 return Err(VdpPortError::Dma(VdpDmaError::PendingInputs));
             }
         }
@@ -77,7 +84,7 @@ impl State {
         Ok(())
     }
 
-    fn validate_dma_phase(
+    pub(super) fn validate_dma_phase(
         &self,
         command: ControlCommand,
         mode: u8,
@@ -111,7 +118,7 @@ impl State {
         &mut self,
         memory: &VdpMemory,
         writes: &data::WriteBatch,
-    ) -> Result<Option<(VdpWrite, Option<bool>)>, VdpScheduleError> {
+    ) -> Result<Option<MemoryTransfer>, VdpScheduleError> {
         let mut dma =
             VdpDmaRegisters::from_registers(&self.registers).map_err(VdpScheduleError::Dma)?;
         let increment = self
@@ -121,9 +128,38 @@ impl State {
                 AUTO_INCREMENT_REGISTER,
             )))?;
         let cache_address = self.command.address ^ u32::from(WORD_ODD_ADDRESS_BIT);
+        if self.dma == Some(Phase::FillUnknownCram) {
+            if self.command.code & !(COMMAND_CD4 | COMMAND_CD5) != CRAM_WRITE_CODE {
+                return Err(VdpScheduleError::Dma(VdpDmaError::MissingSource));
+            }
+            let write = dma
+                .plan_fill_word_command(&mut self.command, increment)
+                .map_err(VdpScheduleError::Dma)?;
+            self.registers.publish_dma_counters(dma);
+            if self.command.code & COMMAND_CD5 == 0 {
+                self.dma = None;
+            }
+            return Ok(write.map(MemoryTransfer::UnknownCram));
+        }
+        if let Phase::Fill(data) = self.dma.unwrap()
+            && matches!(
+                self.command.code & !(COMMAND_CD4 | COMMAND_CD5),
+                CRAM_WRITE_CODE | VSRAM_WRITE_CODE
+            )
+        {
+            let write = dma
+                .plan_fill_word(&mut self.command, increment, data)
+                .map_err(VdpScheduleError::Dma)?;
+            self.registers.publish_dma_counters(dma);
+            if self.command.code & COMMAND_CD5 == 0 {
+                self.dma = None;
+            }
+            return Ok(write.map(|write| MemoryTransfer::Known(write, None)));
+        }
         let write = match self.dma.unwrap() {
             Phase::External => unreachable!("external DMA feeds the FIFO"),
             Phase::FillWaiting => unreachable!("fill waits for FIFO retirement"),
+            Phase::FillUnknownCram => unreachable!("unknown CRAM fill serviced above"),
             Phase::Fill(data) => dma.plan_fill(&mut self.command, increment, data),
             Phase::Copy(Some(copy)) => {
                 self.dma = Some(Phase::Copy(None));
@@ -133,7 +169,7 @@ impl State {
             Phase::Copy(None) => {
                 let source = dma.source() ^ WORD_ODD_ADDRESS_BIT;
                 let word = memory
-                    .read_after_writes(
+                    .read_after_transfers(
                         ControlCommand {
                             address: u32::from(source & !WORD_ODD_ADDRESS_BIT),
                             code: VRAM_READ_CODE,
@@ -161,7 +197,7 @@ impl State {
                 cache_address,
                 self.registers.horizontal_mode().unwrap(),
             );
-            (
+            MemoryTransfer::Known(
                 VdpWrite {
                     command: ControlCommand {
                         address: u32::from(write.address & !WORD_ODD_ADDRESS_BIT),

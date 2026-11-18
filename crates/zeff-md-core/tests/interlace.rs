@@ -1,5 +1,7 @@
 use zeff_emu_common::time::{MachineTiming, Reset};
 use zeff_md_core::{Emulator, LoadConfig, Region};
+#[path = "interlace/normal.rs"]
+pub mod normal;
 
 struct Rom {
     bytes: Vec<u8>,

@@ -38,11 +38,11 @@ fn transfer(
 ) -> Result<u16, BusError> {
     let clock = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        let mut bus = ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        };
+        let mut bus = ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        );
         match value {
             Some(value) => bus
                 .write_cycle(access(address, lanes), value, clock)
@@ -127,7 +127,9 @@ fn granted_main_aperture_lanes_and_4000_c000_aliases() {
                 );
             }
             machine.bus.sound.request(false);
-            assert!(transfer(&mut machine, 0xa04000, ByteLanes::Upper, Some(0x2a00)).is_err());
+            let address = machine.opn2_snapshot().address;
+            transfer(&mut machine, 0xa04000, ByteLanes::Upper, Some(0x2a00)).unwrap();
+            assert_eq!(machine.opn2_snapshot().address, address);
         }
     }
 }
@@ -207,6 +209,7 @@ fn failed_concurrent_prime_rolls_back_a_published_dac_write() {
             &mut machine.bus.sound,
             &mut machine.bus.ram,
             &mut Audio::new(region),
+            &mut machine.bus.cartridge,
         );
         machine.bus.advance_machine(156).unwrap();
         let pending = PendingSound::prepare(
@@ -222,11 +225,11 @@ fn failed_concurrent_prime_rolls_back_a_published_dac_write() {
         machine.bus.cartridge.initial.pc = 0xc0000e;
         let saved = machine.clone();
         let mut witness = saved.clone();
-        ScheduledBus {
-            bus: &mut witness.bus,
-            cpu: &mut witness.sound_cpu,
-            schedule: &mut witness.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut witness.bus,
+            &mut witness.sound_cpu,
+            &mut witness.sound_schedule,
+        )
         .advance_machine(28)
         .unwrap();
         assert_eq!(witness.opn2_snapshot().dac, 0x99);

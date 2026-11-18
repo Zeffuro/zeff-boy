@@ -26,10 +26,11 @@ fn memory(program: &[u8]) -> SoundMemory {
     memory
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn sound_store_pre_tie_post_deadline_and_main_context_are_exact() {
     for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
-        let cartridge = fixture(region, true, &[0x60fe]).bus.cartridge;
+        let mut cartridge = fixture(region, true, &[0x60fe]).bus.cartridge;
         let mut memory = memory(&[0x3e, 0x85, 0x32, 0x11, 0x7f, 0x76]);
         let mut cpu = zeff_z80::Cpu::new();
         let mut schedule = SoundSchedule::default();
@@ -39,7 +40,7 @@ fn sound_store_pre_tie_post_deadline_and_main_context_are_exact() {
         schedule.advance(
             &mut cpu,
             &mut memory,
-            &cartridge,
+            &mut cartridge,
             &mut [],
             SoundInterval::new(0..299, &mut audio),
         );
@@ -48,7 +49,7 @@ fn sound_store_pre_tie_post_deadline_and_main_context_are_exact() {
         schedule.advance(
             &mut cpu,
             &mut memory,
-            &cartridge,
+            &mut cartridge,
             &mut [],
             SoundInterval::new(299..300, &mut audio),
         );
@@ -70,7 +71,7 @@ fn sound_store_pre_tie_post_deadline_and_main_context_are_exact() {
         schedule.advance(
             &mut cpu,
             &mut memory,
-            &cartridge,
+            &mut cartridge,
             &mut [],
             SoundInterval::new(300..301, &mut audio),
         );
@@ -79,16 +80,17 @@ fn sound_store_pre_tie_post_deadline_and_main_context_are_exact() {
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn banked_store_uses_reserved_final_deadline_and_never_records_preparation() {
-    let cartridge = fixture(Region::NtscUs, true, &[0x60fe]).bus.cartridge;
+    let mut cartridge = fixture(Region::NtscUs, true, &[0x60fe]).bus.cartridge;
     let mut memory = memory(&[0x3e, 0x9f, 0x32, 0x11, 0x80, 0x76]);
     memory.bank = 0x180;
     let mut cpu = zeff_z80::Cpu::new();
     let mut audio = audio(Region::NtscUs);
     PendingSound::prepare(&cpu, &memory, &cartridge, 0)
         .unwrap()
-        .publish(&mut cpu, &mut memory, &mut [], &mut audio);
+        .publish(&mut cpu, &mut memory, &mut [], &mut audio, &mut cartridge);
     let mut pending = PendingSound::prepare(&cpu, &memory, &cartridge, 105).unwrap();
     pending.trace_origin = Some(sound_origin(cpu.regs().pc, memory.bank, &cartridge));
     assert_eq!(pending.deadline, 300);
@@ -109,7 +111,7 @@ fn banked_store_uses_reserved_final_deadline_and_never_records_preparation() {
             .is_empty()
     );
     let deadline = pending.deadline;
-    pending.publish(&mut cpu, &mut memory, &mut [], &mut audio);
+    pending.publish(&mut cpu, &mut memory, &mut [], &mut audio, &mut cartridge);
     let trace = audio.trace.finish(deadline).unwrap();
     trace.validate_complete().unwrap();
     assert_eq!(trace.events.len(), 1);
@@ -127,9 +129,10 @@ fn banked_store_uses_reserved_final_deadline_and_never_records_preparation() {
     );
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn live_opn2_read_replay_does_not_emit_phantom_or_duplicate_writes() {
-    let cartridge = fixture(Region::NtscUs, true, &[0x60fe]).bus.cartridge;
+    let mut cartridge = fixture(Region::NtscUs, true, &[0x60fe]).bus.cartridge;
     let mut memory = memory(&[0x3a, 0, 0x40, 0x32, 0x11, 0x7f, 0x76]);
     let mut cpu = zeff_z80::Cpu::new();
     let mut schedule = SoundSchedule::default();
@@ -139,7 +142,7 @@ fn live_opn2_read_replay_does_not_emit_phantom_or_duplicate_writes() {
     schedule.advance(
         &mut cpu,
         &mut memory,
-        &cartridge,
+        &mut cartridge,
         &mut [],
         SoundInterval::new(0..151, &mut audio),
     );
@@ -149,7 +152,7 @@ fn live_opn2_read_replay_does_not_emit_phantom_or_duplicate_writes() {
     schedule.advance(
         &mut cpu,
         &mut memory,
-        &cartridge,
+        &mut cartridge,
         &mut [],
         SoundInterval::new(160..195, &mut audio),
     );
@@ -158,7 +161,7 @@ fn live_opn2_read_replay_does_not_emit_phantom_or_duplicate_writes() {
     schedule.advance(
         &mut cpu,
         &mut memory,
-        &cartridge,
+        &mut cartridge,
         &mut [],
         SoundInterval::new(195..390, &mut audio),
     );
@@ -185,7 +188,8 @@ fn live_opn2_read_replay_does_not_emit_phantom_or_duplicate_writes() {
     assert_eq!(schedule.fault, None);
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn main_transfer_tied_to_sound_publication_retains_sound_then_main_order() {
     use zeff_m68k::bus::{AccessKind, BusAccess, ByteLanes, FunctionCode};
     use zeff_m68k::timing::ClockedBus;
@@ -193,17 +197,27 @@ fn main_transfer_tied_to_sound_publication_retains_sound_then_main_order() {
     machine.reset_and_begin_audio_trace(8).unwrap();
     machine.bus.sound.set_reset(false);
     machine.bus.sound.ram[..6].copy_from_slice(&[0x3e, 0x85, 0x32, 0x11, 0x7f, 0x76]);
-    let cartridge = &machine.bus.cartridge;
-    PendingSound::prepare(&machine.sound_cpu, &machine.bus.sound, cartridge, 56)
-        .unwrap()
-        .publish(
-            &mut machine.sound_cpu,
-            &mut machine.bus.sound,
-            &mut [],
-            &mut machine.bus.audio,
-        );
-    let mut pending =
-        PendingSound::prepare(&machine.sound_cpu, &machine.bus.sound, cartridge, 225).unwrap();
+    PendingSound::prepare(
+        &machine.sound_cpu,
+        &machine.bus.sound,
+        &machine.bus.cartridge,
+        56,
+    )
+    .unwrap()
+    .publish(
+        &mut machine.sound_cpu,
+        &mut machine.bus.sound,
+        &mut [],
+        &mut machine.bus.audio,
+        &mut machine.bus.cartridge,
+    );
+    let mut pending = PendingSound::prepare(
+        &machine.sound_cpu,
+        &machine.bus.sound,
+        &machine.bus.cartridge,
+        225,
+    )
+    .unwrap();
     assert_eq!(pending.deadline, 420);
     pending.trace_origin = Some(MdTraceOrigin {
         writer: MdTraceWriter::Z80,
@@ -222,11 +236,11 @@ fn main_transfer_tied_to_sound_publication_retains_sound_then_main_order() {
         kind: AccessKind::Data,
         lanes: ByteLanes::Lower,
     };
-    crate::hardware::bus::scheduled::ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    crate::hardware::bus::scheduled::ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .write_cycle(access, 0x9f, clock)
     .result
     .unwrap();

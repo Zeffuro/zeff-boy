@@ -193,7 +193,6 @@ pub fn already_eligible_fifo_preserves_byte_phase_with(
     next: impl Fn(&VdpH32Timing, MasterTicks) -> Result<MasterTicks, VdpTimingError>,
     qualifies: impl Fn(&VdpH32Timing, MasterTicks) -> Result<bool, VdpTimingError>,
 ) {
-    // Captured FIFO heads are already eligible; no CPU arrival or frame transition is modeled.
     let epoch = 3;
     let clock = VdpH32Timing::at_counter_zero(tick(epoch));
     let mut fifo = VdpWriteFifo::default();
@@ -244,7 +243,7 @@ pub fn already_eligible_fifo_preserves_byte_phase_with(
         assert_eq!(memory.read_word(command(0, 0)), Ok(word));
         after = offset;
     }
-    assert_eq!(memory.cram()[1], 0x0aac);
+    assert_eq!(memory.known_cram().unwrap()[1], 0x0aac);
     assert_eq!(memory.vsram()[2], 0x0567);
     assert_eq!(memory.read_word(command(2, 0)), Ok(0x7856));
     assert_eq!(fifo.status_bits(), 0x0200);

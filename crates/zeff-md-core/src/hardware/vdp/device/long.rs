@@ -18,11 +18,13 @@ impl Vdp {
         acknowledge: bool,
         source: Option<VdpDmaSource<'_>>,
     ) -> Result<(), VdpScheduleError> {
+        self.require_legacy()?;
         let mut state = self.state.clone();
         loop {
             // DMA data affects writes, not qualification; replay supplies the live bytes.
-            let (next, _, _) =
+            let prepared =
                 state.prepare_chunk_to_from(at, region, acknowledge, &self.memory, source)?;
+            let next = prepared.state;
             if next.now() == at {
                 return Ok(());
             }
@@ -39,12 +41,13 @@ impl Vdp {
         source: Option<VdpDmaSource<'_>>,
     ) -> Option<u8> {
         loop {
-            let (state, writes, level) = self
+            let prepared = self
                 .state
                 .prepare_chunk_to_from(at, region, acknowledge, &self.memory, source)
                 .expect("validated DMA horizon");
-            let complete = state.now() == at;
-            self.publish(state, writes);
+            let complete = prepared.state.now() == at;
+            let level = prepared.level;
+            self.publish(prepared);
             if complete {
                 return level;
             }
@@ -67,6 +70,8 @@ impl Vdp {
         acknowledge: bool,
         source: Option<VdpDmaSource<'_>>,
     ) -> Result<Option<u8>, VdpScheduleError> {
+        self.require_legacy()?;
+        self.invalidate_interval();
         self.preflight_dma_from(at, region, acknowledge, source)?;
         Ok(self.replay_dma_from(at, region, acknowledge, source))
     }
@@ -79,6 +84,8 @@ impl Vdp {
         region: Region,
         source: Option<VdpDmaSource<'_>>,
     ) -> Result<Result<VdpScanline, VdpLineError>, VdpScheduleError> {
+        self.require_legacy()?;
+        self.invalidate_interval();
         self.preflight_dma_from(at, region, acknowledge, source)?;
         let captured = match self.preflight_dma_from(capture_at, region, false, source) {
             Ok(()) => {
@@ -101,6 +108,8 @@ impl Vdp {
         at: MasterTicks,
         region: Region,
     ) -> Result<VdpScanline, VdpLineError> {
+        self.require_legacy()?;
+        self.invalidate_interval();
         self.preflight_dma_to(at, region, false)?;
         let checkpoint = self.checkpoint();
         self.replay_dma_from(at, region, false, None);

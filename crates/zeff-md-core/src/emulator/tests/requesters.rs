@@ -75,11 +75,11 @@ fn run(
     clocks: u64,
 ) -> Vec<(u32, Direction, u16, u64, u32)> {
     let mut bus = ReservedBus {
-        inner: ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        },
+        inner: ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        ),
         requester: Some(requester),
         events: Vec::new(),
     };
@@ -135,11 +135,11 @@ fn foreign_reservation_fault_preserves_publication_and_frozen_replay() {
     let mut machine = super::waits::fixture(0x2010);
     machine.cpu.registers.a[0] = 0x3ffffe;
     let mut bus = ReservedBus {
-        inner: ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        },
+        inner: ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        ),
         requester: Some(THIRD),
         events: Vec::new(),
     };
@@ -172,11 +172,11 @@ fn foreign_reservation_fault_preserves_publication_and_frozen_replay() {
 #[test]
 fn foreign_reservation_overflow_leaves_owned_phase_unchanged() {
     let mut machine = super::waits::fixture(0x2080);
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(20)
     .unwrap();
     let before = machine.clone();

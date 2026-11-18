@@ -7,6 +7,19 @@ license = "MIT OR Apache-2.0"
 description = "Mega Drive cartridge machine foundation."
 repository = "https://github.com/zeffuro/zeff-boy"
 
+[features]
+sound-shadow-observer = []
+ram-copy-census = ["sound-shadow-observer"]
+first-failure-diagnostic = []
+
+[[example]]
+name = "first_failure"
+required-features = ["first-failure-diagnostic"]
+
+[[example]]
+name = "ram_copy_census"
+required-features = ["ram-copy-census"]
+
 [dependencies]
 anyhow = "1.0.104"
 encoding_rs = "0.8.35"
@@ -14,3 +27,6 @@ sha2 = "0.11.0"
 zeff-emu-common = { path = "../zeff-emu-common" }
 zeff-m68k = { path = "../zeff-m68k" }
 zeff-z80 = { path = "../zeff-z80" }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "=0.3.76"

@@ -178,6 +178,18 @@ fn format_sega8_bus_trace_line(
 ) -> String {
     let access = match event {
         Sega8BusTraceEvent::Read {
+            space: TraceWriteKind::Bus,
+            addr,
+            value,
+            ..
+        } => format!("busread addr={addr:X} value={value:X}"),
+        Sega8BusTraceEvent::Write {
+            space: TraceWriteKind::Bus,
+            addr,
+            written_value,
+            ..
+        } => format!("buswrite addr={addr:X} value={written_value:X}"),
+        Sega8BusTraceEvent::Read {
             space: TraceWriteKind::Memory,
             addr,
             value,

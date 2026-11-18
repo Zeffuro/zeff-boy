@@ -300,6 +300,24 @@ impl<C: AudioTraceChip, W> ChipAudioTraceRecorder<C, W> {
         self.trace.is_some()
     }
 
+    pub fn inactive_metadata(&self) -> Option<(u64, usize)> {
+        let Self {
+            generation,
+            trace,
+            max_events,
+        } = self;
+        trace.is_none().then_some((*generation, *max_events))
+    }
+
+    pub fn retained_event_capacity(&self) -> usize {
+        let Self {
+            generation: _,
+            trace,
+            max_events: _,
+        } = self;
+        trace.as_ref().map_or(0, |trace| trace.events.capacity())
+    }
+
     pub fn record(&mut self, event: AudioTraceEvent<W>) {
         let Some(trace) = self
             .trace

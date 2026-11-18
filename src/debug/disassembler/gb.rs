@@ -28,6 +28,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
         bytes.push(opcode);
         bytes.push(cb);
         return DisassembledLine {
+            decode_status: None,
             address: addr.into(),
             storage_offset: None,
             bank: None,
@@ -215,6 +216,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
     };
 
     DisassembledLine {
+        decode_status: None,
         address: addr.into(),
         storage_offset: None,
         bank: None,

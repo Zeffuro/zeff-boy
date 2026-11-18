@@ -19,7 +19,8 @@ fn invalidated(machine: &mut Emulator, reason: AudioTraceInvalidation) {
     assert!(machine.finish_audio_trace().is_none());
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn rejected_start_and_finish_preserve_live_machine_and_owned_capture() {
     let mut machine = fixture(Region::NtscUs, true, &writes());
     machine.reset_and_begin_audio_trace(2).unwrap();
@@ -49,7 +50,8 @@ fn rejected_start_and_finish_preserve_live_machine_and_owned_capture() {
     restarted.trace.validate_complete().unwrap();
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn cloned_recorders_overflow_and_finish_independently() {
     for capacity in [1, 2] {
         let mut source = fixture(Region::Pal, true, &writes());
@@ -73,7 +75,8 @@ fn cloned_recorders_overflow_and_finish_independently() {
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn reset_precheck_preserves_capture_and_success_invalidates() {
     let mut machine = fixture(Region::NtscJapan, true, &writes());
     machine.reset_and_begin_audio_trace(8).unwrap();
@@ -115,18 +118,19 @@ fn pending_psg() -> Emulator {
         {
             return machine;
         }
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .advance_machine(1)
         .unwrap();
     }
     panic!("actual Z80 PSG write did not reach its unpublished deadline");
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn failed_reset_prime_rolls_back_a_sound_write_without_leaking_an_event() {
     let mut failed = pending_psg();
     assert_eq!(failed.psg_snapshot().volumes, [15; 4]);
@@ -181,7 +185,8 @@ fn failed_reset_prime_rolls_back_a_sound_write_without_leaking_an_event() {
     same_hardware(&mut failed, &mut before);
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn rejected_restore_is_atomic_and_current_and_legacy_restore_invalidate() {
     for concurrent in [false, true] {
         let mut machine = fixture(Region::NtscUs, concurrent, &writes());
@@ -214,17 +219,18 @@ fn rejected_restore_is_atomic_and_current_and_legacy_restore_invalidate() {
         );
         assert!(trace.validate_complete().is_err());
 
-        let mut legacy = saved[..saved.len() - 5].to_vec();
-        legacy[8..12].copy_from_slice(&14_u32.to_le_bytes());
+        let legacy = saved.clone();
         machine.decode_state(&legacy).unwrap();
         invalidated(&mut machine, AudioTraceInvalidation::StateRestore);
+        current.decode_state(&legacy).unwrap();
         step(&mut current, 512);
         step(&mut machine, 512);
         same_hardware(&mut current, &mut machine);
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn actual_main_and_sound_fault_paths_invalidate_and_clear_origin() {
     let mut main = fixture(Region::NtscUs, false, &[0x1039, 0x0080, 0x0000, 0x60fe]);
     main.reset_and_begin_audio_trace(8).unwrap();
@@ -251,11 +257,11 @@ fn actual_main_and_sound_fault_paths_invalidate_and_clear_origin() {
     sound.reset_and_begin_audio_trace(8).unwrap();
     step(&mut sound, 2);
     sound.bus.sound.set_reset(false);
-    sound.bus.sound.ram[..3].copy_from_slice(&[0x3a, 0, 0x50]);
+    sound.bus.sound.ram[..3].copy_from_slice(&[0x3a, 0x18, 0x7f]);
     assert!(matches!(
         sound.step_sound_instruction(),
         Err(SoundFault::UnsupportedAccess {
-            address: 0x5000,
+            address: 0x7f18,
             ..
         })
     ));
@@ -267,7 +273,8 @@ fn actual_main_and_sound_fault_paths_invalidate_and_clear_origin() {
     assert!(trace.events.is_empty());
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn external_mutations_preserve_first_reason_and_rejected_mutations_preserve_capture() {
     let mut machine = fixture(Region::NtscUs, true, &writes());
     machine.reset_and_begin_audio_trace(8).unwrap();
@@ -296,7 +303,8 @@ fn external_mutations_preserve_first_reason_and_rejected_mutations_preserve_capt
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn save_ram_load_rejection_is_atomic_and_success_invalidates() {
     let base = fixture(Region::NtscUs, true, &writes());
     let mut rom = base.rom_bytes().to_vec();
@@ -321,7 +329,8 @@ fn save_ram_load_rejection_is_atomic_and_success_invalidates() {
     invalidated(&mut machine, AudioTraceInvalidation::ExternalMutation);
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn renderer_controls_and_controller_inputs_preserve_chip_write_observation() {
     let mut on = fixture(Region::Pal, true, &writes());
     let mut off = on.clone();

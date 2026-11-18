@@ -2,6 +2,7 @@ use super::*;
 use crate::hardware::vdp::VdpInterrupts;
 
 mod boundaries;
+mod normal;
 
 fn registers(region: Region, h40: bool, tall: bool, interlaced: bool) -> VdpRegisterPipeline {
     let mut registers = VdpRegisterPipeline::bootstrap_mode5();
@@ -60,12 +61,13 @@ fn latch_toggle_wrap_and_outgoing_rows_follow_one_calendar() {
                     !interrupts
                         .field_position(region, &registers)
                         .unwrap()
-                        .interlaced
+                        .mode
+                        .interlaced()
                 );
                 advance(&mut interrupts, latch, region, &mut registers);
                 let position = interrupts.field_position(region, &registers).unwrap();
-                assert!(position.interlaced);
-                assert!(!position.odd && !position.active_interlaced);
+                assert!(position.mode.interlaced());
+                assert!(!position.odd && !position.active_mode.interlaced());
                 advance(
                     &mut interrupts,
                     height * H32_LINE_TICKS,
@@ -77,7 +79,7 @@ fn latch_toggle_wrap_and_outgoing_rows_follow_one_calendar() {
                     .unwrap()
                     .unwrap();
                 assert_eq!(u64::from(row), height - 1);
-                assert!(!outgoing.active_interlaced);
+                assert!(!outgoing.active_mode.interlaced());
                 let toggle = height * H32_LINE_TICKS + mode.vertical_interrupt();
                 advance(&mut interrupts, toggle, region, &mut registers);
                 assert_eq!(interrupts.status_bits() & 0x10, 0x10);
@@ -90,7 +92,7 @@ fn latch_toggle_wrap_and_outgoing_rows_follow_one_calendar() {
                 advance(&mut interrupts, first_end, region, &mut registers);
                 let position = interrupts.field_position(region, &registers).unwrap();
                 assert_eq!((position.id, position.line), (1, 0));
-                assert!(position.active_interlaced && position.active_odd);
+                assert!(position.active_mode.interlaced() && position.active_odd);
                 advance(&mut interrupts, first_end + toggle, region, &mut registers);
                 assert_eq!(interrupts.status_bits() & 0x10, 0);
                 assert_eq!(
@@ -153,8 +155,8 @@ fn disabling_interlace_keeps_shifted_origin_and_outgoing_geometry() {
             &registers,
         )
         .unwrap();
-    assert!(!calendar.interlaced && !calendar.odd);
-    assert!(calendar.active_interlaced && calendar.active_odd);
+    assert!(!calendar.mode.interlaced() && !calendar.odd);
+    assert!(calendar.active_mode.interlaced() && calendar.active_odd);
     assert!(write.publish_at.get() < calendar.updated_at.get());
     let end = first_end + 262 * H32_LINE_TICKS;
     let (calendar, _) = calendar
@@ -166,7 +168,7 @@ fn disabling_interlace_keeps_shifted_origin_and_outgoing_geometry() {
         .unwrap();
     assert_eq!(calendar.start.get(), end + 5 * 262 * H32_LINE_TICKS);
     assert_eq!(calendar.id, 7);
-    assert!(!calendar.active_interlaced);
+    assert!(!calendar.active_mode.interlaced());
 }
 
 #[test]
@@ -192,12 +194,12 @@ fn publication_before_at_and_after_blank_uses_the_old_image_on_a_tie() {
             let (at_latch, _) = calendar
                 .project(MasterTicks::new(latch), region, &registers)
                 .unwrap();
-            assert_eq!(at_latch.interlaced, offset < 0);
+            assert_eq!(at_latch.mode.interlaced(), offset < 0);
             let second_latch = 262 * H32_LINE_TICKS + latch;
             let (later, _) = calendar
                 .project(MasterTicks::new(second_latch), region, &registers)
                 .unwrap();
-            assert!(later.interlaced);
+            assert!(later.mode.interlaced());
         }
     }
 }
@@ -211,7 +213,7 @@ fn sound_snapshot_projects_pending_mode_through_the_same_field_edges() {
         .queue_control_register(DISPLAY_SIZE_REGISTER, H40_CLOCK_MASK | INTERLACE_MODE_MASK)
         .unwrap();
     let interrupts = VdpInterrupts::at_counters_zero(MasterTicks::ZERO, 0, false, false);
-    let snapshot = interrupts.sound_interrupt(registers, region);
+    let snapshot = interrupts.sound_interrupt(&registers, region);
     let timing = VdpVerticalTiming::at_counters_zero(MasterTicks::ZERO);
     let pulse = 224 * H32_LINE_TICKS + u64::from(H40_DOT_TICKS);
     for origin in [0, 313 * H32_LINE_TICKS, (313 + 312) * H32_LINE_TICKS] {
@@ -232,39 +234,9 @@ fn sound_snapshot_projects_pending_mode_through_the_same_field_edges() {
 }
 
 #[test]
-fn every_legacy_state_version_derives_progressive_origin_without_changing_ticks() {
-    use crate::hardware::vdp::state::{StateReader, StateWriter};
-    for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
-        for version in 1..14 {
-            let epoch = 137;
-            let now = epoch + region.frame_lines() * H32_LINE_TICKS * 9 + 123;
-            let mut writer = StateWriter::new();
-            writer.write_u64(epoch);
-            writer.write_u64(now);
-            writer.write_u8(17);
-            writer.write_bool(true);
-            writer.write_bool(false);
-            let bytes = writer.into_bytes();
-            let mut reader = StateReader::new(&bytes);
-            let interrupts = VdpInterrupts::read_state(&mut reader, version, region).unwrap();
-            assert!(reader.is_exhausted());
-            assert_eq!(interrupts.now().get(), now);
-            let mut registers = registers(region, false, false, false);
-            registers.advance_to(MasterTicks::new(now)).unwrap();
-            let position = interrupts.field_position(region, &registers).unwrap();
-            assert_eq!(
-                (position.id, position.line, position.start.get()),
-                (9, 0, now - 123)
-            );
-            assert!(!position.interlaced && !position.active_interlaced && !position.odd);
-        }
-    }
-}
-
-#[test]
 fn interlace_state_round_trip_retains_latched_and_active_field_history() {
     use crate::hardware::vdp::state::{StateReader, StateWriter};
-    use crate::save_state::STATE_VERSION_WITH_INTERLACE;
+
     for region in [Region::NtscUs, Region::Pal] {
         let mut registers = registers(region, true, false, true);
         let mut interrupts = VdpInterrupts::at_counters_zero(MasterTicks::ZERO, 0, false, false);
@@ -284,20 +256,14 @@ fn interlace_state_round_trip_retains_latched_and_active_field_history() {
             interrupts.write_state(&mut writer);
             let bytes = writer.into_bytes();
             let mut reader = StateReader::new(&bytes);
-            let restored =
-                VdpInterrupts::read_state(&mut reader, STATE_VERSION_WITH_INTERLACE, region)
-                    .unwrap();
+            let restored = VdpInterrupts::read_state(&mut reader, region).unwrap();
             assert_eq!(restored, interrupts);
             restored.validate_state(&registers, region).unwrap();
             assert!(reader.is_exhausted());
             let mut malformed = bytes;
             malformed[8..16].copy_from_slice(&(at + H32_LINE_TICKS).to_le_bytes());
-            let invalid = VdpInterrupts::read_state(
-                &mut StateReader::new(&malformed),
-                STATE_VERSION_WITH_INTERLACE,
-                region,
-            )
-            .unwrap();
+            let invalid =
+                VdpInterrupts::read_state(&mut StateReader::new(&malformed), region).unwrap();
             assert!(invalid.validate_state(&registers, region).is_err());
         }
     }

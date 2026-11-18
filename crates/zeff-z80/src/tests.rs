@@ -1,6 +1,9 @@
 use super::flags::szp_flags;
 use super::*;
 
+mod im1;
+mod reset;
+
 const TEST_STATUS_PORT: u8 = 0x05;
 const TEST_DATA_PORT: u8 = 0x04;
 const TEST_OUTPUT_PORT: u8 = 0x7F;
@@ -114,19 +117,6 @@ fn cpu_and_bus(program: &[u8]) -> (Cpu, Bus) {
     (Cpu::new(), Bus::new(program))
 }
 
-#[test]
-fn reset_uses_the_configured_host_state() {
-    let reset_state = ResetState::new(0x1234, 0xABCD);
-    let mut cpu = Cpu::new_with_reset(reset_state);
-    cpu.regs.pc = 0;
-    cpu.regs.sp = 0;
-
-    cpu.reset();
-
-    assert_eq!(cpu.regs().pc, reset_state.pc);
-    assert_eq!(cpu.regs().sp, reset_state.sp);
-}
-
 fn nmi_cpu_and_bus(program: &[u8]) -> (Cpu, Bus) {
     cpu_and_bus(program)
 }
@@ -237,6 +227,7 @@ fn undocumented_ed_retn_aliases_return_like_retn() {
 
 #[test]
 fn enabled_vblank_interrupt_pushes_pc_and_vectors_to_0038() {
+    im1::check();
     let (mut cpu, mut bus) = cpu_and_bus(&[
         0x31, 0x00, 0xD0, // LD SP,$D000
         0xFB, // EI

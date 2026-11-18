@@ -70,7 +70,12 @@ pub fn indexed_cb_reset_and_fault_preserve_progress() {
     assert_eq!(machine.timing_snapshot().now(), now);
     assert_eq!(machine.peek(0xa0_0100), Some(0x81));
     assert!(!machine.sound_instruction_pending());
-    let mut machine = start(&[0xfd, 0x21, 0, 0x80, 0xfd, 0xcb, 0, 0, 0x76], 12, &[], &[]);
+    let mut machine = start(
+        &[0xfd, 0x21, 0, 0x80, 0xfd, 0xcb, 0, 0, 0x76],
+        12,
+        &multi::bank_sources(0x80),
+        &[],
+    );
     assert_eq!(machine.sound_cpu().cycles(), 34);
     let cpu = machine.sound_cpu().clone();
     let mut copied = machine.clone();

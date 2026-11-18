@@ -5,7 +5,8 @@ mod vdp_dma_cpu {
 
     macro_rules! case {
         ($name:ident, $with:ident) => {
-            #[test]
+            #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+            #[cfg_attr(not(target_arch = "wasm32"), test)]
             fn $name() {
                 cases::$with(&mut support::execute);
             }
@@ -45,6 +46,10 @@ mod vdp_dma_device {
 
     case!(fill_slots, cases, fill_slots_with);
     case!(copy_slots_and_clones, cases, copy_slots_and_clones_with);
+    #[test]
+    fn copy_alias_helper_guards() {
+        cases::copy_alias_helper_guards();
+    }
     case!(all_increments, cases, all_increments_with);
     case!(overlap_and_partitions, cases, overlap_and_partitions_with);
     case!(
@@ -78,7 +83,11 @@ mod vdp_dma_device {
         long,
         long_active_field_margin_with
     );
-    case!(seed_validation, guards, seed_validation_with);
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn seed_validation() {
+        guards::seed_validation_with(&mut support::execute);
+    }
     case!(pending_inputs, guards, pending_inputs_with);
     case!(chronological_capacity, guards, chronological_capacity_with);
     case!(clock_guards, guards, clock_guards_with);

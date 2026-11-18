@@ -1,5 +1,8 @@
 use zeff_emu_common::system::System;
 
+mod sound;
+pub(super) use sound::import_md_sound;
+
 use super::{ImportCapabilities, ImportContext, SymbolImporter, SymbolModule, TargetInfo};
 use crate::symbols::{
     Confidence, CpuLocation, ExecMode, Provenance, ProvenanceKind, SourceFile, SourceLine,
@@ -42,7 +45,7 @@ impl SymbolImporter for WlaSymImporter {
 
     fn import(&self, data: &[u8], ctx: &ImportContext) -> anyhow::Result<SymbolModule> {
         anyhow::ensure!(
-            ctx.target.system != System::Md,
+            ctx.target.system != System::Md || ctx.cpu_space == crate::symbols::AddressSpaceId(1),
             "Mega Drive symbol imports are not supported yet"
         );
         let text = std::str::from_utf8(data)?;
@@ -218,6 +221,9 @@ impl SymbolImporter for WlaSymImporter {
                 crc32: Some(source.crc32),
             })
             .collect();
+        if ctx.target.system == System::Md {
+            sound::qualify(&mut module);
+        }
         Ok(module)
     }
 }

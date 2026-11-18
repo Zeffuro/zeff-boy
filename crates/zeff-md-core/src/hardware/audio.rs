@@ -1,11 +1,16 @@
+mod rollback_memory;
 use crate::Region;
 
+mod batch;
 mod constants;
+mod frontend;
+pub(crate) use frontend::MAX_FRONTEND_AUDIO_BYTES;
 mod opn2;
 mod output;
 mod psg;
 #[cfg(test)]
 mod publication_mix_tests;
+mod replay;
 mod state;
 pub(crate) mod trace;
 use crate::constants::{FM_CHANNEL_COUNT, OPN2_CLOCK_TICKS};
@@ -13,12 +18,14 @@ use constants::*;
 pub use opn2::{Opn2, Opn2DebugSnapshot};
 use output::Output;
 pub use psg::{Psg, PsgDebugSnapshot};
+pub use replay::{MD_AUDIO_REPLAY_MAX_FRAMES, MdAudioReplay};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct Audio {
     pub psg: Psg,
     pub opn2: Opn2,
     now: u64,
+    deferred: Option<u64>,
     chip_phase: u64,
     opn2_phase: u64,
     sample_phase: u64,
@@ -34,6 +41,74 @@ pub(crate) struct Audio {
     head: usize,
     len: usize,
 }
+
+impl PartialEq for Audio {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            psg,
+            opn2,
+            now,
+            deferred,
+            chip_phase,
+            opn2_phase,
+            sample_phase,
+            sample_rate,
+            master_hz,
+            generation_enabled,
+            mutes,
+            fm_mutes,
+            output,
+            trace,
+            trace_origin,
+            samples,
+            head,
+            len,
+        } = self;
+        let Self {
+            psg: other_psg,
+            opn2: other_opn2,
+            now: other_now,
+            deferred: other_deferred,
+            chip_phase: other_chip_phase,
+            opn2_phase: other_opn2_phase,
+            sample_phase: other_sample_phase,
+            sample_rate: other_sample_rate,
+            master_hz: other_master_hz,
+            generation_enabled: other_generation_enabled,
+            mutes: other_mutes,
+            fm_mutes: other_fm_mutes,
+            output: other_output,
+            trace: other_trace,
+            trace_origin: other_trace_origin,
+            samples: other_samples,
+            head: other_head,
+            len: other_len,
+        } = other;
+        // Consumed slots and ring origin are storage; only the ordered live queue is state.
+        psg == other_psg
+            && opn2 == other_opn2
+            && now == other_now
+            && deferred == other_deferred
+            && chip_phase == other_chip_phase
+            && opn2_phase == other_opn2_phase
+            && sample_phase == other_sample_phase
+            && sample_rate == other_sample_rate
+            && master_hz == other_master_hz
+            && generation_enabled == other_generation_enabled
+            && mutes == other_mutes
+            && fm_mutes == other_fm_mutes
+            && output == other_output
+            && trace == other_trace
+            && trace_origin == other_trace_origin
+            && len == other_len
+            && (0..*len).all(|index| {
+                samples[(*head + index) % SAMPLE_CAPACITY]
+                    == other_samples[(*other_head + index) % SAMPLE_CAPACITY]
+            })
+    }
+}
+
+impl Eq for Audio {}
 
 pub(crate) struct AudioCheckpoint {
     psg: Psg,
@@ -65,6 +140,7 @@ impl Audio {
             psg: Psg::default(),
             opn2: Opn2::default(),
             now: 0,
+            deferred: None,
             chip_phase: 0,
             opn2_phase: 0,
             sample_phase: 0,
@@ -131,6 +207,10 @@ impl Audio {
 
     pub fn advance_to(&mut self, at: u64) {
         let elapsed = at.checked_sub(self.now).expect("ordered audio publication");
+        if let Some(admitted) = &mut self.deferred {
+            assert!(at >= *admitted, "ordered immediate audio fence");
+            *admitted = at;
+        }
         let total =
             u128::from(self.sample_phase) + u128::from(elapsed) * u128::from(self.sample_rate);
         let count = (total / u128::from(self.master_hz)) as u64;
@@ -153,8 +233,13 @@ impl Audio {
             self.head = 0;
             self.len = 0;
         }
+        let psg_silent = self.psg.silent_with_mutes(self.mutes);
         while self.now < at {
-            let psg = PSG_CLOCK_TICKS - self.chip_phase;
+            let psg = if psg_silent {
+                u64::MAX
+            } else {
+                PSG_CLOCK_TICKS - self.chip_phase
+            };
             let fm = self.opn2.clocks_to_sample() * OPN2_CLOCK_TICKS - self.opn2_phase;
             let sample = (self.master_hz - self.sample_phase).div_ceil(u64::from(self.sample_rate));
             let step = (at - self.now).min(psg).min(fm).min(sample);
@@ -228,8 +313,15 @@ impl Audio {
         self.len = 0;
     }
 
+    pub(crate) fn pending_frames(&self) -> usize {
+        self.len
+    }
+
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+    pub(crate) fn sample_generation_enabled(&self) -> bool {
+        self.generation_enabled
     }
     pub fn set_sample_generation_enabled(&mut self, enabled: bool) {
         if self.generation_enabled == enabled {
@@ -242,6 +334,10 @@ impl Audio {
         }
         self.restart_filter();
     }
+    pub fn channel_mutes(&self) -> ([bool; PSG_CHANNELS], [bool; FM_CHANNEL_COUNT]) {
+        (self.mutes, self.fm_mutes)
+    }
+
     pub fn set_channel_mutes(&mut self, mutes: [bool; PSG_CHANNELS]) {
         if self.mutes == mutes {
             return;
@@ -279,6 +375,7 @@ impl Audio {
     }
 
     pub fn checkpoint(&self) -> AudioCheckpoint {
+        assert!(self.deferred.is_none(), "canonical audio checkpoint");
         let mut samples = [[0; OUTPUT_CHANNELS]; SAMPLE_CAPACITY];
         samples.copy_from_slice(&self.samples);
         AudioCheckpoint {
@@ -323,3 +420,6 @@ impl Audio {
 mod opn2_mix_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod silent_psg_tests;

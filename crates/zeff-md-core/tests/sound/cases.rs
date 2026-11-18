@@ -76,7 +76,9 @@ pub fn main_sound_ram_lanes_and_mirrors() {
 }
 
 pub fn serial_bank_and_cartridge_requester() {
-    for bank in [0u16, 1, 2, 4, 8, 16, 32, 64, 0x55, 128, 0x100, 0x140, 0x1ff] {
+    for bank in [
+        0u16, 1, 2, 4, 8, 16, 32, 64, 0x55, 128, 0xff, 0x100, 0x140, 0x1ff,
+    ] {
         let mut program = load_program(&[0x3a, 0, 0x80, 0x76, 0]);
         for bit in 0..9 {
             store_byte(&mut program, SOUND_RAM + 0x6000, ((bank >> bit) & 1) as u8);
@@ -99,7 +101,7 @@ pub fn serial_bank_and_cartridge_requester() {
             machine.step_instruction().unwrap().cpu,
             TimedOutcome::Stopped
         );
-        if bank <= 0x7f || bank == 0x1ff {
+        if bank <= 0xff || bank == 0x1ff {
             machine.step_sound_instruction().unwrap();
             assert_eq!(
                 machine.sound_cpu().regs().a,

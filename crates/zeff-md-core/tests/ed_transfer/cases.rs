@@ -70,19 +70,19 @@ pub fn ed_returns_keep_low_and_read_high_live() {
 pub fn ed_second_access_faults_keep_progress() {
     for (sound, nops, clocks, pc, address, direction) in [
         (
-            &[0x21, 0x34, 0x12, 0xed, 0x63, 3, 0x40][..],
+            &[0x21, 0x34, 0x12, 0xed, 0x63, 0x17, 0x7f][..],
             8,
             27,
             7,
-            0x4004,
+            0x7f18,
             Direction::Write,
         ),
         (
-            &[0x31, 3, 0x40, 0xed, 0x45][..],
+            &[0x31, 0xff, 0x7e, 0xed, 0x45][..],
             5,
             21,
             5,
-            0x4004,
+            0x7f00,
             Direction::Read,
         ),
     ] {
@@ -100,9 +100,9 @@ pub fn ed_second_access_faults_keep_progress() {
         assert_eq!(machine, copied);
         assert_eq!(machine.sound_cpu(), &cpu);
         if direction == Direction::Write {
-            assert_eq!(machine.opn2_snapshot().status & 0x80, 0x80);
+            assert_eq!(machine.psg_snapshot().periods[0], 0x340);
         } else {
-            assert_eq!(machine.sound_cpu().regs().sp, 0x4004);
+            assert_eq!(machine.sound_cpu().regs().sp, 0x7f00);
         }
         let saved = machine.clone();
         assert_eq!(machine.step_instruction(), expected);

@@ -50,6 +50,9 @@ pub(super) fn advance_tas_frame(
         return Err(Rejected::InvalidInput);
     }
     match candidate.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            Err(Rejected::NoActiveLease)
+        }
         TasExecutionProfile::DirectNesCartridge => advance_direct_nes_tas_frame(
             context.backend,
             context.runtime_fault,

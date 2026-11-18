@@ -21,12 +21,7 @@ impl PrefetchCpu {
         }
         if opcode == 0x4e76 && self.registers.status_register() & OVERFLOW != 0 {
             // TRAPV samples supervisor-program space before stacking.
-            self.read_word(
-                bus,
-                pc.wrapping_add(4),
-                FunctionCode::SupervisorProgram,
-                AccessKind::Prefetch,
-            )?;
+            self.fetch_with_fc(bus, pc.wrapping_add(4), FunctionCode::SupervisorProgram)?;
             self.short_exception_with_idle(bus, VECTOR_TRAPV, pc.wrapping_add(2), 0)?;
             return Ok(Some(Completion {
                 exception: Some(VECTOR_TRAPV),
@@ -35,6 +30,7 @@ impl PrefetchCpu {
         }
         match opcode {
             _ if opcode & 0xfff8 == 0x4e50 => {
+                bus.instruction_input(pc.wrapping_add(2), pipeline.input(1));
                 let old = self.registers.address_register(register).unwrap();
                 let frame = self.registers.stack_pointer().wrapping_sub(4);
                 let displacement = i32::from(pipeline.words[1] as i16);
@@ -46,10 +42,7 @@ impl PrefetchCpu {
                     .set_address_register(7, frame.wrapping_add_signed(displacement));
                 let second = self.fetch(bus, pc.wrapping_add(6))?;
                 self.registers.pc = pc.wrapping_add(4);
-                self.pipeline = Some(Pipeline {
-                    address: self.registers.pc,
-                    words: [first, second],
-                });
+                self.pipeline = Some(Pipeline::sampled(self.registers.pc, [first, second]));
             }
             _ if opcode & 0xfff8 == 0x4e58 => {
                 let frame = self.registers.address_register(register).unwrap();
@@ -63,6 +56,7 @@ impl PrefetchCpu {
                 self.finish_frame(bus, pipeline)?;
             }
             0x4e77 => {
+                let bank = ControlStackBank::active(&self.registers);
                 let sp = self.registers.stack_pointer();
                 let fc = crate::ea::data_space(&self.registers);
                 let ccr = self.read_word(bus, sp, fc, AccessKind::Stack)?;
@@ -73,6 +67,13 @@ impl PrefetchCpu {
                 );
                 let low = self.read_word(bus, sp.wrapping_add(4), fc, AccessKind::Stack)?;
                 self.control_refill(bus, (u32::from(high) << 16) | u32::from(low))?;
+                self.record_control_return(
+                    ControlFlowReturnKind::Rtr,
+                    pc,
+                    bank,
+                    sp,
+                    sp.wrapping_add(2),
+                );
             }
             _ if opcode & 0xfff0 == 0x4e60 => {
                 if opcode & 8 == 0 {
@@ -99,10 +100,10 @@ impl PrefetchCpu {
     ) -> Result<(), TimingFault<B::Error>> {
         let next = self.fetch(bus, pipeline.address.wrapping_add(4))?;
         self.registers.pc = pipeline.address.wrapping_add(2);
-        self.pipeline = Some(Pipeline {
-            address: self.registers.pc,
-            words: [pipeline.words[1], next],
-        });
+        self.pipeline = Some(Pipeline::sampled(
+            self.registers.pc,
+            [pipeline.input(1), next],
+        ));
         Ok(())
     }
 }

@@ -173,44 +173,44 @@ pub fn plane_sizes_and_bounds() {
         );
     }
     let mut bank = bank();
-    let mut accepted = 0;
-    let mut unsupported = 0;
+    let extents = [
+        (32, 32),
+        (64, 32),
+        (32, 1),
+        (128, 32),
+        (32, 64),
+        (64, 64),
+        (32, 1),
+        (128, 32),
+        (32, 128),
+        (64, 32),
+        (32, 1),
+        (128, 32),
+        (32, 128),
+        (64, 64),
+        (32, 1),
+        (128, 32),
+    ];
     for value in 0..=255u8 {
         publish(&mut bank, 16, value);
         let saved = bank;
+        let (width, height) = extents[usize::from(value & 3) + usize::from((value >> 4) & 3) * 4];
         for plane in [VdpPlane::A, VdpPlane::B] {
-            if let Some((width, height)) = dimensions(value) {
-                for (x, y) in [(0, 0), (width * 8 - 1, height * 8 - 1)] {
-                    assert_eq!(
-                        memory.sample_plane(&bank, plane, x, y),
-                        Ok(pixel(0, 0, false))
-                    );
-                }
-                for (x, y) in [(width * 8, 0), (0, height * 8), (u16::MAX, u16::MAX)] {
-                    assert_eq!(
-                        memory.sample_plane(&bank, plane, x, y),
-                        Err(VdpRenderError::CoordinateOutOfBounds { x, y })
-                    );
-                }
-            } else {
+            for (x, y) in [(0, 0), (width * 8 - 1, height * 8 - 1)] {
                 assert_eq!(
-                    memory.sample_plane(&bank, plane, 0, 0),
-                    Err(VdpRenderError::UnsupportedPlaneSize(value))
+                    memory.sample_plane(&bank, plane, x, y),
+                    Ok(pixel(0, 0, false))
                 );
+            }
+            for (x, y) in [(width * 8, 0), (0, height * 8), (u16::MAX, u16::MAX)] {
                 assert_eq!(
-                    memory.sample_plane(&bank, plane, u16::MAX, u16::MAX),
-                    Err(VdpRenderError::UnsupportedPlaneSize(value))
+                    memory.sample_plane(&bank, plane, x, y),
+                    Err(VdpRenderError::CoordinateOutOfBounds { x, y })
                 );
             }
         }
         assert_eq!(bank, saved);
-        if dimensions(value).is_some() {
-            accepted += 1;
-        } else {
-            unsupported += 1;
-        }
     }
-    assert_eq!((accepted, unsupported), (96, 160));
 }
 
 pub fn plane_table_strides_and_limits() {

@@ -54,17 +54,37 @@ fn memory(app: &mut App) -> Value {
     }
 }
 
-fn deliver(app: &mut App, attempt_mutation: bool) {
-    let snapshot = app.build_snapshot_request(&TabDataRequirements::default(), false);
-    assert!(snapshot.want_debug_info && snapshot.show_memory_viewer);
+fn deliver(app: &mut App, attempt_mutation: bool, single_step: bool) {
     let mut actions = DebugUiActions::none();
     if attempt_mutation {
         actions.memory_writes.push((0xff0040, 0xa5));
-        actions.add_breakpoint = Some(0x10012);
-        actions.add_one_shot_breakpoint = Some(0x10012);
+        actions.add_breakpoint = Some(0x10013);
+        actions.add_one_shot_breakpoint = Some(0x10013);
     }
+    deliver_actions(
+        app,
+        actions,
+        attempt_mutation,
+        single_step,
+        usize::from(!single_step),
+    );
+}
+
+fn deliver_actions(
+    app: &mut App,
+    actions: DebugUiActions,
+    attempt_mutation: bool,
+    single_step: bool,
+    expected_frames: usize,
+) {
+    let snapshot = app.build_snapshot_request(&TabDataRequirements::default(), false);
+    assert!(snapshot.want_debug_info && snapshot.show_memory_viewer);
     let input = FrameInput {
-        frames: 1,
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_request: 0,
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_pacing: (0, 0),
+        frames: usize::from(!single_step),
         speculation_blockers: SpeculationBlockers::feature_disabled(),
         replay_joypad_frames: None,
         host_tilt: (0.0, 0.0),
@@ -83,8 +103,8 @@ fn deliver(app: &mut App, attempt_mutation: bool) {
         },
         pce_mouse: Default::default(),
         zapper: Default::default(),
-        debug_step: attempt_mutation,
-        debug_continue: attempt_mutation,
+        debug_step: attempt_mutation || single_step,
+        debug_continue: !single_step,
         debug_suspend_after_frame: attempt_mutation,
         audio: AudioConfig {
             apu_capture_enabled: false,
@@ -108,7 +128,7 @@ fn deliver(app: &mut App, attempt_mutation: bool) {
     loop {
         if let Some(result) = app.emu_thread.as_ref().unwrap().try_recv_frame() {
             assert!(result.runtime_fault.is_none());
-            assert_eq!(result.advanced_frames, 1);
+            assert_eq!(result.advanced_frames, expected_frames);
             app.process_frame_result(result);
             return;
         }
@@ -121,18 +141,59 @@ fn deliver(app: &mut App, attempt_mutation: bool) {
 }
 
 #[test]
-fn md_register_remote_worker_publishes_guest_registers_with_controls_gated() {
+fn md_watchpoint_remote_worker_reports_24_bit_access_hit_without_prior_storage_value() {
+    let mut app = app();
+    assert!(debug_info(&mut app)["cpu"].is_null());
+    assert_eq!(memory(&mut app)["ready"], false);
+    let mut actions = DebugUiActions::none();
+    actions.add_watchpoint = Some((0xff0040, 0xff0040, zeff_emu_common::debug::WatchType::Write));
+    deliver_actions(&mut app, actions, false, false, 0);
+    let reply = debug_info(&mut app);
+    assert_eq!(reply["cpu"]["state"], "Suspended");
+    assert_eq!(reply["cpu"]["pc"], 0x1000e);
+    assert_eq!(
+        reply["cpu"]["hit_watchpoint"],
+        json!({
+            "address": 0xff0040, "address_hex": "00FF0040", "old_value": 0,
+            "new_value": 0x5a, "type": "Write",
+        })
+    );
+    assert_eq!(reply["cpu"]["watchpoints"][0]["address"], 0xff0040);
+    assert_eq!(memory(&mut app)["bytes"], json!([0x5a]));
+    let features = app
+        .cached_ui_data
+        .as_ref()
+        .unwrap()
+        .core_features
+        .as_ref()
+        .unwrap();
+    let features = core_features::core_features_json(features);
+    assert_eq!(features["supports_memory_watchpoints"], true);
+    assert_eq!(features["supports_symbol_loading"], true);
+    assert_eq!(features["supports_debugger"], true);
+    app.emu_thread.as_mut().unwrap().shutdown();
+}
+
+#[test]
+fn md_register_remote_worker_separates_execution_controls_from_debug_mutations() {
     let mut app = app();
     assert!(debug_info(&mut app)["cpu"].is_null());
     assert_eq!(memory(&mut app)["ready"], false);
     let mut previous_cycles = 0;
     for attempt_mutation in [false, true, false] {
-        deliver(&mut app, attempt_mutation);
+        deliver(&mut app, attempt_mutation, false);
         let reply = debug_info(&mut app);
         assert!(reply["note"].is_null());
         let cpu = &reply["cpu"];
         assert_eq!(cpu["pc"], 0x10012);
-        assert_eq!(cpu["state"], "Read-only");
+        assert_eq!(
+            cpu["state"],
+            if attempt_mutation {
+                "Suspended"
+            } else {
+                "Running"
+            }
+        );
         assert_eq!(cpu["status"], "M68000 register snapshot");
         let cycles = cpu["cycles"].as_u64().unwrap();
         assert!(cycles > previous_cycles);
@@ -148,18 +209,30 @@ fn md_register_remote_worker_publishes_guest_registers_with_controls_gated() {
                 {"name": "C", "set": true}
             ])
         );
-        assert_eq!(cpu["last_opcode"], "Instruction history unavailable");
+        assert_eq!(cpu["recent_opcode_records"].as_array().unwrap().len(), 32);
+        assert!(
+            cpu["recent_opcode_records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|entry| {
+                    entry["address"] == 0x10012 && entry["bytes"] == json!([0x60, 0xfe])
+                })
+        );
+        assert_eq!(cpu["last_opcode"], cpu["recent_opcodes"][0]);
         for field in [
-            "recent_opcodes",
             "call_stack",
             "breakpoints",
             "one_shot_breakpoints",
             "watchpoints",
-            "supported_events",
         ] {
             assert!(cpu[field].as_array().unwrap().is_empty());
         }
-        assert_eq!(cpu["call_stack_available"], false);
+        assert_eq!(cpu["call_stack_available"], true);
+        assert_eq!(
+            cpu["supported_events"],
+            json!(["IRQ / NMI", "DMA transfer", "CPU exception"])
+        );
         assert!(cpu["hit_breakpoint"].is_null());
         assert_eq!(memory(&mut app)["bytes"], json!([0x5a]));
         let features = app
@@ -169,13 +242,23 @@ fn md_register_remote_worker_publishes_guest_registers_with_controls_gated() {
             .core_features
             .as_ref()
             .unwrap();
-        assert!(!features.supports_debugger);
-        assert!(!features.supports_execution_controls);
-        assert!(!features.supports_guest_calls);
-        assert!(!features.supports_opcode_history);
-        assert!(!features.supports_cheats);
-        assert!(!features.supports_rewind);
-        assert!(!features.supports_replay);
+        assert!(features.supports_debugger);
+        assert!(features.supports_execution_controls);
+        assert!(features.supports_symbol_loading);
+        assert!(features.supports_guest_calls);
+        assert!(features.supports_opcode_history);
+        assert!(features.supports_instruction_trace);
+        assert!(features.supports_cheats);
+        assert!(features.supports_rewind);
+        assert!(features.supports_replay);
     }
+    deliver(&mut app, true, false);
+    let before = debug_info(&mut app);
+    deliver(&mut app, false, true);
+    let after = debug_info(&mut app);
+    assert_eq!(after["cpu"]["state"], "Suspended");
+    assert_eq!(after["cpu"]["pc"], before["cpu"]["pc"]);
+    assert!(after["cpu"]["cycles"].as_u64().unwrap() > before["cpu"]["cycles"].as_u64().unwrap());
+    assert_eq!(memory(&mut app)["bytes"], json!([0x5a]));
     app.emu_thread.as_mut().unwrap().shutdown();
 }

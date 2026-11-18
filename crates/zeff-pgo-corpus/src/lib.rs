@@ -17,6 +17,7 @@ use gba::{
 };
 mod ws;
 use ws::rom as ws_rom;
+mod md;
 
 pub const SUGGESTED_FRAMES: u32 = 600;
 
@@ -83,6 +84,12 @@ pub fn fixtures() -> Vec<Fixture> {
             system: "NES",
             extension: "nes",
             bytes: nes_rom(),
+        },
+        Fixture {
+            id: "md-vdp-audio",
+            system: "MD",
+            extension: "md",
+            bytes: md::rom(),
         },
         Fixture {
             id: "pce-video-loop",
@@ -261,7 +268,9 @@ mod tests {
         let systems: BTreeSet<_> = fixtures.iter().map(|fixture| fixture.system).collect();
         assert_eq!(
             systems,
-            BTreeSet::from(["GB", "GBC", "GBA", "GG", "NES", "PCE", "SMS", "WS", "WSC"])
+            BTreeSet::from([
+                "GB", "GBC", "GBA", "GG", "MD", "NES", "PCE", "SMS", "WS", "WSC"
+            ])
         );
         let paths: BTreeSet<_> = manifest_for(&fixtures)
             .fixtures

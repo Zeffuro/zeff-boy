@@ -39,7 +39,6 @@ fn decode(opcode: u16) -> Option<Binary> {
             _ => return None,
         }
     };
-    // Leave register routes and their special aliases to the existing whitelist.
     if mode < 2 || mode == 7 && register > 4 {
         return None;
     }
@@ -194,10 +193,7 @@ impl PrefetchCpu {
             }
         }
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: stream.cursor,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         Ok(true)
     }
 

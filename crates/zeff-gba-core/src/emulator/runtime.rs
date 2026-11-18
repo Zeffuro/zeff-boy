@@ -239,7 +239,7 @@ impl Emulator {
                 {
                     record.push_write(TraceWrite {
                         address: addr,
-                        old_value,
+                        old_value: Some(old_value),
                         new_value,
                         width,
                         kind: TraceWriteKind::Memory,

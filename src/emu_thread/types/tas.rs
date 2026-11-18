@@ -3,6 +3,8 @@ use crate::tas_project::{TasDigest, TasExternalIdentity};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum TasExecutionProfile {
+    DirectMdThreeButton,
+    DirectMdSixButton,
     DirectNesCartridge,
     DirectFdsDisk,
     DirectGbCartridgeDmg,
@@ -233,6 +235,7 @@ pub(crate) enum TasPersistencePublicationOutcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TasLoadedProfileObservation {
+    pub(crate) sync_config_sha256: Option<TasDigest>,
     pub(crate) profile: TasExecutionProfile,
     pub(crate) system: crate::emu_backend::ActiveSystem,
     pub(crate) identity_metadata_matches: bool,

@@ -19,6 +19,13 @@ pub(super) fn parse(
                 _ => anyhow::bail!("--md-region requires auto, ntsc, japan or pal"),
             }
         }
+        "--md-timing" => {
+            options.md_timing = Some(match value.as_str() {
+                "standard" => zeff_md_core::TimingModel::Standard,
+                "precise" => zeff_md_core::TimingModel::Precise,
+                _ => anyhow::bail!("--md-timing requires standard or precise"),
+            });
+        }
         "--md-controller" => {
             options.md_controller = match value.as_str() {
                 "3" | "three" => Some(ControllerKind::ThreeButton),
@@ -49,9 +56,20 @@ mod tests {
         let headless = args.headless.unwrap();
         assert_eq!(headless.md_region, Some(Region::Pal));
         assert_eq!(headless.md_controller, Some(ControllerKind::ThreeButton));
+        assert_eq!(headless.md_timing, None);
+        for (value, timing) in [
+            ("standard", zeff_md_core::TimingModel::Standard),
+            ("PRECISE", zeff_md_core::TimingModel::Precise),
+        ] {
+            let args = parse_args_from(["--headless", "--md-timing", value, "game.md"]).unwrap();
+            assert_eq!(args.headless.unwrap().md_timing, Some(timing));
+        }
         for args in [
             vec!["--md-region", "invalid"],
             vec!["--md-controller", "9"],
+            vec!["--headless", "--md-timing", "invalid"],
+            vec!["--headless", "--md-timing"],
+            vec!["--md-timing", "precise", "game.md"],
             vec!["--md-region"],
             vec!["--md-region", "pal", "game.md"],
             vec!["--md-controller", "6", "game.md"],

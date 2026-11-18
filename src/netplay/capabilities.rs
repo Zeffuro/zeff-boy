@@ -4,6 +4,7 @@ pub(crate) fn rollback_session(system: ActiveSystem) -> bool {
     matches!(
         system,
         ActiveSystem::Nes
+            | ActiveSystem::Md
             | ActiveSystem::MasterSystem
             | ActiveSystem::Sg1000
             | ActiveSystem::Pce
@@ -45,6 +46,7 @@ mod tests {
                 matches!(
                     spec.system,
                     ActiveSystem::Nes
+                        | ActiveSystem::Md
                         | ActiveSystem::MasterSystem
                         | ActiveSystem::Sg1000
                         | ActiveSystem::Pce

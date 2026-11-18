@@ -1,3 +1,6 @@
+#[path = "support/state_layout.rs"]
+mod state_layout;
+
 use zeff_emu_common::time::Reset;
 use zeff_md_core::{Emulator, LoadConfig, Region};
 
@@ -161,21 +164,20 @@ fn save_import_reset_and_state_are_transactional_and_media_bound() {
         assert!(machine.decode_state(&saved[..cut]).is_err());
         assert_eq!(machine.encode_state().unwrap(), saved);
     }
-    for (offset, value) in [(saved.len() - 514, 0), (saved.len() - 513, 2)] {
+    let save = state_layout::save_range(&saved);
+    assert_eq!(save.len(), 515);
+    assert_eq!(&saved[save.start..save.start + 2], &[1, 1]);
+    assert_eq!(&saved[save.start + 2..save.end - 1], expected);
+    assert_eq!(saved[save.end - 1], 0);
+    for (offset, value) in [(save.start, 0), (save.start + 1, 2)] {
         let mut bad = saved.clone();
         bad[offset] = value;
         assert!(machine.decode_state(&bad).is_err());
         assert_eq!(machine.encode_state().unwrap(), saved);
     }
-    let mut old = saved[..saved.len() - 518].to_vec();
-    old[8..12].copy_from_slice(&14_u32.to_le_bytes());
-    assert!(
-        machine
-            .decode_state(&old)
-            .unwrap_err()
-            .to_string()
-            .contains("no cartridge save RAM")
-    );
+    let mut unsupported = saved.clone();
+    unsupported[8..12].copy_from_slice(&0_u32.to_le_bytes());
+    assert!(machine.decode_state(&unsupported).is_err());
     assert_eq!(machine.encode_state().unwrap(), saved);
     machine.reset();
     assert_eq!(machine.dump_save_ram(), Some(expected.clone()));
@@ -246,10 +248,9 @@ fn unsupported_boards_controls_and_initial_mapping_remain_guarded() {
     bytes[0x1b0..0x1bc].fill(0);
     let mut plain = Emulator::new(bytes, LoadConfig::default()).unwrap();
     assert!(plain.load_save_ram(&[0; 512]).is_err());
-    let mut old = plain.encode_state().unwrap();
-    old.truncate(old.len() - 5);
-    old[8..12].copy_from_slice(&14_u32.to_le_bytes());
-    plain.decode_state(&old).unwrap();
+    let current = plain.encode_state().unwrap();
+    plain.decode_state(&current).unwrap();
+    assert_eq!(plain.encode_state().unwrap(), current);
     assert_eq!(plain.dump_save_ram(), None);
 }
 

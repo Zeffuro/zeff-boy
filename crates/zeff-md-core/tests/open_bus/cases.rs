@@ -265,23 +265,46 @@ pub fn open_bus_guards_and_consumed_observation() {
                 }
                 let input = machine.input().clone();
                 let sound = machine.sound_cpu().clone();
-                assert!(matches!(
-                    machine.step_instruction(),
-                    Err(MachineFault::Main(TimingFault::Bus {
-                        source: BusError::UnsupportedAccess { .. },
-                        ..
-                    }))
-                ));
-                assert_eq!(machine.registers().d[0], 0x1234_5600);
+                let pc = machine.registers().pc;
+                let clock = machine.cpu_clock();
+                let observed = match address {
+                    RESET => Some(0x7a),
+                    address if address == BUS_REQUEST + 1 || address == BUS_REQUEST + 0xff => {
+                        Some(0x55)
+                    }
+                    _ => None,
+                };
+                let result = machine.step_instruction();
+                if let Some(byte) = observed {
+                    assert!(result.is_ok(), "{address:#08x}: {result:?}");
+                    assert_eq!(machine.registers().d[0], 0x1234_5600 | byte);
+                    assert_eq!(machine.registers().pc, pc + 6);
+                    assert_eq!(machine.cpu_clock().0 - clock.0, 16);
+                    assert_eq!(machine.queued_words(), Some([0x7a55, 0x4e71]));
+                } else {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(MachineFault::Main(TimingFault::Bus {
+                                source: BusError::UnsupportedAccess { .. },
+                                ..
+                            }))
+                        ),
+                        "{address:#08x}: {result:?}"
+                    );
+                    assert_eq!(machine.registers().d[0], 0x1234_5600);
+                }
                 controls(&machine, granted);
                 assert_eq!(machine.input(), &input);
                 assert_eq!(machine.sound_cpu(), &sound);
-                let frozen = machine.clone();
-                assert_eq!(
-                    machine.step_instruction(),
-                    Err(MachineFault::Main(TimingFault::Frozen))
-                );
-                assert_eq!(machine, frozen);
+                if observed.is_none() {
+                    let frozen = machine.clone();
+                    assert_eq!(
+                        machine.step_instruction(),
+                        Err(MachineFault::Main(TimingFault::Frozen))
+                    );
+                    assert_eq!(machine, frozen);
+                }
             }
             let mut program = Vec::new();
             let prefix = setup(&mut program, granted);

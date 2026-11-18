@@ -35,6 +35,15 @@ impl Default for AddressDebugController {
 }
 
 impl AddressDebugController {
+    pub fn retained_capacities(&self) -> [usize; 4] {
+        [
+            self.breakpoints.capacity(),
+            self.one_shot_breakpoints.capacity(),
+            self.hit_conditions.capacity(),
+            self.watchpoints.capacity(),
+        ]
+    }
+
     pub fn new() -> Self {
         Self {
             breakpoints: Vec::new(),

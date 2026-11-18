@@ -281,7 +281,6 @@ fn sampled_target_and_sequential_words_survive_stack_self_modification_at_the_co
             }
         };
         if opcode == 0x4e97 {
-            // Both target words overlap the return-address writes.
             timed.registers.set_address_register(0, 0x2ffc);
             timed.pipeline.as_mut().unwrap().words[0] = 0x4e90;
             bus.words.insert(pc & BUS_ADDRESS_MASK, 0x4e90);

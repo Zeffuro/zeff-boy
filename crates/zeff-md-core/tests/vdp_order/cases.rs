@@ -136,7 +136,7 @@ pub fn phase_and_fault_guards_with(
         advance(&mut ntsc, tick(1100), Region::NtscUs, &mut ntsc_registers)
     );
     assert_eq!((pal, pal_registers), (ntsc, ntsc_registers));
-    for (index, value) in [(1, 4), (1, 0x4c), (12, 2), (12, 4)] {
+    for (index, value) in [(1, 4), (1, 0x4c), (12, 4)] {
         let (mut state, mut registers) = known(1000, 0, false, false);
         drain(&mut state, &mut registers, 3661);
         assert!(state.horizontal_pending());

@@ -91,7 +91,7 @@ fn netplay_auto_audio_budget_app_hooks_cover_pause_restore_poison_and_replacemen
     app.netplay.phase = Phase::Admission;
     app.pump_emulator_audio();
     assert_eq!(driver.preroll(), 9_600);
-    app.consume_netplay_response(EmuResponse::Netplay(Response::Ready));
+    app.consume_netplay_response(EmuResponse::Netplay(Response::Ready { md_input: None }));
     app.queue_emulator_audio(&[0.25; 30_000], 1);
     assert_eq!(driver.preroll(), 3_552);
     assert_eq!(driver.buffered(), 7_200);
@@ -126,7 +126,7 @@ fn netplay_auto_audio_budget_app_hooks_cover_pause_restore_poison_and_replacemen
     assert!(!app.netplay.fenced());
     assert_eq!(driver.preroll(), 9_600);
     app.netplay.phase = Phase::Admission;
-    app.consume_netplay_response(EmuResponse::Netplay(Response::Ready));
+    app.consume_netplay_response(EmuResponse::Netplay(Response::Ready { md_input: None }));
     app.pump_emulator_audio();
     assert_eq!(driver.preroll(), 3_552);
     app.consume_netplay_response(EmuResponse::Netplay(Response::Stopped {

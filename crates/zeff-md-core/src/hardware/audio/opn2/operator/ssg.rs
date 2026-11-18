@@ -13,6 +13,10 @@ pub(super) struct Ssg {
 
 impl Ssg {
     pub(super) fn clock(&mut self, mode: u8, level: u16, keyed: bool, sampled: bool) {
+        if mode & 8 == 0 {
+            *self = Self::default();
+            return;
+        }
         let enabled = mode & 8 != 0;
         let crossed = enabled && level & 512 != 0;
         self.reset = crossed && mode & 3 == 0;

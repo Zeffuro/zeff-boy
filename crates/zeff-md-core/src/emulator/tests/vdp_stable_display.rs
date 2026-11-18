@@ -58,11 +58,11 @@ fn access() -> BusAccess {
 pub fn transfer(machine: &mut Emulator, word: u16) -> CycleResult<(), BusError> {
     let start = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .write_cycle(access(), word, start)
     } else {
         machine.bus.write_cycle(access(), word, start)

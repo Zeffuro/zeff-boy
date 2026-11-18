@@ -134,6 +134,7 @@ pub fn encode(trace: &NesAudioTrace, cancel: &AtomicBool) -> Result<NesVgmExport
                 reset: "zeff_power_on_v1",
                 status_read_observation_count,
             }),
+            md: None,
             limitations: LIMITATIONS,
         },
         cancel,

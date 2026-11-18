@@ -3,12 +3,27 @@ use crate::constants::{FM_CHANNEL_COUNT, PSG_CHANNEL_COUNT};
 use crate::hardware::audio::{Opn2DebugSnapshot, PsgDebugSnapshot};
 
 impl Emulator {
+    pub fn pending_audio_frames(&self) -> usize {
+        self.bus.audio.pending_frames()
+    }
+
     pub fn psg_snapshot(&self) -> PsgDebugSnapshot {
         self.bus.audio.psg.debug_snapshot()
     }
 
     pub fn opn2_snapshot(&self) -> Opn2DebugSnapshot {
         self.bus.audio.opn2.debug_snapshot()
+    }
+
+    pub fn apu_channel_mutes(&self) -> [bool; PSG_CHANNEL_COUNT + FM_CHANNEL_COUNT] {
+        let (psg, fm) = self.bus.audio.channel_mutes();
+        std::array::from_fn(|index| {
+            if index < PSG_CHANNEL_COUNT {
+                psg[index]
+            } else {
+                fm[index - PSG_CHANNEL_COUNT]
+            }
+        })
     }
 
     pub fn set_fm_channel_mutes(&mut self, mutes: [bool; FM_CHANNEL_COUNT]) {

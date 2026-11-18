@@ -4,11 +4,11 @@ use zeff_emu_common::save_state::{StateReader, StateWriter};
 use super::{CpuClocks, InterruptState, Pipeline, PrefetchCpu, physical};
 use crate::{Registers, STATUS_MASK};
 
-const BOUNDARY_STATE_VERSION: u8 = 1;
-const MAX_BOUNDARY_STATE_BYTES: usize = 95;
+const BOUNDARY_STATE_VERSION: u8 = 2;
+const MAX_BOUNDARY_STATE_BYTES: usize = 97;
 
 impl PrefetchCpu {
-    /// Ordinary boundaries only; physical/imported and host-frozen states reject.
+    /// Serializes ordinary instruction boundaries only.
     pub fn write_boundary_state(&self, writer: &mut StateWriter) -> Result<()> {
         ensure!(
             !self.frozen
@@ -19,7 +19,12 @@ impl PrefetchCpu {
             "M68000 state requires an ordinary execution boundary"
         );
         self.validate_boundary_state()?;
-        writer.write_u8(BOUNDARY_STATE_VERSION);
+        let observed = self.interrupts.observed_parts();
+        writer.write_u8(if observed.is_some() {
+            BOUNDARY_STATE_VERSION
+        } else {
+            1
+        });
         writer.write_section(|writer| {
             for value in self.registers.d.into_iter().chain(self.registers.a) {
                 writer.write_u32(value);
@@ -41,16 +46,25 @@ impl PrefetchCpu {
             let (level, edge) = self.interrupts.state_parts();
             writer.write_u8(level);
             writer.write_bool(edge);
+            if let Some((pending, level)) = observed {
+                writer.write_bool(pending);
+                writer.write_u8(level);
+            }
         });
         Ok(())
     }
 
     pub fn read_boundary_state(&mut self, reader: &mut StateReader<'_>) -> Result<()> {
+        let version = reader.read_u8()?;
         ensure!(
-            reader.read_u8()? == BOUNDARY_STATE_VERSION,
+            (1..=BOUNDARY_STATE_VERSION).contains(&version),
             "unsupported M68000 boundary state version"
         );
-        let mut reader = StateReader::new(reader.read_slice(MAX_BOUNDARY_STATE_BYTES)?);
+        let mut reader = StateReader::new(reader.read_slice(if version == 1 {
+            MAX_BOUNDARY_STATE_BYTES - 2
+        } else {
+            MAX_BOUNDARY_STATE_BYTES
+        })?);
         let mut registers = Registers::new();
         for value in registers.d.iter_mut().chain(&mut registers.a) {
             *value = reader.read_u32()?;
@@ -63,10 +77,10 @@ impl PrefetchCpu {
         registers.set_status_register(sr);
         let clock = CpuClocks(reader.read_u64()?);
         let pipeline = if reader.read_bool()? {
-            Some(Pipeline {
-                address: reader.read_u32()?,
-                words: [reader.read_u16()?, reader.read_u16()?],
-            })
+            Some(Pipeline::unknown(
+                reader.read_u32()?,
+                [reader.read_u16()?, reader.read_u16()?],
+            ))
         } else {
             None
         };
@@ -74,8 +88,16 @@ impl PrefetchCpu {
         let pending_trace = reader.read_bool()?;
         let level = reader.read_u8()?;
         let edge = reader.read_bool()?;
-        let interrupts = InterruptState::from_state_parts(level, edge)
+        let mut interrupts = InterruptState::from_state_parts(level, edge)
             .ok_or_else(|| anyhow::anyhow!("invalid M68000 interrupt level"))?;
+        if version == 2 {
+            let pending = reader.read_bool()?;
+            let level = reader.read_u8()?;
+            ensure!(
+                interrupts.restore_observation(pending, level),
+                "invalid M68000 observed interrupt"
+            );
+        }
         ensure!(reader.is_exhausted(), "trailing M68000 boundary state data");
         let candidate = Self {
             registers,
@@ -98,6 +120,15 @@ impl PrefetchCpu {
                 .is_none_or(|pipeline| !self.stopped && pipeline.address == self.registers.pc),
             "inconsistent M68000 boundary prefetch"
         );
+        if let Some((pending, level)) = self.interrupts.observed_parts() {
+            ensure!(
+                !self.stopped
+                    && !self.pending_trace
+                    && self.pipeline.is_some()
+                    && (!pending || level > ((self.registers.status_register() >> 8) & 7) as u8),
+                "inconsistent M68000 observed interrupt boundary"
+            );
+        }
         Ok(())
     }
 }

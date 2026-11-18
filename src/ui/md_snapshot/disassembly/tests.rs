@@ -24,7 +24,7 @@ fn ram_code() -> Emulator {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn md_disassembly_rebuilds_same_pc_ram_and_restored_code_without_navigation() {
+fn md_disassembly_rebuilds_same_pc_ram_and_restored_code_with_invalid_target_fallback() {
     let mut emu = ram_code();
     let mut req = request();
     req.show_memory_viewer = false;
@@ -35,17 +35,19 @@ fn md_disassembly_rebuilds_same_pc_ram_and_restored_code_without_navigation() {
     );
     req.show_disassembler = true;
     req.last_disasm_pc = Some(emu.registers().pc);
-    req.disasm_target = Some(crate::debug::DisassemblyTarget {
-        cpu_address: 0xc00000,
-        storage_offset: Some(0),
-        bank: Some(0),
-        thumb: None,
-    });
+    req.disasm_target = Some(crate::debug::DisassemblyTarget::Cpu(
+        crate::debug::CpuDisassemblyTarget {
+            cpu_address: 0xc00000,
+            storage_offset: Some(0),
+            bank: Some(0),
+            thumb: None,
+        },
+    ));
     let original = emu.encode_state().unwrap();
     for immediate in 1..=3 {
         let data = collect_md_snapshot(&emu, &req, None);
         let view = data.disassembly_view.unwrap();
-        assert_eq!(view.pc, 0xff0000);
+        assert_eq!(view.cursor.cpu_address().unwrap(), 0xff0000);
         assert!(!view.is_navigation_target && !view.is_static_target);
         assert_eq!(view.lines.len(), 26);
         assert_eq!(view.lines[0].address, 0xff0000);
@@ -77,6 +79,75 @@ fn md_disassembly_rebuilds_same_pc_ram_and_restored_code_without_navigation() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn md_disassembly_navigates_live_cpu_addresses_and_rejects_unsupported_target_dimensions() {
+    use crate::debug::DisassemblyTarget;
+    let emu = ram_code();
+    let state = emu.encode_state().unwrap();
+    let mut req = request();
+    req.show_memory_viewer = false;
+    req.show_disassembler = true;
+    let target = crate::debug::CpuDisassemblyTarget {
+        cpu_address: 0xff0008,
+        storage_offset: None,
+        bank: None,
+        thumb: None,
+    };
+    for (address, expected) in [(0xff0008, "MOVEQ #1,D0"), (0x222, "NOP")] {
+        req.disasm_target = Some(DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+            cpu_address: address,
+            ..target
+        }));
+        let view = collect_md_snapshot(&emu, &req, None)
+            .disassembly_view
+            .unwrap();
+        assert_eq!(view.cursor.cpu_address().unwrap(), address);
+        assert!(view.is_navigation_target && !view.is_static_target);
+        assert_eq!(view.lines[0].mnemonic.as_str(), expected);
+        assert!(
+            view.lines
+                .iter()
+                .all(|line| line.storage_offset.is_none() && line.bank.is_none())
+        );
+    }
+    for invalid in [
+        DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+            cpu_address: 0x1_000000,
+            ..target
+        }),
+        DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+            cpu_address: 0xff0009,
+            ..target
+        }),
+        DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+            storage_offset: Some(8),
+            ..target
+        }),
+        DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+            bank: Some(0),
+            ..target
+        }),
+        DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+            thumb: Some(false),
+            ..target
+        }),
+        DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+            thumb: Some(true),
+            ..target
+        }),
+    ] {
+        req.disasm_target = Some(invalid);
+        let view = collect_md_snapshot(&emu, &req, None)
+            .disassembly_view
+            .unwrap();
+        assert_eq!(view.cursor.cpu_address().unwrap(), 0xff0000);
+        assert!(!view.is_navigation_target && !view.is_static_target);
+        assert_eq!(view.lines[0].bytes.as_slice(), &[0x52, 0x39, 0, 0xff, 0, 9]);
+    }
+    assert_eq!(emu.encode_state().unwrap(), state);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn md_disassembly_inspection_preserves_pending_machine_and_future_frame_pcm() {
     for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
         for h40 in [false, true] {
@@ -93,6 +164,23 @@ fn md_disassembly_inspection_preserves_pending_machine_and_future_frame_pcm() {
                     .unwrap();
                 assert_eq!(view.lines.len(), 26);
                 assert_eq!(view.lines[0].address, emu.registers().pc & 0xffffff);
+                assert_eq!(emu, control);
+                assert_eq!(emu.encode_state().unwrap(), encoded);
+            }
+            for address in [0x200, 0xff0000, 0xc00004, 0xfffffe] {
+                req.disasm_target = Some(crate::debug::DisassemblyTarget::Cpu(
+                    crate::debug::CpuDisassemblyTarget {
+                        cpu_address: address,
+                        storage_offset: None,
+                        bank: None,
+                        thumb: None,
+                    },
+                ));
+                let view = collect_md_snapshot(&emu, &req, None)
+                    .disassembly_view
+                    .unwrap();
+                assert_eq!(view.cursor.cpu_address().unwrap(), address);
+                assert!(view.is_navigation_target && !view.is_static_target);
                 assert_eq!(emu, control);
                 assert_eq!(emu.encode_state().unwrap(), encoded);
             }

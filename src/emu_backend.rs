@@ -412,6 +412,10 @@ impl EmuBackend {
         dispatch!(self, framebuffer())
     }
 
+    pub(crate) fn framebuffer_available(&self) -> bool {
+        !matches!(self, Self::Md(backend) if !backend.core().framebuffer_available())
+    }
+
     pub(crate) fn display_framebuffer(&self) -> (&[u8], Option<(u32, u32)>) {
         if let Self::Pce(backend) = self {
             backend.display_framebuffer()
@@ -845,6 +849,14 @@ impl EmuBackend {
 
     pub(crate) fn supports_execution_controls(&self) -> bool {
         dispatch!(self, supports_execution_controls())
+    }
+
+    pub(crate) fn supports_pc_breakpoints(&self) -> bool {
+        dispatch!(self, supports_pc_breakpoints())
+    }
+
+    pub(crate) fn supports_memory_watchpoints(&self) -> bool {
+        dispatch!(self, supports_memory_watchpoints())
     }
 
     pub(crate) fn supports_symbol_loading(&self) -> bool {

@@ -4,6 +4,13 @@ use crate::emu_backend::load_backend_from_rom_source;
 pub(in crate::app::state_io) fn direct_netplay_media(system: ActiveSystem, path: &Path) -> bool {
     let extension = match system {
         ActiveSystem::Nes => "nes",
+        ActiveSystem::Md => {
+            return path.extension().is_some_and(|value| {
+                ["md", "gen", "bin"]
+                    .iter()
+                    .any(|extension| value.eq_ignore_ascii_case(extension))
+            });
+        }
         ActiveSystem::MasterSystem => "sms",
         ActiveSystem::Sg1000 => "sg",
         ActiveSystem::Pce => "pce",

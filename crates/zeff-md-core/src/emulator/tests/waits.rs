@@ -53,11 +53,11 @@ impl ClockedBus for TraceBus<'_> {
 
 fn run(machine: &mut Emulator, clocks: u64) -> Vec<(u32, Direction, u16, u64, u32)> {
     let mut bus = TraceBus {
-        inner: ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        },
+        inner: ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        ),
         events: Vec::new(),
     };
     let step = machine.cpu.step(&mut bus).unwrap();
@@ -155,11 +155,11 @@ fn data_access(address: u32) -> BusAccess {
 
 fn after_first_word() -> Emulator {
     let mut machine = fixture(0x2080);
-    let result = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    let result = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .write_cycle(data_access(0xff8010), 0xa1b2, CpuClocks(8));
     assert_eq!(result.wait_clocks, 0);
     assert!(result.result.is_ok());
@@ -189,22 +189,22 @@ fn stack_preflight_and_mapped_fault_keep_elapsed_waits() {
             _ => unreachable!(),
         }
         let saved = machine.clone();
-        let result = ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        let result = ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .read_cycle(data_access(0xff8012), start);
         assert!(result.result.is_err());
         assert_eq!(result.wait_clocks, 0);
         assert_eq!(machine, saved);
     }
     let mut machine = after_first_word();
-    let result = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    let result = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .read_cycle(data_access(0xa21100), CpuClocks(12));
     assert_eq!(
         result.result,
@@ -265,11 +265,11 @@ pub(super) fn fixture(opcode: u16) -> Emulator {
     machine.concurrent_sound = true;
     machine
         .cpu
-        .prime(&mut ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        })
+        .prime(&mut ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        ))
         .unwrap();
     assert_eq!(machine.bus.now.get(), 56);
     assert_eq!(machine.cpu.clock(), CpuClocks(8));
@@ -277,11 +277,11 @@ pub(super) fn fixture(opcode: u16) -> Emulator {
 }
 
 fn advance(machine: &mut Emulator, ticks: u64) {
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(ticks)
     .unwrap();
 }

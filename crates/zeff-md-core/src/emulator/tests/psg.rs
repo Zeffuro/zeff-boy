@@ -20,11 +20,11 @@ fn write(
 ) -> Result<(), BusError> {
     let clock = machine.bus.cpu_clock;
     if machine.concurrent_sound {
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .write_cycle(access(address, lanes), value, clock)
         .result
     } else {
@@ -82,7 +82,7 @@ fn granted_sound_aperture_uses_byte_parity() {
     }
     assert!(write(&mut machine, 0xa07f21, ByteLanes::Lower, 0x90).is_err());
     machine.bus.sound.set_reset(true);
-    assert!(write(&mut machine, 0xa07f11, ByteLanes::Lower, 0x90).is_err());
+    write(&mut machine, 0xa07f11, ByteLanes::Lower, 0x90).unwrap();
     assert_eq!(machine.psg_snapshot().volumes, [15; 4]);
 }
 
@@ -162,6 +162,7 @@ fn failed_concurrent_prime_rolls_back_published_psg_write() {
         &mut machine.bus.sound,
         &mut machine.bus.ram,
         &mut crate::hardware::audio::Audio::default(),
+        &mut machine.bus.cartridge,
     );
     machine.bus.advance_machine(156).unwrap();
     let pending = PendingSound::prepare(
@@ -177,11 +178,11 @@ fn failed_concurrent_prime_rolls_back_published_psg_write() {
     machine.bus.cartridge.initial.pc = 0xc0000e;
     let saved = machine.clone();
     let mut witness = saved.clone();
-    ScheduledBus {
-        bus: &mut witness.bus,
-        cpu: &mut witness.sound_cpu,
-        schedule: &mut witness.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut witness.bus,
+        &mut witness.sound_cpu,
+        &mut witness.sound_schedule,
+    )
     .advance_machine(28)
     .unwrap();
     assert_eq!(witness.psg_snapshot().volumes[0], 0);

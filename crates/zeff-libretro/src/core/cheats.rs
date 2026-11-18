@@ -10,6 +10,10 @@ impl CoreState {
         self.ram_cheats.clear();
         self.gba_codebreaker_state.reset();
         match &mut self.core {
+            ActiveCore::Md(emu) => {
+                self.md_cheat_slots.clear();
+                emu.clear_rom_patches();
+            }
             ActiveCore::Gb(emu) => emu.clear_rom_patches(),
             ActiveCore::Gba(_) => {}
             ActiveCore::Nes(emu) => emu.clear_game_genie(),
@@ -19,8 +23,57 @@ impl CoreState {
         }
     }
 
+    pub fn set_indexed_cheat(&mut self, index: u32, code: Option<&str>) {
+        let ActiveCore::Md(emu) = &mut self.core else {
+            if let Some(code) = code {
+                self.cheat_set(code);
+            }
+            return;
+        };
+
+        let mut slots = self.md_cheat_slots.clone();
+        if let Some(code) = code {
+            let Some((patches, _)) = zeff_md_core::cheats::parse_cheats(code) else {
+                crate::callbacks::retro_log_warn(
+                    "Use Mega Drive raw byte/word codes or ROM Game Genie codes",
+                );
+                return;
+            };
+            slots.insert(index, patches);
+        } else if slots.remove(&index).is_none() {
+            return;
+        }
+
+        let mut patches: Vec<_> = slots.values().flatten().copied().collect();
+        if let Err(error) = emu.install_rom_patches(&patches) {
+            if code.is_some() {
+                crate::callbacks::retro_log_warn(&format!("Mega Drive cheats rejected: {error}"));
+                return;
+            }
+            // Disabling one slot can expose a reset-vector patch that another slot masked.
+            emu.clear_rom_patches();
+            patches.clear();
+            slots.retain(|slot, entries| {
+                let start = patches.len();
+                patches.extend(entries.iter().copied());
+                if let Err(error) = emu.install_rom_patches(&patches) {
+                    crate::callbacks::retro_log_warn(&format!(
+                        "Mega Drive ROM cheats removed from slot {slot}: {error}"
+                    ));
+                    patches.truncate(start);
+                    entries.retain(|patch| !patch.is_rom_patch());
+                    patches.extend(entries.iter().copied());
+                }
+                !entries.is_empty()
+            });
+        }
+        self.md_cheat_slots = slots;
+        self.ram_cheats = patches;
+    }
+
     pub fn cheat_set(&mut self, code: &str) {
         match &mut self.core {
+            ActiveCore::Md(_) => unreachable!(),
             ActiveCore::Gb(emu) => {
                 if let Ok((patches, _)) = zeff_gb_core::cheats::parse_cheat(code) {
                     for patch in patches.into_iter().map(resolve_libretro_patch_parameter) {
@@ -78,6 +131,11 @@ impl CoreState {
     pub fn apply_ram_cheats(&mut self) {
         let cheats = self.ram_cheats.as_slice();
         match &mut self.core {
+            ActiveCore::Md(emu) => {
+                if self.md_runtime_fault.is_none() {
+                    emu.apply_ram_cheats(cheats);
+                }
+            }
             ActiveCore::Gb(emu) => {
                 apply_ram_cheats_16(emu.as_mut(), cheats);
             }

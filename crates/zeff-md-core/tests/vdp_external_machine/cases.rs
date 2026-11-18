@@ -127,7 +127,10 @@ pub fn actual_rom_and_ram_dma_to_frame_in_region(
                     &machine.vdp().memory().vram()[0x2000..0x2008],
                     &[0x34, 0x12, 0xcd, 0xab, 0x78, 0x56, 0xbc, 0x9a]
                 );
-                assert_eq!(&machine.vdp().memory().cram()[..2], &[0x0eee, 0x000e]);
+                assert_eq!(
+                    &machine.vdp().memory().known_cram().unwrap()[..2],
+                    &[0x0eee, 0x000e]
+                );
                 assert_eq!(machine.peek(0xff2001), Some(0xef));
                 assert_eq!(
                     machine.framebuffer_dimensions(),

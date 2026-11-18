@@ -229,7 +229,7 @@ pub fn zero_length_and_partitioned_transfer() {
     assert_eq!(whole.registers().registers()[19..24], [Some(0); 5]);
     assert_eq!(whole.command().address, 0);
     assert!(whole.fifo().is_empty());
-    for (index, &word) in whole.memory().cram().iter().enumerate() {
+    for (index, &word) in whole.memory().known_cram().unwrap().iter().enumerate() {
         assert_eq!(word, (65472u16 + index as u16).wrapping_mul(73) & 0x0eee);
     }
 }

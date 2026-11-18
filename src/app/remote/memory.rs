@@ -132,7 +132,7 @@ impl App {
             ConsoleGraphicsData::Md(md) => match space {
                 "vram" => slice_memory_json(space, start, length, &md.vram),
                 "cram" | "palette" | "paletteram" => {
-                    slice_memory_json(space, start, length, &md.cram)
+                    slice_optional_memory_json(space, start, length, &md.cram)
                 }
                 "vsram" => slice_memory_json(space, start, length, &md.vsram),
                 _ => memory_not_ready_json(
@@ -290,6 +290,7 @@ fn canonical_cached_memory_space(
         return match region.kind {
             MemoryRegionKind::CpuAddressSpace => "cpu",
             MemoryRegionKind::VideoRam => "vram",
+            MemoryRegionKind::VideoScrollRam => "vsram",
             MemoryRegionKind::PaletteRam => "palette",
             MemoryRegionKind::Oam => "oam",
             MemoryRegionKind::Framebuffer => "framebuffer",
@@ -355,6 +356,29 @@ fn slice_memory_json(space: &str, start: usize, length: usize, data: &[u8]) -> V
     memory_ready_json(space, start as u32, data.len(), &data[start..end])
 }
 
+fn slice_optional_memory_json(
+    space: &str,
+    start: usize,
+    length: usize,
+    data: &[Option<u8>],
+) -> Value {
+    if start >= data.len() {
+        return json!({
+            "ready": false,
+            "space": space,
+            "start": start,
+            "requested_length": length,
+            "available": data.len(),
+            "note": "start is outside the selected buffer",
+        });
+    }
+    let end = start.saturating_add(length).min(data.len());
+    let Some(known) = data[start..end].iter().copied().collect::<Option<Vec<_>>>() else {
+        return memory_not_ready_json(space, start as u32, length, "selected bytes are unknown");
+    };
+    memory_ready_json(space, start as u32, data.len(), &known)
+}
+
 fn hex_string(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -370,7 +394,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_pce_memory_retains_canonical_offsets_and_size() {
+    fn cached_memory_retains_offsets_size_and_knownness() {
+        use super::super::json_helpers::{buffer_summary_json, optional_buffer_summary_json};
+        let bytes = [Some(0x12), Some(0x34), None, Some(0x56)];
+        assert_eq!(
+            slice_optional_memory_json("cram", 0, 2, &bytes),
+            memory_ready_json("cram", 0, 4, &[0x12, 0x34])
+        );
+        let unknown = slice_optional_memory_json("cram", 1, 2, &bytes);
+        assert_eq!(unknown["ready"], false);
+        assert!(unknown.get("hex").is_none() && unknown.get("bytes").is_none());
+        assert_eq!(
+            slice_optional_memory_json("cram", 3, usize::MAX, &bytes)["bytes"],
+            json!([0x56])
+        );
+        assert_eq!(
+            slice_optional_memory_json("cram", 4, 1, &bytes)["available"],
+            4
+        );
+        assert_eq!(
+            optional_buffer_summary_json(&[Some(0x12), Some(0x34)]),
+            buffer_summary_json(&[0x12, 0x34])
+        );
+        let summary = optional_buffer_summary_json(&bytes);
+        assert_eq!(summary["bytes"], 4);
+        assert_eq!(summary["unknown_bytes"], 1);
+        assert!(summary["digest"].is_null());
         let native = [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255];
         let first = native_pce_frame_memory_json(0, 8, &native, (2, 2));
         assert_eq!(first["available"], 640 * 480 * 4);

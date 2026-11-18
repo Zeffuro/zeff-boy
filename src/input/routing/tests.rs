@@ -918,3 +918,5 @@ fn duplicate_legacy_bindings_keep_first_match_and_axes_are_per_device() {
     assert_eq!(effective.players[0].stick, (0.5, 0.0));
     assert_eq!(effective.players[1].stick, (0.0, -1.0));
 }
+
+mod md;

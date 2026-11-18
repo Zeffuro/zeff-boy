@@ -1,9 +1,18 @@
+#[path = "support/state_layout.rs"]
+mod state_layout;
+
 #[path = "save_capacity/domains.rs"]
 mod domains;
 #[path = "save_capacity/fixture.rs"]
 mod fixture;
+#[path = "save_capacity/header_profile.rs"]
+mod header_profile;
+#[path = "save_capacity/layouts.rs"]
+mod layouts;
 #[path = "save_capacity/state.rs"]
 mod state;
+#[path = "save_capacity/switching.rs"]
+mod switching;
 
 use fixture::{Rom, all_cells_rom, config, expected, run_to_phase};
 use zeff_md_core::{Emulator, Region};

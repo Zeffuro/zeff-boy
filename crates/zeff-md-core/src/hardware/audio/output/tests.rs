@@ -1,4 +1,10 @@
 use super::*;
+mod ring;
+
+#[test]
+fn circular_filter_matches_scalar_reference() {
+    ring::reference_signature();
+}
 
 #[test]
 fn every_fractional_step_settles_exactly_without_dc_drift() {

@@ -20,8 +20,10 @@ pub(super) fn ensure_system_headless_options(
     system: &str,
     opts: &HeadlessOptions,
 ) -> anyhow::Result<()> {
-    if system != "md" && (opts.md_region.is_some() || opts.md_controller.is_some()) {
-        anyhow::bail!("--md-region and --md-controller require Mega Drive media");
+    if system != "md"
+        && (opts.md_region.is_some() || opts.md_timing.is_some() || opts.md_controller.is_some())
+    {
+        anyhow::bail!("--md-region, --md-timing and --md-controller require Mega Drive media");
     }
     if opts.expect_serial.is_some() {
         anyhow::bail!("--expect-serial is only supported for GB/GBC headless runs");

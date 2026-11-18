@@ -84,6 +84,10 @@ pub(crate) fn run_headless(
     audio_dump::validate_paths(path, opts)?;
     validate_audio_trace_options(opts)?;
     if opts.tas_project_path.is_some() {
+        anyhow::ensure!(
+            opts.md_timing.is_none(),
+            "--md-timing requires Mega Drive media"
+        );
         return tas_project::run_tas_project_headless(path, firmware_search_dirs, opts);
     }
     if crate::app::is_native_archive_path(path) {
@@ -103,9 +107,10 @@ pub(crate) fn run_headless(
     anyhow::ensure!(
         system == ActiveSystem::Md
             || (opts.md_region.is_none()
+                && opts.md_timing.is_none()
                 && opts.md_controller.is_none()
                 && opts.md_save_state_path.is_none()),
-        "--md-region, --md-controller and --md-save-state-out require Mega Drive media"
+        "--md-region, --md-timing, --md-controller and --md-save-state-out require Mega Drive media"
     );
     audio_trace::validate_system(system.code(), opts)?;
     validate_tas_system(opts, system.code())?;

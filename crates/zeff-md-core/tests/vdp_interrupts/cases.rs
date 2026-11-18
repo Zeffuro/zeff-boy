@@ -339,7 +339,7 @@ pub fn fault_atomicity_with(
     );
     assert_eq!(pal.line_counter(), 18);
     assert_eq!(state, initial);
-    for (index, value) in [(1, 4), (1, 0x4c), (12, 2), (12, 4)] {
+    for (index, value) in [(1, 4), (1, 0x4c), (12, 4)] {
         let mut invalid = good;
         publish(&mut invalid, index, value);
         assert_eq!(

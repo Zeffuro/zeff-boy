@@ -132,9 +132,13 @@ fn deliver(app: &mut App, attempt_mutation: bool) {
     let mut actions = DebugUiActions::none();
     if attempt_mutation {
         actions.memory_writes.push((0xff0040, 0x77));
-        actions.add_breakpoint = Some(0x200);
+        actions.add_breakpoint = Some(0x201);
     }
     let input = FrameInput {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_request: 0,
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        audio_timing_pacing: (0, 0),
         frames: 1,
         speculation_blockers: SpeculationBlockers::feature_disabled(),
         replay_joypad_frames: None,
@@ -213,11 +217,11 @@ fn md_memory_remote_worker_preserves_high_start_and_read_only_guards() {
         .core_features
         .as_ref()
         .unwrap();
-    assert!(!features.supports_debugger);
-    assert!(!features.supports_execution_controls);
-    assert!(!features.supports_guest_calls);
-    assert!(!features.supports_opcode_history);
-    assert!(!features.supports_cheats);
+    assert!(features.supports_debugger);
+    assert!(features.supports_execution_controls);
+    assert!(features.supports_guest_calls);
+    assert!(features.supports_opcode_history);
+    assert!(features.supports_cheats);
     app.emu_thread.as_mut().unwrap().shutdown();
 }
 
@@ -256,5 +260,46 @@ fn md_memory_remote_boundary_range_is_exact_and_invalid_requests_do_not_schedule
     assert_eq!(reply["ready"], false);
     assert_eq!(app.remote_memory_frames_remaining, 3);
     assert_eq!(app.remote_memory_view_start, Some(u32::MAX));
+    app.emu_thread.as_mut().unwrap().shutdown();
+}
+
+#[test]
+fn md_named_region_descriptors_preserve_scroll_routing_and_uncached_exports() {
+    let regions = [
+        MemoryRegionDescriptor::video_ram(65536),
+        MemoryRegionDescriptor::video_scroll_ram(80),
+        MemoryRegionDescriptor::save_ram(512),
+    ];
+    for name in ["vsram", "video_scroll_ram", "scrollram", "VIDEO.SCROLL.RAM"] {
+        assert_eq!(
+            canonical_cached_memory_space(name, &normalized_space_name(name), &regions),
+            "vsram"
+        );
+    }
+    assert_eq!(
+        canonical_cached_memory_space("vram", "vram", &regions),
+        "vram"
+    );
+    assert_eq!(
+        canonical_cached_memory_space("sram", "sram", &regions),
+        "saveram"
+    );
+    assert_eq!(
+        serde_json::to_value(MemoryRegionKind::VideoScrollRam).unwrap(),
+        json!("video_scroll_ram")
+    );
+    assert_eq!(
+        super::super::memory_region_kind_label(MemoryRegionKind::VideoScrollRam),
+        "video_scroll_ram"
+    );
+    let mut app = app();
+    assert_eq!(read(&mut app, 0xff0040, 2)["ready"], false);
+    deliver(&mut app, false);
+    let reply = app.live_memory_json(&LiveMemorySpace::Region("wram".into()), 0, 4);
+    assert_eq!(reply["ready"], false);
+    assert_eq!(
+        reply["note"],
+        "advertised memory region is not cached by live memory yet"
+    );
     app.emu_thread.as_mut().unwrap().shutdown();
 }

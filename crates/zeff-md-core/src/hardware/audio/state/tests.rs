@@ -136,3 +136,5 @@ fn changed_period_and_timer_reload_keep_old_countdown() {
     assert_eq!(bytes(&restored), saved);
     assert!(audio.psg.debug_snapshot().counters[0] > audio.psg.debug_snapshot().periods[0]);
 }
+
+mod frontend;

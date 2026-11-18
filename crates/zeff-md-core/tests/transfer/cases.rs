@@ -92,12 +92,12 @@ pub fn memory_read_and_write_resume_after_grant() {
 }
 
 pub fn transfer_fault_preserves_m1() {
-    let mut machine = start(&[0x21, 4, 0x40, 0x7e, 0x76], &[]);
+    let mut machine = start(&[0x21, 0, 0x7f, 0x7e, 0x76], &[]);
     assert_eq!(machine.sound_cpu().regs().pc, 4);
     assert_eq!(machine.sound_cpu().cycles(), 14);
     let cpu = machine.sound_cpu().clone();
     let expected = MachineFault::Sound(SoundFault::UnsupportedAccess {
-        address: 0x4004,
+        address: 0x7f00,
         direction: Direction::Read,
     });
     for _ in 0..8 {
@@ -111,7 +111,7 @@ pub fn transfer_fault_preserves_m1() {
     assert_eq!(
         machine.sound_fault(),
         Some(SoundFault::UnsupportedAccess {
-            address: 0x4004,
+            address: 0x7f00,
             direction: Direction::Read
         })
     );

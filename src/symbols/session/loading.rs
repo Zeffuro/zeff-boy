@@ -16,12 +16,12 @@ use super::discovery::{
 use super::{LoadedSymbolModule, SymbolSession};
 use crate::symbols::identity::{IdentityStatus, RomIdentity};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::symbols::import::{ImportContext, TargetInfo, import_symbols};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::symbols::{AddressSpaceId, ImageId, RegionId, SymbolKind};
+use crate::symbols::import::{ImportContext, TargetInfo, import_md_sound_symbols, import_symbols};
 use crate::symbols::{
     Confidence, Provenance, ProvenanceKind, SymbolId, SymbolRecord, SymbolScope, UserSymbolDraft,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::symbols::{ImageId, RegionId, SymbolKind};
 
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_SYMBOL_FILE_BYTES: u64 = 64 * 1024 * 1024;
@@ -121,7 +121,7 @@ impl SymbolSession {
         if let Some(path) = discover_zdbg_sidecar(source_path, rom_path) {
             labels_loaded = session.load_zdbg_sidecar(path, identity);
         }
-        if system == System::Gba
+        if matches!(system, System::Gba | System::Md)
             && let Some(path) = discover_elf_sidecar(source_path, rom_path)
         {
             labels_loaded |= session.load_imported_sidecar(path, identity, labels_loaded);
@@ -174,7 +174,7 @@ impl SymbolSession {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_imported_sidecar(
+    pub(super) fn load_imported_sidecar(
         &mut self,
         path: PathBuf,
         identity: RomIdentity,
@@ -187,7 +187,12 @@ impl SymbolSession {
                 "symbol file is larger than 64 MiB"
             );
             let data = std::fs::read(&path)?;
-            let mut module = import_symbols(
+            let importer = if self.target == crate::debug::DebugTarget::Sound {
+                import_md_sound_symbols
+            } else {
+                import_symbols
+            };
+            let mut module = importer(
                 path.file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("symbols.sym"),
@@ -198,7 +203,7 @@ impl SymbolSession {
                     },
                     image: ImageId(0),
                     rom_region: RegionId(0),
-                    cpu_space: AddressSpaceId(0),
+                    cpu_space: self.target.cpu_space(),
                     source_name: Some(path.display().to_string()),
                 },
             )?;
@@ -293,8 +298,12 @@ impl SymbolSession {
 
     pub(crate) fn upsert_user_symbol(
         &mut self,
-        draft: UserSymbolDraft,
+        mut draft: UserSymbolDraft,
     ) -> anyhow::Result<Option<PathBuf>> {
+        anyhow::ensure!(
+            self.target == crate::debug::DebugTarget::Primary,
+            "SOUND symbols are read-only"
+        );
         anyhow::ensure!(!draft.name.trim().is_empty(), "symbol name is empty");
         anyhow::ensure!(draft.name.len() <= 256, "symbol name is too long");
         anyhow::ensure!(
@@ -308,6 +317,12 @@ impl SymbolSession {
             "symbol has no location or value"
         );
         let identity = self.identity.context("no ROM is loaded")?;
+        if identity.system == System::Md {
+            crate::symbols::md::normalize_mode(&mut draft.location.exec_mode)?;
+            if let Some(cpu) = draft.location.cpu {
+                crate::symbols::md::validate_cpu_range(cpu.address, draft.size)?;
+            }
+        }
         let source = {
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -353,6 +368,10 @@ impl SymbolSession {
     }
 
     pub(crate) fn remove_user_symbol(&mut self, name: &str) -> anyhow::Result<Option<PathBuf>> {
+        anyhow::ensure!(
+            self.target == crate::debug::DebugTarget::Primary,
+            "SOUND symbols are read-only"
+        );
         let identity = self.identity.context("no ROM is loaded")?;
         let mut symbols = self.user_symbols.clone();
         let original_len = symbols.len();

@@ -5,7 +5,7 @@ const H40_OFFSETS: [u16; H40_LINE_DOTS + 1] = h40_offsets();
 const H40_NONACTIVE_OFFSETS: [u16; H40_NONACTIVE_SLOT_COUNT] = h40_nonactive_offsets();
 const H40_ACTIVE_OFFSETS: [u16; H40_ACTIVE_WRITE_SLOTS.len()] = h40_active_offsets();
 
-const fn h40_counter(dot: usize) -> u16 {
+pub(super) const fn h40_counter(dot: usize) -> u16 {
     if dot < H40_COUNTER_LOW_COUNT as usize {
         dot as u16
     } else {
@@ -79,6 +79,20 @@ const fn h40_active_offsets() -> [u16; H40_ACTIVE_WRITE_SLOTS.len()] {
 }
 
 impl HorizontalMode {
+    pub(super) fn scroll_fetch_phase(self) -> u64 {
+        match self {
+            Self::H32 => {
+                (u64::from(H32_HSCROLL_FETCH_COUNTER) - H32_COUNTER_HIGH_START
+                    + H32_COUNTER_LOW_COUNT)
+                    * H32_DOT_TICKS
+            }
+            Self::H40 => u64::from(
+                H40_OFFSETS[(H40_HSCROLL_FETCH_COUNTER - H40_COUNTER_HIGH_START
+                    + H40_COUNTER_LOW_COUNT) as usize],
+            ),
+        }
+    }
+
     pub(super) fn counter(self, phase: u64) -> u16 {
         match self {
             Self::H32 => {
@@ -133,17 +147,23 @@ impl VdpVerticalTiming {
     pub(super) fn horizontal_mode(
         registers: &VdpRegisterPipeline,
     ) -> Result<HorizontalMode, VdpTimingError> {
-        let value = registers.registers()[usize::from(DISPLAY_SIZE_REGISTER)]
-            .ok_or(VdpTimingError::UnknownRegister(DISPLAY_SIZE_REGISTER))?;
-        if matches!(value & INTERLACE_MODE_MASK, 0 | INTERLACE_MODE_MASK)
-            && let Some(mode) = HorizontalMode::from_register(value)
-        {
-            Ok(mode)
-        } else {
-            Err(VdpTimingError::UnsupportedMode {
-                index: DISPLAY_SIZE_REGISTER,
-                value,
-            })
-        }
+        horizontal_mode_byte(registers.registers()[usize::from(DISPLAY_SIZE_REGISTER)])
+    }
+}
+
+pub(in crate::hardware::vdp) fn horizontal_mode_byte(
+    value: Option<u8>,
+) -> Result<HorizontalMode, VdpTimingError> {
+    let value = value.ok_or(VdpTimingError::UnknownRegister(DISPLAY_SIZE_REGISTER))?;
+    if matches!(value & INTERLACE_MODE_MASK, 0 | 2 | INTERLACE_MODE_MASK)
+        && value & H40_CLOCK_MASK != 1
+        && let Some(mode) = HorizontalMode::from_register(value)
+    {
+        Ok(mode)
+    } else {
+        Err(VdpTimingError::UnsupportedMode {
+            index: DISPLAY_SIZE_REGISTER,
+            value,
+        })
     }
 }

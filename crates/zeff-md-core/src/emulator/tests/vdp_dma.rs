@@ -1,4 +1,6 @@
 use super::*;
+#[path = "vdp_dma/activity.rs"]
+mod activity;
 use crate::{ControlCommand, VdpLineError, VdpRenderError, VdpScanline};
 
 const REGION: Region = Region::NtscUs;

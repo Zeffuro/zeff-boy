@@ -5,6 +5,10 @@ use zeff_emu_common::time::MachineTiming;
 use zeff_md_core::{Emulator, LoadConfig, Region};
 
 fn fixture(region: Region) -> Emulator {
+    fixture_with_dac(region, true)
+}
+
+fn fixture_with_dac(region: Region, dac_enabled: bool) -> Emulator {
     let mut rom = vec![0; 0x1000];
     rom[..4].copy_from_slice(&0x00ff_fffc_u32.to_be_bytes());
     rom[4..8].copy_from_slice(&0x200_u32.to_be_bytes());
@@ -19,7 +23,7 @@ fn fixture(region: Region) -> Emulator {
         (0x25, 2),
         (0x26, 0x78),
         (0x27, 5),
-        (0x2b, 0x80),
+        (0x2b, if dac_enabled { 0x80 } else { 0 }),
         (0x2a, 0x40),
     ] {
         writes.extend([(0xa04000, address), (0xa04001, value)]);
@@ -80,9 +84,14 @@ fn assert_exposed_fields(emu: &Emulator, data: &ApuDebugInfo) {
         data.master_lines[0],
         format!("sample_rate={}", emu.sample_rate())
     );
-    assert!(data.master_lines[1].contains("Read-only"));
+    assert!(data.master_lines[1].contains("host output only"));
     assert!(data.master_lines[1].contains("history"));
-    assert!(data.channels.is_empty() && data.master_waveform.is_empty());
+    assert_eq!(data.channels.len(), 10);
+    assert!(data.master_waveform.is_empty());
+    for (index, channel) in data.channels.iter().enumerate() {
+        assert_eq!(channel.muted, emu.apu_channel_mutes()[index]);
+        assert!(channel.waveform.is_empty());
+    }
     assert_eq!(data.extra_sections.len(), 2);
     assert_eq!(
         section(data, "PSG"),
@@ -201,5 +210,95 @@ fn md_audio_inspection_preserves_whole_state_and_future_pcm_frames_after_restore
             assert_eq!(pcm, control.drain_audio_samples());
             assert_eq!(emu.encode_state().unwrap(), control.encode_state().unwrap());
         }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn md_audio_channel_rows_map_every_host_mute_and_retain_policy_on_restore() {
+    let names = [
+        "PSG Tone 1",
+        "PSG Tone 2",
+        "PSG Tone 3",
+        "PSG Noise",
+        "FM 1",
+        "FM 2",
+        "FM 3",
+        "FM 4",
+        "FM 5",
+        "FM 6 / DAC",
+    ];
+    for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
+        let mut emu = fixture(region);
+        let saved = emu.encode_state().unwrap();
+        for slot in 0..10 {
+            for solo in [false, true] {
+                let mutes: [bool; 10] = std::array::from_fn(|index| (index == slot) != solo);
+                emu.set_apu_channel_mutes(std::array::from_fn(|index| mutes[index]));
+                emu.set_fm_channel_mutes(std::array::from_fn(|index| mutes[index + 4]));
+                assert_eq!(emu.apu_channel_mutes(), mutes);
+                assert_eq!(emu.encode_state().unwrap(), saved);
+                emu.decode_state(&saved).unwrap();
+                assert_eq!(emu.apu_channel_mutes(), mutes);
+                let before = emu.clone();
+                let data = capture(&emu, true).unwrap();
+                assert_exposed_fields(&emu, &data);
+                for (index, channel) in data.channels.iter().enumerate() {
+                    assert_eq!(channel.name, names[index]);
+                    assert_eq!(channel.muted, mutes[index]);
+                }
+                assert!(capture(&emu, false).is_none());
+                assert_eq!(emu, before);
+            }
+        }
+        emu.set_apu_channel_mutes([false; 4]);
+        emu.set_fm_channel_mutes([false; 6]);
+        assert!(
+            capture(&emu, true)
+                .unwrap()
+                .channels
+                .iter()
+                .all(|ch| !ch.muted)
+        );
+        assert_eq!(emu.encode_state().unwrap(), saved);
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn md_audio_rows_distinguish_volume_raw_fm_output_and_selected_dac_source() {
+    for dac in [false, true] {
+        let emu = fixture_with_dac(Region::NtscUs, dac);
+        let psg = emu.psg_snapshot();
+        let fm = emu.opn2_snapshot();
+        let data = capture(&emu, true).unwrap();
+        for (index, channel) in data.channels[..4].iter().enumerate() {
+            assert_eq!(channel.enabled, psg.volumes[index] < 15);
+            assert!(
+                channel.register_lines[0]
+                    .contains(&format!("attenuation={:X}", psg.volumes[index]))
+            );
+        }
+        for (index, channel) in data.channels[4..].iter().enumerate() {
+            let selected_dac = index == 5 && dac;
+            assert_eq!(channel.enabled, selected_dac || fm.output[index] != 0);
+            if selected_dac {
+                assert_eq!(
+                    channel.register_lines[0],
+                    format!(
+                        "source=DAC dac={:02X} bypassed_fm_output={}",
+                        fm.dac, fm.output[index]
+                    )
+                );
+                assert!(channel.detail_line.contains("FM 6 output bypassed"));
+            } else {
+                assert_eq!(
+                    channel.register_lines[0],
+                    format!("instantaneous_output={}", fm.output[index])
+                );
+                assert!(channel.detail_line.contains("not key-on"));
+            }
+        }
+        assert!(data.channels[9].detail_line.contains("shares"));
     }
 }

@@ -38,7 +38,6 @@ impl VdpDmaCopy {
     }
 }
 
-/// Settled DMA register image; port triggers, FIFO arbitration and timing are separate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VdpDmaRegisters {
     length: u16,
@@ -123,7 +122,6 @@ impl VdpDmaRegisters {
         Ok(Some(write))
     }
 
-    /// One fill byte after the triggering normal word has completed.
     pub fn fill_byte(
         &mut self,
         command: &mut ControlCommand,
@@ -144,18 +142,66 @@ impl VdpDmaRegisters {
         increment: u8,
         data: u16,
     ) -> Result<Option<VdpDmaWrite>, VdpDmaError> {
-        let Some(next) = self.next_address(command, increment, DMA_FILL_MODE)? else {
+        let next = self.next_address(command, increment, DMA_FILL_MODE)?;
+        if command.code & !(COMMAND_CD4 | COMMAND_CD5) != VRAM_WRITE_CODE {
+            return Err(VdpDmaError::UnsupportedCommand(*command));
+        }
+        let Some(next) = next else {
             return Ok(None);
         };
-        let write = VdpDmaWrite {
+        Ok(self.complete_fill_service(command, next, data, true))
+    }
+
+    // Caller owns seeded-service qualification and the committed next address.
+    pub(super) fn complete_fill_service(
+        &mut self,
+        command: &mut ControlCommand,
+        next: u32,
+        data: u16,
+        write_enabled: bool,
+    ) -> Option<VdpDmaWrite> {
+        let write = write_enabled.then_some(VdpDmaWrite {
             address: command.address as u16 ^ WORD_ODD_ADDRESS_BIT,
             data: data.to_be_bytes()[0],
+        });
+        self.complete_byte(command, next);
+        write
+    }
+
+    pub(super) fn plan_fill_word(
+        &mut self,
+        command: &mut ControlCommand,
+        increment: u8,
+        data: u16,
+    ) -> Result<Option<VdpWrite>, VdpDmaError> {
+        Ok(self
+            .plan_fill_word_command(command, increment)?
+            .map(|command| VdpWrite { command, data }))
+    }
+
+    pub(super) fn plan_fill_word_command(
+        &mut self,
+        command: &mut ControlCommand,
+        increment: u8,
+    ) -> Result<Option<ControlCommand>, VdpDmaError> {
+        let next = self.next_address(command, increment, DMA_FILL_MODE)?;
+        if !matches!(
+            command.code & !(COMMAND_CD4 | COMMAND_CD5),
+            CRAM_WRITE_CODE | VSRAM_WRITE_CODE
+        ) {
+            return Err(VdpDmaError::UnsupportedCommand(*command));
+        }
+        let Some(next) = next else {
+            return Ok(None);
+        };
+        let write = ControlCommand {
+            code: command.code & !COMMAND_CD5,
+            ..*command
         };
         self.complete_byte(command, next);
         Ok(Some(write))
     }
 
-    /// Completed read/write pair; callers qualify its two access opportunities.
     pub fn copy_byte(
         &mut self,
         command: &mut ControlCommand,
@@ -235,7 +281,6 @@ impl VdpDmaRegisters {
         Ok(write)
     }
 
-    /// Atomic completed bytes, bounded by eight distinct VRAM destinations.
     pub fn fill_bytes(
         &mut self,
         command: &mut ControlCommand,
@@ -282,7 +327,11 @@ impl VdpDmaRegisters {
             [None; DMA_WRITE_BATCH_CAPACITY];
         let mut completed = 0;
         while completed < count {
-            let Some(next) = registers.next_address(&candidate, increment, mode)? else {
+            let next = registers.next_address(&candidate, increment, mode)?;
+            if fill.is_some() && candidate.code & !(COMMAND_CD4 | COMMAND_CD5) != VRAM_WRITE_CODE {
+                return Err(VdpDmaError::UnsupportedCommand(candidate));
+            }
+            let Some(next) = next else {
                 break;
             };
             let source = registers.source ^ WORD_ODD_ADDRESS_BIT;
@@ -321,9 +370,12 @@ impl VdpDmaRegisters {
             return Err(VdpDmaError::WrongOperation(self.source_high));
         }
         let valid_code = if mode == DMA_FILL_MODE {
-            command.code & !(COMMAND_CD4 | COMMAND_CD5) == VRAM_WRITE_CODE
+            matches!(
+                command.code & !(COMMAND_CD4 | COMMAND_CD5),
+                VRAM_WRITE_CODE | CRAM_WRITE_CODE | VSRAM_WRITE_CODE
+            )
         } else {
-            command.code & !COMMAND_CD5 == COMMAND_CD4
+            command.code & COMMAND_CD4 != 0 && command.code & !COMMAND_CODE_MASK == 0
         };
         if !valid_code || command.address > COMMAND_ADDRESS_MASK {
             return Err(VdpDmaError::UnsupportedCommand(*command));

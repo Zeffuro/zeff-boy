@@ -720,6 +720,9 @@ pub(super) fn accept_browser_settings(settings: &mut Settings) -> Result<()> {
 }
 
 #[cfg(test)]
+mod svp_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn browser_pending_and_failed_saves_do_not_advance_durable_metadata() {
@@ -812,6 +815,7 @@ mod tests {
         assert!(super::prepare_import(&original, r#"{"schema_version":999}"#).is_err());
         assert!(super::prepare_import(&original, &" ".repeat(4 * 1024 * 1024 + 1)).is_err());
         assert_eq!(super::export(&original).unwrap(), before);
+        super::svp_tests::profile_import(&original);
     }
 
     #[test]

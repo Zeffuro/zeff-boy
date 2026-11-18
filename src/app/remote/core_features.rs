@@ -23,7 +23,17 @@ pub(super) fn core_features_json(features: &CoreCapabilities) -> Value {
         "supports_cheats": features.supports_cheats,
         "supports_guest_calls": features.supports_guest_calls,
         "supports_debugger": features.supports_debugger,
+        "supports_rom_breakpoints": features.supports_rom_breakpoints,
+        "supports_symbol_loading": features.supports_symbol_loading,
+        "supports_instruction_trace": features.supports_instruction_trace,
         "supports_execution_controls": features.supports_execution_controls,
+        "supports_pc_breakpoints": features.supports_pc_breakpoints,
+        "supports_memory_watchpoints": features.supports_memory_watchpoints,
+        "memory_editing": features.memory_editing.map(|editing| json!({
+            "ranges": editing.ranges,
+            "enabled": editing.enabled,
+            "requires_pause": editing.requires_pause,
+        })),
         "supports_opcode_history": features.supports_opcode_history,
         "tas_execution_primitives": tas_execution_primitives_json(&features.tas_execution_primitives),
     })

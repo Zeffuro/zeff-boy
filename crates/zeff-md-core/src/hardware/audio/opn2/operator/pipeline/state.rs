@@ -3,25 +3,7 @@ use anyhow::{Result, ensure};
 use zeff_emu_common::save_state::{StateReader as Reader, StateWriter as Writer};
 
 impl Pipeline {
-    pub(crate) fn migrated(keyed: bool) -> Self {
-        let mut pipeline = Self {
-            desired: keyed,
-            sampled: keyed,
-            ..Self::default()
-        };
-        pipeline.selected.valid = false;
-        pipeline.prepared.valid = false;
-        pipeline.increment_valid = false;
-        pipeline.level_valid = false;
-        pipeline.total_level = UNKNOWN_TOTAL_LEVEL;
-        pipeline
-    }
-
     pub(crate) fn write_state(&self, w: &mut Writer) {
-        self.write_state_version(w, crate::save_state::STATE_VERSION);
-    }
-
-    pub(crate) fn write_state_version(&self, w: &mut Writer, version: u32) {
         w.write_bool(self.desired);
         w.write_bool(self.sampled);
         w.write_bool(self.selected.enabled);
@@ -41,20 +23,15 @@ impl Pipeline {
         w.write_u32(self.sample.phase);
         w.write_u16(self.sample.level);
         w.write_bool(self.sample.valid);
-        if version >= crate::save_state::STATE_VERSION_WITH_CSM_LEVEL {
+        {
             w.write_u8(self.total_level);
         }
-        if version >= crate::save_state::STATE_VERSION_WITH_CSM_TIMER {
+        {
             w.write_bool(self.csm);
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn read_state(r: &mut Reader<'_>) -> Result<Self> {
-        Self::read_state_version(r, crate::save_state::STATE_VERSION)
-    }
-
-    pub(crate) fn read_state_version(r: &mut Reader<'_>, version: u32) -> Result<Self> {
         let pipeline = Self {
             desired: r.read_bool()?,
             sampled: r.read_bool()?,
@@ -81,12 +58,8 @@ impl Pipeline {
                 level: r.read_u16()?,
                 valid: r.read_bool()?,
             },
-            total_level: if version >= crate::save_state::STATE_VERSION_WITH_CSM_LEVEL {
-                r.read_u8()?
-            } else {
-                UNKNOWN_TOTAL_LEVEL
-            },
-            csm: version >= crate::save_state::STATE_VERSION_WITH_CSM_TIMER && r.read_bool()?,
+            total_level: { r.read_u8()? },
+            csm: r.read_bool()?,
         };
         let sustain_valid = |level: u16| level == 992 || (level <= 448 && level.is_multiple_of(32));
         ensure!(

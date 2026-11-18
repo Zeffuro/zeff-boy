@@ -1,14 +1,27 @@
 use super::fixture::{Rom, config, expected, run_to_phase};
+use super::layouts::{header_profile, mapped};
 use zeff_emu_common::time::Reset;
 use zeff_m68k::bus::Direction;
 use zeff_md_core::{Emulator, LoadError, MachineFault, Region, SoundFault};
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn new_layouts_allow_real_guest_reads_and_writes_without_enable_before_and_after_reset() {
-    for size in [8192, 32768] {
-        let last = 0x200000 + size as u32 * 2 - 1;
+    for (size, base, profile) in [
+        (8192, 0x200000, None),
+        (32768, 0x200000, None),
+        (8192, 0x300000, None),
+        (32768, 0x300000, None),
+        (8192, 0x200000, Some(0)),
+        (8192, 0x200000, Some(1)),
+        (8192, 0x200000, Some(2)),
+    ] {
+        let last = base + size as u32 * 2 - 1;
         let mut rom = Rom::new(size);
-        for (index, (address, mask)) in [(0x200001, 0x5a), (last, 0xa7)].into_iter().enumerate() {
+        if base == 0x200000 {
+            rom.byte(0xa130f0, 1);
+        }
+        for (index, (address, mask)) in [(base + 1, 0x5a), (last, 0xa7)].into_iter().enumerate() {
             rom.read_byte(address, 0xff0000 + index as u32);
             rom.word(0x0a00);
             rom.word(mask);
@@ -16,7 +29,15 @@ fn new_layouts_allow_real_guest_reads_and_writes_without_enable_before_and_after
             rom.long(address);
             rom.read_byte(address, 0xff0002 + index as u32);
         }
-        let bytes = rom.finish();
+        rom.byte(base, 0x99);
+        rom.write_word(base + 2, 0x115a);
+        rom.write_long(base + 4, 0x22663377);
+        let bytes = mapped(rom.finish(), base);
+        let bytes = if let Some(index) = profile {
+            header_profile(bytes, index)
+        } else {
+            bytes
+        };
         for region in [Region::NtscUs, Region::NtscJapan, Region::Pal] {
             for concurrent in [false, true] {
                 let mut machine = Emulator::new(bytes.clone(), config(region, concurrent)).unwrap();
@@ -27,22 +48,56 @@ fn new_layouts_allow_real_guest_reads_and_writes_without_enable_before_and_after
                 let mut expected = vec![0xff; size];
                 expected[0] = 0xa5;
                 expected[size - 1] = 0x58;
+                expected[1..4].copy_from_slice(&[0x5a, 0x66, 0x77]);
+                assert_eq!(machine.peek(base), Some(0xff));
+                assert_eq!(machine.peek(last + 2), Some(0xff));
+                if base != 0x200000 {
+                    assert_eq!(machine.peek(base - 1), Some(0x69));
+                    assert_eq!(machine.peek(0x200001), Some(0));
+                }
                 assert_eq!(machine.dump_save_ram(), Some(expected));
                 machine.reset();
                 run_to_phase(&mut machine, 3);
                 for (offset, value) in [0xa5, 0x58, 0xff, 0xff].into_iter().enumerate() {
                     assert_eq!(machine.peek(0xff0000 + offset as u32), Some(value));
                 }
-                assert_eq!(machine.dump_save_ram(), Some(vec![0xff; size]));
+                let mut reset_cells = vec![0xff; size];
+                reset_cells[1..4].copy_from_slice(&[0x5a, 0x66, 0x77]);
+                assert_eq!(machine.dump_save_ram(), Some(reset_cells));
             }
         }
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn new_layout_admission_requires_the_complete_exact_nonoverlap_declaration() {
-    for size in [8192, 32768] {
-        let bytes = Rom::new(size).finish();
+    for profile in 0..3 {
+        let bytes = header_profile(Rom::new(8192).finish(), profile);
+        for offset in (0x180..0x18e).chain(0x1b2..0x1bc) {
+            let mut wrong = bytes.clone();
+            wrong[offset] ^= 2;
+            assert!(matches!(
+                Emulator::new(wrong, config(Region::NtscUs, false)),
+                Err(LoadError::UnsupportedSaveHardware)
+            ));
+        }
+        for size in [0x80000, bytes.len() - 1, bytes.len() + 1, 0x200002] {
+            let mut wrong = bytes.clone();
+            wrong.resize(size, 0);
+            assert!(matches!(
+                Emulator::new(wrong, config(Region::NtscUs, false)),
+                Err(LoadError::UnsupportedSaveHardware)
+            ));
+        }
+    }
+    for (size, base) in [
+        (8192, 0x200000),
+        (32768, 0x200000),
+        (8192, 0x300000),
+        (32768, 0x300000),
+    ] {
+        let bytes = mapped(Rom::new(size).finish(), base);
         for offset in 0x1b2..0x1bc {
             let mut malformed = bytes.clone();
             malformed[offset] ^= 1;
@@ -55,7 +110,7 @@ fn new_layout_admission_requires_the_complete_exact_nonoverlap_declaration() {
             );
         }
         let mut overlap = bytes.clone();
-        overlap.resize(0x200002, 0);
+        overlap.resize(base as usize + 2, 0);
         assert!(matches!(
             Emulator::new(overlap, config(Region::NtscUs, false)),
             Err(LoadError::UnsupportedSaveHardware)
@@ -110,7 +165,8 @@ fn constructor_frontend_reset_cpu_restart_and_reset_output_keep_their_mapping_do
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn unsupported_controls_and_old_pre_enable_accesses_fault_without_save_mutation() {
     for size in [512, 8192, 32768] {
         for (address, value) in [
@@ -120,6 +176,11 @@ fn unsupported_controls_and_old_pre_enable_accesses_fault_without_save_mutation(
             (0xa130f1, 0x81),
             (0xa130f0, 1),
         ] {
+            if size != 512
+                && (address == 0xa130f1 && value == 3 || address == 0xa130f0 && value == 1)
+            {
+                continue;
+            }
             let mut rom = Rom::new(size);
             rom.byte(address, value);
             let mut machine = Emulator::new(rom.finish(), config(Region::NtscUs, true)).unwrap();
@@ -158,13 +219,93 @@ fn unsupported_controls_and_old_pre_enable_accesses_fault_without_save_mutation(
             assert_eq!(machine.peek(0xff0000), Some(0));
         }
     }
+    upper_control_rejections();
 }
 
-#[test]
-fn restored_pending_vdp_dma_reads_first_and_last_new_cells() {
+fn upper_control_rejections() {
     for size in [8192, 32768] {
+        for (address, value) in [
+            (0xa130f0, 0),
+            (0xa130f0, 2),
+            (0xa130f0, 3),
+            (0xa130f0, 0x81),
+            (0xa130f2, 1),
+            (0xa130fe, 1),
+            (0x01a130f0, 1),
+        ] {
+            let mut rom = Rom::new(size);
+            rom.byte(address, value);
+            let mut machine = Emulator::new(rom.finish(), config(Region::NtscUs, true)).unwrap();
+            let cells = expected(size, 0x93);
+            machine.load_save_ram(&cells).unwrap();
+            assert_control_write_fault(&mut machine, address & 0xfffffe);
+            assert_eq!(machine.dump_save_ram(), Some(cells));
+        }
+    }
+    for profile in 0..8 {
+        let mut rom = Rom::new(if profile == 0 { 512 } else { 8192 });
+        rom.byte(0xa130f0, 1);
+        let mut bytes = rom.finish();
+        match profile {
+            0 => (),
+            1 => bytes = mapped(bytes, 0x300000),
+            2 => bytes[0x1b0..0x1bc].fill(0),
+            3 => {
+                bytes.resize(0x200000, 0);
+                bytes[0x180..0x18e].copy_from_slice(b"GM T-119186-00");
+                bytes[0x1b0..0x1bc].copy_from_slice(b"RA\xf8\x40\x00\x20\x00\x01\x00\x20\x0f\xff");
+            }
+            4 | 5 => {
+                if profile == 5 {
+                    bytes.resize(0x200000, 0);
+                }
+                bytes[0x180..0x18e].copy_from_slice(if profile == 4 {
+                    b"GM G-4060  -00"
+                } else {
+                    b"GM T-81033  00"
+                });
+                bytes[0x1b0..0x1bc].copy_from_slice(b"RA\xe8\x40\x00\x20\x00\x01\x00\x20\x00\x01");
+            }
+            6 | 7 => {
+                bytes.resize(0x300000, 0);
+                bytes[0x180..0x18e].copy_from_slice(if profile == 6 {
+                    b"GM G-5524  -00"
+                } else {
+                    b"GM G-5543  -00"
+                });
+            }
+            _ => unreachable!(),
+        }
+        let mut machine = Emulator::new(bytes, config(Region::Pal, true)).unwrap();
+        let before = machine.dump_save_ram();
+        assert_control_write_fault(&mut machine, 0xa130f0);
+        assert_eq!(machine.dump_save_ram(), before);
+    }
+}
+
+fn assert_control_write_fault(machine: &mut Emulator, address: u32) {
+    assert!(matches!(
+        machine.step_instruction(),
+        Err(MachineFault::Main(zeff_m68k::timing::TimingFault::Bus {
+            source: zeff_md_core::BusError::UnsupportedAccess {
+                address: actual,
+                direction: Direction::Write,
+            }, ..
+        })) if actual == address
+    ));
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn restored_pending_vdp_dma_reads_first_and_last_new_cells() {
+    for (size, base) in [
+        (8192, 0x200000),
+        (32768, 0x200000),
+        (8192, 0x300000),
+        (32768, 0x300000),
+    ] {
         for index in [0, size - 1] {
-            let source_word = (0x200000 + index as u32 * 2) / 2;
+            let source_word = (base + index as u32 * 2) / 2;
             let mut rom = Rom::new(size);
             for (register, value) in [
                 (1, 0x14),
@@ -180,7 +321,8 @@ fn restored_pending_vdp_dma_reads_first_and_last_new_cells() {
             rom.write_word(0xc00004, 0x5000);
             let cut = rom.pc as u32;
             rom.write_word(0xc00004, 0x0080);
-            let mut machine = Emulator::new(rom.finish(), config(Region::Pal, true)).unwrap();
+            let mut machine =
+                Emulator::new(mapped(rom.finish(), base), config(Region::Pal, true)).unwrap();
             let cells = expected(size, 0x37);
             machine.load_save_ram(&cells).unwrap();
             while machine.registers().pc != cut {
@@ -201,10 +343,16 @@ fn restored_pending_vdp_dma_reads_first_and_last_new_cells() {
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn actual_uploaded_z80_banked_reads_and_writes_guard_both_new_aperture_endpoints() {
-    for size in [8192, 32768] {
-        for address in [0x200001, 0x200000 + size as u32 * 2 - 1] {
+    for (size, base) in [
+        (8192, 0x200000),
+        (32768, 0x200000),
+        (8192, 0x300000),
+        (32768, 0x300000),
+    ] {
+        for address in [base + 1, base + size as u32 * 2 - 1] {
             for direction in [Direction::Read, Direction::Write] {
                 let bank = address & !0x7fff;
                 let sound_address = (0x8000 | (address & 0x7fff)) as u16;
@@ -234,7 +382,12 @@ fn actual_uploaded_z80_banked_reads_and_writes_guard_both_new_aperture_endpoints
                 rom.write_word(0xa11200, 0x0100);
                 rom.write_word(0xa11100, 0);
                 let mut machine =
-                    Emulator::new(rom.finish(), config(Region::NtscUs, true)).unwrap();
+                    Emulator::new(mapped(rom.finish(), base), config(Region::NtscUs, true))
+                        .unwrap();
+                let mut cells = vec![0xff; size];
+                cells[0] = 0x47;
+                cells[size - 1] = 0xb3;
+                machine.load_save_ram(&cells).unwrap();
                 let mut fault = None;
                 for _ in 0..1000 {
                     if let Err(error) = machine.step_instruction() {
@@ -244,12 +397,21 @@ fn actual_uploaded_z80_banked_reads_and_writes_guard_both_new_aperture_endpoints
                 }
                 assert_eq!(
                     fault,
-                    Some(MachineFault::Sound(SoundFault::UnsupportedAccess {
-                        address: sound_address,
-                        direction,
-                    }))
+                    (base == 0x200000 || direction == Direction::Write).then_some(
+                        MachineFault::Sound(SoundFault::UnsupportedAccess {
+                            address: sound_address,
+                            direction,
+                        }),
+                    )
                 );
-                assert_eq!(machine.dump_save_ram(), Some(vec![0xff; size]));
+                if fault.is_none() {
+                    assert!(machine.sound_cpu().is_halted());
+                    assert_eq!(
+                        machine.sound_cpu().regs().a,
+                        if address == base + 1 { 0x47 } else { 0xb3 }
+                    );
+                }
+                assert_eq!(machine.dump_save_ram(), Some(cells));
             }
         }
     }

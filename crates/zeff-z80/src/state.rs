@@ -1,13 +1,26 @@
 use super::*;
 pub(crate) use zeff_emu_common::save_state::{StateReader as Reader, StateWriter as Writer};
 
-const VERSION: u16 = 1;
+const VERSION: u16 = 2;
 const MAX_BYTES: usize = 256;
 
 impl Cpu {
-    /// Save the CPU together with its pending bus-segment continuation.
     pub fn write_continuation(&self, bus: &BusState, w: &mut Writer) {
         w.write_u16(VERSION);
+        self.write_continuation_payload(bus, w, true);
+    }
+
+    pub fn write_legacy_continuation(&self, bus: &BusState, w: &mut Writer) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.memptr_profile == MemptrProfile::Legacy,
+            "cannot downgrade NMOS history"
+        );
+        w.write_u16(1);
+        self.write_continuation_payload(bus, w, false);
+        Ok(())
+    }
+
+    fn write_continuation_payload(&self, bus: &BusState, w: &mut Writer, history: bool) {
         w.write_section(|w| {
             w.write_u16(self.reset_state.pc);
             w.write_u16(self.reset_state.sp);
@@ -17,6 +30,9 @@ impl Cpu {
             w.write_u8(self.instruction_byte_count);
             w.write_u8(self.last_m1_fetch_count);
             bus.write_continuation(w);
+            if history {
+                self.write_memptr(w);
+            }
         });
     }
 
@@ -26,8 +42,29 @@ impl Cpu {
         bus: &mut BusState,
         r: &mut Reader<'_>,
     ) -> anyhow::Result<()> {
+        self.read_continuation_version(bus, r, VERSION)
+    }
+
+    pub fn read_legacy_continuation(
+        &mut self,
+        bus: &mut BusState,
+        r: &mut Reader<'_>,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            r.read_u16()? == VERSION,
+            self.memptr_profile == MemptrProfile::Legacy,
+            "legacy Z80 continuation cannot restore NMOS history"
+        );
+        self.read_continuation_version(bus, r, 1)
+    }
+
+    fn read_continuation_version(
+        &mut self,
+        bus: &mut BusState,
+        r: &mut Reader<'_>,
+        version: u16,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            r.read_u16()? == version,
             "unsupported Z80 continuation version"
         );
         let mut r = Reader::new(r.read_slice(MAX_BYTES)?);
@@ -49,6 +86,12 @@ impl Cpu {
         cpu.instruction_byte_count = bounded_byte(&mut r, 4)?;
         cpu.last_m1_fetch_count = r.read_u8()?;
         let candidate_bus = BusState::read_continuation(&mut r)?;
+        if version == VERSION {
+            cpu.read_memptr(&mut r)?;
+        } else {
+            cpu.memptr = None;
+            cpu.memptr_profile = MemptrProfile::Legacy;
+        }
         anyhow::ensure!(r.is_exhausted(), "trailing Z80 continuation data");
         *self = cpu;
         *bus = candidate_bus;

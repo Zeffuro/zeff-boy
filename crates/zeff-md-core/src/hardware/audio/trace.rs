@@ -68,18 +68,32 @@ pub(crate) fn sound_origin(pc: u16, bank: u16, cartridge: &Cartridge) -> MdTrace
 }
 
 fn main_source(address: u32, cartridge: &Cartridge) -> MdTraceSource {
+    if (cartridge.extended_ssf.is_some()
+        || cartridge.sf001.is_some()
+        || cartridge.realtec.is_some())
+        && address <= CARTRIDGE_END
+        || cartridge
+            .lock_on
+            .is_some_and(|mapping| mapping.mode_sensitive(address))
+        || cartridge.ssf2.is_some() && crate::cartridge::ssf2::Ssf2::mode_sensitive(address)
+        || cartridge.sf002.is_some() && (0x200000..=0x3bffff).contains(&address)
+    {
+        return MdTraceSource::Unknown;
+    }
     if (WORK_RAM_START..=BUS_ADDRESS_MASK).contains(&address) {
         MdTraceSource::MainRam {
             offset: address & WORK_RAM_MASK as u32,
         }
     } else if address <= CARTRIDGE_END
-        && (address as usize) < cartridge.bytes.len()
         && !cartridge
             .save
             .as_ref()
-            .is_some_and(|save| save.contains(address))
+            .is_some_and(|save| save.contains(address) && !save.rom_visible())
+        && let Some(offset) = cartridge.rom_source_offset(address)
     {
-        MdTraceSource::EffectiveRom { offset: address }
+        MdTraceSource::EffectiveRom {
+            offset: offset as u32,
+        }
     } else {
         MdTraceSource::Unknown
     }

@@ -13,11 +13,11 @@ fn read(machine: &mut Emulator) -> u32 {
         kind: AccessKind::Data,
     };
     let clock = machine.bus.cpu_clock;
-    let report = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    let report = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .read_cycle(access, clock);
     assert!(report.result.is_ok());
     assert!(report.wait_clocks > 0);
@@ -99,7 +99,7 @@ fn bank_reservation_delay_samples_irq_before_following_main_transfer() {
     let irq = source
         .vdp()
         .interrupts()
-        .sound_interrupt(*source.vdp().registers(), source.region());
+        .sound_interrupt(source.vdp().registers(), source.region());
     let mut expected = source.clone();
     read(&mut source);
     let end = source.bus.now.get();
@@ -109,11 +109,11 @@ fn bank_reservation_delay_samples_irq_before_following_main_transfer() {
         ticks: release..end,
     }];
     interval.occupied = &reservation;
-    interval.sound_irq = Some(irq);
+    interval.sound_irq = Some(&irq);
     expected.sound_schedule.advance(
         &mut expected.sound_cpu,
         &mut expected.bus.sound,
-        &expected.bus.cartridge,
+        &mut expected.bus.cartridge,
         &mut expected.bus.ram,
         interval,
     );

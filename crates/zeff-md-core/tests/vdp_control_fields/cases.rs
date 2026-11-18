@@ -137,7 +137,7 @@ pub fn write_targets_ignore_only_cd4() {
         assert_eq!(fifo.complete_write(&mut memory), Ok(Some(entry)));
         match code {
             0x11 => assert_eq!(memory.read_word(command(0, 0)), Ok(expected)),
-            0x13 => assert_eq!(memory.cram()[0], expected),
+            0x13 => assert_eq!(memory.known_cram().unwrap()[0], expected),
             0x15 => assert_eq!(memory.vsram()[0], expected),
             _ => unreachable!(),
         }
@@ -156,7 +156,7 @@ pub fn write_targets_ignore_only_cd4() {
     let mut memory = VdpMemory::default();
     let saved_memory = memory.clone();
     for code in 0..=255u8 {
-        if code < 0x20 && !matches!(code & 0xf, 0 | 4 | 8 | 0xc) {
+        if code == 0x14 || (code < 0x20 && !matches!(code & 0xf, 4 | 8 | 0xc)) {
             continue;
         }
         let mut fifo = VdpWriteFifo::default();

@@ -5,7 +5,16 @@ use crate::debug::{
 use crate::emu_backend::CoreCapabilities;
 use zeff_emu_common::address::Address;
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SoundTraceInfo {
+    pub(crate) rejection: Option<&'static str>,
+    pub(crate) gap: Option<&'static str>,
+}
+
 pub(crate) struct InstructionTraceBatch {
+    pub(crate) target: super::TraceTarget,
+    pub(crate) sound: Option<SoundTraceInfo>,
+    pub(crate) stream: Option<super::TraceStreamId>,
     pub(crate) enabled: bool,
     pub(crate) capacity: usize,
     pub(crate) retained: usize,
@@ -16,8 +25,12 @@ pub(crate) struct InstructionTraceBatch {
 
 #[derive(Default)]
 pub(crate) struct UiFrameData {
+    pub(crate) debug_target: crate::debug::DebugTarget,
+    pub(crate) debug_revision: u64,
     pub(crate) core_features: Option<CoreCapabilities>,
     pub(crate) cpu_debug: Option<CpuDebugSnapshot>,
+    pub(crate) md_sound_watch: Option<crate::debug::sound_watchpoints::SoundWatchView>,
+    pub(crate) md_timed_ports: Option<crate::debug::md_timed_ports::MdTimedPortView>,
     pub(crate) perf_info: Option<PerfInfo>,
     pub(crate) apu_debug: Option<ApuDebugInfo>,
     pub(crate) oam_debug: Option<OamDebugInfo>,

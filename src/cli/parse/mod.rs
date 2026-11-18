@@ -281,7 +281,7 @@ pub(crate) fn parse_args_from(
                 headless.gb_dmg_palette_preset = Some(parse_dmg_palette_arg(value, &args[i])?);
                 i += 2;
             }
-            "--md-region" | "--md-controller" => {
+            "--md-region" | "--md-timing" | "--md-controller" => {
                 md::parse(&args[i], args.get(i + 1), &mut headless)?;
                 i += 2;
             }
@@ -672,9 +672,9 @@ pub(crate) fn parse_args_from(
         headless_enabled
             || !args.iter().any(|arg| matches!(
                 arg.as_str(),
-                "--md-region" | "--md-controller" | "--md-save-state-out"
+                "--md-region" | "--md-timing" | "--md-controller" | "--md-save-state-out"
             )),
-        "--md-region, --md-controller and --md-save-state-out require --headless"
+        "--md-region, --md-timing, --md-controller and --md-save-state-out require --headless"
     );
     audio_trace::validate(headless_enabled, rom_path.as_deref(), &headless)?;
 

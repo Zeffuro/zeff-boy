@@ -7,23 +7,32 @@ use crate::emu_backend::ActiveSystem;
 use crate::save_paths::SRAM_COMPONENT;
 
 impl MdBackend {
+    pub(crate) fn host_persistence_enabled(&self) -> bool {
+        self.host_persistence_enabled
+    }
+
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn set_host_persistence_enabled(&mut self, enabled: bool) {
+        if self.rollback_owned() {
+            return;
+        }
         self.host_persistence_enabled = enabled;
     }
 
     pub(crate) fn battery_components(&self) -> Vec<(&'static str, Vec<u8>)> {
-        if !self.emu.save_ram_kind().is_persistent() {
+        if !self.machine.core().save_ram_kind().is_persistent() {
             return Vec::new();
         }
-        self.emu
+        self.machine
+            .core()
             .dump_save_ram()
             .map(|bytes| vec![(SRAM_COMPONENT, bytes)])
             .unwrap_or_default()
     }
 
     pub(super) fn flush_save_ram(&mut self) -> anyhow::Result<Option<String>> {
-        if !self.host_persistence_enabled || !self.emu.save_ram_kind().is_persistent() {
+        self.require_normal()?;
+        if !self.host_persistence_enabled || !self.machine.core().save_ram_kind().is_persistent() {
             return Ok(None);
         }
         crate::save_paths::flush_battery_sram(
@@ -31,7 +40,7 @@ impl MdBackend {
             self.paths.rom_path(),
             ActiveSystem::Md.storage_subdir(),
             self.rom_hash,
-            self.emu.dump_save_ram(),
+            self.machine.core().dump_save_ram(),
         )
     }
 }

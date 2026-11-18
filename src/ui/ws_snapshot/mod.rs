@@ -49,11 +49,14 @@ pub(crate) fn collect_ws_snapshot(
         data.input_debug = Some(input::ws_input_snapshot(emu));
     }
 
-    let disasm_target = snapshot.disasm_target.filter(|target| {
-        target.storage_offset.is_some_and(|offset| {
-            target.cpu_address <= 0x0F_FFFF && offset < rom_bytes.len() as u64
-        })
-    });
+    let disasm_target = snapshot
+        .disasm_target
+        .and_then(crate::debug::DisassemblyTarget::as_cpu)
+        .filter(|target| {
+            target.storage_offset.is_some_and(|offset| {
+                target.cpu_address <= 0x0F_FFFF && offset < rom_bytes.len() as u64
+            })
+        });
     let current_disasm = disasm_target.map_or_else(
         || (emu.cpu_pc(), Some(emu.rom_mapping_token())),
         |target| (target.cpu_address, target.storage_offset),
@@ -114,7 +117,7 @@ pub(crate) fn collect_ws_snapshot(
 }
 
 fn target_rom_offset(
-    target: crate::debug::DisassemblyTarget,
+    target: crate::debug::CpuDisassemblyTarget,
     address: Address,
     rom_len: usize,
 ) -> Option<u64> {
@@ -124,7 +127,7 @@ fn target_rom_offset(
     (offset < rom_len as u64).then_some(offset)
 }
 
-fn target_rom_byte(rom: &[u8], target: crate::debug::DisassemblyTarget, address: Address) -> u8 {
+fn target_rom_byte(rom: &[u8], target: crate::debug::CpuDisassemblyTarget, address: Address) -> u8 {
     target_rom_offset(target, address, rom.len())
         .and_then(|offset| usize::try_from(offset).ok())
         .and_then(|offset| rom.get(offset))

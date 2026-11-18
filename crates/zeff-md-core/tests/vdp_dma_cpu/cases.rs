@@ -1,7 +1,7 @@
 use super::support::*;
 use zeff_md_core::{
     ControlWrite, Vdp, VdpDmaError, VdpInterruptError, VdpLineError, VdpPortError,
-    VdpScheduleError, VdpTimingError, VdpWriteError,
+    VdpScheduleError, VdpTimingError,
 };
 
 fn fixture_enabled(length: u16, source: u16, mode: u8, increment: u8) -> Vdp {
@@ -60,40 +60,92 @@ fn busy_ports(run: &mut Run<'_>, device: &mut Vdp, data: bool) {
     }
 }
 
+fn waiting_ports(run: &mut Run<'_>, device: &mut Vdp) {
+    for op in [Op::Read, Op::ReadWait] {
+        reject(run, device, op, dma(VdpDmaError::Busy));
+    }
+    let memory = device.memory().clone();
+    let mut control = device.clone();
+    assert_eq!(
+        run(&mut control, Op::Control(0x8f02)),
+        Ok(Value::Control(ControlWrite::Register {
+            index: 15,
+            value: 2
+        }))
+    );
+    assert_eq!(control.command(), command(0x0f02, 0x32));
+    let write = control.registers().pending().unwrap();
+    assert_eq!((write.index, write.value), (15, 2));
+    advance(run, &mut control, write.publish_at.get());
+    assert_eq!(control.registers().auto_increment(), Some(2));
+    assert_eq!(control.memory(), &memory);
+    status(run, &mut control, true, true);
+    for index in 0..24 {
+        if matches!(index, 1 | 23) {
+            reject(
+                run,
+                device,
+                Op::Register(index, 0),
+                Error::Schedule(VdpScheduleError::Dma(VdpDmaError::Busy)),
+            );
+            continue;
+        }
+        let mut candidate = device.clone();
+        let Value::Register(write) = run(&mut candidate, Op::Register(index, 0)).unwrap() else {
+            panic!("register publication")
+        };
+        assert_eq!((write.index, write.value), (index, 0));
+        assert_eq!(candidate.registers().pending(), Some(write));
+        assert_eq!(candidate.command(), device.command());
+        advance(run, &mut candidate, write.publish_at.get());
+        assert_eq!(candidate.registers().registers()[index as usize], Some(0));
+        assert_eq!(candidate.registers().pending(), None);
+        assert_eq!(candidate.memory(), &memory);
+        status(run, &mut candidate, true, true);
+    }
+}
+
 pub fn copy_command_start_with(run: &mut Run<'_>) {
-    for parity in [0, 1] {
-        let mut device = fixture_enabled(2, 0, 0xe5, 1);
-        let memory = device.memory().clone();
-        let pointer = device.memory().vram().as_ptr();
-        let first = slot_after(device.now().get());
-        arm(run, &mut device, 0x2000 + parity, 0x30);
-        counters(&device, 2, 0, 0xe5);
-        assert_eq!(device.memory(), &memory);
-        status(run, &mut device, true, true);
-        advance(run, &mut device, first - 1);
-        assert_eq!(device.memory(), &memory);
-        advance(run, &mut device, first);
-        assert_eq!(device.memory(), &memory);
-        counters(&device, 2, 0, 0xe5);
-        let mut read_clone = device.clone();
-        busy_ports(run, &mut device, true);
-        let second = slot_after(first);
-        advance(run, &mut device, second);
-        assert_eq!(device.memory().vram()[(0x2000 + parity) as usize ^ 1], 0x34);
-        counters(&device, 1, 1, 0xe5);
-        assert_eq!(device.command(), command(0x2001 + parity, 0x30));
-        let third = slot_after(second);
-        advance(run, &mut device, third);
-        counters(&device, 1, 1, 0xe5);
-        let fourth = slot_after(third);
-        advance(run, &mut device, fourth);
-        advance(run, &mut read_clone, fourth);
-        assert_eq!(device, read_clone);
-        assert_eq!(device.memory().vram()[(0x2001 + parity) as usize ^ 1], 0x12);
-        counters(&device, 0, 2, 0xe5);
-        assert_eq!(device.command(), command(0x2002 + parity, 0x10));
-        status(run, &mut device, false, true);
-        assert_eq!(device.memory().vram().as_ptr(), pointer);
+    for code in (0x30..=0x3f).filter(|code| code & 3 != 2) {
+        for parity in [0, 1] {
+            let mut device = fixture_enabled(2, 0, 0xe5, 1);
+            let memory = device.memory().clone();
+            let pointer = device.memory().vram().as_ptr();
+            let first = slot_after(device.now().get());
+            arm(run, &mut device, 0x2000 + parity, code);
+            counters(&device, 2, 0, 0xe5);
+            assert_eq!(device.memory(), &memory);
+            status(run, &mut device, true, true);
+            advance(run, &mut device, first - 1);
+            assert_eq!(device.memory(), &memory);
+            advance(run, &mut device, first);
+            assert_eq!(device.memory(), &memory);
+            counters(&device, 2, 0, 0xe5);
+            let mut read_clone = device.clone();
+            busy_ports(run, &mut device, true);
+            let second = slot_after(first);
+            advance(run, &mut device, second);
+            assert_eq!(device.memory().vram()[(0x2000 + parity) as usize ^ 1], 0x34);
+            counters(&device, 1, 1, 0xe5);
+            assert_eq!(device.command(), command(0x2001 + parity, code));
+            let third = slot_after(second);
+            advance(run, &mut device, third);
+            counters(&device, 1, 1, 0xe5);
+            let fourth = slot_after(third);
+            advance(run, &mut device, fourth);
+            advance(run, &mut read_clone, fourth);
+            assert_eq!(device, read_clone);
+            assert_eq!(device.memory().vram()[(0x2001 + parity) as usize ^ 1], 0x12);
+            counters(&device, 0, 2, 0xe5);
+            assert_eq!(device.command(), command(0x2002 + parity, code & !0x20));
+            status(run, &mut device, false, true);
+            assert_eq!(device.memory().vram().as_ptr(), pointer);
+            assert_eq!(
+                device.memory().known_cram().unwrap(),
+                memory.known_cram().unwrap()
+            );
+            assert_eq!(device.memory().vsram(), memory.vsram());
+        }
     }
 }
 
@@ -111,7 +163,7 @@ pub fn fill_wait_and_trigger_with(run: &mut Run<'_>) {
                 assert_eq!(device.command(), command(address, code));
                 counters(&device, 2, 0x12ff, 0xa5);
                 status(run, &mut device, true, true);
-                busy_ports(run, &mut device, false);
+                waiting_ports(run, &mut device);
                 assert_eq!(run(&mut device, Op::WriteWait), Ok(Value::Wait(None)));
                 assert_eq!(run(&mut device, Op::Data(0xabcd)), Ok(Value::Unit));
                 let start = address + u32::from(increment);
@@ -126,12 +178,9 @@ pub fn fill_wait_and_trigger_with(run: &mut Run<'_>) {
                 advance(run, &mut device, first - 1);
                 assert_eq!(device.memory(), &memory);
                 advance(run, &mut device, first);
-                let first_byte = (address as usize & !1) + 1;
-                assert_eq!(
-                    device.memory().vram()[first_byte],
-                    if parity == 0 { 0xcd } else { 0xab }
-                );
-                assert_eq!(device.memory().vram()[first_byte - 1], 0);
+                let first_byte = address as usize ^ 1;
+                assert_eq!(device.memory().vram()[first_byte], 0xcd);
+                assert_eq!(device.memory().vram()[first_byte ^ 1], 0);
                 counters(&device, 2, 0x12ff, 0xa5);
                 let second = slot_after(first);
                 advance(run, &mut device, second);
@@ -159,10 +208,113 @@ pub fn fill_wait_and_trigger_with(run: &mut Run<'_>) {
                     command(address + 3 * u32::from(increment), code & !0x20)
                 );
                 status(run, &mut device, false, true);
-                assert_eq!(device.memory().cram(), memory.cram());
+                assert_eq!(
+                    device.memory().known_cram().unwrap(),
+                    memory.known_cram().unwrap()
+                );
                 assert_eq!(device.memory().vsram(), memory.vsram());
             }
         }
+    }
+    for code in [0x23, 0x33, 0x25, 0x35] {
+        let vsram = code & !(0x10 | 0x20) == 5;
+        let mask = if vsram { 0x07ff } else { 0x0eee };
+        for boundary in [0x1ffce, 0x1fffe] {
+            for increment in [0, 1, 2, 255] {
+                for parity in [0, 1] {
+                    let address = boundary + parity;
+                    let history = [0x1379, 0x2f4d, 0x59a3, 0xc6e1];
+                    let mut device = fixture_enabled(2, 0x12ff, 0xa5, increment);
+                    for (index, data) in history.into_iter().enumerate() {
+                        arm(run, &mut device, 0x1000 + index as u32 * 2, 1);
+                        assert_eq!(run(&mut device, Op::Data(data)), Ok(Value::Unit));
+                        let end = slot_after(slot_after(device.now().get()));
+                        advance(run, &mut device, end);
+                    }
+                    let memory = device.memory().clone();
+                    let mut expected = if vsram {
+                        memory.vsram()
+                    } else {
+                        memory.known_cram().unwrap()
+                    }
+                    .to_vec();
+                    arm(run, &mut device, address, code);
+                    status(run, &mut device, true, true);
+                    assert_eq!(run(&mut device, Op::Data(0xf35b)), Ok(Value::Unit));
+                    assert_eq!(device.fifo().next_slot_data(), Some(history[1]));
+                    let mut next_address = (address + u32::from(increment)) & 0x1ffff;
+                    let first = slot_after(device.now().get());
+                    advance(run, &mut device, first - 1);
+                    assert_eq!(device.memory(), &memory);
+                    advance(run, &mut device, first);
+                    if let Some(word) = expected.get_mut((address as usize & 0x7e) >> 1) {
+                        *word = 0xf35b & mask;
+                    }
+                    assert_eq!(
+                        if vsram {
+                            device.memory().vsram()
+                        } else {
+                            device.memory().known_cram().unwrap()
+                        },
+                        expected
+                    );
+                    assert!(device.fifo().is_empty());
+                    counters(&device, 2, 0x12ff, 0xa5);
+                    busy_ports(run, &mut device, true);
+                    let mut at = first;
+                    for step in 1..=2 {
+                        at = slot_after(at);
+                        advance(run, &mut device, at - 1);
+                        counters(&device, 3 - step, 0x12fe + step, 0xa5);
+                        advance(run, &mut device, at);
+                        if let Some(word) = expected.get_mut((next_address as usize & 0x7e) >> 1) {
+                            *word = history[1] & mask;
+                        }
+                        next_address = (next_address + u32::from(increment)) & 0x1ffff;
+                        assert_eq!(
+                            if vsram {
+                                device.memory().vsram()
+                            } else {
+                                device.memory().known_cram().unwrap()
+                            },
+                            expected
+                        );
+                        counters(&device, 2 - step, 0x12ff + step, 0xa5);
+                    }
+                    assert_eq!(device.command(), command(next_address, code & !0x20));
+                    status(run, &mut device, false, true);
+                    assert_eq!(device.memory().vram(), memory.vram());
+                    assert_eq!(
+                        if vsram {
+                            device.memory().known_cram().unwrap()
+                        } else {
+                            device.memory().vsram()
+                        },
+                        if vsram {
+                            memory.known_cram().unwrap()
+                        } else {
+                            memory.vsram()
+                        }
+                    );
+                }
+            }
+        }
+    }
+    for code in [0x23, 0x33, 0x25, 0x35] {
+        let mut unknown = known(0, START, 0x14, None, false);
+        arm(run, &mut unknown, 0, code);
+        if code & 0x0f == 3 {
+            assert_eq!(run(&mut unknown, Op::Data(0xabcd)), Ok(Value::Unit));
+            continue;
+        }
+        reject(
+            run,
+            &mut unknown,
+            Op::Data(0xabcd),
+            Error::Port(VdpPortError::Schedule(VdpScheduleError::Dma(
+                VdpDmaError::MissingSource,
+            ))),
+        );
     }
 }
 
@@ -206,31 +358,104 @@ pub fn fill_fifo_priority_with(run: &mut Run<'_>) {
         counters(&device, 0, 2, 0x80);
         status(run, &mut device, false, true);
     }
+    for queued_target in [0x03, 0x05, 0x13, 0x15] {
+        for fill_code in [0x21, 0x31] {
+            let mut device = fixture_enabled(2, 0, 0x80, 2);
+            let memory = device.memory().clone();
+            arm(run, &mut device, 0x20, queued_target);
+            for word in [0x1357, 0x2468] {
+                assert_eq!(run(&mut device, Op::Data(word)), Ok(Value::Unit));
+            }
+            arm(run, &mut device, 0x2000, fill_code);
+            assert_eq!(device.fifo().len(), 2);
+            assert_eq!(
+                device.fifo().front().unwrap().command,
+                command(0x20, queued_target)
+            );
+            assert_eq!(run(&mut device, Op::Data(0xabcd)), Ok(Value::Unit));
+            let mut at = device.now().get();
+            for remaining in [2, 1, 1, 0] {
+                at = slot_after(at);
+                advance(run, &mut device, at);
+                assert_eq!(device.fifo().len(), remaining);
+                counters(&device, 2, 0, 0x80);
+                assert_eq!(device.command(), command(0x2002, fill_code));
+            }
+            assert_eq!(&device.memory().vram()[0x2000..0x2002], &[0xab, 0xcd]);
+            advance(run, &mut device, slot_after(slot_after(at)));
+            let mut vram = memory.vram().to_vec();
+            vram[0x2000..0x2006].copy_from_slice(&[0xab, 0xcd, 0, 0xab, 0, 0xab]);
+            let mut cram = memory.known_cram().unwrap().to_vec();
+            let mut vsram = memory.vsram().to_vec();
+            if queued_target & !0x10 == 3 {
+                cram[16..18].copy_from_slice(&[0x1357 & 0x0eee, 0x2468 & 0x0eee]);
+            } else {
+                vsram[16..18].copy_from_slice(&[0x1357 & 0x07ff, 0x2468 & 0x07ff]);
+            }
+            assert_eq!(device.memory().vram(), vram.as_slice());
+            assert_eq!(device.memory().known_cram().unwrap(), cram.as_slice());
+            assert_eq!(device.memory().vsram(), vsram.as_slice());
+            assert_eq!(device.command(), command(0x2006, fill_code & !0x20));
+            counters(&device, 0, 2, 0x80);
+        }
+    }
 }
 
 pub fn command_guards_and_busy_with(run: &mut Run<'_>) {
+    for queued_target in [0x03, 0x05, 0x13, 0x15] {
+        for fill_code in [0x21, 0x31] {
+            let mut device = fixture_enabled(2, 0, 0x80, 2);
+            arm(run, &mut device, 0x20, queued_target);
+            assert_eq!(run(&mut device, Op::Data(0x1357)), Ok(Value::Unit));
+            arm(run, &mut device, 0x2000, fill_code);
+            let at = slot_after(device.now().get());
+            reject(
+                run,
+                &mut device,
+                Op::Advance(at),
+                Error::Schedule(VdpScheduleError::Dma(VdpDmaError::PendingInputs)),
+            );
+            counters(&device, 2, 0, 0x80);
+            assert_eq!(device.fifo().len(), 1);
+            assert_eq!(
+                device.fifo().front().unwrap().command,
+                command(0x20, queued_target)
+            );
+        }
+    }
+    for (mode, fill_code, queued_target) in [(0x80, 0x21, 9), (0x80, 0x23, 5), (0x80, 0x25, 3)] {
+        let mut device = fixture_enabled(2, 0, mode, 2);
+        arm(run, &mut device, 0x20, queued_target);
+        assert_eq!(run(&mut device, Op::Data(0x1357)), Ok(Value::Unit));
+        assert!(run(&mut device, Op::Control(first_word(0x2000, fill_code))).is_ok());
+        reject(
+            run,
+            &mut device,
+            Op::Control(second_word(0x2000, fill_code)),
+            dma(VdpDmaError::PendingInputs),
+        );
+    }
     for (mode, code) in [(0x80, 0x21), (0xc0, 0x30)] {
         let mut disabled = fixture(2, 0, mode, 1);
         assert!(run(&mut disabled, Op::Control(first_word(0x2000, code))).is_ok());
-        if mode == 0x80 {
-            assert!(run(&mut disabled, Op::Control(second_word(0x2000, code))).is_ok());
-            assert_eq!(disabled.command(), command(0x2000, 1));
-        } else {
-            reject(
-                run,
-                &mut disabled,
-                Op::Control(second_word(0x2000, code)),
-                Error::Port(VdpPortError::Control(VdpWriteError::UnsupportedCommand(
-                    command(0x2000, 0x10),
-                ))),
-            );
-        }
+        assert!(run(&mut disabled, Op::Control(second_word(0x2000, code))).is_ok());
+        assert_eq!(disabled.command(), command(0x2000, code & !0x20));
         status(run, &mut disabled, false, true);
+        if mode == 0xc0 {
+            let memory = disabled.memory().clone();
+            assert_eq!(run(&mut disabled, Op::Data(0xabcd)), Ok(Value::Unit));
+            assert_eq!(disabled.command(), command(0x2001, 0x10));
+            let end = slot_after(slot_after(disabled.now().get()));
+            advance(run, &mut disabled, end);
+            counters(&disabled, 2, 0, mode);
+            assert_eq!(disabled.memory(), &memory);
+            status(run, &mut disabled, false, true);
+        }
         let base = fixture_enabled(2, 0, mode, 1);
         for invalid in 0x20..0x40 {
             if invalid & 3 == 2
-                || (mode == 0x80 && matches!(invalid, 0x21 | 0x31))
-                || (mode == 0xc0 && invalid == 0x30)
+                || (mode == 0x80 && matches!(invalid, 0x21 | 0x23 | 0x25 | 0x31 | 0x33 | 0x35))
+                || (mode == 0xc0 && invalid & 0x10 != 0)
             {
                 continue;
             }

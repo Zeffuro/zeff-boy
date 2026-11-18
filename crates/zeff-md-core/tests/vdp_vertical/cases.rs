@@ -287,7 +287,7 @@ pub fn selector_partition_with(
             let result = if value & mask == wanted {
                 accepted += 1;
                 valid
-            } else if index == 12 && value & mask == 6 {
+            } else if index == 12 && matches!(value & mask, 2 | 6) {
                 accepted += 1;
                 (
                     Ok(0xe0),
@@ -307,7 +307,7 @@ pub fn selector_partition_with(
         }
         assert_eq!(
             (accepted, rejected),
-            if index == 1 { (32, 96) } else { (32, 32) }
+            if index == 1 { (32, 96) } else { (48, 16) }
         );
     }
     let registers = known(0x44, 0);
@@ -342,7 +342,7 @@ pub fn pending_publication_with(
 ) {
     let clock = VdpVerticalTiming::at_counters_zero(tick(1000));
     let at = tick(1000 + 765320);
-    for (index, value) in [(1, 0x4c), (12, 2), (7, 0x31)] {
+    for (index, value) in [(1, 0x4c), (12, 4), (7, 0x31)] {
         let mut registers = known(0x44, 0);
         registers.advance_to(tick(41)).unwrap();
         let write = registers.queue_register(index, value).unwrap();

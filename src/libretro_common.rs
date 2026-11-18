@@ -10,6 +10,7 @@ pub(crate) enum LibretroPlatform {
     Pce = 6,
     PceCd = 7,
     SuperGrafx = 8,
+    Md = 9,
 }
 
 impl LibretroPlatform {
@@ -24,6 +25,7 @@ impl LibretroPlatform {
             Self::Pce => "NEC - PC Engine - TurboGrafx 16",
             Self::PceCd => "NEC - PC Engine CD - TurboGrafx-CD",
             Self::SuperGrafx => "NEC - PC Engine SuperGrafx",
+            Self::Md => "Sega - Mega Drive - Genesis",
         }
     }
 
@@ -38,6 +40,7 @@ impl LibretroPlatform {
             Self::Pce => "PC Engine / TurboGrafx-16",
             Self::PceCd => "PC Engine CD / TurboGrafx-CD",
             Self::SuperGrafx => "SuperGrafx",
+            Self::Md => "Mega Drive / Genesis",
         }
     }
 
@@ -52,6 +55,7 @@ impl LibretroPlatform {
             Self::Pce => "pce",
             Self::PceCd => "pce-cd",
             Self::SuperGrafx => "supergrafx",
+            Self::Md => "md",
         }
     }
 
@@ -66,6 +70,7 @@ impl LibretroPlatform {
             Self::Pce => &[".pce"],
             Self::PceCd => &[".cue", ".chd"],
             Self::SuperGrafx => &[".pce"],
+            Self::Md => &[".md", ".gen", ".bin", ".smd"],
         }
     }
 

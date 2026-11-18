@@ -40,7 +40,7 @@ impl ClockedBus for TraceBus<'_> {
     }
 }
 
-fn ready(sound: &[u8]) -> Emulator {
+pub(super) fn ready(sound: &[u8]) -> Emulator {
     let mut machine = super::machine(&[0x4e71, 0x2010, 0x4e71, 0x4e71]);
     machine.bus.ram.fill(0xde);
     machine.bus.sound.set_reset(false);
@@ -61,11 +61,11 @@ fn ready(sound: &[u8]) -> Emulator {
     machine.concurrent_sound = true;
     machine
         .cpu
-        .prime(&mut ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        })
+        .prime(&mut ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        ))
         .unwrap();
     machine.step_instruction().unwrap();
     assert_eq!(machine.bus.now.get(), 84);
@@ -78,11 +78,11 @@ fn automatic_load_reservation_samples_after_one_finite_hold() {
     let mut copied = machine.clone();
     for candidate in [&mut machine, &mut copied] {
         let mut bus = TraceBus {
-            inner: ScheduledBus {
-                bus: &mut candidate.bus,
-                cpu: &mut candidate.sound_cpu,
-                schedule: &mut candidate.sound_schedule,
-            },
+            inner: ScheduledBus::new(
+                &mut candidate.bus,
+                &mut candidate.sound_cpu,
+                &mut candidate.sound_schedule,
+            ),
             reads: Vec::new(),
         };
         let step = candidate.cpu.step(&mut bus).unwrap();
@@ -116,11 +116,11 @@ fn read(address: u32) -> BusAccess {
 #[test]
 fn bank_access_is_latched_and_waiting_main_gets_the_next_turn() {
     let mut machine = ready(&[0x22, 0, 0x80, 0x76]);
-    let mut bus = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    };
+    let mut bus = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    );
     bus.idle(CpuClocks(12), 14);
     assert_eq!(bus.bus.now.get(), 182);
     let low = bus.schedule.pending.as_ref().unwrap();
@@ -192,16 +192,17 @@ fn automatic_mapped_fault_retains_waits_and_prior_sound_write() {
 fn concurrent_reset_rolls_back_first_and_second_prime_failures() {
     for (headroom, release) in [(56, 15), (100, 50)] {
         let mut machine = ready(&[0x36, 0x55, 0x76]);
-        ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .idle(CpuClocks(12), 4);
         let pending = machine.sound_schedule.pending.as_mut().unwrap();
         assert_eq!(pending.bank_access.unwrap().value, 0x55);
         pending.start = u64::MAX - release - 45;
         pending.deadline = u64::MAX - release;
+        machine.bus.vdp.retire_timed_port_history();
         machine.bus.now = MasterTicks::new(u64::MAX - headroom);
         let saved = machine.clone();
         assert!(machine.reset_cpu().is_err());
@@ -213,11 +214,11 @@ fn concurrent_reset_rolls_back_first_and_second_prime_failures() {
 #[test]
 fn reservation_overflow_discards_only_unpublished_phase() {
     let mut machine = ready(&[0x36, 0x55, 0x76]);
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .idle(CpuClocks(12), 4);
     machine.bus.ram[0x8004] = 0xa6;
     let cpu = machine.sound_cpu.clone();
@@ -225,7 +226,7 @@ fn reservation_overflow_discards_only_unpublished_phase() {
     machine.sound_schedule.advance(
         &mut machine.sound_cpu,
         &mut machine.bus.sound,
-        &machine.bus.cartridge,
+        &mut machine.bus.cartridge,
         &mut machine.bus.ram,
         crate::hardware::sound::schedule::SoundInterval {
             sound_irq: None,
@@ -264,4 +265,136 @@ fn unclassified_and_multiple_accesses_never_gain_phase_ownership() {
     )
     .unwrap();
     assert!(pending.bank_access.is_none());
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn previous_value_waits_for_the_real_pending_sound_bank_write() {
+    use crate::hardware::bus::scheduled::CompactBus;
+
+    let mut seed = ready(&[0x22, 0, 0x80, 0x76]);
+    ScheduledBus::new(&mut seed.bus, &mut seed.sound_cpu, &mut seed.sound_schedule)
+        .idle(CpuClocks(12), 14);
+    assert_eq!(seed.bus.now.get(), 182);
+    assert_eq!(&seed.bus.ram[0x8000..0x8002], &[0xde, 0xde]);
+    let pending = seed.sound_schedule.pending.as_ref().unwrap();
+    assert_eq!((pending.start, pending.deadline), (150, 195));
+    assert_eq!(
+        pending.bank_access,
+        Some(BankAccess {
+            address: 0xff8000,
+            direction: Direction::Write,
+            value: 0,
+        })
+    );
+    seed.bus.sound.bank = 0x1c0;
+    for compact in [false, true] {
+        for observed in [false, true] {
+            let mut actual = seed.clone();
+            let mut expected = seed.clone();
+            let ordinary = ScheduledBus::new(
+                &mut expected.bus,
+                &mut expected.sound_cpu,
+                &mut expected.sound_schedule,
+            )
+            .write_cycle_observed(read(0xff8000), 0x1234, CpuClocks(26));
+            let scheduled = ScheduledBus::new(
+                &mut actual.bus,
+                &mut actual.sound_cpu,
+                &mut actual.sound_schedule,
+            );
+            let run = |bus: &mut dyn ClockedBus<Error = BusError>| {
+                if observed {
+                    let (cycle, previous) = bus.write_cycle_observed_with_previous(
+                        read(0xff8000),
+                        0x1234,
+                        CpuClocks(26),
+                    );
+                    assert_eq!(cycle, ordinary);
+                    assert_eq!(previous, [Some(0), Some(0xde)]);
+                } else {
+                    let (cycle, previous) =
+                        bus.write_cycle_with_previous(read(0xff8000), 0x1234, CpuClocks(26));
+                    assert_eq!(cycle, ordinary.cycle);
+                    assert_eq!(previous, [Some(0), Some(0xde)]);
+                }
+            };
+            if compact {
+                let mut bus = CompactBus(scheduled);
+                let (cycle, previous) = if observed {
+                    let (observed, previous) = bus.write_cycle_observed_with_previous(
+                        read(0xff8000),
+                        0x1234,
+                        CpuClocks(26),
+                    );
+                    assert_eq!(observed.samples, ordinary.samples);
+                    (observed.cycle, previous)
+                } else {
+                    bus.write_cycle_with_previous(read(0xff8000), 0x1234, CpuClocks(26))
+                };
+                assert_eq!(cycle.result.map_err(|error| *error), ordinary.cycle.result);
+                assert_eq!(cycle.wait_clocks, ordinary.cycle.wait_clocks);
+                assert_eq!(previous, [Some(0), Some(0xde)]);
+            } else {
+                run(&mut { scheduled });
+            }
+            assert_eq!(ordinary.cycle.wait_clocks, 2);
+            assert_eq!(actual.bus.now.get(), 224);
+            assert_eq!(&actual.bus.ram[0x8000..0x8002], &[0x12, 0x34]);
+            assert_eq!(actual, expected);
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn standard_sound_trace_restart_prime_failure_restores_actual_partial_and_output() {
+    use crate::sound_trace::{SoundCapture, SoundTraceContinuation};
+    use zeff_emu_common::debug::InstructionTraceStore;
+    for (headroom, release) in [(56, 15), (100, 50)] {
+        let mut machine = ready(&[0x36, 0x55, 0x76]);
+        let mut continuation = SoundTraceContinuation::default();
+        let mut rows = InstructionTraceStore::default();
+        rows.set_enabled(true);
+        ScheduledBus {
+            bus: &mut machine.bus,
+            cpu: &mut machine.sound_cpu,
+            schedule: &mut machine.sound_schedule,
+            capture: &mut continuation.attach(&mut rows),
+        }
+        .idle(CpuClocks(12), 4);
+        let pending = machine.sound_schedule.pending.as_mut().unwrap();
+        assert_eq!(pending.bank_access.unwrap().value, 0x55);
+        pending.start = u64::MAX - release - 45;
+        pending.deadline = u64::MAX - release;
+        machine.bus.vdp.retire_timed_port_history();
+        machine.bus.now = MasterTicks::new(u64::MAX - headroom);
+        let before = machine.clone();
+        let checkpoint = continuation.attach(&mut rows).checkpoint();
+        let retained = rows.iter().copied().collect::<Vec<_>>();
+        let gaps = continuation.gaps();
+        assert!(
+            machine
+                .reset_cpu_sound_traced(&mut continuation.attach(&mut rows))
+                .is_err()
+        );
+        assert_eq!(machine, before);
+        assert_eq!(rows.iter().copied().collect::<Vec<_>>(), retained);
+        assert_eq!(continuation.gaps(), gaps);
+        let mut control = before;
+        let mut control_continuation = SoundTraceContinuation::default();
+        let mut control_rows = InstructionTraceStore::default();
+        control_continuation
+            .attach(&mut control_rows)
+            .rollback(checkpoint);
+        assert!(machine.reset_sound_cpu_traced(&mut continuation.attach(&mut rows)));
+        assert!(
+            control.reset_sound_cpu_traced(&mut control_continuation.attach(&mut control_rows))
+        );
+        assert_eq!(machine, control);
+        assert_eq!(
+            rows.iter().copied().collect::<Vec<_>>(),
+            control_rows.iter().copied().collect::<Vec<_>>()
+        );
+    }
 }

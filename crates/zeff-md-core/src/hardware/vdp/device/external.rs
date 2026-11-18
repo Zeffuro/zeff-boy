@@ -53,6 +53,7 @@ impl State {
         Ok(())
     }
 
+    #[inline(never)]
     pub(super) fn external_release(
         &self,
         region: Region,
@@ -89,7 +90,7 @@ impl State {
                 .expect("external DMA progress");
             state = state
                 .prepare_chunk_to_from(next, region, false, memory, Some(source))?
-                .0;
+                .state;
         }
         Ok(Some(state.now()))
     }

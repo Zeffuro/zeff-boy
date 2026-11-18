@@ -107,7 +107,6 @@ pub fn calendar_drives_captured_fifo() {
         entry(4, 5, 0xfd67),
         entry(3, 1, 0x5678),
     ];
-    // These captured heads are already eligible; this is not a CPU arrival trace.
     for write in writes {
         fifo.push(write).unwrap();
     }
@@ -147,7 +146,7 @@ pub fn calendar_drives_captured_fifo() {
         assert_eq!(memory, copied_memory);
         after = next;
     }
-    assert_eq!(memory.cram()[1], 0x0aac);
+    assert_eq!(memory.known_cram().unwrap()[1], 0x0aac);
     assert_eq!(memory.vsram()[2], 0x0567);
     assert_eq!(memory.read_word(command(2, 0)), Ok(0x7856));
     assert_eq!(fifo.status_bits(), 0x0200);

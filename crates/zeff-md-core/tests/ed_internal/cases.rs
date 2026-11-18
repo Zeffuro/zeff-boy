@@ -54,7 +54,12 @@ pub fn nibble_reset_and_fault_keep_uncommitted_registers() {
     assert_eq!(machine.timing_snapshot().now(), now);
     assert_eq!(machine.peek(0xa0_0100), Some(0x34));
     assert!(!machine.sound_instruction_pending());
-    let mut machine = start(&[0x21, 0, 0x80, 0x3e, 0x12, 0xed, 0x67, 0x76], 11, &[], &[]);
+    let mut machine = start(
+        &[0x21, 0, 0x80, 0x3e, 0x12, 0xed, 0x67, 0x76],
+        11,
+        &multi::bank_sources(0x80),
+        &[],
+    );
     assert_eq!(machine.sound_cpu().cycles(), 32);
     let cpu = machine.sound_cpu().clone();
     let mut copied = machine.clone();
@@ -67,6 +72,9 @@ pub fn nibble_reset_and_fault_keep_uncommitted_registers() {
     assert_eq!(machine, copied);
     assert_eq!(machine.sound_cpu(), &cpu);
     assert_eq!(machine.sound_cpu().regs().a, 0x12);
+    assert_eq!(machine.sound_cpu().regs().f, 0);
+    assert_eq!(machine.sound_cpu().regs().pc, 7);
+    assert!(machine.sound_instruction_pending());
     let saved = machine.clone();
     assert_eq!(machine.step_instruction(), expected);
     assert_eq!(machine, saved);

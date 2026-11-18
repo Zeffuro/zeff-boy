@@ -48,7 +48,6 @@ impl From<VdpRegisterError> for VdpScheduleError {
 }
 
 impl VdpInterrupts {
-    /// Consumes one ordered event on aligned clocks with stable latched mode history.
     pub fn advance_registers_to(
         &mut self,
         at: MasterTicks,
@@ -64,6 +63,18 @@ impl VdpInterrupts {
         region: Region,
         registers: &mut VdpRegisterPipeline,
         require_display: bool,
+    ) -> Result<Option<VdpEvent>, VdpScheduleError> {
+        let mut position = None;
+        self.advance_pair_with_position(at, region, registers, require_display, &mut position)
+    }
+
+    pub(in crate::hardware::vdp) fn advance_pair_with_position(
+        &mut self,
+        at: MasterTicks,
+        region: Region,
+        registers: &mut VdpRegisterPipeline,
+        require_display: bool,
+        position: &mut Option<super::super::timing::FieldPosition>,
     ) -> Result<Option<VdpEvent>, VdpScheduleError> {
         if self.now != registers.now() {
             return Err(VdpScheduleError::ClockMismatch {
@@ -82,15 +93,23 @@ impl VdpInterrupts {
             }
             .into());
         }
-        let interrupt =
-            match self
-                .timing
-                .next_counter_edge(self.now, region, &published, require_display)
-            {
-                Ok(edge) => Some(edge),
-                Err(VdpTimingError::ClockOverflow) => None,
-                Err(error) => return Err(VdpInterruptError::from(error).into()),
-            };
+        if self.timing.blank.is_some() {
+            return self.advance_blank_pair(at, region, registers, require_display);
+        }
+        if self.timing.uses_history(registers) {
+            return self.advance_anchored_pair(at, region, registers, require_display);
+        }
+        let interrupt = match self.timing.next_counter_edge_with_position(
+            self.now,
+            region,
+            &published,
+            require_display,
+            position,
+        ) {
+            Ok(edge) => Some(edge),
+            Err(VdpTimingError::ClockOverflow) => None,
+            Err(error) => return Err(VdpInterruptError::from(error).into()),
+        };
         let write = registers.pending().filter(|write| write.publish_at <= at);
         if let (Some(edge), Some(write)) = (interrupt, write)
             && edge.at == write.publish_at
@@ -133,7 +152,6 @@ impl VdpInterrupts {
         Ok(event)
     }
 
-    /// Advances an isolated IACK interval, rejecting a register/interrupt edge at its completion.
     pub fn complete_scheduled_acknowledge(
         &mut self,
         at: MasterTicks,

@@ -78,9 +78,10 @@ fn pure_register_forms_match_existing_semantics_with_explicit_schedule() {
     }
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn side_effecting_aliases_and_exception_operands_never_touch_timed_bus() {
-    for opcode in [0x4188, 0x80c8, 0x81c8, 0x5208, 0x4448, 0x4888] {
+    for opcode in [0x4188, 0x80c8, 0x81c8, 0x5208, 0x4888] {
         let mut timed = cpu(0x2000);
         timed.pipeline.as_mut().unwrap().words[0] = opcode;
         let original = timed.clone();

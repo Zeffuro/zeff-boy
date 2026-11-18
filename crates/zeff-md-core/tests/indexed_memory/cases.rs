@@ -55,7 +55,12 @@ pub fn indexed_reset_and_write_fault() {
     assert_eq!(machine.timing_snapshot().now(), now);
     assert_eq!(machine.peek(0xa0_0100), Some(0));
     assert!(!machine.sound_instruction_pending());
-    let mut machine = start(&[0xfd, 0x21, 0, 0x80, 0xfd, 0x77, 0, 0x76], 9, &[], &[]);
+    let mut machine = start(
+        &[0xfd, 0x21, 0, 0x80, 0xfd, 0x77, 0, 0x76],
+        9,
+        &multi::bank_sources(0x80),
+        &[],
+    );
     assert_eq!(machine.sound_cpu().cycles(), 30);
     let before = machine.sound_cpu().clone();
     let mut copied = machine.clone();

@@ -116,10 +116,7 @@ impl PrefetchCpu {
             self.idle(bus, internal)?;
         }
         self.registers = candidate;
-        self.pipeline = Some(Pipeline {
-            address: candidate.pc,
-            words: [pipeline.words[1], next],
-        });
+        self.pipeline = Some(Pipeline::sampled(candidate.pc, [pipeline.input(1), next]));
         Ok(true)
     }
 }

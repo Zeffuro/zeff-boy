@@ -84,8 +84,11 @@ pub fn bounded_loading_and_startup() {
     image[7] = 0;
     image[3] |= 1;
     assert_eq!(
-        Emulator::new(image, LoadConfig::default()),
-        Err(LoadError::ResetStackPointer(0x00ff_fffd))
+        Emulator::new(image, LoadConfig::default())
+            .unwrap()
+            .registers()
+            .ssp,
+        0x00ff_fffd
     );
 }
 
@@ -307,5 +310,7 @@ fn main_fault(fault: zeff_md_core::MachineFault) -> TimingFault<BusError> {
     match fault {
         zeff_md_core::MachineFault::Main(fault) => fault,
         zeff_md_core::MachineFault::Sound(fault) => panic!("sound fault: {fault:?}"),
+        zeff_md_core::MachineFault::Input(fault) => panic!("input fault: {fault:?}"),
+        zeff_md_core::MachineFault::PreciseTiming(fault) => panic!("precise timing fault: {fault}"),
     }
 }

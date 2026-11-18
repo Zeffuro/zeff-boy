@@ -1,5 +1,5 @@
 use super::physical::{CriticalFault, EntryBus, EntryFault, Group0Capture, PhysicalEntryState};
-use super::{CpuClocks, Pipeline, PrefetchCpu, TimedStep, TimingFault};
+use super::{CpuClocks, InstructionInput, Pipeline, PrefetchCpu, TimedStep, TimingFault};
 use crate::bus::{BusAccess, Direction};
 use crate::constants::TRACE;
 
@@ -38,11 +38,16 @@ pub struct InstructionReport<T, E> {
     pub outcome: InstructionOutcome<T, E>,
 }
 
-/// Total elapsed belongs to the device callback. AtGroup0Entry includes abort,
-/// release and transition; the CPU adds only the subsequent entry schedule.
-/// Host failures retain completed phase effects, including Dn/CCR changes and writes.
+/// Callbacks own elapsed time through abort release; completed effects persist.
 pub trait InstructionBus: EntryBus {
-    /// Operands and prefetch share physical D15..D0 lane placement.
+    fn instruction_input(&mut self, _address: u32, _input: InstructionInput) {}
+    fn read_instruction_fetch(
+        &mut self,
+        access: BusAccess,
+        start: CpuClocks,
+    ) -> InstructionReport<InstructionInput, Self::Error> {
+        super::instruction_origin::unknown_physical(self.read_instruction(access, start))
+    }
     fn read_instruction(
         &mut self,
         access: BusAccess,
@@ -56,7 +61,7 @@ pub trait InstructionBus: EntryBus {
         start: CpuClocks,
     ) -> InstructionReport<(), Self::Error>;
 
-    /// Detection only; AtGroup0Entry ends at aser1. Complete supplies no such boundary.
+    /// Detects misalignment; AtGroup0Entry ends at aser1.
     fn detect_instruction_address_error(
         &mut self,
         _access: BusAccess,
@@ -134,7 +139,6 @@ fn selected_instruction(word: u16, supervisor: bool) -> bool {
 }
 
 impl PrefetchCpu {
-    /// Selected instruction captures with supplied transition timing.
     pub fn step_physical_instruction<B: InstructionBus>(
         &mut self,
         bus: &mut B,
@@ -170,6 +174,7 @@ impl PrefetchCpu {
                 },
             ));
         }
+        bus.instruction_input(pipeline.address, pipeline.input(0));
         self.physical_state = PhysicalEntryState::Idle;
         let start = self.clock.0;
         let pc = self.registers.pc;
@@ -241,7 +246,7 @@ impl PrefetchCpu {
                 pc.wrapping_add(2),
                 opcode,
             );
-            let first = match self.physical_read(bus, phase) {
+            let first = match self.physical_fetch(bus, phase) {
                 Ok(value) => value,
                 Err(exit) => return Self::physical_exit(exit, opcode, start, self.clock.0),
             };
@@ -249,17 +254,14 @@ impl PrefetchCpu {
                 InstructionPhase::BranchSecond,
                 target.wrapping_add(2),
                 target.wrapping_add(2),
-                first,
+                first.value,
             );
-            let second = match self.physical_read(bus, phase) {
+            let second = match self.physical_fetch(bus, phase) {
                 Ok(value) => value,
                 Err(exit) => return Self::physical_exit(exit, opcode, start, self.clock.0),
             };
             self.registers.pc = target;
-            self.pipeline = Some(Pipeline {
-                address: target,
-                words: [first, second],
-            });
+            self.pipeline = Some(Pipeline::sampled(target, [first, second]));
         } else {
             if opcode != 0x4e71 {
                 self.entry_reserve().map_err(InstructionFault::Entry)?;
@@ -273,15 +275,15 @@ impl PrefetchCpu {
                 pc.wrapping_add(4),
                 pipeline.words[1],
             );
-            let next = match self.physical_read(bus, phase) {
+            let next = match self.physical_fetch(bus, phase) {
                 Ok(value) => value,
                 Err(exit) => return Self::physical_exit(exit, opcode, start, self.clock.0),
             };
             self.registers.pc = pc.wrapping_add(2);
-            self.pipeline = Some(Pipeline {
-                address: self.registers.pc,
-                words: [pipeline.words[1], next],
-            });
+            self.pipeline = Some(Pipeline::sampled(
+                self.registers.pc,
+                [pipeline.input(1), next],
+            ));
         }
         Ok(PhysicalInstructionStep::Instruction(TimedStep {
             opcode,

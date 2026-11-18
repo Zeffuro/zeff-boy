@@ -18,12 +18,17 @@ impl Emulator {
 
     pub fn nominal_frame_duration_ns(&self) -> u64 {
         let region = self.region();
+        if self.bus.owned.is_some() {
+            return (region.frame_ticks() * 1_000_000_000 + region.master_hz() / 2)
+                / region.master_hz();
+        }
         let interlaced = self
             .bus
             .vdp
             .field_position(region)
             .expect("validated VDP calendar")
-            .interlaced;
+            .mode
+            .interlaced();
         let lines_x2 = region.frame_lines() * 2;
         let lines_x2 = if interlaced {
             if region == crate::Region::Pal {
@@ -34,12 +39,16 @@ impl Emulator {
         } else {
             lines_x2
         };
-        let ticks_x2 = lines_x2 * crate::constants::VDP_LINE_TICKS;
+        let ticks_x2 = lines_x2 * self.bus.vdp.effective_line_ticks();
         (ticks_x2 * 1_000_000_000 + region.master_hz()) / (region.master_hz() * 2)
     }
 
+    /// Sized backing storage; present only when `framebuffer_available()` is true.
     pub fn framebuffer(&self) -> &[u8] {
         self.bus.video.framebuffer()
+    }
+    pub fn framebuffer_available(&self) -> bool {
+        self.bus.video.framebuffer_available()
     }
     pub fn framebuffer_dimensions(&self) -> (usize, usize) {
         self.bus.video.dimensions()
@@ -56,8 +65,10 @@ impl Emulator {
     pub fn video_error(&self) -> Option<VdpLineError> {
         self.bus.video.raster_error()
     }
-    /// One caller-selected deadline; retrieve its row or capture error after execution.
     pub fn queue_vdp_capture(&mut self, at: MasterTicks) -> Result<(), VdpCaptureError> {
+        if self.bus.owned.is_some() {
+            return Err(VdpCaptureError::Busy);
+        }
         self.bus.video.queue(at, self.bus.now)
     }
 

@@ -5,6 +5,12 @@ use zeff_m68k::bus::Direction;
 use zeff_md_core::{Emulator, LoadConfig, MachineFault, SoundFault};
 use zeff_z80::CpuState;
 
+pub(crate) fn bank_sources(bank: u16) -> Vec<(u32, u8)> {
+    (0..9)
+        .map(|bit| (0x6000, ((bank >> bit) & 1) as u8))
+        .collect()
+}
+
 pub(crate) fn start(
     sound: &[u8],
     nops: usize,
@@ -82,14 +88,14 @@ pub fn address_and_partial_write_survive_grant() {
 }
 
 pub fn partial_write_fault_and_reset() {
-    let sound = [0x21, 0x34, 0x12, 0x22, 3, 0x40, 0x76];
+    let sound = [0x21, 0x34, 0x12, 0x22, 0x17, 0x7f, 0x76];
     let mut machine = start(&sound, 7, &[], &[]);
     assert_eq!(machine.sound_cpu().cycles(), 23);
-    assert_eq!(machine.opn2_snapshot().status & 0x80, 0x80);
+    assert_eq!(machine.psg_snapshot().periods[0], 0x340);
     let cpu = machine.sound_cpu().clone();
     let mut copied = machine.clone();
     let expected = MachineFault::Sound(SoundFault::UnsupportedAccess {
-        address: 0x4004,
+        address: 0x7f18,
         direction: Direction::Write,
     });
     let result = machine.step_instruction();
@@ -97,13 +103,13 @@ pub fn partial_write_fault_and_reset() {
     assert_eq!(result, Err(expected.clone()));
     assert_eq!(machine, copied);
     assert_eq!(machine.sound_cpu(), &cpu);
-    assert_eq!(machine.opn2_snapshot().status & 0x80, 0x80);
+    assert_eq!(machine.psg_snapshot().periods[0], 0x340);
     let saved = machine.clone();
     assert_eq!(machine.step_instruction(), Err(expected));
     assert_eq!(machine, saved);
     let now = machine.timing_snapshot().now();
     machine.reset_sound_cpu();
-    assert_eq!(machine.opn2_snapshot().status & 0x80, 0x80);
+    assert_eq!(machine.psg_snapshot().periods[0], 0x340);
     assert_eq!(machine.timing_snapshot().now(), now);
     assert!(!machine.sound_instruction_pending());
     Reset::reset(&mut machine);

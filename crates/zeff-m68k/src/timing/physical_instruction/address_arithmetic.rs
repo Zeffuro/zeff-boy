@@ -61,9 +61,9 @@ impl PrefetchCpu {
             InstructionPhase::OperandRefill,
             address,
             address,
-            operand.retained,
+            operand.retained.value,
         );
-        let fetched = self.physical_read(bus, phase)?;
+        let fetched = self.physical_fetch(bus, phase)?;
         if profile.source.size == Size::Word {
             self.entry_idle(bus, 2)
                 .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))?;
@@ -73,10 +73,10 @@ impl PrefetchCpu {
         self.entry_idle(bus, 2)
             .map_err(|e| TransferExit::Fault(InstructionFault::Entry(e)))?;
         self.registers.pc = operand.anchor;
-        self.pipeline = Some(Pipeline {
-            address: operand.anchor,
-            words: [operand.retained, fetched],
-        });
+        self.pipeline = Some(Pipeline::sampled(
+            operand.anchor,
+            [operand.retained, fetched],
+        ));
         Ok(())
     }
 }

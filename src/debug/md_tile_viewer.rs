@@ -27,6 +27,13 @@ pub(super) fn draw_md_tile_viewer_content(
     });
     ui.ctx()
         .data_mut(|data| data.insert_persisted(palette_id, palette));
+    if gfx.palette[palette * 16..(palette + 1) * 16]
+        .iter()
+        .any(Option::is_none)
+    {
+        ui.weak("The selected palette contains unknown CRAM colors.");
+        return;
+    }
     ui.weak(format!(
         "8 × {tile_height} patterns · normal intensity · color 0 shown opaque"
     ));
@@ -69,7 +76,14 @@ fn refresh_image(state: &mut TileViewerState, gfx: &MdGraphicsData, palette: usi
         return;
     };
     let height = tile_count(tile_height).div_ceil(COLUMNS) * tile_height;
-    let palette_bytes = gfx.palette.as_flattened();
+    let Some(palette_colors) = gfx.palette[palette * 16..(palette + 1) * 16]
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    let palette_bytes = palette_colors.as_flattened();
     let signature = u64::from(crc32fast::hash(&gfx.vram))
         ^ u64::from(crc32fast::hash(palette_bytes)).rotate_left(17)
         ^ (palette as u64).rotate_left(41)
@@ -95,7 +109,9 @@ fn render_tiles(
         for y in 0..tile_height {
             for x in 0..8 {
                 let color = pattern_color(&gfx.vram, tile, tile_height, x, y);
-                let rgba = gfx.palette[palette * 16 + color];
+                let Some(rgba) = gfx.palette[palette * 16 + color] else {
+                    return;
+                };
                 image[(tile % COLUMNS * 8 + x, tile / COLUMNS * tile_height + y)] =
                     egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
             }

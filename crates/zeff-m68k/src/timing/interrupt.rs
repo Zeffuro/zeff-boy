@@ -12,9 +12,20 @@ pub enum InterruptVector {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum BoundaryDecision {
+    #[default]
+    LegacyBoundary,
+    Observed {
+        pending: bool,
+        level: u8,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InterruptState {
     level: u8,
     level7_edge: bool,
+    decision: BoundaryDecision,
 }
 
 impl InterruptState {
@@ -23,17 +34,23 @@ impl InterruptState {
     }
 
     pub(super) fn from_state_parts(level: u8, level7_edge: bool) -> Option<Self> {
-        (level <= 7).then_some(Self { level, level7_edge })
+        (level <= 7).then_some(Self {
+            level,
+            level7_edge,
+            decision: BoundaryDecision::LegacyBoundary,
+        })
     }
 
     pub fn level(&self) -> u8 {
         self.level
     }
 
-    /// Boundary-level input; this does not reproduce physical IPL latch latency.
     pub fn set_level(&mut self, level: u8) -> bool {
         if level > 7 {
             return false;
+        }
+        if level == 7 || self.level == 7 || self.level7_edge {
+            self.clear_observation();
         }
         if level == 7 && self.level != 7 {
             self.level7_edge = true;
@@ -45,6 +62,8 @@ impl InterruptState {
     pub(super) fn accepted(&self, sr: u16) -> Option<u8> {
         if self.level7_edge {
             Some(7)
+        } else if let BoundaryDecision::Observed { pending, level } = self.decision {
+            pending.then_some(level)
         } else if self.level > ((sr >> 8) & 7) as u8 {
             Some(self.level)
         } else {
@@ -52,8 +71,42 @@ impl InterruptState {
         }
     }
 
+    pub(super) fn clear_observation(&mut self) {
+        self.decision = BoundaryDecision::LegacyBoundary;
+    }
+
+    pub(super) fn observed_parts(&self) -> Option<(bool, u8)> {
+        match self.decision {
+            BoundaryDecision::LegacyBoundary => None,
+            BoundaryDecision::Observed { pending, level } => Some((pending, level)),
+        }
+    }
+
+    pub(super) fn restore_observation(&mut self, pending: bool, level: u8) -> bool {
+        if level >= 7 || pending && level == 0 || self.level == 7 || self.level7_edge {
+            return false;
+        }
+        self.decision = BoundaryDecision::Observed { pending, level };
+        true
+    }
+
+    pub(super) fn observe(&mut self, samples: Option<InterruptSamples>, mask: u8) {
+        self.clear_observation();
+        if let Some(samples) = samples {
+            let (first, second) = samples.levels();
+            self.restore_observation(first == second && second > mask, second);
+        }
+    }
+
+    fn consume_boundary(&mut self, sr: u16) -> Option<u8> {
+        let accepted = self.accepted(sr);
+        self.clear_observation();
+        accepted
+    }
+
     pub(super) fn clear_accepted_edge(&mut self) {
         self.level7_edge = false;
+        self.clear_observation();
     }
 }
 
@@ -88,7 +141,10 @@ impl PrefetchCpu {
         {
             return Err(TimingFault::Unprimed);
         }
-        if let Some(level) = self.interrupts.accepted(self.registers.status_register()) {
+        if let Some(level) = self
+            .interrupts
+            .consume_boundary(self.registers.status_register())
+        {
             return self.interrupt(bus, level);
         }
         if self.stopped {
@@ -148,29 +204,30 @@ impl PrefetchCpu {
             AccessKind::Vector,
         )?;
         let target = (u32::from(high) << 16) | u32::from(low);
-        let first = self.read_word(
+        let (first, samples) = self.read_observed_word(
             bus,
             target,
             FunctionCode::SupervisorProgram,
-            AccessKind::Prefetch,
+            InterruptAperture::HandlerRefill,
         )?;
         self.idle(bus, 2)?;
-        let second = self.read_word(
-            bus,
-            target.wrapping_add(2),
-            FunctionCode::SupervisorProgram,
-            AccessKind::Prefetch,
-        )?;
+        let final_start = self.clock;
+        let second =
+            self.fetch_with_fc(bus, target.wrapping_add(2), FunctionCode::SupervisorProgram)?;
         self.registers.ssp = sp.wrapping_sub(6);
         self.registers.set_status_register(
             ((sr | SUPERVISOR) & !(TRACE | INTERRUPT_MASK)) | (u16::from(level) << 8),
         );
         self.registers.pc = target;
-        self.pipeline = Some(Pipeline {
-            address: target,
-            words: [first, second],
-        });
+        self.pipeline = Some(Pipeline::sampled(target, [first, second]));
         self.stopped = false;
+        self.publish_interrupt_samples(if level == 7 { None } else { samples }, final_start, level);
+        self.record_control_entry(
+            ControlFlowEntryKind::Interrupt { level, vector },
+            pc,
+            pc,
+            self.control_stack(ControlStackBank::Supervisor, sp, sp.wrapping_sub(4)),
+        );
         Ok(TimedOutcome::Interrupt {
             level,
             vector,
@@ -179,5 +236,7 @@ impl PrefetchCpu {
     }
 }
 
+#[cfg(test)]
+pub(super) mod sampling_tests;
 #[cfg(test)]
 mod tests;

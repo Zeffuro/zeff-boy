@@ -42,8 +42,16 @@ pub fn rmw_reset_discards_write() {
 }
 
 pub fn rmw_write_fault_keeps_read_phase() {
-    let mut machine = start(&[0x21, 0, 0x80, 0x34, 0x76], 4, &[], &[]);
+    let mut machine = start(
+        &[0x21, 0, 0x80, 0x34, 0x76],
+        4,
+        &multi::bank_sources(0x80),
+        &[],
+    );
     assert_eq!(machine.sound_cpu().cycles(), 18);
+    assert_eq!(machine.sound_cpu().regs().pc, 4);
+    assert_eq!(machine.sound_cpu().regs().hl(), 0x8000);
+    assert_eq!(machine.sound_cpu().regs().f, 0);
     let cpu = machine.sound_cpu().clone();
     let mut copied = machine.clone();
     let expected = Err(MachineFault::Sound(SoundFault::UnsupportedAccess {

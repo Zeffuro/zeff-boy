@@ -4,6 +4,9 @@ use crate::hardware::sound::schedule::PendingSound;
 use zeff_m68k::bus::{AccessKind, BusAccess, ByteLanes, FunctionCode};
 use zeff_m68k::timing::{ClockedBus, InterruptVector};
 
+#[path = "open_bus/word.rs"]
+mod word;
+
 fn access(address: u32, kind: AccessKind, lanes: ByteLanes) -> BusAccess {
     BusAccess {
         logical_address: address,
@@ -22,11 +25,11 @@ fn with_bus<T>(
     let clock = machine.bus.cpu_clock;
     if concurrent {
         f(
-            &mut ScheduledBus {
-                bus: &mut machine.bus,
-                cpu: &mut machine.sound_cpu,
-                schedule: &mut machine.sound_schedule,
-            },
+            &mut ScheduledBus::new(
+                &mut machine.bus,
+                &mut machine.sound_cpu,
+                &mut machine.sound_schedule,
+            ),
             clock,
         )
     } else {
@@ -52,7 +55,7 @@ fn seed(machine: &mut Emulator, concurrent: bool) {
         .map(|word| word >> 8),
         Ok(0x4e)
     );
-    assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
+    assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
 }
 
 #[test]
@@ -69,7 +72,7 @@ fn prefetch_sources_and_read_consumption() {
                 ),
                 Ok(0x7a55)
             );
-            assert_eq!(machine.bus.prefetch_upper, Some(0x7a));
+            assert_eq!(machine.bus.prefetch.upper(), Some(0x7a));
         }
         for offset in (0..=0xfe).step_by(2) {
             seed(&mut machine, concurrent);
@@ -90,7 +93,7 @@ fn prefetch_sources_and_read_consumption() {
                 ),
                 Ok(0x4f00)
             );
-            assert_eq!(machine.bus.prefetch_upper, None);
+            assert_eq!(machine.bus.prefetch.upper(), None);
             assert_eq!(machine.bus.sound, controls);
             assert_eq!(
                 read(
@@ -115,9 +118,9 @@ fn prefetch_sources_and_read_consumption() {
                         ByteLanes::Both
                     )
                 ),
-                Ok(0x100)
+                Ok(0x4f71)
             );
-            assert_eq!(machine.bus.prefetch_upper, None);
+            assert_eq!(machine.bus.prefetch.upper(), None);
         }
         for kind in [
             AccessKind::Data,
@@ -132,7 +135,7 @@ fn prefetch_sources_and_read_consumption() {
                 access(0x100, kind, ByteLanes::Both),
             )
             .unwrap();
-            assert_eq!(machine.bus.prefetch_upper, None);
+            assert_eq!(machine.bus.prefetch.upper(), None);
         }
         for lanes in [ByteLanes::Upper, ByteLanes::Lower] {
             seed(&mut machine, concurrent);
@@ -142,7 +145,7 @@ fn prefetch_sources_and_read_consumption() {
                 access(0x100, AccessKind::Prefetch, lanes),
             )
             .unwrap();
-            assert_eq!(machine.bus.prefetch_upper, None);
+            assert_eq!(machine.bus.prefetch.upper(), None);
         }
         let mut bytes = machine.bus.cartridge.bytes.to_vec();
         bytes.push(0x7a);
@@ -157,7 +160,7 @@ fn prefetch_sources_and_read_consumption() {
                 ),
                 Ok(if address == 0x200 { 0x7aff } else { 0xffff })
             );
-            assert_eq!(machine.bus.prefetch_upper, None);
+            assert_eq!(machine.bus.prefetch.upper(), None);
         }
     }
 }
@@ -172,22 +175,24 @@ fn completed_activity_invalidates_prefetch() {
                 bus.write_cycle(access(address, AccessKind::Data, ByteLanes::Both), 0, clock)
             });
             assert_eq!(result.result.is_ok(), address != 0xa11300);
-            assert_eq!(machine.bus.prefetch_upper, None);
+            assert_eq!(machine.bus.prefetch.upper(), None);
         }
         let mut machine = super::machine(&[0x4e71, 0x4e71]);
         seed(&mut machine, concurrent);
-        read(
-            &mut machine,
-            concurrent,
-            access(0xa11200, AccessKind::Data, ByteLanes::Upper),
-        )
-        .unwrap_err();
-        assert_eq!(machine.bus.prefetch_upper, None);
+        assert_eq!(
+            read(
+                &mut machine,
+                concurrent,
+                access(0xa11200, AccessKind::Data, ByteLanes::Upper),
+            ),
+            Ok(0x4e00)
+        );
+        assert_eq!(machine.bus.prefetch.upper(), None);
         seed(&mut machine, concurrent);
         with_bus(&mut machine, concurrent, |bus, clock| bus.idle(clock, 0));
-        assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
+        assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
         with_bus(&mut machine, concurrent, |bus, clock| bus.idle(clock, 1));
-        assert_eq!(machine.bus.prefetch_upper, None);
+        assert_eq!(machine.bus.prefetch.upper(), None);
         seed(&mut machine, concurrent);
         let result = with_bus(&mut machine, concurrent, |bus, clock| {
             bus.acknowledge_cycle(
@@ -201,17 +206,17 @@ fn completed_activity_invalidates_prefetch() {
                 InterruptVector::Autovector
             ))
         );
-        assert_eq!(machine.bus.prefetch_upper, None);
+        assert_eq!(machine.bus.prefetch.upper(), None);
         seed(&mut machine, concurrent);
         with_bus(&mut machine, concurrent, |bus, clock| {
             bus.begin_reset_output(clock).unwrap();
             bus.end_reset_output(clock);
         });
-        assert_eq!(machine.bus.prefetch_upper, None);
+        assert_eq!(machine.bus.prefetch.upper(), None);
         machine.reset_cpu().unwrap();
-        assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
+        assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
         Reset::reset(&mut machine);
-        assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
+        assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
     }
 }
 
@@ -240,7 +245,7 @@ fn failed_advancement_preserves_prefetch() {
                 3 => bus.idle(clock, 1),
                 _ => unreachable!(),
             });
-            assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
+            assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
             if operation == 3 {
                 assert!(machine.bus.clock_fault);
                 machine.bus.clock_fault = saved.bus.clock_fault;
@@ -294,7 +299,7 @@ fn sound_activity_and_stop_discard_observation() {
     assert_eq!(held.sound_cpu.cycles(), 0);
     assert_eq!(held.sound_deadline(), Some(MasterTicks::new(150)));
     assert!(!held.sound_bus_granted());
-    assert_eq!(held.bus.prefetch_upper, None);
+    assert_eq!(held.bus.prefetch.upper(), None);
     let mut machine = super::machine(&[0x4e71, 0x4e71]);
     machine.bus.sound.set_reset(false);
     let pending = PendingSound::prepare(
@@ -320,49 +325,53 @@ fn sound_activity_and_stop_discard_observation() {
     );
     assert!(machine.sound_bus_granted());
     assert_eq!(machine.sound_cpu.cycles(), 4);
-    assert_eq!(machine.bus.prefetch_upper, None);
+    assert_eq!(machine.bus.prefetch.upper(), None);
     seed(&mut machine, true);
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(0)
     .unwrap();
-    assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(1)
     .unwrap();
-    assert_eq!(machine.bus.prefetch_upper, None);
+    assert_eq!(machine.bus.prefetch.upper(), None);
     for concurrent_sound in [false, true] {
         let mut machine = super::machine(&[0x4e72, 0x2000, 0x4e71, 0x4e71]);
         machine.concurrent_sound = concurrent_sound;
         machine.step_instruction().unwrap();
-        assert_eq!(machine.bus.prefetch_upper, None);
+        assert_eq!(machine.bus.prefetch.upper(), None);
         seed(&mut machine, concurrent_sound);
         assert_eq!(
             machine.step_instruction().unwrap().cpu,
             TimedOutcome::Stopped
         );
-        assert_eq!(machine.bus.prefetch_upper, None);
+        assert_eq!(machine.bus.prefetch.upper(), None);
         seed(&mut machine, concurrent_sound);
         machine.bus.now = MasterTicks::new(u64::MAX);
         assert!(machine.step_instruction().is_err());
-        assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
+        assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
     }
     let mut machine = super::machine(&[0x4e72, 0x2000, 0x4e71, 0x4e71]);
     machine.bus.sound.set_reset(false);
     machine.step_instruction().unwrap();
-    assert_eq!(machine.bus.prefetch_upper, None);
+    assert_eq!(machine.bus.prefetch.upper(), None);
     seed(&mut machine, false);
     machine.step_sound_instruction().unwrap_err();
-    assert_eq!(machine.bus.prefetch_upper, Some(0x4e));
+    assert_eq!(machine.bus.prefetch.upper(), Some(0x4e));
     machine.step_instruction().unwrap();
     seed(&mut machine, false);
     machine.step_sound_instruction().unwrap();
-    assert_eq!(machine.bus.prefetch_upper, None);
+    assert_eq!(machine.bus.prefetch.upper(), None);
 }
+
+#[cfg(feature = "first-failure-diagnostic")]
+#[path = "open_bus/active_word.rs"]
+mod active_word;

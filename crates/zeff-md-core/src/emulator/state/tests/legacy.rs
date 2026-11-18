@@ -1,149 +1,284 @@
 use super::*;
+use crate::{ControllerKind, ControllerPort, LoadConfig};
 
-const HEADER_BYTES: usize = 52;
-const VIDEO_HEADER_BYTES: usize = 15;
-const OLD_PIXELS: usize = 307_200;
-const VDP_MEMORY_BYTES: usize = 65_536 + 64 * 2 + 40 * 2;
-
-fn bus_prefix(reader: &mut StateReader<'_>) {
-    reader.read_u64().unwrap();
-    reader.read_u64().unwrap();
-    reader.read_u8().unwrap();
-    reader.read_u64().unwrap();
-    if reader.read_bool().unwrap() {
-        reader.read_u8().unwrap();
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn legacy_machine_state_is_rejected_without_mutation() {
+    let mut rom = vec![0; 0x400];
+    rom[..8].copy_from_slice(&[0, 0xff, 0xff, 0xfc, 0, 0, 2, 0]);
+    rom[0x200..0x204].copy_from_slice(&[0x4e, 0x71, 0x60, 0xfc]);
+    let mut target = Emulator::new(
+        rom,
+        LoadConfig {
+            region: Region::Pal,
+            concurrent_sound: true,
+        },
+    )
+    .unwrap();
+    for port in [ControllerPort::One, ControllerPort::Two] {
+        target
+            .input_mut()
+            .set_controller_kind(port, ControllerKind::SixButton);
     }
-    reader.set_position(reader.position() + crate::constants::WORK_RAM_SIZE);
+    for _ in 0..16 {
+        target.step_instruction().unwrap();
+    }
+    let before = target.clone();
+    let mut legacy = vec![0; 756_348];
+    for &(offset, bytes) in RAW38_SEGMENTS {
+        legacy[offset..offset + bytes.len()].copy_from_slice(bytes);
+    }
+    let error = target.decode_state(&legacy).unwrap_err();
+    assert_eq!(error.to_string(), "unsupported MD save-state format");
+    assert!(target == before);
 }
 
-pub(super) fn section_offsets(current: &[u8]) -> (usize, usize) {
-    let mut outer = StateReader::new(current);
-    outer.set_position(HEADER_BYTES);
-    outer.read_slice(MAX_STATE_BYTES).unwrap();
-    let bus_at = outer.position() + 4;
-    let bus = outer.read_slice(MAX_STATE_BYTES).unwrap();
-    let mut reader = StateReader::new(bus);
-    bus_prefix(&mut reader);
-    for _ in 0..3 {
-        reader.read_slice(MAX_STATE_BYTES).unwrap();
-    }
-    (bus_at, bus_at + reader.position() + 4)
-}
-
-pub(super) fn progressive_state(current: &[u8], version: u32) -> Vec<u8> {
-    assert!(
-        (MIN_STATE_VERSION..=crate::save_state::STATE_VERSION_WITH_INTERLACE).contains(&version)
-    );
-    let mut reader = StateReader::new(current);
-    reader.set_position(HEADER_BYTES);
-    let cpu = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    let bus = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    let schedule = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    let stopped = reader.read_bool().unwrap();
-    let save = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    assert_eq!(save, &[0]);
-    assert!(reader.is_exhausted());
-    let mut writer = StateWriter::new();
-    writer.write_bytes(&current[..STATE_MAGIC.len()]);
-    writer.write_u32(version);
-    writer.write_bytes(&current[STATE_MAGIC.len() + 4..HEADER_BYTES]);
-    writer.write_vec(cpu);
-    if version < crate::save_state::STATE_VERSION_WITH_INTERLACE {
-        writer.write_vec(&legacy_bus(bus, version));
-    } else {
-        writer.write_vec(bus);
-    }
-    writer.write_vec(schedule);
-    writer.write_bool(stopped);
-    writer.into_bytes()
-}
-
-fn legacy_bus(current: &[u8], version: u32) -> Vec<u8> {
-    let mut reader = StateReader::new(current);
-    bus_prefix(&mut reader);
-    let prefix_end = reader.position();
-    let input = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    let sound = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    let vdp = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    let video = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    let audio = reader.read_slice(MAX_STATE_BYTES).unwrap();
-    assert!(reader.is_exhausted());
-    let mut writer = StateWriter::new();
-    writer.write_bytes(&current[..prefix_end]);
-    let serial_bytes = if version < crate::save_state::STATE_VERSION_WITH_SERIAL_IO {
-        crate::constants::IO_PORT_COUNT * 2
-    } else {
-        0
-    };
-    writer.write_vec(&input[..input.len() - serial_bytes]);
-    writer.write_vec(sound);
-    writer.write_vec(&legacy_vdp(vdp));
-    writer.write_vec(&legacy_video(video));
-    writer.write_vec(&legacy_audio(audio, version));
-    writer.into_bytes()
-}
-
-fn legacy_vdp(current: &[u8]) -> Vec<u8> {
-    let mut reader = StateReader::new(current);
-    reader.read_u64().unwrap();
-    reader.read_u64().unwrap();
-    if reader.read_bool().unwrap() {
-        let index = reader.read_u8().unwrap();
-        let value = reader.read_u8().unwrap();
-        assert!(index != 12 || value & 6 == 0);
-        reader.read_u64().unwrap();
-    }
-    for index in 0..24 {
-        if reader.read_bool().unwrap() {
-            let value = reader.read_u8().unwrap();
-            assert!(index != 12 || value & 6 == 0);
-        }
-    }
-    reader.read_u64().unwrap();
-    let calendar_at = reader.position();
-    reader.read_u64().unwrap();
-    reader.read_u64().unwrap();
-    reader.read_u64().unwrap();
-    for _ in 0..4 {
-        assert!(!reader.read_bool().unwrap());
-    }
-    assert_eq!(reader.position() - calendar_at, 28);
-    // This fixture has never written SAT; old caches must keep their unknown words.
-    let memory_at = current.len() - VDP_MEMORY_BYTES;
-    assert_eq!(&current[memory_at - 160..memory_at], &[0; 160]);
-    let mut old = current.to_vec();
-    old.drain(calendar_at..calendar_at + 28);
-    old
-}
-
-fn legacy_video(current: &[u8]) -> Vec<u8> {
-    let mut reader = StateReader::new(current);
-    reader.read_u16().unwrap();
-    let height = reader.read_u16().unwrap();
-    let rows = reader.read_u16().unwrap();
-    assert!(height <= 240 && rows <= height);
-    reader.set_position(VIDEO_HEADER_BYTES + crate::constants::FRAMEBUFFER_LEN);
-    if reader.read_bool().unwrap() {
-        reader.read_u64().unwrap();
-        assert_eq!(reader.read_u16().unwrap(), height);
-        assert!(!reader.read_bool().unwrap());
-        assert!(!reader.read_bool().unwrap());
-    }
-    assert_eq!(reader.read_u8().unwrap(), 0);
-    assert!(reader.is_exhausted());
-    current[..VIDEO_HEADER_BYTES + OLD_PIXELS].to_vec()
-}
-
-fn legacy_audio(current: &[u8], version: u32) -> Vec<u8> {
-    let mut reader = StateReader::new(current);
-    crate::hardware::audio::Psg::read_state(&mut reader).unwrap();
-    let fm_at = reader.position();
-    let chip = crate::hardware::audio::Opn2::read_state(&mut reader).unwrap();
-    let fm_end = reader.position();
-    assert_eq!(current.len() - fm_end, 24);
-    let mut writer = StateWriter::new();
-    writer.write_bytes(&current[..fm_at]);
-    chip.write_state_version(&mut writer, version);
-    writer.write_bytes(&current[fm_end..]);
-    writer.into_bytes()
-}
+// Nonzero spans from a PAL synthetic-ROM save emitted by the v38 encoder.
+const RAW38_SEGMENTS: &[(usize, &[u8])] = &[
+    (
+        0,
+        &[
+            90, 77, 68, 83, 84, 65, 84, 69, 38, 0, 0, 0, 156, 106, 243, 213, 30, 21, 184, 190, 239,
+            76, 37, 3, 48, 66, 147, 88, 34, 152, 44, 79, 59, 218, 87, 85, 154, 142, 180, 168, 45,
+            9, 53, 13, 0, 4, 0, 0, 1, 1, 1, 1, 100, 0, 0, 0, 1, 95,
+        ],
+    ),
+    (
+        125,
+        &[
+            252, 255, 255, 0, 0, 2, 0, 0, 0, 39, 232, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 113, 78,
+            252, 96, 0, 0, 0, 0, 109, 137, 11, 0, 88, 6, 0, 0, 0, 0, 0, 0, 232,
+        ],
+    ),
+    (185, &[2, 252, 96]),
+    (
+        65_724,
+        &[
+            60, 0, 0, 0, 1, 255, 15, 0, 0, 0, 1, 255, 15, 0, 0, 0, 127, 127, 127, 0, 0, 0, 255,
+            255, 255,
+        ],
+    ),
+    (
+        65_768,
+        &[
+            2, 0, 0, 0, 1, 1, 10, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 6, 32,
+        ],
+    ),
+    (
+        73_988,
+        &[
+            1, 0, 106, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 88, 6, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 4, 1,
+            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+            1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+        ],
+    ),
+    (74_083, &[88, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 88, 6]),
+    (74_126, &[1, 1]),
+    (
+        140_032,
+        &[
+            255, 255, 255, 255, 255, 255, 255, 255, 104, 0, 0, 0, 2, 1, 0, 1, 1, 0, 88, 6, 0, 0, 0,
+            0, 0, 0, 94, 6,
+        ],
+    ),
+    (140_076, &[88, 6]),
+    (
+        140_112,
+        &[
+            255, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 255, 0, 0, 0, 1, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 22, 96, 9, 0, 0, 1, 224,
+        ],
+    ),
+    (
+        754_572,
+        &[
+            1, 0, 123, 6, 0, 0, 0, 0, 0, 0, 0, 0, 15, 15, 15, 15, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0,
+            10, 0, 1, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1,
+            0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        754_663,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        754_711,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        754_759,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 192,
+        ],
+    ),
+    (
+        754_846,
+        &[
+            15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        754_907,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        754_955,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_003,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 192,
+        ],
+    ),
+    (
+        755_090,
+        &[
+            15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_151,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_199,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_247,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 192,
+        ],
+    ),
+    (
+        755_334,
+        &[
+            15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_395,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_443,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_491,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 192,
+        ],
+    ),
+    (
+        755_578,
+        &[
+            15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_639,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_687,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_735,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 192,
+        ],
+    ),
+    (
+        755_822,
+        &[
+            15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_883,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_931,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1,
+        ],
+    ),
+    (
+        755_979,
+        &[
+            255, 3, 0, 0, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 255, 3, 1, 0,
+            0, 0, 0, 255, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 192,
+        ],
+    ),
+    (756_066, &[15, 15]),
+    (
+        756_088,
+        &[
+            2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 88, 0, 0, 0, 0, 0, 0, 0, 128,
+        ],
+    ),
+    (756_136, &[1, 0, 0, 1, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+    (756_175, &[63]),
+    (
+        756_200,
+        &[
+            3, 3, 1, 1, 1, 1, 0, 192, 192, 192, 192, 192, 192, 88, 6, 0, 0, 0, 0, 0, 0, 184,
+        ],
+    ),
+    (756_237, &[63, 0, 0, 0, 1, 0, 56]),
+    (
+        756_305,
+        &[
+            1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+            0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+        ],
+    ),
+];

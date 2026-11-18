@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 mod coverage;
+mod history;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Bus {
@@ -188,6 +189,63 @@ fn load_and_stack_phase_families_continue_exactly() {
 #[test]
 fn single_prefix_cb_rmw_and_indexed_phase_families_continue_exactly() {
     let mut visited = BTreeSet::new();
+    for opcode in [0x18, 0x20, 0x28, 0x30, 0x38] {
+        for flags in [
+            0,
+            Z80_FLAG_ZERO,
+            Z80_FLAG_CARRY,
+            Z80_FLAG_ZERO | Z80_FLAG_CARRY,
+        ] {
+            for program in [vec![opcode, 0x80], vec![0xdd, 0xfd, opcode, 0x7f]] {
+                visited.extend(check_instruction(&program, |cpu, _| cpu.regs.f = flags));
+            }
+        }
+    }
+    for b in [0, 1, 2, 0xff] {
+        for flags in [0, 0xff] {
+            for displacement in [0, 0x7f, 0x80, 0xfe] {
+                for program in [
+                    vec![0x10, displacement],
+                    vec![0xdd, 0xfd, 0x10, displacement],
+                ] {
+                    visited.extend(check_instruction(&program, |cpu, _| {
+                        cpu.regs.b = b;
+                        cpu.regs.f = flags;
+                    }));
+                }
+            }
+        }
+    }
+    let mut cpu = Cpu::new_with_reset(ResetState::new(0xffff, 0));
+    cpu.regs.b = 2;
+    cpu.regs.f = 0xff;
+    let mut memory = Bus::new(&[1]);
+    memory.memory[0xffff] = 0x10;
+    let mut state = BusState::default();
+    let mut first = cpu.step_bus_segment(&mut memory, &mut state).unwrap();
+    assert_eq!(
+        (
+            first.instruction.cycles,
+            first.complete,
+            cpu.regs.pc,
+            cpu.regs.b
+        ),
+        (5, false, 0, 2)
+    );
+    assert_eq!(memory.events.borrow().as_slice(), &[(0, 0xffff, 0x10)]);
+    assert!(cpu.extend_bus_segment(&mut first.instruction, 3));
+    witness(&cpu, &state, &memory);
+    cpu.suspend();
+    let held = (cpu.clone(), state, memory.clone());
+    assert_eq!(cpu.step_bus_segment(&mut memory, &mut state), None);
+    assert_eq!((cpu.clone(), state, memory.clone()), held);
+    cpu.resume();
+    let tail = cpu.step_bus_segment(&mut memory, &mut state).unwrap();
+    assert_eq!((tail.instruction.cycles, tail.complete), (8, true));
+    assert_eq!(
+        (cpu.regs.pc, cpu.regs.b, cpu.regs.f, cpu.regs.r, cpu.cycles),
+        (2, 1, 0xff, 1, 16)
+    );
     for program in [
         &[0x02][..],
         &[0xdd, 0x26, 0x35],
@@ -354,6 +412,7 @@ fn reset_inspection_and_reachable_stale_fields_survive() {
 
 #[test]
 fn legacy_default_bytes_stay_exact() {
+    history::codec_profiles();
     let cpu = Cpu::new_with_reset(ResetState::new(0x1234, 0xabcd));
     let mut w = Writer::new();
     cpu.write_state(&mut w);
@@ -392,7 +451,7 @@ fn truncated_and_malformed_pairs_leave_both_targets_unchanged() {
         reject(&bytes[..length]);
     }
     for (offset, value) in [
-        (0, 2),
+        (0, 3),
         (2, 255),
         (36, 3),
         (37, 3),
@@ -502,6 +561,8 @@ fn operation_tags_indexes_conditions_and_executable_opcodes_validate() {
         &[0, 1, 0, 0, 12],
         &[0, 1, 0, 0, 0, 0xff, 0],
         &[0, 1, 0, 0, 0, 0x02, 1, 0xcc],
+        &[0, 1, 0, 0, 0, 0x10, 1, 0xcc],
+        &[0, 1, 0, 0, 0, 0x10, 1],
     ] {
         rejects(bytes, BusState::read_continuation);
     }

@@ -289,7 +289,6 @@ pub fn write<B: M68kBus>(
     }
 }
 
-/// Address calculation and operand-read clocks.
 pub fn read_cycles(mode: u16, reg: u16, size: Size) -> Option<u32> {
     if reg > 7 {
         return None;

@@ -54,6 +54,9 @@ pub(crate) fn publish_backend_framebuffer(
     shared: &SharedFramebuffer,
     backend: &crate::emu_backend::EmuBackend,
 ) {
+    if !backend.framebuffer_available() {
+        return;
+    }
     let (pixels, dimensions) = backend.display_framebuffer();
     publish_framebuffer_with_dimensions(shared, pixels, dimensions);
 }

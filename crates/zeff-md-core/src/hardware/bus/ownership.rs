@@ -7,6 +7,7 @@ impl Requester {
     pub const MAIN: Self = Self(0);
     pub const SOUND: Self = Self(1);
     pub const VDP: Self = Self(2);
+    pub const MAIN_RMW: Self = Self(3);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -5,7 +5,6 @@ pub(super) const BUSY_CLOCKS: u64 = 192;
 pub(super) const TIMER_A_STEPS: u16 = 1024;
 pub(super) const TIMER_B_STEPS: u16 = 256;
 pub(super) const TIMER_B_SUBCOUNTER_STEPS: u8 = 16;
-pub(super) const TIMER_B_DIVIDER: u64 = FM_CLOCK_DIVIDER * TIMER_B_SUBCOUNTER_STEPS as u64;
 pub(super) const BUSY_STATUS: u8 = 0x80;
 pub(super) const DAC_ENABLE: u8 = 0x80;
 pub(super) const DAC_CHANNEL: usize = 5;

@@ -75,7 +75,7 @@ pub fn rejected_acceptance_preserves_state() {
     assert_eq!(current, command(1, 1));
     assert_eq!(fifo, saved);
     for code in 0u8..=255 {
-        if code < 0x20 && !matches!(code & 0xf, 0 | 4 | 8 | 0xc) {
+        if code == 0x14 || (code < 0x20 && !matches!(code & 0xf, 4 | 8 | 0xc)) {
             continue;
         }
         let mut current = command(1, code);
@@ -200,7 +200,10 @@ pub fn wide_entries_and_memory_guards() {
                         &aliased.vram()[(address as usize & 0xffff) & !1..][..2],
                         &[0xff, 0xff]
                     ),
-                    3 => assert_eq!(aliased.cram()[((address & 0x7f) >> 1) as usize], 0x0eee),
+                    3 => assert_eq!(
+                        aliased.known_cram().unwrap()[((address & 0x7f) >> 1) as usize],
+                        0x0eee
+                    ),
                     5 if address & 0x7f < 80 => {
                         assert_eq!(aliased.vsram()[((address & 0x7f) >> 1) as usize], 0x07ff)
                     }

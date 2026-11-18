@@ -1,9 +1,11 @@
 mod cheats;
 mod data_models;
+mod disassembly_navigation;
 mod execution_coverage;
 mod memory;
 pub(crate) mod mods;
 mod runtime_inference;
+mod target_navigation;
 mod trace;
 mod viewers;
 
@@ -34,8 +36,17 @@ use zeff_emu_common::address::Address;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DebugDataRefs<'a> {
+    pub(crate) core_family: Option<zeff_emu_common::system::CoreFamily>,
+    pub(crate) supports_pc_breakpoints: bool,
+    pub(crate) supports_rom_breakpoints: bool,
+    pub(crate) supports_memory_watchpoints: bool,
+    pub(crate) memory_editing: Option<crate::emu_backend::capabilities::MemoryEditingCapabilities>,
     pub(crate) symbols: &'a crate::symbols::SymbolSession,
+    pub(crate) primary_symbols: &'a crate::symbols::SymbolSession,
+    pub(crate) sound_symbols: &'a crate::symbols::SymbolSession,
     pub(crate) cpu_debug: Option<&'a CpuDebugSnapshot>,
+    pub(crate) md_sound_watch: Option<&'a crate::debug::sound_watchpoints::SoundWatchView>,
+    pub(crate) md_timed_ports: Option<&'a crate::debug::md_timed_ports::MdTimedPortView>,
     pub(crate) perf_info: Option<&'a PerfInfo>,
     pub(crate) apu_debug: Option<&'a ApuDebugInfo>,
     pub(crate) oam_debug: Option<&'a OamDebugInfo>,
@@ -127,10 +138,14 @@ impl Default for FirmwareInventoryState {
 }
 
 pub(crate) struct DebugWindowState {
+    pub(crate) debug_target: super::DebugTarget,
+    pub(crate) debug_revision: u64,
+    pub(crate) other_target: target_navigation::TargetNavigation,
     pub(crate) netplay: crate::netplay::ui::Ui,
     pub(crate) audio_discovery: super::audio_discovery::AudioDiscoveryState,
     pub(crate) cpu_view: CpuDebugViewState,
     pub(crate) hardware_view: CpuDebugViewState,
+    pub(crate) md_timed_ports: crate::debug::md_timed_ports::MdTimedPortUi,
     pub(crate) memory: MemoryViewerState,
     pub(crate) bp: BreakpointState,
     pub(crate) rebinding_action: Option<InputBindingAction>,
@@ -180,10 +195,14 @@ pub(crate) struct DebugWindowState {
 impl DebugWindowState {
     pub(crate) fn new() -> Self {
         Self {
+            debug_target: super::DebugTarget::Primary,
+            debug_revision: 0,
+            other_target: target_navigation::TargetNavigation::default(),
             netplay: crate::netplay::ui::Ui::default(),
             audio_discovery: super::audio_discovery::AudioDiscoveryState::default(),
             cpu_view: CpuDebugViewState::default(),
             hardware_view: CpuDebugViewState::default(),
+            md_timed_ports: Default::default(),
             memory: MemoryViewerState::new(),
             bp: BreakpointState::new(),
             rebinding_action: None,

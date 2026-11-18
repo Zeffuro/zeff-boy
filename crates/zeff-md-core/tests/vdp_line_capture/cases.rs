@@ -169,7 +169,7 @@ pub fn fifo_completion_is_inclusive_with(
     assert_eq!(device, ordinary);
     assert_eq!(row, ordinary.prepare_line(REGION).unwrap());
     assert_eq!(row.at(), end);
-    assert_eq!(device.memory().cram()[15], 0x0eee);
+    assert_eq!(device.memory().known_cram().unwrap()[15], 0x0eee);
     assert!(device.fifo().is_empty());
     assert_eq!(device.memory().vram().as_ptr(), pointer);
     for x in 0..256 {
@@ -266,7 +266,7 @@ pub fn mixed_memory_and_sprite_rollback_with(
     );
     let mut ordinary = aliases.clone();
     ordinary.advance_to(end, REGION).unwrap();
-    assert_eq!(ordinary.memory().cram()[15], 0x0eee);
+    assert_eq!(ordinary.memory().known_cram().unwrap()[15], 0x0eee);
     assert_eq!(ordinary.memory().vsram()[0], 0x0666);
 
     let mut sprite = fixture();

@@ -9,6 +9,53 @@ use crate::debug::{
 use crate::symbols::import::{ImportContext, TargetInfo, import_symbols};
 use crate::symbols::{AddressSpaceId, ImageId, RegionId, SymbolSession};
 
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn console_physical_offsets_follow_capability_without_changing_cpu_breaks() {
+    let symbols = SymbolSession::default();
+    for supported in [false, true] {
+        let mut state = DebugConsoleState::default();
+        let mut memory = MemoryViewerState::new();
+        let mut rom = RomViewerState::new();
+        let mut actions = DebugUiActions::none();
+        for text in ["break rom:200", "break rom:100000000", "break 200"] {
+            run_command(
+                &mut state,
+                text,
+                CommandContext {
+                    supports_rom_breakpoints: supported,
+                    symbols: &symbols,
+                    cpu_debug: None,
+                    rom_debug: None,
+                    disassembly: None,
+                    views: DebugConsoleViews {
+                        memory: &mut memory,
+                        rom: &mut rom,
+                    },
+                    actions: &mut actions,
+                },
+            );
+        }
+        assert_eq!(actions.toggle_breakpoints, [0x200]);
+        assert_eq!(
+            actions.toggle_rom_breakpoints,
+            if supported {
+                vec![0x200, 0x100000000]
+            } else {
+                Vec::new()
+            }
+        );
+        if !supported {
+            assert!(
+                state
+                    .output
+                    .iter()
+                    .any(|line| line.contains("Physical ROM breakpoints are unavailable"))
+            );
+        }
+    }
+}
+
 #[test]
 fn parses_debugger_hex_notation() {
     assert_eq!(parse_hex("$C100"), Some(0xC100));
@@ -23,6 +70,7 @@ fn parses_event_breakpoint_names() {
     assert_eq!(parse_debug_event("irq"), Some(DebugEvent::Interrupt));
     assert_eq!(parse_debug_event("NMI"), Some(DebugEvent::Interrupt));
     assert_eq!(parse_debug_event("dma"), Some(DebugEvent::Dma));
+    assert_eq!(parse_debug_event("EXCEPTION"), Some(DebugEvent::Exception));
     assert_eq!(parse_debug_event("scanline"), None);
 }
 
@@ -100,6 +148,7 @@ fn symbol_commands_navigate_and_queue_reads() {
         &mut state,
         "goto UpdatePlayer",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: None,
             rom_debug: None,
@@ -112,12 +161,21 @@ fn symbol_commands_navigate_and_queue_reads() {
         },
     );
     assert_eq!(actions.focus_tab, Some(DebugTab::Disassembler));
-    assert_eq!(actions.disasm_target.unwrap().storage_offset, Some(0x8560));
+    assert_eq!(
+        actions
+            .disasm_target
+            .unwrap()
+            .as_cpu()
+            .unwrap()
+            .storage_offset,
+        Some(0x8560)
+    );
 
     run_command(
         &mut state,
         "peek PlayerData 4",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: None,
             rom_debug: None,
@@ -138,6 +196,7 @@ fn symbol_commands_navigate_and_queue_reads() {
         &mut state,
         "breakonce C123",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: None,
             rom_debug: None,
@@ -155,6 +214,7 @@ fn symbol_commands_navigate_and_queue_reads() {
         &mut state,
         "breakafter C124 8",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: None,
             rom_debug: None,
@@ -172,6 +232,7 @@ fn symbol_commands_navigate_and_queue_reads() {
         &mut state,
         "nextframe",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: None,
             rom_debug: None,
@@ -189,6 +250,7 @@ fn symbol_commands_navigate_and_queue_reads() {
         &mut state,
         "comment UpdatePlayer Main movement routine",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: None,
             rom_debug: None,
@@ -233,6 +295,7 @@ fn guest_call_command_requires_a_symbol_and_queues_a_budget() {
         &mut state,
         "call UpdatePlayer 25",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: Some(&cpu),
             rom_debug: None,
@@ -255,12 +318,13 @@ fn guest_call_command_requires_a_symbol_and_queues_a_budget() {
 fn labels_the_current_mapped_code_location() {
     let symbols = SymbolSession::default();
     let view = DisassemblyView {
-        pc: 0x4560,
+        cursor: crate::debug::DisassemblyCursor::Cpu(0x4560),
         mapping: Some(2),
         is_navigation_target: false,
         is_static_target: false,
         location_symbol: None,
         lines: vec![DisassembledLine {
+            decode_status: None,
             address: 0x4560,
             storage_offset: Some(0x8560),
             bank: None,
@@ -286,6 +350,7 @@ fn labels_the_current_mapped_code_location() {
         &mut state,
         "label UpdatePlayer",
         CommandContext {
+            supports_rom_breakpoints: true,
             symbols: &symbols,
             cpu_debug: None,
             rom_debug: None,
@@ -302,4 +367,83 @@ fn labels_the_current_mapped_code_location() {
     assert_eq!(symbol.name, "UpdatePlayer");
     assert_eq!(symbol.location.cpu.unwrap().address, 0x4560);
     assert_eq!(symbol.location.storage.unwrap().offset, 0x8560);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn exception_event_command_toggles_only_when_core_advertises_it() {
+    use zeff_emu_common::debug::DebugEvent;
+    let mut cpu = suspended_cpu();
+    let symbols = SymbolSession::default();
+    let mut memory = MemoryViewerState::new();
+    let mut rom = RomViewerState::new();
+    let mut state = DebugConsoleState::default();
+    for (supported, enabled) in [(false, false), (true, false), (true, true)] {
+        cpu.supported_events = if supported {
+            vec![DebugEvent::Interrupt, DebugEvent::Exception]
+        } else {
+            vec![DebugEvent::Interrupt]
+        };
+        cpu.event_breakpoints = if enabled {
+            vec![DebugEvent::Exception]
+        } else {
+            vec![]
+        };
+        let mut actions = DebugUiActions::none();
+        run_command(
+            &mut state,
+            "breakevent EXCEPTION",
+            CommandContext {
+                supports_rom_breakpoints: true,
+                symbols: &symbols,
+                cpu_debug: Some(&cpu),
+                rom_debug: None,
+                disassembly: None,
+                views: DebugConsoleViews {
+                    memory: &mut memory,
+                    rom: &mut rom,
+                },
+                actions: &mut actions,
+            },
+        );
+        assert_eq!(
+            actions.event_breakpoint_changes,
+            if supported {
+                vec![(DebugEvent::Exception, !enabled)]
+            } else {
+                vec![]
+            }
+        );
+        assert!(state.output.back().unwrap().contains(if supported {
+            if enabled {
+                "Disabled CPU exception"
+            } else {
+                "Enabled CPU exception"
+            }
+        } else {
+            "unavailable"
+        }));
+    }
+    run_command(
+        &mut state,
+        "help",
+        CommandContext {
+            supports_rom_breakpoints: true,
+            symbols: &symbols,
+            cpu_debug: Some(&cpu),
+            rom_debug: None,
+            disassembly: None,
+            views: DebugConsoleViews {
+                memory: &mut memory,
+                rom: &mut rom,
+            },
+            actions: &mut DebugUiActions::none(),
+        },
+    );
+    assert!(
+        state
+            .output
+            .iter()
+            .any(|line| line.contains("interrupt|dma|exception"))
+    );
 }

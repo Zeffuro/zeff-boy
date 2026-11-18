@@ -30,7 +30,7 @@ impl PrefetchCpu {
                 pc.wrapping_add(2),
                 true,
             ))
-        } else if matches!(opcode, 0x4afa..=0x4afc) {
+        } else if matches!(opcode, 0x4afa..=0x4afc) || illegal_unary_ea(opcode) {
             Some((VECTOR_ILLEGAL_INSTRUCTION, pc, false))
         } else if matches!(opcode >> 12, 10 | 15) {
             Some((
@@ -55,6 +55,7 @@ impl PrefetchCpu {
         match opcode {
             0x4e70 => self.reset_instruction(bus, pipeline)?,
             0x4e72 => {
+                bus.instruction_input(pc.wrapping_add(2), pipeline.input(1));
                 self.idle(bus, 4)?;
                 self.registers.set_status_register(pipeline.words[1]);
                 self.registers.pc = pc.wrapping_add(4);
@@ -63,6 +64,11 @@ impl PrefetchCpu {
             }
             0x4e73 | 0x4e75 => {
                 let rte = opcode == 0x4e73;
+                let bank = if rte {
+                    ControlStackBank::Supervisor
+                } else {
+                    ControlStackBank::active(&self.registers)
+                };
                 let sp = if rte {
                     self.registers.ssp
                 } else {
@@ -89,8 +95,20 @@ impl PrefetchCpu {
                     self.registers.set_address_register(7, sp.wrapping_add(4));
                 }
                 self.refill(bus, target)?;
+                self.record_control_return(
+                    if rte {
+                        ControlFlowReturnKind::Rte
+                    } else {
+                        ControlFlowReturnKind::Rts
+                    },
+                    pc,
+                    bank,
+                    sp,
+                    address,
+                );
             }
             0x007c | 0x027c | 0x0a7c => {
+                bus.instruction_input(pc.wrapping_add(2), pipeline.input(1));
                 self.fetch(bus, pc.wrapping_add(4))?;
                 self.idle(bus, 6)?;
                 let sr = self.registers.status_register();
@@ -104,6 +122,7 @@ impl PrefetchCpu {
                 self.refill(bus, pc.wrapping_add(4))?;
             }
             0x46fc => {
+                bus.instruction_input(pc.wrapping_add(2), pipeline.input(1));
                 self.fetch(bus, pc.wrapping_add(4))?;
                 self.idle(bus, 2)?;
                 self.registers.set_status_register(pipeline.words[1]);
@@ -133,10 +152,7 @@ impl PrefetchCpu {
         let first = self.fetch(bus, target)?;
         let second = self.fetch(bus, target.wrapping_add(2))?;
         self.registers.pc = target;
-        self.pipeline = Some(Pipeline {
-            address: target,
-            words: [first, second],
-        });
+        self.pipeline = Some(Pipeline::sampled(target, [first, second]));
         Ok(())
     }
 
@@ -157,6 +173,7 @@ impl PrefetchCpu {
         idle: u32,
     ) -> Result<(), TimingFault<B::Error>> {
         let sr = self.registers.status_register();
+        let source_pc = self.registers.pc;
         let sp = self.registers.ssp;
         if idle != 0 {
             self.idle(bus, idle)?;
@@ -178,30 +195,30 @@ impl PrefetchCpu {
             AccessKind::Vector,
         )?;
         let target = (u32::from(high) << 16) | u32::from(low);
-        let first = self.read_word(
-            bus,
-            target,
-            FunctionCode::SupervisorProgram,
-            AccessKind::Prefetch,
-        )?;
+        let first = self.fetch_with_fc(bus, target, FunctionCode::SupervisorProgram)?;
         self.idle(bus, 2)?;
-        let second = self.read_word(
-            bus,
-            target.wrapping_add(2),
-            FunctionCode::SupervisorProgram,
-            AccessKind::Prefetch,
-        )?;
+        let second =
+            self.fetch_with_fc(bus, target.wrapping_add(2), FunctionCode::SupervisorProgram)?;
         self.registers
             .set_status_register((sr | SUPERVISOR) & !TRACE);
         self.registers.ssp = sp.wrapping_sub(6);
         self.registers.pc = target;
-        self.pipeline = Some(Pipeline {
-            address: target,
-            words: [first, second],
-        });
+        self.pipeline = Some(Pipeline::sampled(target, [first, second]));
         self.stopped = false;
+        self.record_control_entry(
+            ControlFlowEntryKind::Exception(vector),
+            source_pc,
+            saved_pc,
+            self.control_stack(ControlStackBank::Supervisor, sp, sp.wrapping_sub(4)),
+        );
         Ok(())
     }
+}
+
+pub(super) fn illegal_unary_ea(opcode: u16) -> bool {
+    matches!(opcode & 0xff00, 0x4000 | 0x4200 | 0x4400 | 0x4600 | 0x4a00)
+        && opcode & 0x00c0 != 0x00c0
+        && (opcode & 0x0038 == 0x0008 || opcode & 0x003f >= 0x003a)
 }
 
 #[cfg(test)]

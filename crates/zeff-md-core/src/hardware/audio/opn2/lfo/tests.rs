@@ -210,7 +210,7 @@ fn brief_disable_clears_live_counter_without_changing_the_current_scan_latch() {
 }
 
 #[test]
-fn state_preserves_distinct_live_and_sampled_counters_and_seeds_legacy_latches() {
+fn state_preserves_distinct_live_and_sampled_counters() {
     let mut chip = Opn2::default();
     control(&mut chip, 13);
     chip.advance(144 * 176 + 6);
@@ -226,23 +226,6 @@ fn state_preserves_distinct_live_and_sampled_counters_and_seeds_legacy_latches()
         restored.advance(1);
         assert_eq!(chip, restored);
     }
-    for version in 1..=7 {
-        let mut writer = StateWriter::new();
-        chip.write_state_version(&mut writer, version);
-        let bytes = writer.into_bytes();
-        let restored = Opn2::read_state_version(&mut StateReader::new(&bytes), version).unwrap();
-        assert_eq!(restored.lfo.sampled, restored.lfo.counter);
-        if version >= 3 {
-            assert_eq!(restored.lfo.control, chip.lfo.control);
-            assert_eq!(restored.lfo.counter, chip.lfo.counter);
-            assert_eq!(restored.lfo.quotient, chip.lfo.quotient);
-        }
-        if version == 7 {
-            let mut writer = StateWriter::new();
-            restored.write_state_version(&mut writer, version);
-            assert_eq!(writer.into_bytes(), bytes);
-        }
-    }
     for invalid in [128, 255] {
         let mut bad = bytes.clone();
         let offset = bad.len() - 7;
@@ -250,4 +233,42 @@ fn state_preserves_distinct_live_and_sampled_counters_and_seeds_legacy_latches()
         assert!(Opn2::read_state(&mut StateReader::new(&bad)).is_err());
     }
     assert!(Opn2::read_state(&mut StateReader::new(&bytes[..bytes.len() - 1])).is_err());
+}
+
+fn original_frequency(fnum: u16, counter: u8, sensitivity: u8) -> u16 {
+    let step = counter >> 2;
+    let quarter = (step & 7) ^ if step & 8 == 0 { 0 } else { 7 };
+    let depth = sensitivity.min(5);
+    let weight = LFO_PM_WEIGHTS[usize::from(depth)][usize::from(quarter)];
+    let high = fnum >> 4;
+    let contribution = match weight {
+        0 => 0,
+        1 => high >> 2,
+        2 => high >> 1,
+        3 => (high >> 1) + (high >> 2),
+        4 => high,
+        5 => high + (high >> 2),
+        _ => high + (high >> 1),
+    };
+    let magnitude = (contribution << sensitivity.saturating_sub(5)) >> 2;
+    let offset = if counter & 64 == 0 {
+        magnitude as i32
+    } else {
+        -(magnitude as i32)
+    };
+    ((i32::from(fnum) * 2 + offset) & 0xfff) as u16
+}
+
+#[test]
+fn all_frequency_inputs_preserve_the_original_integer_transform() {
+    for sensitivity in 0..8 {
+        for counter in 0..128 {
+            for fnum in 0..2048 {
+                let (fnum, counter, sensitivity) =
+                    std::hint::black_box((fnum, counter, sensitivity));
+                let actual = frequency(fnum, counter, sensitivity);
+                assert_eq!(actual, original_frequency(fnum, counter, sensitivity));
+            }
+        }
+    }
 }

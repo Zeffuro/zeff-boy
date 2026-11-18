@@ -3,6 +3,8 @@
 mod support;
 use support::{Access, Bus, seeded};
 use zeff_z80::{BusState, Cpu, CpuState, PrefixState};
+#[path = "cases/history.rs"]
+mod history;
 
 fn step(cpu: &mut Cpu, bus: &mut Bus, state: &mut BusState, clocks: u32, complete: bool) {
     let result = cpu.step_bus_segment(bus, state).unwrap();
@@ -12,6 +14,7 @@ fn step(cpu: &mut Cpu, bus: &mut Bus, state: &mut BusState, clocks: u32, complet
 }
 
 pub fn all_cb_and_memory_inc_dec_match_legacy() {
+    history::distinguishing_histories();
     for terminal in 0..258u16 {
         for value in [0, 1, 0x7f, 0x80, 0x81, 0xff] {
             let (mut cpu, mut bus) = seeded(value);

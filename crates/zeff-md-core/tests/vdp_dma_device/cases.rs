@@ -1,5 +1,64 @@
 use super::support::*;
-use zeff_md_core::{VdpDmaError, VdpPortError, VdpRenderError};
+use zeff_md_core::{VdpDmaError, VdpDmaRegisters, VdpPortError, VdpRenderError};
+
+pub fn copy_alias_helper_guards() {
+    let device = fixture(1, 1, 0xe5, 1);
+    let original = VdpDmaRegisters::from_registers(device.registers()).unwrap();
+    let before = device.memory().clone();
+    for code in 0x30..=0x3f {
+        let mut dma = original;
+        let mut target = command(0x2000, code);
+        let mut memory = before.clone();
+        let copy = dma.read_copy_byte(&target, 1, &memory).unwrap().unwrap();
+        assert_eq!(copy.data(), 0x12);
+        assert_eq!(dma, original);
+        assert_eq!(target, command(0x2000, code));
+        assert_eq!(memory, before);
+        for stale_code in [code ^ 1, code ^ 2, code & !0x20] {
+            let mut stale = command(0x2000, stale_code);
+            assert_eq!(
+                dma.write_copy_byte(&mut stale, 1, copy, &mut memory),
+                Err(VdpDmaError::StaleCopy)
+            );
+            assert_eq!(dma, original);
+            assert_eq!(stale, command(0x2000, stale_code));
+            assert_eq!(memory, before);
+        }
+        let write = dma
+            .write_copy_byte(&mut target, 1, copy, &mut memory)
+            .unwrap();
+        assert_eq!((write.address, write.data), (0x2001, 0x12));
+        assert_eq!(target, command(0x2001, code & !0x20));
+        assert_eq!(
+            (dma.length(), dma.source(), dma.source_high()),
+            (0, 2, 0xe5)
+        );
+        assert_eq!(memory.vram()[0x2001], 0x12);
+        assert_eq!(memory.known_cram().unwrap(), before.known_cram().unwrap());
+        assert_eq!(memory.vsram(), before.vsram());
+        assert_eq!(dma.read_copy_byte(&target, 255, &memory), Ok(None));
+        let saved = (dma, target, memory.clone());
+        assert_eq!(
+            dma.write_copy_byte(&mut target, 1, copy, &mut memory),
+            Err(VdpDmaError::StaleCopy)
+        );
+        assert_eq!((dma, target, &memory), (saved.0, saved.1, &saved.2));
+    }
+    for code in (0x20..=0x2f).chain(0x40..=0xff) {
+        let target = command(0x2000, code);
+        assert_eq!(
+            original.read_copy_byte(&target, 1, &before),
+            Err(VdpDmaError::UnsupportedCommand(target))
+        );
+    }
+    for address in [0x20000, u32::MAX] {
+        let target = command(address, 0x31);
+        assert_eq!(
+            original.read_copy_byte(&target, 1, &before),
+            Err(VdpDmaError::UnsupportedCommand(target))
+        );
+    }
+}
 
 pub fn fill_slots_with(run: &mut Run<'_>) {
     for parity in [0, 1] {
@@ -27,57 +86,69 @@ pub fn fill_slots_with(run: &mut Run<'_>) {
         assert_eq!(device.command(), command(0x2002 + parity, 0x11));
         busy_status(run, &mut device, false);
         assert_eq!(device.memory().vram().as_ptr(), pointer);
-        assert_eq!(device.memory().cram(), before.cram());
+        assert_eq!(
+            device.memory().known_cram().unwrap(),
+            before.known_cram().unwrap()
+        );
         assert_eq!(device.memory().vsram(), before.vsram());
     }
 }
 
 pub fn copy_slots_and_clones_with(run: &mut Run<'_>) {
-    for source in [0, 1] {
-        for parity in [0, 1] {
-            let mut device = fixture(2, source, 0xe5, 1);
-            let memory = device.memory().clone();
-            let pointer = device.memory().vram().as_ptr();
-            let bytes = if source == 0 {
-                [0x34, 0x12]
-            } else {
-                [0x12, 0x78]
-            };
-            seed(run, &mut device, 0x2000 + parity, 0x30, None);
-            let registers = *device.registers();
-            advance(run, &mut device, 1010);
-            assert_eq!(device.memory(), &memory);
-            assert_eq!(device.registers().registers(), registers.registers());
-            assert_eq!(device.command(), command(0x2000 + parity, 0x30));
-            counters(&device, 2, source, 0xe5);
-            let mut cloned_read = device.clone();
-            busy_status(run, &mut device, true);
-            advance(run, &mut device, 1029);
-            assert_eq!(device.memory(), &memory);
-            advance(run, &mut device, 1030);
-            assert_eq!(
-                device.memory().vram()[(0x2000 + parity) as usize ^ 1],
-                bytes[0]
-            );
-            counters(&device, 1, source + 1, 0xe5);
-            assert_eq!(device.command(), command(0x2001 + parity, 0x30));
-            let written = device.memory().clone();
-            advance(run, &mut device, 1050);
-            assert_eq!(device.memory(), &written);
-            counters(&device, 1, source + 1, 0xe5);
-            advance(run, &mut device, 1069);
-            assert_eq!(device.memory(), &written);
-            advance(run, &mut device, 1070);
-            advance(run, &mut cloned_read, 1070);
-            assert_eq!(device, cloned_read);
-            assert_eq!(
-                device.memory().vram()[(0x2001 + parity) as usize ^ 1],
-                bytes[1]
-            );
-            counters(&device, 0, source + 2, 0xe5);
-            assert_eq!(device.command(), command(0x2002 + parity, 0x10));
-            busy_status(run, &mut device, false);
-            assert_eq!(device.memory().vram().as_ptr(), pointer);
+    for code in 0x30..=0x3f {
+        for source in [0, 1] {
+            for parity in [0, 1] {
+                let mut device = fixture(2, source, 0xe5, 1);
+                let memory = device.memory().clone();
+                let pointer = device.memory().vram().as_ptr();
+                let bytes = if source == 0 {
+                    [0x34, 0x12]
+                } else {
+                    [0x12, 0x78]
+                };
+                seed(run, &mut device, 0x2000 + parity, code, None);
+                let registers = *device.registers();
+                advance(run, &mut device, 1009);
+                assert_eq!(device.memory(), &memory);
+                advance(run, &mut device, 1010);
+                assert_eq!(device.memory(), &memory);
+                assert_eq!(device.registers().registers(), registers.registers());
+                assert_eq!(device.command(), command(0x2000 + parity, code));
+                counters(&device, 2, source, 0xe5);
+                let mut cloned_read = device.clone();
+                busy_status(run, &mut device, true);
+                advance(run, &mut device, 1029);
+                assert_eq!(device.memory(), &memory);
+                advance(run, &mut device, 1030);
+                assert_eq!(
+                    device.memory().vram()[(0x2000 + parity) as usize ^ 1],
+                    bytes[0]
+                );
+                counters(&device, 1, source + 1, 0xe5);
+                assert_eq!(device.command(), command(0x2001 + parity, code));
+                let written = device.memory().clone();
+                advance(run, &mut device, 1050);
+                assert_eq!(device.memory(), &written);
+                counters(&device, 1, source + 1, 0xe5);
+                advance(run, &mut device, 1069);
+                assert_eq!(device.memory(), &written);
+                advance(run, &mut device, 1070);
+                advance(run, &mut cloned_read, 1070);
+                assert_eq!(device, cloned_read);
+                assert_eq!(
+                    device.memory().vram()[(0x2001 + parity) as usize ^ 1],
+                    bytes[1]
+                );
+                counters(&device, 0, source + 2, 0xe5);
+                assert_eq!(device.command(), command(0x2002 + parity, code & !0x20));
+                busy_status(run, &mut device, false);
+                assert_eq!(device.memory().vram().as_ptr(), pointer);
+                assert_eq!(
+                    device.memory().known_cram().unwrap(),
+                    memory.known_cram().unwrap()
+                );
+                assert_eq!(device.memory().vsram(), memory.vsram());
+            }
         }
     }
 }
@@ -134,42 +205,44 @@ pub fn all_increments_with(run: &mut Run<'_>) {
 }
 
 pub fn overlap_and_partitions_with(run: &mut Run<'_>) {
-    for (source, destination, bytes) in [
-        (0x100, 0x101, [0x20, 0x20, 0x20, 0x20, 0x50, 0x20]),
-        (0x101, 0x100, [0x40, 0x10, 0x60, 0x30, 0x50, 0x60]),
-        (0x100, 0x102, [0x10, 0x20, 0x10, 0x20, 0x10, 0x20]),
-        (0x102, 0x100, [0x30, 0x40, 0x50, 0x60, 0x50, 0x60]),
-        (0x100, 0x100, [0x10, 0x20, 0x30, 0x40, 0x50, 0x60]),
-    ] {
-        let base = fixture(4, source, 0xc0, 1);
-        let mut expected = [0; 65536];
-        expected.copy_from_slice(base.memory().vram());
-        expected[0x100..0x106].copy_from_slice(&bytes);
-        let mut one = base.clone();
-        seed(run, &mut one, destination, 0x30, None);
-        advance(run, &mut one, slot(8));
-        assert_eq!(one.memory().vram(), &expected);
-        for first in 0..=4 {
-            let mut split = base.clone();
-            seed(run, &mut split, destination, 0x30, None);
-            advance(run, &mut split, slot(first * 2));
-            advance(run, &mut split, slot(8));
-            assert_eq!(split, one);
+    for code in [0x30, 0x31] {
+        for (source, destination, bytes) in [
+            (0x100, 0x101, [0x20, 0x20, 0x20, 0x20, 0x50, 0x20]),
+            (0x101, 0x100, [0x40, 0x10, 0x60, 0x30, 0x50, 0x60]),
+            (0x100, 0x102, [0x10, 0x20, 0x10, 0x20, 0x10, 0x20]),
+            (0x102, 0x100, [0x30, 0x40, 0x50, 0x60, 0x50, 0x60]),
+            (0x100, 0x100, [0x10, 0x20, 0x30, 0x40, 0x50, 0x60]),
+        ] {
+            let base = fixture(4, source, 0xc0, 1);
+            let mut expected = [0; 65536];
+            expected.copy_from_slice(base.memory().vram());
+            expected[0x100..0x106].copy_from_slice(&bytes);
+            let mut one = base.clone();
+            seed(run, &mut one, destination, code, None);
+            advance(run, &mut one, slot(8));
+            assert_eq!(one.memory().vram(), &expected);
+            for first in 0..=4 {
+                let mut split = base.clone();
+                seed(run, &mut split, destination, code, None);
+                advance(run, &mut split, slot(first * 2));
+                advance(run, &mut split, slot(8));
+                assert_eq!(split, one);
+            }
+            for first in [1, 3, 5, 7] {
+                let mut split = base.clone();
+                seed(run, &mut split, destination, code, None);
+                advance(run, &mut split, slot(first));
+                counters(
+                    &split,
+                    4 - (first / 2) as u16,
+                    source + (first / 2) as u16,
+                    0xc0,
+                );
+                advance(run, &mut split, slot(8));
+                assert_eq!(split, one);
+            }
+            counters(&one, 0, source + 4, 0xc0);
         }
-        for first in [1, 3, 5, 7] {
-            let mut split = base.clone();
-            seed(run, &mut split, destination, 0x30, None);
-            advance(run, &mut split, slot(first));
-            counters(
-                &split,
-                4 - (first / 2) as u16,
-                source + (first / 2) as u16,
-                0xc0,
-            );
-            advance(run, &mut split, slot(8));
-            assert_eq!(split, one);
-        }
-        counters(&one, 0, source + 4, 0xc0);
     }
 }
 

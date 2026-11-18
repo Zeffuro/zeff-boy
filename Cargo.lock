@@ -7702,6 +7702,7 @@ dependencies = [
  "zeff-emu-common",
  "zeff-gb-core",
  "zeff-gba-core",
+ "zeff-md-core",
  "zeff-nes-core",
  "zeff-pce-core",
  "zeff-sega8-core",
@@ -7713,6 +7714,7 @@ name = "zeff-m68k"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "wasm-bindgen-test",
  "zeff-emu-common",
  "zeff-test-support",
 ]
@@ -7742,6 +7744,7 @@ dependencies = [
  "anyhow",
  "encoding_rs",
  "sha2",
+ "wasm-bindgen-test",
  "zeff-emu-common",
  "zeff-m68k",
  "zeff-z80",
@@ -7857,6 +7860,7 @@ dependencies = [
  "sha2",
  "zeff-gb-core",
  "zeff-gba-core",
+ "zeff-md-core",
  "zeff-nes-core",
  "zeff-pce-core",
  "zeff-sega8-core",
@@ -7914,6 +7918,7 @@ name = "zeff-z80"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "wasm-bindgen-test",
  "zeff-emu-common",
  "zeff-test-support",
 ]

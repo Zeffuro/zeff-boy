@@ -11,7 +11,9 @@ pub fn background_merge_with(
 ) {
     previous::shadow_highlight_with(|memory, bank| {
         let prepared = prepare(memory, bank, 0);
-        let line = memory.compose_sprite_line_with_registers(bank, &prepared).unwrap();
+        let line = memory
+            .compose_sprite_line_with_registers(bank, &prepared)
+            .unwrap();
         sample(memory, bank, &line, 0, 0)
     });
     previous::sprite_plane_priority_with(|memory, bank| {
@@ -61,10 +63,10 @@ pub fn background_merge_with(
             Err(VdpRenderError::CoordinateOutOfBounds { x, y })
         );
     }
-    legacy::publish(&mut bank, 12, 2);
+    legacy::publish(&mut bank, 12, 4);
     assert_eq!(
         sample(&memory, &bank, &line, 0, 0),
-        Err(VdpRenderError::UnsupportedRenderMode(2))
+        Err(VdpRenderError::UnsupportedRenderMode(4))
     );
 }
 

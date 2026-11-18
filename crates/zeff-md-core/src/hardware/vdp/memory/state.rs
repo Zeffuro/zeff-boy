@@ -5,12 +5,13 @@ use anyhow::{Result, ensure};
 impl VdpMemory {
     pub(in crate::hardware::vdp) fn write_state(&self, w: &mut StateWriter) {
         w.write_bytes(&self.vram);
-        for value in self.cram {
-            w.write_u16(value);
+        for value in self.cram() {
+            w.write_u16(*value);
         }
         for value in self.vsram {
             w.write_u16(value);
         }
+        w.write_u64(self.cram_known);
     }
 
     pub(in crate::hardware::vdp) fn read_state(r: &mut StateReader<'_>) -> Result<Self> {
@@ -23,6 +24,9 @@ impl VdpMemory {
         for value in &mut result.vsram {
             *value = r.read_u16()?;
             ensure!(*value & !VSRAM_DATA_MASK == 0, "invalid VDP VSRAM word");
+        }
+        {
+            result.cram_known = r.read_u64()?;
         }
         Ok(result)
     }

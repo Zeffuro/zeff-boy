@@ -12,6 +12,8 @@ const REPLAY_CHECKPOINT_INTERVAL_FRAMES: usize = 300;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod finalization;
+#[cfg(not(target_arch = "wasm32"))]
+mod playback;
 #[cfg(test)]
 mod tests;
 
@@ -296,68 +298,12 @@ impl App {
                 return;
             };
 
-            match zeff_emu_common::replay::ReplayPlayer::load(&path) {
-                Ok(player) => {
-                    if let Err(err) = self.validate_replay_playback(&player) {
-                        log::error!("Replay metadata mismatch: {err}");
-                        self.toast_manager.error(format!("Replay mismatch: {err}"));
-                        return;
-                    }
-                    let total = player.total_frames();
-                    let state_bytes = player.save_state().to_vec();
-                    if let Err(error) = self.suspend_uncapped_worker() {
-                        self.toast_manager.error(error.to_string());
-                        return;
-                    }
-                    let command = EmuCommand::LoadStateBytes {
-                        state_bytes,
-                        buttons_pressed: 0,
-                        dpad_pressed: 0,
-                        replay_events: Some(player.metadata().events.clone()),
-                        game_boy_link_start_state: player.metadata().game_boy_link_start_state,
-                        game_boy_link_coordinator_start_state: player
-                            .metadata()
-                            .game_boy_link_coordinator_start_state,
-                        game_boy_link_start_tick: player.metadata().game_boy_link_start_tick,
-                        wonder_swan_link_start_tick: player.metadata().wonder_swan_link_start_tick,
-                    };
-                    if let Err(error) = self.send_emu_command_checked(command) {
-                        self.resume_uncapped_worker_after_replay();
-                        self.toast_manager.error(error.to_string());
-                        return;
-                    }
-                    match self.recv_cold_response() {
-                        Some(EmuResponse::LoadStateOk {
-                            media_slot_snapshot,
-                            game_boy_serial_device,
-                            ..
-                        }) => {
-                            self.media_slot_snapshot = media_slot_snapshot;
-                            if let Some(device) = game_boy_serial_device {
-                                self.game_boy_serial_device = device;
-                            }
-                            if let Some(thread) = &self.emu_thread {
-                                self.latest_frame = thread.shared_framebuffer().load_full();
-                            }
-                            self.clear_replay_progress();
-                            self.recording.replay_player = Some(player);
-                            self.toast_manager
-                                .info(format!("Playing replay ({total} frames)"));
-                        }
-                        Some(EmuResponse::LoadStateFailed(err)) => {
-                            self.resume_uncapped_worker_after_replay();
-                            log::error!("Failed to load replay state: {}", err);
-                            self.toast_manager
-                                .error(format!("Replay load failed: {err}"));
-                        }
-                        _ => self.resume_uncapped_worker_after_replay(),
-                    }
-                }
-                Err(err) => {
-                    log::error!("Failed to load replay: {}", err);
-                    self.toast_manager
-                        .error(format!("Replay load failed: {err}"));
-                }
+            if let Err(error) = zeff_emu_common::replay::ReplayPlayer::load(&path)
+                .and_then(|player| self.play_replay(player))
+            {
+                log::error!("Replay load failed: {error:#}");
+                self.toast_manager
+                    .error(format!("Replay load failed: {error}"));
             }
         }
     }
@@ -425,6 +371,9 @@ impl App {
                 current.system.as_deref().unwrap_or("unknown")
             );
         }
+        if metadata.core_family.is_some() && metadata.core_family != current.core_family {
+            anyhow::bail!("core family differs");
+        }
         if metadata.rom_sha256 != current.rom_sha256 {
             anyhow::bail!("ROM hash differs");
         }
@@ -449,6 +398,9 @@ impl App {
         &self,
         player: &zeff_emu_common::replay::ReplayPlayer,
     ) -> anyhow::Result<()> {
+        if self.active_system == crate::emu_backend::ActiveSystem::Md {
+            crate::replay_execution::validate_md_replay_input(player)?;
+        }
         if player.uses_zapper_input() && self.active_system != crate::emu_backend::ActiveSystem::Nes
         {
             anyhow::bail!("replay contains NES Zapper input but current ROM is not a NES game");

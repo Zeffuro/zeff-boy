@@ -133,15 +133,19 @@ pub fn concurrent_irq_preserves_live_line_and_partial_stack() {
 }
 
 pub fn failed_irq_write_retains_prior_progress_and_reset_line() {
-    let mut sound = vec![0x31, 1, 0x60, 0xfb, 0, 0xc3, 0, 1];
+    let mut sound = vec![0x31, 1, 0x80, 0xfb, 0, 0xc3, 0, 1];
     sound.resize(0x100, 0);
     sound.push(0x76);
-    let mut machine = ready(&sound, &[], &[]);
+    let bank: Vec<_> = (0..9)
+        .map(|bit| (0x6000, ((0x1c0 >> bit) & 1) as u8))
+        .collect();
+    let mut machine = ready(&sound, &[], &bank);
+    assert_eq!(machine.peek(0xe00000), Some(0));
     halt_ready(&mut machine);
     machine.set_sound_interrupt(true);
     let mut copied = machine.clone();
     let expected = Err(MachineFault::Sound(SoundFault::UnsupportedAccess {
-        address: 0x5fff,
+        address: 0x7fff,
         direction: Direction::Write,
     }));
     for _ in 0..32 {
@@ -154,16 +158,18 @@ pub fn failed_irq_write_retains_prior_progress_and_reset_line() {
         }
     }
     assert!(machine.sound_fault().is_some());
-    assert_eq!(machine.sound_cpu().regs().sp, 0x5fff);
+    assert_eq!(machine.sound_cpu().regs().sp, 0x7fff);
     assert_eq!(machine.sound_cpu().regs().pc, 0x101);
-    assert_eq!(machine.sound_bank(), 0x100);
+    assert_eq!(machine.sound_bank(), 0x1c0);
+    assert_eq!(machine.peek(0xe00000), Some(1));
     let saved = machine.clone();
     assert_eq!(machine.step_instruction(), expected);
     assert_eq!(machine, saved);
     let now = machine.timing_snapshot().now();
     machine.reset_sound_cpu();
     assert_eq!(machine.timing_snapshot().now(), now);
-    assert_eq!(machine.sound_bank(), 0x100);
+    assert_eq!(machine.sound_bank(), 0x1c0);
+    assert_eq!(machine.peek(0xe00000), Some(1));
     assert_eq!(machine.sound_cpu().interrupt_mode(), InterruptMode::Im0);
     assert_eq!(machine.sound_cpu().regs().r, 0);
     assert!(machine.sound_fault().is_none());

@@ -84,8 +84,7 @@ fn load_state_response_reports_authoritative_game_boy_serial_device() {
         &mut backend,
         Ok(zeff_emu_common::StateRestoreOutcome::Exact),
         "test state".to_string(),
-        0,
-        0,
+        Some((0, 0)),
         &shared_fb,
     );
 
@@ -112,8 +111,7 @@ fn load_state_response_has_no_game_boy_serial_device_for_other_systems() {
         &mut backend,
         Ok(zeff_emu_common::StateRestoreOutcome::Exact),
         "test state".to_string(),
-        0,
-        0,
+        Some((0, 0)),
         &shared_fb,
     );
 
@@ -137,8 +135,7 @@ fn load_state_response_carries_structured_best_effort_bess_warning() {
         &mut backend,
         Ok(zeff_emu_common::StateRestoreOutcome::BestEffortBess),
         "portable state".to_string(),
-        0,
-        0,
+        Some((0, 0)),
         &shared_fb,
     );
 
@@ -166,8 +163,7 @@ fn load_state_response_carries_structured_best_effort_portable_warning() {
         &mut backend,
         Ok(zeff_emu_common::StateRestoreOutcome::BestEffortPortable),
         "portable state".to_string(),
-        0,
-        0,
+        Some((0, 0)),
         &shared_fb,
     );
 

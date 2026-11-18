@@ -149,7 +149,6 @@ fn mode2_raster_and_scalar_have_literal_alternating_field_pixels() {
             .compose_sprite_line_with_registers(&registers, &[])
             .unwrap();
         for odd in [false, true] {
-            // Raw R12 deliberately differs from the active geometry on half the cases.
             let geometry = RasterGeometry::new(0, true, odd);
             let expected = if odd { 0x0e0 } else { 0x00e };
             let mut actual = vec![0; mode.width()];

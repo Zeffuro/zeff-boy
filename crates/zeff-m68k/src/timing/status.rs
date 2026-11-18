@@ -46,20 +46,14 @@ impl PrefetchCpu {
                 let words = stream.finish(self, bus)?;
                 self.idle(bus, 2)?;
                 self.registers.pc = stream.cursor;
-                self.pipeline = Some(Pipeline {
-                    address: stream.cursor,
-                    words,
-                });
+                self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
             } else {
                 let (_, address) =
                     self.read_operand(bus, &mut stream, (Size::Word, mode, register))?;
                 let words = stream.finish(self, bus)?;
                 self.write_data(bus, address, false, sr)?;
                 self.registers.pc = stream.cursor;
-                self.pipeline = Some(Pipeline {
-                    address: stream.cursor,
-                    words,
-                });
+                self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
             }
         } else {
             let (value, _) = self.read_operand(bus, &mut stream, (Size::Word, mode, register))?;

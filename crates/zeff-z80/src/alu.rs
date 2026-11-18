@@ -92,6 +92,7 @@ impl Cpu {
 
     pub(super) fn add_hl(&mut self, value: u16) {
         let hl = self.regs.hl();
+        self.set_memptr(hl.wrapping_add(1));
         let result = hl.wrapping_add(value);
         let half_carry = (hl & 0x0FFF) + (value & 0x0FFF) > 0x0FFF;
         let carry = u32::from(hl) + u32::from(value) > 0xFFFF;

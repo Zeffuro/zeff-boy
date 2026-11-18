@@ -5,6 +5,30 @@ use zeff_emu_common::audio_trace::{AudioTraceInvalidation, AudioTraceTiming, MdA
 
 impl Emulator {
     pub fn reset_and_begin_audio_trace(&mut self, max_events: usize) -> anyhow::Result<()> {
+        self.reset_and_begin_audio_trace_captured(max_events, &mut NoSoundCapture)
+    }
+
+    pub fn reset_and_begin_audio_trace_sound_traced(
+        &mut self,
+        max_events: usize,
+        sound: &mut crate::sound_trace::SoundTraceAttachment<'_>,
+    ) -> anyhow::Result<()> {
+        self.reset_and_begin_audio_trace_captured(max_events, sound)
+    }
+
+    fn reset_and_begin_audio_trace_captured<C: SoundCapture>(
+        &mut self,
+        max_events: usize,
+        sound: &mut C,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.bus.cartridge.rom_overlay.is_empty(),
+            "audio tracing is unavailable with active ROM cheats"
+        );
+        anyhow::ensure!(
+            self.bus.owned.is_none(),
+            "audio trace ownership is unavailable for precise timing"
+        );
         let chip = trace_chip(self.region());
         let recorder = self.bus.audio.trace.prepare_with_clock(
             max_events,
@@ -12,6 +36,7 @@ impl Emulator {
             chip,
             AudioTraceTiming::BusServiceBoundary,
         )?;
+        sound.reset();
         self.reset();
         self.bus.audio.trace = recorder;
         Ok(())

@@ -12,6 +12,9 @@ pub(super) fn restore_backend_checkpoint(
     persistence: crate::emu_thread::TasPersistenceContract,
 ) -> Result<TasRestoredCheckpoint, TasControlRollbackRejectedReason> {
     match checkpoint.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(TasControlRollbackRejectedReason::RestoreFailed);
+        }
         TasExecutionProfile::DirectNesCartridge => backend
             .load_state_from_bytes(checkpoint.state_bytes.clone())
             .map_err(|_| TasControlRollbackRejectedReason::RestoreFailed)
@@ -126,6 +129,9 @@ fn validate_runtime(
 ) -> Result<(), TasControlCommitRejectedReason> {
     let invalid = |_| TasControlCommitRejectedReason::StateVerificationUnavailable;
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(TasControlCommitRejectedReason::StateVerificationUnavailable);
+        }
         TasExecutionProfile::DirectGbCartridgeDmg => match persistence {
             crate::emu_thread::TasPersistenceContract::Absent => {
                 crate::emu_backend::loader::validate_direct_gb_tas_runtime(backend, false)
@@ -282,6 +288,9 @@ fn validate_state(
 ) -> Result<(), TasControlCommitRejectedReason> {
     let invalid = || TasControlCommitRejectedReason::StateVerificationUnavailable;
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(TasControlCommitRejectedReason::StateVerificationUnavailable);
+        }
         TasExecutionProfile::DirectGbCartridgeDmg => {
             crate::emu_backend::loader::validate_direct_gb_tas_state(state_bytes)
                 .map_err(|_| invalid())?;

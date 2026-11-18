@@ -239,7 +239,6 @@ fn binary<B: M68kBus>(ctx: &mut Context<'_, B>) -> Result<u32, Fault<B::Error>> 
     }
     let to_memory = opmode >= 4;
     if to_memory {
-        // Mode 0/1 aliases extended arithmetic, BCD and EXG.
         if !memory_alterable(mode, reg) && !(family == 11 && mode == 0) {
             return Err(ctx.unsupported());
         }

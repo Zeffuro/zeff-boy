@@ -6,7 +6,8 @@ impl Bus {
             .vdp
             .external_dma_release(
                 self.region,
-                VdpDmaSource::from_cartridge(&self.cartridge, &self.ram),
+                VdpDmaSource::from_cartridge(&self.cartridge, &self.ram)
+                    .with_tmss(self.tmss.as_ref()),
             )
             .map_err(BusError::Vdp)?;
         release
@@ -22,6 +23,7 @@ impl Bus {
         if let Some((clocks, _)) = self.external_dma_wait()? {
             let total = waits.checked_add(clocks).ok_or(BusError::ClockOverflow)?;
             self.advance_main(self.cpu_clock, clocks)?;
+            self.prefetch = Prefetch::Empty;
             *waits = total;
         }
         Ok(())

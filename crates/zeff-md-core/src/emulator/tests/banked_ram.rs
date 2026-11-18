@@ -30,6 +30,7 @@ fn pending_write() -> Emulator {
         &mut machine.bus.sound,
         &mut machine.bus.ram,
         &mut machine.bus.audio,
+        &mut machine.bus.cartridge,
     );
     let pending = PendingSound::prepare(
         &machine.sound_cpu,
@@ -45,11 +46,11 @@ fn pending_write() -> Emulator {
 }
 
 fn advance(machine: &mut Emulator, ticks: u64) {
-    ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .advance_machine(ticks)
     .unwrap();
 }
@@ -99,11 +100,11 @@ fn banked_pending_clone_reset_and_disjoint_write() {
     let clock = machine.bus.cpu_clock;
     let mut neighbor = access();
     neighbor.lanes = ByteLanes::Lower;
-    let result = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    let result = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .write_cycle(neighbor, 0x00a6, clock);
     assert_eq!(result.result, Ok(()));
     assert_eq!(result.wait_clocks, 0);
@@ -131,11 +132,11 @@ fn banked_sound_publication_precedes_tied_main_transfer() {
         let mut machine = pending_write();
         machine.bus.now = MasterTicks::new(300 - 28 - u64::from(!tied));
         let clock = machine.bus.cpu_clock;
-        let result = ScheduledBus {
-            bus: &mut machine.bus,
-            cpu: &mut machine.sound_cpu,
-            schedule: &mut machine.sound_schedule,
-        }
+        let result = ScheduledBus::new(
+            &mut machine.bus,
+            &mut machine.sound_cpu,
+            &mut machine.sound_schedule,
+        )
         .write_cycle(access(), 0xa600, clock);
         assert_eq!(result.result, Ok(()));
         assert_eq!(result.wait_clocks, 0);
@@ -151,11 +152,11 @@ fn banked_sound_publication_precedes_tied_main_transfer() {
     let mut machine = pending_write();
     machine.bus.now = MasterTicks::new(300 - 28);
     let clock = machine.bus.cpu_clock;
-    let result = ScheduledBus {
-        bus: &mut machine.bus,
-        cpu: &mut machine.sound_cpu,
-        schedule: &mut machine.sound_schedule,
-    }
+    let result = ScheduledBus::new(
+        &mut machine.bus,
+        &mut machine.sound_cpu,
+        &mut machine.sound_schedule,
+    )
     .read_cycle(access(), clock);
     assert_eq!(result.result, Ok(0x55de));
     assert_eq!(result.wait_clocks, 0);
@@ -184,6 +185,7 @@ fn banked_overflow_discards_only_unpublished_writes() {
     assert_eq!(machine.peek(0xff8000), Some(0x34));
     assert_eq!(machine.peek(0xff8001), Some(0xde));
     let cpu = machine.sound_cpu.clone();
+    machine.bus.vdp.retire_timed_port_history();
     machine.bus.now = MasterTicks::new(u64::MAX - 28);
     advance(&mut machine, 7);
     assert_eq!(machine.sound_fault(), Some(SoundFault::ClockOverflow));

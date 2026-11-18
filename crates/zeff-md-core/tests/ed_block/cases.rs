@@ -60,14 +60,14 @@ pub fn block_failed_write_keeps_read_state() {
     for input in [false, true] {
         let mut machine = if input {
             start(
-                &[0x21, 4, 0x40, 0x01, 2, 0x12, 0xed, 0xa2, 0x76],
+                &[0x21, 0, 0x7f, 0x01, 2, 0x12, 0xed, 0xa2, 0x76],
                 11,
                 &[],
                 &[],
             )
         } else {
             start(
-                &[0x21, 0, 1, 0x11, 4, 0x40, 0x01, 2, 0, 0xed, 0xa0, 0x76],
+                &[0x21, 0, 1, 0x11, 0, 0x7f, 0x01, 2, 0, 0xed, 0xa0, 0x76],
                 16,
                 &[(0x100, 0x5a)],
                 &[],
@@ -77,7 +77,7 @@ pub fn block_failed_write_keeps_read_state() {
         let cpu = machine.sound_cpu().clone();
         let mut copied = machine.clone();
         let expected = Err(MachineFault::Sound(SoundFault::UnsupportedAccess {
-            address: 0x4004,
+            address: 0x7f00,
             direction: Direction::Write,
         }));
         assert_eq!(machine.step_instruction(), expected);

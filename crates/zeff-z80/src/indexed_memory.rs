@@ -1,5 +1,6 @@
 use super::*;
 
+mod cycle;
 mod state;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +25,10 @@ enum Phase {
 }
 
 impl IndexedMemory {
+    pub(super) fn memory_cycle(&self) -> Option<u32> {
+        matches!(self.0, Phase::Memory(Operation::Read(_), _)).then_some(CYCLES_MEMORY_TRANSFER)
+    }
+
     pub(super) fn decode(cpu: &Cpu, opcode: u8, prefix: u8) -> Option<Self> {
         let operation = match opcode {
             0x46 | 0x4e | 0x56 | 0x5e | 0x66 | 0x6e | 0x7e => Operation::Read((opcode >> 3) & 7),
@@ -56,6 +61,7 @@ impl IndexedMemory {
                 (next, CYCLES_MEMORY_TRANSFER)
             }
             Phase::Address(operation, address) => {
+                cpu.set_memptr(address);
                 let next = match operation {
                     Operation::IncDec(opcode) => {
                         Phase::Rmw(rmw::Rmw::inc_dec_at(address, opcode).unwrap())
@@ -64,10 +70,14 @@ impl IndexedMemory {
                 };
                 (next, CYCLES_INDEX_ADDRESS)
             }
-            Phase::Immediate(address) => (
-                Phase::Memory(Operation::Write(cpu.fetch_u8(bus)), address),
-                CYCLES_INDEX_IMMEDIATE,
-            ),
+            Phase::Immediate(address) => {
+                let value = cpu.fetch_u8(bus);
+                cpu.set_memptr(address);
+                (
+                    Phase::Memory(Operation::Write(value), address),
+                    CYCLES_INDEX_IMMEDIATE,
+                )
+            }
             Phase::Memory(operation, address) => {
                 match operation {
                     Operation::Read(register) => {

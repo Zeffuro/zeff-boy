@@ -11,20 +11,13 @@ impl VdpSpriteCache {
         }
     }
 
-    pub(in crate::hardware::vdp) fn read_state_version(
-        r: &mut StateReader<'_>,
-        version: u32,
-    ) -> Result<Self> {
+    pub(in crate::hardware::vdp) fn read_state(r: &mut StateReader<'_>) -> Result<Self> {
         let mut result = Self::default();
         for words in &mut result.entries {
             for (index, word) in words.iter_mut().enumerate() {
                 *word = read_optional(r, StateReader::read_u16)?;
                 let mask = if index == 0 {
-                    if version >= crate::save_state::STATE_VERSION_WITH_INTERLACE {
-                        SPRITE_CACHED_POSITION_MASK
-                    } else {
-                        SPRITE_POSITION_MASK
-                    }
+                    SPRITE_CACHED_POSITION_MASK
                 } else {
                     SPRITE_LAYOUT_MASK
                 };

@@ -18,9 +18,9 @@ pub fn vram_bytes_publish_in_order() {
     for code in [1, 0x11] {
         for (address, first, last) in [
             (0, [0xaa, 0x34], [0x12, 0x34]),
-            (1, [0xaa, 0x12], [0x34, 0x12]),
+            (1, [0x34, 0xbb], [0x34, 0x12]),
             (0xfffe, [0xaa, 0x34], [0x12, 0x34]),
-            (0xffff, [0xaa, 0x12], [0x34, 0x12]),
+            (0xffff, [0x34, 0xbb], [0x34, 0x12]),
         ] {
             let mut memory = VdpMemory::default();
             let base = address as usize & !1;
@@ -45,7 +45,7 @@ pub fn vram_bytes_publish_in_order() {
             assert_eq!(&memory.vram()[base..base + 2], &first);
             assert_eq!(&memory.vram()[..base], &before.vram()[..base]);
             assert_eq!(&memory.vram()[base + 2..], &before.vram()[base + 2..]);
-            assert_eq!(memory.cram(), before.cram());
+            assert_eq!(memory.known_cram().unwrap(), before.known_cram().unwrap());
             assert_eq!(memory.vsram(), before.vsram());
             registers.advance_to(MasterTicks::new(21)).unwrap();
             registers.queue_register(15, 255).unwrap();
@@ -65,7 +65,7 @@ pub fn vram_bytes_publish_in_order() {
             assert_eq!(&memory.vram()[base..base + 2], &last);
             assert_eq!(&memory.vram()[..base], &before.vram()[..base]);
             assert_eq!(&memory.vram()[base + 2..], &before.vram()[base + 2..]);
-            assert_eq!(memory.cram(), before.cram());
+            assert_eq!(memory.known_cram().unwrap(), before.known_cram().unwrap());
             assert_eq!(memory.vsram(), before.vsram());
             assert_eq!(fifo.status_bits(), 0x0200);
             assert_eq!(current, command(0x10000, 0x3f));
@@ -94,7 +94,7 @@ pub fn partial_heads_preserve_occupancy_and_clones() {
                 assert!(fifo.is_empty());
                 let index = (address >> 1) as usize;
                 if code & 0x0f == 3 {
-                    assert_eq!(memory.cram()[index], data & 0x0eee);
+                    assert_eq!(memory.known_cram().unwrap()[index], data & 0x0eee);
                 } else {
                     assert_eq!(memory.vsram()[index], data & 0x07ff);
                 }
@@ -149,7 +149,7 @@ pub fn partial_heads_preserve_occupancy_and_clones() {
                 assert_eq!(fifo.len(), 3 - index);
             }
             assert_eq!(fifo.next_slot_data(), Some(writes[0].data));
-            assert_eq!(memory.cram()[1], 0x0aac);
+            assert_eq!(memory.known_cram().unwrap()[1], 0x0aac);
             assert_eq!(memory.vsram()[3], 0x0567);
             assert_eq!(memory.read_word(command(0x20, 0)), Ok(0x1234 + round));
             assert_eq!(
@@ -192,20 +192,34 @@ pub fn partial_heads_preserve_occupancy_and_clones() {
 pub fn completed_api_does_not_replay_first_byte() {
     for finish_with_slot in [false, true] {
         for code in [1, 0x11] {
-            for (address, expected) in [(0, 0x1299), (1, 0x3499)] {
+            for (address, first, overwritten, expected) in [
+                (0, [0, 0x34], [0, 0x99], [0x12, 0x99]),
+                (1, [0x34, 0], [0x99, 0], [0x99, 0x12]),
+            ] {
                 let mut memory = VdpMemory::default();
                 let mut fifo = VdpWriteFifo::default();
                 let write = entry(address, code, 0x1234);
                 fifo.push(write).unwrap();
                 assert_eq!(fifo.service_write_slot(&mut memory), Ok(None));
-                memory.write_word(command(0, 1), 0xee99).unwrap();
+                assert_eq!(&memory.vram()[..2], &first);
+                let serviced = address as usize ^ 1;
+                assert_eq!(memory.vram()[serviced], 0x34);
+                memory
+                    .write_word(command(0, 1), u16::from_be_bytes(overwritten))
+                    .unwrap();
+                assert_eq!(memory.vram()[serviced], 0x99);
                 let result = if finish_with_slot {
                     fifo.service_write_slot(&mut memory)
                 } else {
                     fifo.complete_write(&mut memory)
                 };
                 assert_eq!(result, Ok(Some(write)));
-                assert_eq!(memory.read_word(command(0, 0)), Ok(expected));
+                assert_eq!(&memory.vram()[..2], &expected);
+                assert_eq!(
+                    memory.read_word(command(0, 0)),
+                    Ok(u16::from_be_bytes(expected))
+                );
+                assert_eq!(memory.vram()[serviced], 0x99);
                 assert!(fifo.is_empty());
                 let next = entry(2, 1, 0xabcd);
                 fifo.push(next).unwrap();
@@ -222,7 +236,7 @@ pub fn rejected_service_preserves_state() {
     let mut memory = VdpMemory::default();
     memory.write_word(command(0, 1), 0xaabb).unwrap();
     for code in 0..64 {
-        if code < 0x20 && !matches!(code & 0xf, 0 | 4 | 8 | 0xc) {
+        if code == 0x14 || (code < 0x20 && !matches!(code & 0xf, 4 | 8 | 0xc)) {
             continue;
         }
         let write = entry(0, code, 0xffff);
@@ -261,7 +275,7 @@ pub fn rejected_service_preserves_state() {
                     &memory.vram()[(write.command.address as usize & 0xffff) & !1..][..2],
                     &[0xff, 0xff]
                 ),
-                3 => assert_eq!(memory.cram()[0], 0x0eee),
+                3 => assert_eq!(memory.known_cram().unwrap()[0], 0x0eee),
                 5 => assert_eq!(memory.vsram()[0], 0x07ff),
                 _ => unreachable!(),
             }
@@ -287,5 +301,5 @@ pub fn rejected_service_preserves_state() {
         fifo.service_write_slot(&mut memory),
         Ok(Some(entry(2, 3, 0xffff)))
     );
-    assert_eq!(memory.cram()[1], 0x0eee);
+    assert_eq!(memory.known_cram().unwrap()[1], 0x0eee);
 }

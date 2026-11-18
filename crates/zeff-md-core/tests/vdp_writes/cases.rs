@@ -43,7 +43,7 @@ pub fn vram_word_lanes_and_edges() {
         assert_eq!(&memory.vram()[index..index + 2], &expected);
         assert_eq!(&memory.vram()[..index], &saved.vram()[..index]);
         assert_eq!(&memory.vram()[index + 2..], &saved.vram()[index + 2..]);
-        assert_eq!(memory.cram(), saved.cram());
+        assert_eq!(memory.known_cram().unwrap(), saved.known_cram().unwrap());
         assert_eq!(memory.vsram(), saved.vsram());
     }
     assert_eq!(&memory.vram()[..2], &[0x34, 0x12]);
@@ -66,7 +66,7 @@ pub fn vram_word_lanes_and_edges() {
 
 pub fn color_word_masks_and_aliases() {
     let mut memory = VdpMemory::default();
-    assert_eq!(memory.cram().len(), 64);
+    assert_eq!(memory.known_cram().unwrap().len(), 64);
     assert_eq!(memory.vsram().len(), 40);
     for (data, cram, vsram) in [
         (0xffff, 0x0eee, 0x07ff),
@@ -82,7 +82,7 @@ pub fn color_word_masks_and_aliases() {
                     memory
                         .write_word(entry(3, address, data).command, data)
                         .unwrap();
-                    assert_eq!(memory.cram()[usize::from(index)], cram);
+                    assert_eq!(memory.known_cram().unwrap()[usize::from(index)], cram);
                     if index < 40 {
                         memory
                             .write_word(entry(5, address, data).command, data)
@@ -131,7 +131,7 @@ pub fn fifo_capture_order_and_reuse() {
     assert_eq!(fifo.next_slot_data(), Some(0x1234));
     assert_eq!(fifo.complete_write(&mut memory), Ok(Some(writes[0])));
     assert_eq!(&memory.vram()[..2], &[0x12, 0x34]);
-    assert_eq!(memory.cram()[1], 0);
+    assert_eq!(memory.known_cram().unwrap()[1], 0);
     assert_eq!(memory.vsram()[39], 0);
     assert_eq!(fifo.front(), Some(writes[1]));
     assert_eq!(fifo.next_slot_data(), Some(0x1234));
@@ -145,7 +145,7 @@ pub fn fifo_capture_order_and_reuse() {
     assert_eq!(fifo.len(), 0);
     assert_eq!(fifo.front(), None);
     assert_eq!(fifo.next_slot_data(), Some(0xffff));
-    assert_eq!(memory.cram()[1], 0x0eee);
+    assert_eq!(memory.known_cram().unwrap()[1], 0x0eee);
     assert_eq!(memory.vsram()[39], 0x0400);
     assert_eq!(&memory.vram()[2..4], &[0x98, 0x76]);
     assert_eq!(&memory.vram()[0xfffe..], &[0xcd, 0xab]);
@@ -164,19 +164,22 @@ pub fn fifo_capture_order_and_reuse() {
     assert_eq!(memory, saved);
     assert_eq!(fifo.complete_write(&mut memory), Ok(Some(writes[0])));
     assert_eq!(&memory.vram()[2..4], &[0x13, 0x57]);
-    assert_eq!(memory.cram()[1], saved.cram()[1]);
+    assert_eq!(
+        memory.known_cram().unwrap()[1],
+        saved.known_cram().unwrap()[1]
+    );
     assert_eq!(memory.vsram()[1], saved.vsram()[1]);
     assert_eq!(fifo.complete_write(&mut memory), Ok(Some(writes[1])));
-    assert_eq!(memory.cram()[1], 0x0246);
+    assert_eq!(memory.known_cram().unwrap()[1], 0x0246);
     assert_eq!(&memory.vram()[2..4], &[0x13, 0x57]);
     assert_eq!(memory.vsram()[1], saved.vsram()[1]);
     assert_eq!(fifo.complete_write(&mut memory), Ok(Some(writes[2])));
     assert_eq!(memory.vsram()[1], 0x0456);
-    assert_eq!(memory.cram()[1], 0x0246);
+    assert_eq!(memory.known_cram().unwrap()[1], 0x0246);
     assert_eq!(&memory.vram()[2..4], &[0x13, 0x57]);
     assert_eq!(fifo.complete_write(&mut memory), Ok(Some(writes[3])));
     assert_eq!(&memory.vram()[2..4], &[0xa1, 0xb2]);
-    assert_eq!(memory.cram()[1], 0x0246);
+    assert_eq!(memory.known_cram().unwrap()[1], 0x0246);
     assert_eq!(memory.vsram()[1], 0x0456);
     assert!(fifo.is_empty());
 }
@@ -210,10 +213,11 @@ pub fn full_and_invalid_pushes_are_atomic() {
 
 pub fn unsupported_completions_preserve_memory_and_queue() {
     for write in [
-        entry(0, 0, 0xffff),
         entry(4, 0, 0xffff),
         entry(8, 0, 0xffff),
         entry(0x0c, 0, 0xffff),
+        entry(0x18, 0, 0xffff),
+        entry(0x1c, 0, 0xffff),
         entry(0x21, 0, 0xffff),
         entry(0x3f, 0, 0xffff),
     ] {
@@ -309,7 +313,10 @@ pub fn fifo_history_retains_unmasked_data() {
                 fifo.complete_write(&mut memory),
                 Ok(Some(entry(3, index * 2, data)))
             );
-            assert_eq!(memory.cram()[usize::from(index)], data & 0x0eee);
+            assert_eq!(
+                memory.known_cram().unwrap()[usize::from(index)],
+                data & 0x0eee
+            );
         }
         assert_eq!(fifo.next_slot_data(), Some(0xf111 + round * 4));
     }

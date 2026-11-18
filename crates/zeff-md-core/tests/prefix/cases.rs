@@ -163,13 +163,13 @@ pub fn ed_faults_are_transactional() {
             assert_eq!(machine.peek(SOUND_RAM), Some(0xff));
         }
     }
-    let mut machine = stopped(&[0x21, 0x34, 0x12, 0xed, 0x63, 3, 0x40], &[]);
+    let mut machine = stopped(&[0x21, 0x34, 0x12, 0xed, 0x63, 0x17, 0x7f], &[]);
     step(&mut machine, 10);
     let before = machine.clone();
     assert_eq!(
         machine.step_sound_instruction(),
         Err(SoundFault::UnsupportedAccess {
-            address: 0x4004,
+            address: 0x7f18,
             direction: Direction::Write
         })
     );
@@ -322,14 +322,8 @@ pub fn extended_fetch_and_bank_guards() {
         for _ in 0..3 {
             step(&mut machine, 4);
         }
-        let before = machine.clone();
-        assert_eq!(
-            machine.step_sound_instruction(),
-            Err(SoundFault::UnsupportedAccess {
-                address: 0x4004,
-                direction: Direction::Read,
-            })
-        );
-        assert_eq!(machine, before);
+        step(&mut machine, 4);
+        assert_eq!(machine.sound_cpu().regs().pc, 0x4005);
+        assert_eq!(machine.sound_fault(), None);
     }
 }

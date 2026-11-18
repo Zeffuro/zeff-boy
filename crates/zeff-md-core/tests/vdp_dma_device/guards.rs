@@ -1,7 +1,7 @@
 use super::support::*;
 use zeff_md_core::{
-    ControlWrite, VdpDmaError, VdpInterruptError, VdpLineError, VdpPortError, VdpRenderError,
-    VdpScheduleError, VdpTimingError, VdpVerticalTiming,
+    ControlWrite, VdpDmaError, VdpDmaRegisters, VdpInterruptError, VdpLineError, VdpPortError,
+    VdpRenderError, VdpScheduleError, VdpTimingError, VdpVerticalTiming,
 };
 
 fn dma(error: VdpDmaError) -> Error {
@@ -20,8 +20,10 @@ pub fn seed_validation_with(run: &mut Run<'_>) {
             (0xc0, 0x30)
         };
         let base = fixture(2, 0, mode, 1);
-        for code in 0..64u8 {
-            if (fill.is_some() && matches!(code, 0x21 | 0x31)) || (fill.is_none() && code == 0x30) {
+        for code in 0..=255u8 {
+            if (fill.is_some() && matches!(code, 0x21 | 0x23 | 0x25 | 0x31 | 0x33 | 0x35))
+                || (fill.is_none() && (0x30..=0x3f).contains(&code))
+            {
                 continue;
             }
             let mut device = base.clone();
@@ -54,6 +56,41 @@ pub fn seed_validation_with(run: &mut Run<'_>) {
             );
             counters(&device, 0, 2, mode);
         }
+        if fill.is_some() {
+            for code in [0x23, 0x33, 0x25, 0x35] {
+                let vsram = code & !(0x10 | 0x20) == 5;
+                let mask = if vsram { 0x07ff } else { 0x0eee };
+                let mut device = base.clone();
+                let memory = device.memory().clone();
+                seed(run, &mut device, 0x7f, code, Some(0xafcd));
+                advance(run, &mut device, slot(2));
+                let target = if vsram {
+                    device.memory().vsram()
+                } else {
+                    device.memory().known_cram().unwrap()
+                };
+                assert_eq!(
+                    target.get(63).copied(),
+                    if vsram { None } else { Some(0xafcd & mask) }
+                );
+                assert_eq!(target[0], 0xafcd & mask);
+                assert_eq!(
+                    if vsram {
+                        device.memory().known_cram().unwrap()
+                    } else {
+                        device.memory().vsram()
+                    },
+                    if vsram {
+                        memory.known_cram().unwrap()
+                    } else {
+                        memory.vsram()
+                    }
+                );
+                assert_eq!(device.memory().vram(), memory.vram());
+                assert_eq!(device.command(), command(0x81, code & !0x20));
+                counters(&device, 0, 2, mode);
+            }
+        }
         let mut device = base.clone();
         reject(
             run,
@@ -64,6 +101,30 @@ pub fn seed_validation_with(run: &mut Run<'_>) {
             ),
             dma(VdpDmaError::WrongOperation(mode)),
         );
+    }
+    for mode in [0x80, 0xc0] {
+        let device = fixture(2, 0, mode, 1);
+        for code in [0x03, 0x13, 0x23, 0x33, 0x05, 0x15, 0x25, 0x35] {
+            let mut registers = VdpDmaRegisters::from_registers(device.registers()).unwrap();
+            let mut target = command(0, code);
+            let mut memory = device.memory().clone();
+            let error = if mode == 0x80 {
+                VdpDmaError::UnsupportedCommand(target)
+            } else {
+                VdpDmaError::WrongOperation(mode)
+            };
+            let saved = (registers, target, memory.clone());
+            assert_eq!(
+                registers.fill_byte(&mut target, 1, 0xabcd, &mut memory),
+                Err(error)
+            );
+            assert_eq!((registers, target, &memory), (saved.0, saved.1, &saved.2));
+            assert_eq!(
+                registers.fill_bytes(&mut target, 1, 0xabcd, 1, &mut memory),
+                Err(error)
+            );
+            assert_eq!((registers, target, &memory), (saved.0, saved.1, &saved.2));
+        }
     }
     let mut unsupported = fixture(2, 0, 0x7f, 1);
     reject(
@@ -212,12 +273,11 @@ pub fn chronological_capacity_with(run: &mut Run<'_>) {
 }
 
 pub fn staged_failures_and_iack_with(run: &mut Run<'_>) {
-    for fill in [Some(0xabcd), None] {
-        let (mode, code, opportunities) = if fill.is_some() {
-            (0x80, 0x21, 2)
-        } else {
-            (0xc0, 0x30, 4)
-        };
+    for (fill, mode, code, opportunities) in [
+        (Some(0xabcd), 0x80, 0x21, 2),
+        (None, 0xc0, 0x30, 4),
+        (None, 0xc0, 0x31, 4),
+    ] {
         let mut carry = fixture(2, 0, mode, 1);
         seed(run, &mut carry, 0x3ffe, code, fill);
         advance(run, &mut carry, slot(opportunities));
@@ -225,7 +285,11 @@ pub fn staged_failures_and_iack_with(run: &mut Run<'_>) {
         assert_eq!(carry.command(), command(0x4000, code & !0x20));
         let mut device = fixture(2, 0, mode, 1);
         seed(run, &mut device, 0x2000, code, fill);
-        for endpoint in [slot(1), slot(opportunities)] {
+        if code == 0x31 {
+            advance(run, &mut device, slot(1));
+            counters(&device, 2, 0, mode);
+        }
+        for endpoint in [slot(if code == 0x31 { 2 } else { 1 }), slot(opportunities)] {
             reject(
                 run,
                 &mut device,

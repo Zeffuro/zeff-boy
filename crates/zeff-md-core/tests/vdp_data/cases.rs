@@ -16,6 +16,26 @@ fn at(now: u64) -> Vdp {
     device.advance_to(tick(now), REGION).unwrap();
     device
 }
+fn at_clock_end(now: u64) -> Vdp {
+    let epoch = now - now % 3420;
+    let mut registers = VdpRegisterPipeline::at_h32_edge(tick(epoch - 24 * 20));
+    for index in 0..24 {
+        registers
+            .advance_to(tick(registers.now().get() + 1))
+            .unwrap();
+        let pending = registers
+            .queue_register(index, if index == 1 { 4 } else { 0 })
+            .unwrap();
+        registers.advance_to(pending.publish_at).unwrap();
+    }
+    assert_eq!(registers.now(), tick(epoch));
+    let interrupts = VdpInterrupts::at_counters_zero(tick(epoch), 0, false, false);
+    let mut device = Vdp::from_known_state(interrupts, registers, REGION).unwrap();
+    device.advance_to(tick(now), REGION).unwrap();
+    assert_eq!(device.now(), tick(now));
+    assert_eq!(device.registers().auto_increment(), Some(0));
+    device
+}
 fn command(device: &mut Vdp, address: u32, code: u8) {
     device
         .write_control(
@@ -60,11 +80,11 @@ pub fn byte_order_and_split_service_with(
     mut advance: impl FnMut(&mut Vdp, MasterTicks, Region) -> Advance,
 ) {
     for region in [REGION, Region::NtscJapan] {
-        for (address, code, first, second) in [
-            (0, 1, 0x34, 0x12),
-            (1, 1, 0x12, 0x34),
-            (0xfffe, 0x11, 0x34, 0x12),
-            (0xffff, 0x11, 0x12, 0x34),
+        for (address, code, first, complete) in [
+            (0, 1, [0, 0x34], [0x12, 0x34]),
+            (1, 1, [0x34, 0], [0x34, 0x12]),
+            (0xfffe, 0x11, [0, 0x34], [0x12, 0x34]),
+            (0xffff, 0x11, [0x34, 0], [0x34, 0x12]),
         ] {
             let mut device = at(1);
             command(&mut device, address, code);
@@ -75,12 +95,12 @@ pub fn byte_order_and_split_service_with(
             assert_eq!(advance(&mut device, tick(9), region), Ok(()));
             assert_eq!(&device.memory().vram()[base..base + 2], &[0, 0]);
             assert_eq!(advance(&mut device, tick(10), region), Ok(()));
-            assert_eq!(&device.memory().vram()[base..base + 2], &[0, first]);
+            assert_eq!(&device.memory().vram()[base..base + 2], &first);
             assert_eq!(device.fifo().len(), 1);
             assert_eq!(advance(&mut device, tick(29), region), Ok(()));
-            assert_eq!(&device.memory().vram()[base..base + 2], &[0, first]);
+            assert_eq!(&device.memory().vram()[base..base + 2], &first);
             assert_eq!(advance(&mut device, tick(30), region), Ok(()));
-            assert_eq!(&device.memory().vram()[base..base + 2], &[second, first]);
+            assert_eq!(&device.memory().vram()[base..base + 2], &complete);
             assert!(device.fifo().is_empty());
         }
     }
@@ -123,14 +143,14 @@ pub fn color_masks_and_address_aliases_with(
                 continue;
             }
             let before = if code & 0xf == 3 {
-                device.memory().cram()[index]
+                device.memory().known_cram().unwrap()[index]
             } else {
                 device.memory().vsram()[index]
             };
             assert_eq!(data(&mut device, word, REGION), Ok(()));
             assert_eq!(device.fifo().len(), 1);
             let current = if code & 0xf == 3 {
-                device.memory().cram()[index]
+                device.memory().known_cram().unwrap()[index]
             } else {
                 device.memory().vsram()[index]
             };
@@ -139,7 +159,7 @@ pub fn color_masks_and_address_aliases_with(
             assert_eq!(advance(&mut device, tick(slot + 1), REGION), Ok(()));
             assert!(device.fifo().is_empty());
             let (actual, mask) = if code & 0xf == 3 {
-                (device.memory().cram()[index], 0x0eee)
+                (device.memory().known_cram().unwrap()[index], 0x0eee)
             } else {
                 (device.memory().vsram()[index], 0x07ff)
             };
@@ -176,8 +196,8 @@ pub fn captured_target_increment_and_parser_with(
     command(&mut device, 6, 5);
     assert_eq!(advance(&mut device, tick(91), REGION), Ok(()));
     assert_eq!(&device.memory().vram()[0x100..0x102], &[0x12, 0x34]);
-    assert_eq!(device.memory().cram()[1], 0x0eee);
-    assert_eq!(device.memory().cram()[2], 0x0246);
+    assert_eq!(device.memory().known_cram().unwrap()[1], 0x0eee);
+    assert_eq!(device.memory().known_cram().unwrap()[2], 0x0246);
     assert_eq!(device.memory().vsram()[3], 0);
     device.write_control(0x4009, REGION).unwrap();
     assert!(device.control().pending_word().is_some());
@@ -244,7 +264,6 @@ pub fn refresh_and_large_horizon_with(
     mut data: impl FnMut(&mut Vdp, u16, Region) -> Data,
     mut advance: impl FnMut(&mut Vdp, MasterTicks, Region) -> Advance,
 ) {
-    // Literal software slot baseline; this does not establish physical DE-off timing.
     for refresh in [530, 1170, 1810, 2450, 3310] {
         for arrival in [refresh - 1, refresh, refresh + 1] {
             let mut device = at(arrival);
@@ -284,7 +303,11 @@ pub fn refresh_and_large_horizon_with(
     assert_eq!(advance(&mut translated, tick(epoch + 550), REGION), Ok(()));
     assert_eq!(&translated.memory().vram()[..2], &[0x12, 0x34]);
     assert!(translated.fifo().is_empty());
-    let mut device = at(1);
+    let registers = *Vdp::bootstrap_mode5().registers();
+    let interrupts = VdpInterrupts::at_counters_zero(tick(0), 0, false, false);
+    // Known counters permit bulk skipping without software port history.
+    let mut device = Vdp::from_known_state(interrupts, registers, REGION).unwrap();
+    device.advance_to(tick(1), REGION).unwrap();
     register(&mut device, 15, 2);
     command(&mut device, 0, 1);
     for word in [0x1234, 0x5678, 0x9abc, 0xdef0] {
@@ -313,13 +336,31 @@ pub fn mode_address_and_clock_guards_with(
 ) {
     let mut device = at(1);
     let saved = device.clone();
+    assert_eq!(device.registers().auto_increment(), Some(0));
+    assert_eq!(data(&mut device, 0x1234, REGION), Ok(()));
     assert_eq!(
-        data(&mut device, 0x1234, REGION),
-        Err(VdpPortError::Data(VdpWriteError::UnsupportedCommand(
-            saved.command()
-        )))
+        device.command(),
+        ControlCommand {
+            address: 0,
+            code: 0
+        }
     );
-    assert_eq!(device, saved);
+    assert_eq!(device.fifo().len(), 1);
+    assert_eq!(device.fifo().front().unwrap().command, saved.command());
+    assert_eq!(device.fifo().front().unwrap().data, 0x1234);
+    assert_eq!(device.control().pending_word(), None);
+    assert_eq!(device.memory(), saved.memory());
+    advance(&mut device, tick(31), REGION).unwrap();
+    assert!(device.fifo().is_empty());
+    assert_eq!(
+        device.command(),
+        ControlCommand {
+            address: 0,
+            code: 0
+        }
+    );
+    assert_eq!(device.memory(), saved.memory());
+    device = at(1);
     command(&mut device, 0, 1);
     let saved = device.clone();
     let mut pal = device.clone();
@@ -377,7 +418,7 @@ pub fn mode_address_and_clock_guards_with(
     assert_eq!(data(&mut candidate, 0x1234, REGION), Ok(()));
     advance(&mut candidate, tick(50), REGION).unwrap();
     assert_eq!(&candidate.memory().vram()[..2], &[0x12, 0x34]);
-    let mut candidate = at(u64::MAX);
+    let mut candidate = at_clock_end(u64::MAX);
     command(&mut candidate, 0, 1);
     let saved = candidate.clone();
     assert_eq!(
@@ -389,7 +430,7 @@ pub fn mode_address_and_clock_guards_with(
     command(&mut candidate, 0, 1);
     assert_eq!(data(&mut candidate, 0x1234, REGION), Ok(()));
     let saved = candidate.clone();
-    for (index, value) in [(1, 0x84), (1, 0x0c), (12, 0x81)] {
+    for (index, value) in [(1, 0x84), (1, 0x0c), (12, 0x80)] {
         assert_eq!(
             candidate.queue_register(index, value, REGION),
             Err(VdpRegisterError::UnsupportedModeChange { index, value }.into())
@@ -480,7 +521,7 @@ pub fn publication_and_acknowledge_atomicity_with(
     assert_eq!(&device.memory().vram()[..4], &[0x12, 0x34, 0x9a, 0xbc]);
     assert!(device.fifo().is_empty());
     assert!(device.interrupts().vertical_pending());
-    let mut device = at(u64::MAX - 6);
+    let mut device = at_clock_end(u64::MAX - 6);
     command(&mut device, 0, 1);
     device.write_control(0x4000, REGION).unwrap();
     let saved = device.clone();
@@ -493,7 +534,7 @@ pub fn publication_and_acknowledge_atomicity_with(
     assert!(device.fifo().is_empty());
     assert_eq!(advance(&mut device, tick(u64::MAX), REGION), Ok(()));
     assert_eq!(&device.memory().vram()[..2], &[0, 0]);
-    let mut device = at(u64::MAX - 46);
+    let mut device = at_clock_end(u64::MAX - 46);
     command(&mut device, 0, 1);
     assert_eq!(data(&mut device, 0xdef0, REGION), Ok(()));
     assert_eq!(advance(&mut device, tick(u64::MAX - 45), REGION), Ok(()));

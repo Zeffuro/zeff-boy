@@ -216,7 +216,7 @@ impl PrefetchCpu {
             profile.first_extension_pc(pipeline.address),
             pipeline.words[0],
         );
-        let first = self.physical_read(bus, phase)?;
+        let first = self.physical_fetch(bus, phase)?;
         let next_opcode = if profile.two_extensions() {
             self.physical_reserve()?;
             let phase = self.prefetch_phase(
@@ -225,18 +225,18 @@ impl PrefetchCpu {
                 pipeline.address.wrapping_add(6),
                 pipeline.words[0],
             );
-            self.physical_read(bus, phase)?
+            self.physical_fetch(bus, phase)?
         } else {
             first
         };
         let value = if profile.mode == AddressMode::Immediate {
             if profile.size == Size::Long {
-                (u32::from(pipeline.words[1]) << 16) | u32::from(first)
+                (u32::from(pipeline.words[1]) << 16) | u32::from(first.value)
             } else {
                 profile.size.truncate(u32::from(pipeline.words[1]))
             }
         } else {
-            let address = profile.address(self, pipeline, first);
+            let address = profile.address(self, pipeline, first.value);
             self.physical_extension_load(bus, pipeline, profile, address)?
         };
         self.physical_reserve()?;
@@ -249,14 +249,11 @@ impl PrefetchCpu {
             InstructionPhase::OperandRefill,
             refill_address,
             refill_address,
-            next_opcode,
+            next_opcode.value,
         );
-        let refill = self.physical_read(bus, phase)?;
+        let refill = self.physical_fetch(bus, phase)?;
         self.registers.pc = pipeline.address.wrapping_add(length);
-        self.pipeline = Some(Pipeline {
-            address: self.registers.pc,
-            words: [next_opcode, refill],
-        });
+        self.pipeline = Some(Pipeline::sampled(self.registers.pc, [next_opcode, refill]));
         Ok(())
     }
 

@@ -1,18 +1,38 @@
 use super::constants::*;
 use super::{ControlCommand, VdpReadError, VdpWriteError};
+mod owned;
 mod state;
 
-/// Canonical mode-5 backing; inspection is separate from buffered port reads.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
+pub(super) enum MemoryTransfer {
+    Known(super::VdpWrite, Option<bool>),
+    UnknownCram(ControlCommand),
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct VdpMemory {
     vram: Box<[u8]>,
     cram: [u16; CRAM_WORDS],
+    cram_known: u64,
     vsram: [u16; VSRAM_WORDS],
+}
+
+impl std::fmt::Debug for VdpMemory {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cram: [Option<u16>; CRAM_WORDS] = std::array::from_fn(|index| self.cram_word(index));
+        formatter
+            .debug_struct("VdpMemory")
+            .field("vram", &self.vram)
+            .field("cram", &cram)
+            .field("vsram", &self.vsram)
+            .finish()
+    }
 }
 
 pub(crate) struct MemorySnapshot {
     vram: [u8; VRAM_SIZE],
     cram: [u16; CRAM_WORDS],
+    cram_known: u64,
     vsram: [u16; VSRAM_WORDS],
 }
 
@@ -20,7 +40,7 @@ pub(crate) struct MemorySnapshot {
 pub(super) enum WriteUndo {
     Noop,
     Vram(usize, u8),
-    Cram(usize, u16),
+    Cram(usize, u16, bool),
     Vsram(usize, u16),
 }
 
@@ -29,17 +49,49 @@ impl Default for VdpMemory {
         Self {
             vram: vec![0; VRAM_SIZE].into_boxed_slice(),
             cram: [0; CRAM_WORDS],
+            cram_known: u64::MAX,
             vsram: [0; VSRAM_WORDS],
         }
     }
 }
 
 impl VdpMemory {
+    pub(crate) fn visit_retained_allocations<'a>(
+        &'a self,
+        into: &mut crate::emulator::rollback::MdRetainedAllocations<'a>,
+    ) -> anyhow::Result<()> {
+        let Self {
+            vram,
+            cram: _,
+            cram_known: _,
+            vsram: _,
+        } = self;
+        into.boxed(
+            vram.as_ref(),
+            crate::emulator::rollback::MdAllocationKind::Vram,
+        )
+    }
+
+    pub(super) fn publish_retirement(&mut self, transfer: MemoryTransfer) -> WriteUndo {
+        match transfer {
+            MemoryTransfer::Known(entry, phase) => self.publish_transfer(entry, phase),
+            MemoryTransfer::UnknownCram(command) => {
+                let index = usize::from((command.address as u16 & COLOR_WORD_ADDRESS_MASK) >> 1);
+                let undo = WriteUndo::Cram(index, self.cram[index], self.cram_is_known(index));
+                self.cram_known &= !(1 << index);
+                undo
+            }
+        }
+    }
+
     pub(super) fn publish_transfer(
         &mut self,
         entry: super::VdpWrite,
         phase: Option<bool>,
     ) -> WriteUndo {
+        if entry.command.is_no_effect_write_target() {
+            return WriteUndo::Noop;
+        }
         let address = entry.command.address as u16;
         if let Some(second) = phase {
             let index = usize::from(address & !WORD_ODD_ADDRESS_BIT) + usize::from(!second);
@@ -50,12 +102,13 @@ impl VdpMemory {
         } else {
             let index = usize::from((address & COLOR_WORD_ADDRESS_MASK) >> 1);
             let undo = match entry.command.code & !COMMAND_CD4 {
-                CRAM_WRITE_CODE => WriteUndo::Cram(index, self.cram[index]),
+                CRAM_WRITE_CODE => {
+                    WriteUndo::Cram(index, self.cram[index], self.cram_is_known(index))
+                }
                 VSRAM_WRITE_CODE => self
                     .vsram
                     .get(index)
                     .map_or(WriteUndo::Noop, |word| WriteUndo::Vsram(index, *word)),
-                _ if entry.command.is_unused_write_target() => WriteUndo::Noop,
                 _ => unreachable!("validated color transfer"),
             };
             self.write_word(entry.command, entry.data)
@@ -68,7 +121,10 @@ impl VdpMemory {
         match undo {
             WriteUndo::Noop => {}
             WriteUndo::Vram(index, byte) => self.vram[index] = byte,
-            WriteUndo::Cram(index, word) => self.cram[index] = word,
+            WriteUndo::Cram(index, word, known) => {
+                self.cram[index] = word;
+                self.cram_known = (self.cram_known & !(1 << index)) | (u64::from(known) << index);
+            }
             WriteUndo::Vsram(index, word) => self.vsram[index] = word,
         }
     }
@@ -79,6 +135,7 @@ impl VdpMemory {
         MemorySnapshot {
             vram,
             cram: self.cram,
+            cram_known: self.cram_known,
             vsram: self.vsram,
         }
     }
@@ -86,12 +143,14 @@ impl VdpMemory {
     pub(crate) fn restore(&mut self, snapshot: MemorySnapshot) {
         self.vram.copy_from_slice(&snapshot.vram);
         self.cram = snapshot.cram;
+        self.cram_known = snapshot.cram_known;
         self.vsram = snapshot.vsram;
     }
 
     pub(super) fn clear(&mut self) {
         self.vram.fill(0);
         self.cram.fill(0);
+        self.cram_known = u64::MAX;
         self.vsram.fill(0);
     }
 
@@ -103,15 +162,51 @@ impl VdpMemory {
         self.vram[usize::from(address)] = data;
     }
 
-    pub fn cram(&self) -> &[u16] {
+    pub(crate) fn cram(&self) -> &[u16] {
         &self.cram
+    }
+
+    pub fn known_cram(&self) -> Option<&[u16]> {
+        self.cram_all_known().then_some(&self.cram)
+    }
+
+    pub fn cram_word_count(&self) -> usize {
+        CRAM_WORDS
+    }
+
+    pub fn cram_known_mask(&self) -> u64 {
+        self.cram_known
+    }
+
+    pub fn cram_word(&self, index: usize) -> Option<u16> {
+        self.cram
+            .get(index)
+            .copied()
+            .filter(|_| self.cram_is_known(index))
+    }
+
+    pub(super) fn cram_all_known(&self) -> bool {
+        self.cram_known == u64::MAX
+    }
+
+    fn cram_is_known(&self, index: usize) -> bool {
+        self.cram_known & (1 << index) != 0
+    }
+
+    pub(super) fn render_cram<const CHECK: bool>(
+        &self,
+        index: usize,
+    ) -> Result<u16, super::VdpRenderError> {
+        if CHECK && !self.cram_is_known(index) {
+            return Err(super::VdpRenderError::UnknownCram(index as u8));
+        }
+        Ok(self.cram[index])
     }
 
     pub fn vsram(&self) -> &[u16] {
         &self.vsram
     }
 
-    /// Completed conventional VRAM word; buffering and byte service are separate.
     pub fn read_word(&self, command: ControlCommand) -> Result<u16, VdpReadError> {
         if command.code != VRAM_READ_CODE || command.address > COMMAND_ADDRESS_MASK {
             return Err(VdpReadError::UnsupportedCommand(command));
@@ -130,7 +225,11 @@ impl VdpMemory {
         }
         let index = usize::from((command.address as u16 & COLOR_WORD_ADDRESS_MASK) >> 1);
         let (word, mask) = match command.code {
-            CRAM_READ_CODE => (self.cram[index], CRAM_DATA_MASK),
+            CRAM_READ_CODE => (
+                self.cram_word(index)
+                    .ok_or(VdpReadError::UnknownCram(index as u8))?,
+                CRAM_DATA_MASK,
+            ),
             VSRAM_READ_CODE => {
                 let Some(word) = self.vsram.get(index) else {
                     return Err(VdpReadError::UnsupportedCommand(command));
@@ -143,14 +242,43 @@ impl VdpMemory {
         Ok((word & mask) | (history & !mask))
     }
 
-    pub(super) fn read_after_writes(
+    pub(super) fn read_after_transfers(
         &self,
         command: ControlCommand,
         history: Option<u16>,
-        writes: impl Iterator<Item = (super::VdpWrite, Option<bool>)>,
+        writes: impl Iterator<Item = MemoryTransfer>,
     ) -> Result<u16, VdpReadError> {
+        if command.code == CRAM_READ_CODE && command.address <= COMMAND_ADDRESS_MASK {
+            let index = usize::from((command.address as u16 & COLOR_WORD_ADDRESS_MASK) >> 1);
+            let mut data = self.cram_word(index);
+            for transfer in writes {
+                match transfer {
+                    MemoryTransfer::Known(entry, None)
+                        if entry.command.code & !COMMAND_CD4 == CRAM_WRITE_CODE
+                            && (entry.command.address & u32::from(COLOR_WORD_ADDRESS_MASK))
+                                >> 1
+                                == index as u32 =>
+                    {
+                        data = Some(entry.data & CRAM_DATA_MASK);
+                    }
+                    MemoryTransfer::UnknownCram(target)
+                        if (target.address & u32::from(COLOR_WORD_ADDRESS_MASK)) >> 1
+                            == index as u32 =>
+                    {
+                        data = None;
+                    }
+                    _ => {}
+                }
+            }
+            let data = data.ok_or(VdpReadError::UnknownCram(index as u8))?;
+            let history = history.ok_or(VdpReadError::UnknownFifoHistory)?;
+            return Ok(data | (history & !CRAM_DATA_MASK));
+        }
         let mut word = self.read_word_with_history(command, history)?;
-        for (entry, phase) in writes {
+        for transfer in writes {
+            let MemoryTransfer::Known(entry, phase) = transfer else {
+                continue;
+            };
             let code = entry.command.code & !COMMAND_CD4;
             if command.code == VRAM_READ_CODE
                 && code == VRAM_WRITE_CODE
@@ -217,6 +345,7 @@ impl VdpMemory {
             CRAM_WRITE_CODE => {
                 let index = usize::from((address & COLOR_WORD_ADDRESS_MASK) >> 1);
                 self.cram[index] = data & CRAM_DATA_MASK;
+                self.cram_known |= 1 << index;
             }
             VSRAM_WRITE_CODE => {
                 let index = usize::from((address & COLOR_WORD_ADDRESS_MASK) >> 1);
@@ -224,7 +353,7 @@ impl VdpMemory {
                     *word = data & VSRAM_DATA_MASK;
                 }
             }
-            _ if command.is_unused_write_target() => {}
+            _ if command.is_no_effect_write_target() => {}
             _ => return Err(VdpWriteError::UnsupportedCommand(command)),
         }
         Ok(())

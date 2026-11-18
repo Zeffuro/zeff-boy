@@ -152,7 +152,7 @@ mod vdp_hv {
         publish(&mut device, 1, 0x84);
         unchanged(&device, REGION, Ok(6), &mut read);
         let saved = device.clone();
-        for (index, value) in [(1, 0x0c), (12, 0x80), (12, 2)] {
+        for (index, value) in [(1, 0x0c), (12, 0x80), (12, 4)] {
             assert_eq!(
                 device.queue_register(index, value, REGION),
                 Err(VdpRegisterError::UnsupportedModeChange { index, value }.into()),
@@ -168,7 +168,7 @@ mod vdp_hv {
             Err(timing(VdpTimingError::UnknownRegister(1))),
         );
         let mut registers = VdpRegisterPipeline::at_h32_edge(tick(0));
-        for (index, value) in [(0, 0), (1, 0x44), (10, 0), (12, 2)] {
+        for (index, value) in [(0, 0), (1, 0x44), (10, 0), (12, 4)] {
             registers
                 .advance_to(tick(registers.now().get() + 1))
                 .unwrap();
@@ -183,7 +183,7 @@ mod vdp_hv {
             ),
             Err(timing(VdpTimingError::UnsupportedMode {
                 index: 12,
-                value: 2
+                value: 4
             })),
         );
     }

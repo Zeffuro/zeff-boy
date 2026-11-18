@@ -24,14 +24,6 @@ impl Default for Render {
 }
 
 impl Render {
-    pub(super) fn migrated() -> Self {
-        Self {
-            mod_valid: 0,
-            raw_valid: 0,
-            ..Self::default()
-        }
-    }
-
     pub(super) fn quiet(&self) -> bool {
         self.modulation == [0; OPERATORS]
             && self.raw == [0; OPERATORS]

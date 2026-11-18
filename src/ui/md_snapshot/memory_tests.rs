@@ -3,6 +3,8 @@ use crate::emu_thread::{MemorySearchRequest, RenderSettings};
 use zeff_emu_common::time::MachineTiming;
 use zeff_md_core::LoadConfig;
 
+mod svp;
+
 pub(super) fn fixture(region: Region, h40: bool) -> Emulator {
     let mut rom = vec![0; 0x20000];
     rom[..4].copy_from_slice(&0x00ff_fffc_u32.to_be_bytes());
@@ -77,6 +79,8 @@ pub(super) fn fixture(region: Region, h40: bool) -> Emulator {
 
 pub(super) fn request() -> SnapshotRequest {
     SnapshotRequest {
+        debug_target: crate::debug::DebugTarget::Primary,
+        debug_revision: 0,
         want_debug_info: false,
         want_perf_info: false,
         any_viewer_open: false,
@@ -89,7 +93,7 @@ pub(super) fn request() -> SnapshotRequest {
         memory_view_start: 0,
         show_rom_viewer: false,
         show_instruction_trace: false,
-        trace_after_sequence: None,
+        trace_cursor: Default::default(),
         rom_view_start: 0,
         last_disasm_pc: None,
         last_disasm_mapping: None,
@@ -186,6 +190,7 @@ fn md_memory_search_is_bounded_to_loaded_rom_and_canonical_work_ram() {
         );
         assert!(results.iter().all(|item| item.matched_bytes == pattern));
     }
+    svp::contract();
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]

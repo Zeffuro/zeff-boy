@@ -47,14 +47,26 @@ impl PrefetchCpu {
         }
         let function_code = crate::ea::data_space(&self.registers);
         // Cache the operand address; postincrement must not redirect the write.
-        let high = self.read_data(bus, address, size == Size::Byte, function_code)?;
+        let high = self.unary_operand(
+            bus,
+            address,
+            size == Size::Byte,
+            function_code,
+            family == 0x4200,
+        )?;
         let value = if size == Size::Long {
             if mode == 3 {
                 self.registers
                     .set_address_register(register, base.wrapping_add(increment));
             }
             (u32::from(high) << 16)
-                | u32::from(self.read_data(bus, address.wrapping_add(2), false, function_code)?)
+                | u32::from(self.unary_operand(
+                    bus,
+                    address.wrapping_add(2),
+                    false,
+                    function_code,
+                    family == 0x4200,
+                )?)
         } else {
             u32::from(high)
         };
@@ -117,11 +129,27 @@ impl PrefetchCpu {
             }
         }
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: stream.cursor,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         Ok(true)
+    }
+
+    fn unary_operand<B: ClockedBus>(
+        &mut self,
+        bus: &mut B,
+        address: u32,
+        byte: bool,
+        function_code: FunctionCode,
+        discarded: bool,
+    ) -> Result<u16, TimingFault<B::Error>> {
+        if !discarded {
+            return self.read_data(bus, address, byte, function_code);
+        }
+        let mut access = self.data_access(address, byte)?;
+        access.function_code = function_code;
+        self.reserve_transfer()?;
+        let response = bus.read_discarded_cycle(access, self.clock);
+        self.finish(response, access, Direction::Read)?;
+        Ok(0)
     }
 }
 

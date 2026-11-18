@@ -45,7 +45,17 @@ pub fn disjoint_table_and_counter_publications() {
         partitioned.advance_to(tick(edge + 10), REGION).unwrap();
         counter.advance_to(tick(edge + 10), REGION).unwrap();
         assert_eq!(device, partitioned);
-        assert_eq!(device.interrupts(), counter.interrupts());
+        let actual = device.interrupts();
+        let expected = counter.interrupts();
+        assert_eq!(actual.now(), expected.now());
+        assert_eq!(actual.line_counter(), expected.line_counter());
+        assert_eq!(actual.horizontal_pending(), expected.horizontal_pending());
+        assert_eq!(actual.vertical_pending(), expected.vertical_pending());
+        assert_eq!(device.interrupt_level(), counter.interrupt_level());
+        assert_eq!(
+            device.read_hv(REGION).unwrap(),
+            counter.read_hv(REGION).unwrap()
+        );
         assert_eq!(
             device.registers().registers()[usize::from(SCROLL_REGISTER)],
             Some(0x2e)

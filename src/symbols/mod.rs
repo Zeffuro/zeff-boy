@@ -4,6 +4,7 @@ mod coleco;
 mod gb;
 mod identity;
 pub(crate) mod import;
+mod md;
 mod model;
 mod nes;
 pub(crate) mod pce;

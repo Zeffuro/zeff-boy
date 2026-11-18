@@ -34,16 +34,39 @@ impl PrefetchCpu {
         }
         if let Operation::Jump(call) = operation {
             let (address, return_pc) = self.jump_address(bus, pipeline, mode, register)?;
-            let first = self.fetch(bus, address)?;
             if call {
-                self.push_stack(bus, return_pc)?;
+                let bank = ControlStackBank::active(&self.registers);
+                let sp = self.registers.stack_pointer();
+                self.call_address(bus, address, return_pc)?;
+                self.record_control_entry(
+                    ControlFlowEntryKind::Jsr,
+                    pipeline.address,
+                    return_pc,
+                    self.control_stack(bank, sp, sp.wrapping_sub(4)),
+                );
+                return Ok(true);
             }
+            let (first, samples) = if opcode == 0x4ef9 {
+                self.read_observed_word(
+                    bus,
+                    address,
+                    crate::ea::program_space(&self.registers),
+                    InterruptAperture::FollowingPrefetch,
+                )?
+            } else {
+                (self.fetch(bus, address)?, None)
+            };
+            let final_start = self.clock;
             let second = self.fetch(bus, address.wrapping_add(2))?;
             self.registers.pc = address;
-            self.pipeline = Some(Pipeline {
-                address,
-                words: [first, second],
-            });
+            self.pipeline = Some(Pipeline::sampled(address, [first, second]));
+            if opcode == 0x4ef9 {
+                self.publish_interrupt_samples(
+                    samples,
+                    final_start,
+                    ((self.registers.status_register() >> 8) & 7) as u8,
+                );
+            }
             return Ok(true);
         }
         let mut stream = Stream::new(pipeline);
@@ -89,11 +112,22 @@ impl PrefetchCpu {
             self.push_stack(bus, address)?;
         }
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: stream.cursor,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         Ok(true)
+    }
+
+    pub(super) fn call_address<B: ClockedBus>(
+        &mut self,
+        bus: &mut B,
+        address: u32,
+        return_pc: u32,
+    ) -> Result<(), TimingFault<B::Error>> {
+        let first = self.fetch(bus, address)?;
+        self.push_stack(bus, return_pc)?;
+        let second = self.fetch(bus, address.wrapping_add(2))?;
+        self.registers.pc = address;
+        self.pipeline = Some(Pipeline::sampled(address, [first, second]));
+        Ok(())
     }
 
     fn jump_address<B: ClockedBus>(
@@ -104,6 +138,9 @@ impl PrefetchCpu {
         register: usize,
     ) -> Result<(u32, u32), TimingFault<B::Error>> {
         let cursor = pipeline.address.wrapping_add(2);
+        if mode != 2 {
+            bus.instruction_input(cursor, pipeline.input(1));
+        }
         let extension = pipeline.words[1];
         let base = if mode == 7 {
             cursor
@@ -126,8 +163,9 @@ impl PrefetchCpu {
             }
             (7, 1) => {
                 let low = self.fetch(bus, cursor.wrapping_add(2))?;
+                bus.instruction_input(cursor.wrapping_add(2), low);
                 return Ok((
-                    (u32::from(extension) << 16) | u32::from(low),
+                    (u32::from(extension) << 16) | u32::from(low.value),
                     cursor.wrapping_add(4),
                 ));
             }

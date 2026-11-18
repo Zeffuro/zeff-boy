@@ -35,7 +35,7 @@ fn sound_pulse_edges_follow_region_height_horizontal_mode_and_counter_epoch() {
             for epoch in [0, 137] {
                 let interrupts =
                     VdpInterrupts::at_counters_zero(MasterTicks::new(epoch), 0, false, false);
-                let view = interrupts.sound_interrupt(fixture_registers(mode, horizontal), region);
+                let view = interrupts.sound_interrupt(&fixture_registers(mode, horizontal), region);
                 let start = epoch + pulse_start(region, mode, horizontal);
                 let period = region.frame_lines() * H32_LINE_TICKS;
                 for frame in [0, 1, 7] {
@@ -67,7 +67,7 @@ fn historical_pending_height_publication_selects_its_published_image() {
         let write = registers
             .queue_control_register(MODE_REGISTER, MODE5_ENABLE | after)
             .unwrap();
-        let view = interrupts.sound_interrupt(registers, Region::Pal);
+        let view = interrupts.sound_interrupt(&registers, Region::Pal);
         assert_eq!(view.asserted_at(old_start), Ok(before == 0));
         assert_eq!(
             view.asserted_at(write.publish_at.get() - 1),
@@ -93,12 +93,12 @@ fn historical_pending_horizontal_publication_changes_the_vint_offset() {
         let write = registers
             .queue_control_register(DISPLAY_SIZE_REGISTER, after)
             .unwrap();
-        let view = interrupts.sound_interrupt(registers, Region::NtscUs);
+        let view = interrupts.sound_interrupt(&registers, Region::NtscUs);
         assert_eq!(write.publish_at.get(), h40_end);
         let reference_before =
-            interrupts.sound_interrupt(fixture_registers(MODE5_ENABLE, before), Region::NtscUs);
+            interrupts.sound_interrupt(&fixture_registers(MODE5_ENABLE, before), Region::NtscUs);
         let reference_after =
-            interrupts.sound_interrupt(fixture_registers(MODE5_ENABLE, after), Region::NtscUs);
+            interrupts.sound_interrupt(&fixture_registers(MODE5_ENABLE, after), Region::NtscUs);
         assert_eq!(
             view.asserted_at(write.publish_at.get() - 1),
             reference_before.asserted_at(write.publish_at.get() - 1)
@@ -135,10 +135,10 @@ fn sound_line_ignores_display_vint_enable_main_pending_status_and_acknowledge() 
         for pending in [false, true] {
             let mut interrupts =
                 VdpInterrupts::at_counters_zero(MasterTicks::ZERO, 0, false, pending);
-            let before = interrupts.sound_interrupt(registers, Region::NtscUs);
+            let before = interrupts.sound_interrupt(&registers, Region::NtscUs);
             let _ = interrupts.status_bits();
             interrupts.complete_acknowledge(&registers).unwrap();
-            let after = interrupts.sound_interrupt(registers, Region::NtscUs);
+            let after = interrupts.sound_interrupt(&registers, Region::NtscUs);
             assert_eq!(before, after);
             assert_eq!(before.asserted_at(start), Ok(true));
             assert_eq!(after.asserted_at(start + H32_LINE_TICKS), Ok(false));
@@ -150,7 +150,7 @@ fn sound_line_ignores_display_vint_enable_main_pending_status_and_acknowledge() 
 fn unsupported_modes_and_time_before_counter_epoch_retain_timing_errors() {
     let epoch = MasterTicks::new(137);
     let interrupts = VdpInterrupts::at_counters_zero(epoch, 0, false, false);
-    let before = interrupts.sound_interrupt(fixture_registers(MODE5_ENABLE, 0), Region::NtscUs);
+    let before = interrupts.sound_interrupt(&fixture_registers(MODE5_ENABLE, 0), Region::NtscUs);
     assert_eq!(
         before.asserted_at(136),
         Err(VdpTimingError::BeforeEpoch {
@@ -159,7 +159,7 @@ fn unsupported_modes_and_time_before_counter_epoch_retain_timing_errors() {
         })
     );
     let tall = interrupts.sound_interrupt(
-        fixture_registers(MODE5_ENABLE | V30_ENABLE, 0),
+        &fixture_registers(MODE5_ENABLE | V30_ENABLE, 0),
         Region::NtscUs,
     );
     assert_eq!(

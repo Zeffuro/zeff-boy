@@ -1,4 +1,5 @@
 use super::*;
+use zeff_z80::{MemptrProfile, ResetState};
 
 fn cartridge() -> Cartridge {
     let mut bytes = vec![0; 16];
@@ -23,23 +24,35 @@ fn restore(saved: &[u8]) -> (SoundSchedule, Cpu) {
 
 #[test]
 fn pending_status_replay_continues_without_publication() {
-    let cartridge = cartridge();
+    for profile in [MemptrProfile::Legacy, MemptrProfile::Nmos] {
+        pending_status_replay(profile);
+    }
+}
+
+fn pending_status_replay(profile: MemptrProfile) {
+    let mut cartridge = cartridge();
     let mut memory = SoundMemory::default();
     memory.set_reset(false);
     memory.bank = 0x140;
     memory.ram[..4].copy_from_slice(&[0x3a, 0x00, 0xc0, 0x76]);
-    let mut cpu = Cpu::new();
+    let mut cpu = Cpu::new_with_memptr_profile(ResetState::default(), profile);
     let mut schedule = SoundSchedule::default();
     let mut audio = Audio::default();
     audio.write_opn2(0, 0, 0x2a);
     schedule.advance(
         &mut cpu,
         &mut memory,
-        &cartridge,
+        &mut cartridge,
         &mut [],
         SoundInterval::new(0..151, &mut audio),
     );
     assert!(schedule.pending.as_ref().unwrap().replay.is_some());
+    if profile == MemptrProfile::Nmos {
+        assert_eq!(
+            schedule.pending.as_ref().unwrap().cpu.memptr(),
+            Some(0xc001)
+        );
+    }
     let saved = save(&schedule, &cpu);
     let (mut restored, mut restored_cpu) = restore(&saved);
     assert_eq!(restored, schedule);
@@ -55,14 +68,14 @@ fn pending_status_replay_continues_without_publication() {
     schedule.advance(
         &mut cpu,
         &mut memory,
-        &cartridge,
+        &mut cartridge,
         &mut [],
         SoundInterval::new(160..600, &mut audio),
     );
     restored.advance(
         &mut restored_cpu,
         &mut restored_memory,
-        &cartridge,
+        &mut cartridge,
         &mut [],
         SoundInterval::new(160..600, &mut restored_audio),
     );
@@ -75,7 +88,7 @@ fn pending_status_replay_continues_without_publication() {
 
 #[test]
 fn pending_journal_slots_and_sampled_memory_are_exact() {
-    let cartridge = cartridge();
+    let mut cartridge = cartridge();
     let cpu = Cpu::new();
     let mut memory = SoundMemory::default();
     memory.set_reset(false);
@@ -104,8 +117,20 @@ fn pending_journal_slots_and_sampled_memory_are_exact() {
     let mut ram_b = ram_a.clone();
     let mut audio_a = Audio::default();
     let mut audio_b = audio_a.clone();
-    a.publish(&mut cpu_a, &mut memory_a, &mut ram_a, &mut audio_a);
-    b.publish(&mut cpu_b, &mut memory_b, &mut ram_b, &mut audio_b);
+    a.publish(
+        &mut cpu_a,
+        &mut memory_a,
+        &mut ram_a,
+        &mut audio_a,
+        &mut cartridge,
+    );
+    b.publish(
+        &mut cpu_b,
+        &mut memory_b,
+        &mut ram_b,
+        &mut audio_b,
+        &mut cartridge,
+    );
     assert_eq!(
         (cpu_a, memory_a, ram_a, audio_a),
         (cpu_b, memory_b, ram_b, audio_b)

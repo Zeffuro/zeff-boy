@@ -48,6 +48,12 @@ pub(super) fn summarize(trace: &NativeTrace, cancel: &AtomicBool) -> Result<Valu
         NativeTrace::Nes(trace) => collect(trace, nes, cancel),
         NativeTrace::Huc6280(trace) => collect(trace.as_ref(), huc, cancel),
         NativeTrace::WonderSwan(trace) => collect(trace, ws, cancel),
+        NativeTrace::Md(_) => Ok(json!({
+            "schema": "zeff-audio-writer-evidence/1",
+            "status": "unsupported",
+            "system": "md",
+            "reason": "Native Mega Drive writer ranking requires typed dual-CPU origins and is not implemented.",
+        })),
     }
 }
 

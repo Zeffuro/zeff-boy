@@ -35,10 +35,10 @@ impl PrefetchCpu {
         held?;
         let next = self.fetch(bus, pipeline.address.wrapping_add(4))?;
         self.registers.pc = pipeline.address.wrapping_add(2);
-        self.pipeline = Some(Pipeline {
-            address: self.registers.pc,
-            words: [pipeline.words[1], next],
-        });
+        self.pipeline = Some(Pipeline::sampled(
+            self.registers.pc,
+            [pipeline.input(1), next],
+        ));
         Ok(())
     }
 
@@ -104,10 +104,7 @@ impl PrefetchCpu {
         }
         let words = stream.finish(self, bus)?;
         self.registers.pc = stream.cursor;
-        self.pipeline = Some(Pipeline {
-            address: stream.cursor,
-            words,
-        });
+        self.pipeline = Some(Pipeline::sampled(stream.cursor, words));
         Ok(true)
     }
 }

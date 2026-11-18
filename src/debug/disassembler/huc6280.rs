@@ -87,6 +87,7 @@ fn line(
     control_target: Option<u16>,
 ) -> DisassembledLine {
     DisassembledLine {
+        decode_status: None,
         address: address.into(),
         storage_offset: None,
         bank: None,

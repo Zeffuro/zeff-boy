@@ -5,10 +5,6 @@ use crate::emu_backend::ActiveSystem;
 use crate::libretro_common::LibretroPlatform;
 
 pub(super) fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
-    if state.active_system == ActiveSystem::Md {
-        ui.label("Mega Drive cheats are not supported yet.");
-        return;
-    }
     poll_async_results(state);
 
     let header =
@@ -87,7 +83,7 @@ pub(super) fn draw_libretro_section(ui: &mut egui::Ui, state: &mut CheatState) {
     state.libretro_show = response.openness > 0.0;
 }
 
-fn poll_async_results(state: &mut CheatState) {
+pub(super) fn poll_async_results(state: &mut CheatState) {
     let Some(rx) = state.libretro_rx.take() else {
         return;
     };
@@ -180,7 +176,7 @@ fn draw_platform_and_actions(ui: &mut egui::Ui, state: &mut CheatState) {
 
         match state.active_system {
             ActiveSystem::Md => {
-                ui.label("Mega Drive / Genesis (cheats unavailable)");
+                ui.label("Mega Drive / Genesis");
             }
             ActiveSystem::GameBoy => {
                 if ui

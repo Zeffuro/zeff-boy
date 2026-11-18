@@ -149,8 +149,11 @@ fn compare(
     result
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn raster_context_matches_scalar_rows_with_scroll_window_attributes_and_intensity() {
+    selected_cram_validity();
+    assert_repeating_scroll_pairs();
     let memory = memory();
     for display in [
         0,
@@ -160,7 +163,7 @@ fn raster_context_matches_scalar_rows_with_scroll_window_attributes_and_intensit
     ] {
         let mode = HorizontalMode::from_register(display).unwrap();
         for size in [0, 1, 3, 0x10, 0x11, 0x30] {
-            for scroll in [0, 2, 3, 4, 6, 7] {
+            for scroll in [0, 1, 2, 3, 4, 5, 6, 7] {
                 for (window_x, window_y) in [(0, 0), (8, 0), (0x88, 0), (8, 0x90), (0x9f, 0x9f)] {
                     let mut values = values(display);
                     values[usize::from(PLANE_SIZE_REGISTER)] = Some(size);
@@ -184,6 +187,200 @@ fn raster_context_matches_scalar_rows_with_scroll_window_attributes_and_intensit
                     }
                 }
             }
+        }
+    }
+}
+
+fn selected_cram_validity() {
+    let registers = bank(values(0));
+    let mut memory = VdpMemory::default();
+    word(&mut memory, CRAM_WRITE_CODE, 2, 0x0246);
+    for index in [2, 23, 62] {
+        memory.publish_retirement(crate::hardware::vdp::memory::MemoryTransfer::UnknownCram(
+            ControlCommand {
+                address: index * 2,
+                code: CRAM_WRITE_CODE,
+            },
+        ));
+    }
+    let background = |color, shadow_highlight| BackgroundPixel {
+        selected: VdpPixel {
+            color,
+            palette: 0,
+            priority: true,
+        },
+        high_priority: true,
+        shadow_highlight,
+    };
+    let hidden = VdpPixel {
+        color: 2,
+        palette: 0,
+        priority: false,
+    };
+    assert_eq!(
+        memory.composite_color(&registers, background(1, false), Some(hidden)),
+        Ok(0x0246)
+    );
+    assert_eq!(
+        memory.composite_color(&registers, background(2, false), None),
+        Err(VdpRenderError::UnknownCram(2))
+    );
+    assert_eq!(
+        memory.composite_color(&registers, background(0, false), None),
+        Err(VdpRenderError::UnknownCram(23))
+    );
+    let operator = VdpPixel {
+        color: 14,
+        palette: 3,
+        priority: true,
+    };
+    assert_eq!(
+        memory.composite_color(&registers, background(1, true), Some(operator)),
+        Ok(((0x0246 >> 1) & SHADOW_COLOR_MASK) + HIGHLIGHT_COLOR_OFFSET)
+    );
+}
+
+fn assert_repeating_scroll_pairs() {
+    for display in [0, H40_CLOCK_MASK] {
+        for base in [0_u16, 0xfc00] {
+            let mut memory = VdpMemory::default();
+            for pair in 0..256_u16 {
+                word(
+                    &mut memory,
+                    VRAM_WRITE_CODE,
+                    u32::from(base + pair * 4),
+                    0xf000 | pair,
+                );
+                word(
+                    &mut memory,
+                    VRAM_WRITE_CODE,
+                    u32::from(base + pair * 4 + 2),
+                    0xac00 | (511 - pair),
+                );
+            }
+            for vertical in [0, 511] {
+                word(&mut memory, VSRAM_WRITE_CODE, 0, vertical);
+                word(&mut memory, VSRAM_WRITE_CODE, 2, 511 - vertical);
+                for mode in 0..8_u8 {
+                    let mut values = values(display);
+                    values[usize::from(SCROLL_MODE_REGISTER)] = Some(mode);
+                    values[usize::from(HSCROLL_TABLE_REGISTER)] = Some((base >> 10) as u8);
+                    let registers = bank(values);
+                    for row in 0..256_u16 {
+                        let pair = match mode & 3 {
+                            0 => 0,
+                            1 => row & 7,
+                            2 => row & !7,
+                            _ => row,
+                        };
+                        assert_eq!(
+                            memory.horizontal_scroll(&registers, row),
+                            Ok([pair, 511 - pair])
+                        );
+                        assert_eq!(
+                            memory.scroll_offsets(&registers, VdpPlane::A, row as u8, 0),
+                            Ok((pair, vertical))
+                        );
+                        assert_eq!(
+                            memory.scroll_offsets(&registers, VdpPlane::B, row as u8, 0),
+                            Ok((511 - pair, 511 - vertical))
+                        );
+                    }
+                }
+            }
+        }
+    }
+    let memory = VdpMemory::default();
+    for display in [None, Some(2), Some(6)] {
+        let mut values = values(0);
+        values[usize::from(SCROLL_MODE_REGISTER)] = Some(HSCROLL_REPEAT);
+        values[usize::from(DISPLAY_SIZE_REGISTER)] = display;
+        let expected = if display.is_none() {
+            VdpRenderError::UnknownRegister(DISPLAY_SIZE_REGISTER)
+        } else {
+            VdpRenderError::UnsupportedScrollMode(HSCROLL_REPEAT)
+        };
+        assert_eq!(memory.horizontal_scroll(&bank(values), 9), Err(expected));
+    }
+    for (display, interlaced) in [(0, true), (2, false), (6, false)] {
+        let mut values = values(display);
+        values[usize::from(SCROLL_MODE_REGISTER)] = Some(HSCROLL_REPEAT);
+        let registers = bank(values);
+        let geometry = RasterGeometry::new(9, interlaced, false);
+        let sprites = memory.compose_sprite_line(&[]).unwrap();
+        assert!(
+            RasterContext::prepare_with_horizontal(
+                &memory,
+                &registers,
+                &sprites,
+                &[0; H32_SCREEN_WIDTH],
+                geometry,
+                Some([17, 31])
+            )
+            .is_none()
+        );
+        assert_eq!(
+            memory.scrolled_plane_with_horizontal(
+                &registers,
+                (VdpPlane::A, Some(17)),
+                0,
+                geometry,
+                true
+            ),
+            Err(VdpRenderError::UnsupportedScrollMode(HSCROLL_REPEAT))
+        );
+        let mut colors = [0; H32_SCREEN_WIDTH];
+        assert_eq!(
+            memory.render_raster_with_horizontal(
+                &registers,
+                &sprites,
+                &mut colors,
+                geometry,
+                Some([17, 31])
+            ),
+            Err(VdpRenderError::UnsupportedScrollMode(HSCROLL_REPEAT))
+        );
+    }
+    for mode in [None, Some(0), Some(MODE5_ENABLE | VRAM_128K_ENABLE)] {
+        let mut values = values(0);
+        values[usize::from(SCROLL_MODE_REGISTER)] = Some(HSCROLL_REPEAT);
+        values[usize::from(MODE_REGISTER)] = mode;
+        let expected = mode.map_or(
+            VdpRenderError::UnknownRegister(MODE_REGISTER),
+            VdpRenderError::UnsupportedRenderMode,
+        );
+        assert_eq!(memory.horizontal_scroll(&bank(values), 9), Err(expected));
+    }
+    let mut memory = VdpMemory::default();
+    for (address, data) in [(0xfc00, 10), (0xfc04, 20), (4, 30)] {
+        word(&mut memory, VRAM_WRITE_CODE, address, data);
+    }
+    let mut registers = bank(values(0));
+    for (index, value, before, after) in [(11, 1, 10, 20), (13, 0, 20, 30)] {
+        registers
+            .advance_to(MasterTicks::new(registers.now().get() + 1))
+            .unwrap();
+        let write = registers.queue_register(index, value).unwrap();
+        let mut copied = registers;
+        for at in [
+            write.publish_at.get() - 1,
+            write.publish_at.get(),
+            write.publish_at.get() + 1,
+        ] {
+            registers.advance_to(MasterTicks::new(at)).unwrap();
+            copied.advance_to(MasterTicks::new(at)).unwrap();
+            assert_eq!(registers, copied);
+            assert_eq!(
+                memory.horizontal_scroll(&registers, 9),
+                Ok([
+                    if at < write.publish_at.get() {
+                        before
+                    } else {
+                        after
+                    },
+                    0
+                ])
+            );
         }
     }
 }
@@ -286,3 +483,42 @@ fn each_raster_call_observes_register_and_completed_fifo_publications() {
 }
 
 mod interlace;
+mod layout;
+mod spans;
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn span_and_scalar_raster_preserve_backdrop_and_plane_colors() {
+    let mut registers = values(H40_CLOCK_MASK);
+    registers[usize::from(BACKDROP_REGISTER)] = Some(0);
+    registers[usize::from(WINDOW_X_REGISTER)] = Some(0);
+    let registers = bank(registers);
+    let mut memory = VdpMemory::default();
+    word(&mut memory, VRAM_WRITE_CODE, 0xc000, 1);
+    word(&mut memory, CRAM_WRITE_CODE, 0, 0x0246);
+    word(&mut memory, CRAM_WRITE_CODE, 2, 0x068a);
+    for address in 32..36 {
+        memory.write_dma_byte(address, 0x10);
+    }
+    let sprites = memory
+        .compose_raster_sprite_line(&[], HorizontalMode::H40)
+        .unwrap();
+    let geometry = RasterGeometry::progressive(0);
+    let expected: [u16; H40_SCREEN_WIDTH] = std::array::from_fn(|x| match x {
+        0 | 2 | 4 | 6 | 256 | 258 | 260 | 262 => 0x068a,
+        _ => 0x0246,
+    });
+    for fetched in [None, Some([0, 0])] {
+        let mut colors = [0xffff; H40_SCREEN_WIDTH];
+        memory
+            .render_raster_with_horizontal(&registers, &sprites, &mut colors, geometry, fetched)
+            .unwrap();
+        assert_eq!(colors, expected);
+
+        let mut scalar = [0xffff; 4];
+        memory
+            .render_raster_with_horizontal(&registers, &sprites, &mut scalar, geometry, fetched)
+            .unwrap();
+        assert_eq!(scalar, expected[..4]);
+    }
+}

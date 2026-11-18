@@ -36,12 +36,6 @@ impl Rom {
         self.long(address);
     }
 
-    pub fn write_long(&mut self, address: u32, value: u32) {
-        self.word(0x23fc);
-        self.long(value);
-        self.long(address);
-    }
-
     pub fn read_byte(&mut self, address: u32, destination: u32) {
         self.word(0x1039);
         self.long(address);

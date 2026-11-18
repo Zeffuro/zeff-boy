@@ -32,7 +32,7 @@ pub(crate) fn assert_native_pcm(path: &Path, native: &[u8], sample_rate: u32) ->
     Ok(())
 }
 
-fn bundle(trace: &[u8], change: impl FnOnce(&mut Value)) -> Vec<u8> {
+pub(super) fn bundle(trace: &[u8], change: impl FnOnce(&mut Value)) -> Vec<u8> {
     let mut manifest = json!({"schema": "zeff-audio-trace-capture/1",
         "context": {"source": {"loaded_media": {"byte_len": 32768, "sha256": "0".repeat(64)}}},
         "artifacts": [{"path": "trace.json", "byte_len": trace.len(),

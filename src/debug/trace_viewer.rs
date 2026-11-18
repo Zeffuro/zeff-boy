@@ -2,48 +2,31 @@ use std::fmt::Write;
 
 use zeff_emu_common::address::Address;
 use zeff_emu_common::debug::{
-    InstructionTraceRecord, TraceExecMode, TraceWrite, TraceWriteKind, TraceWriteWidth,
+    InstructionTraceRecord, TraceBoundaryKind, TraceExecMode, TraceFrameKnowledge,
+    TraceObservationEnd, TraceObservationStart, TraceWrite, TraceWriteKind, TraceWriteWidth,
 };
 
 use super::types::TraceViewerState;
 use super::{DebugTab, DebugUiActions, DisassemblyTarget};
 
+mod controls;
+mod decode;
+#[cfg(test)]
+mod target_symbols_tests;
+use decode::{decode_entry, trace_cpu_address};
+
 pub(crate) fn draw_trace_content(
     ui: &mut egui::Ui,
     state: &mut TraceViewerState,
-    symbols: &crate::symbols::SymbolSession,
+    primary_symbols: &crate::symbols::SymbolSession,
+    sound_symbols: &crate::symbols::SymbolSession,
     actions: &mut DebugUiActions,
 ) {
-    ui.horizontal_wrapped(|ui| {
-        let label = if state.enabled { "Stop" } else { "Record" };
-        if ui.button(label).clicked() {
-            actions.trace_enabled = Some(!state.enabled);
-        }
-        if ui.button("Clear").clicked() {
-            actions.trace_clear = true;
-            state.clear();
-        }
-        egui::ComboBox::from_id_salt("trace_capacity")
-            .selected_text(format_capacity(state.capacity))
-            .show_ui(ui, |ui| {
-                for capacity in [1_000, 10_000, 50_000, 100_000] {
-                    if ui
-                        .selectable_label(state.capacity == capacity, format_capacity(capacity))
-                        .clicked()
-                    {
-                        actions.trace_capacity = Some(capacity);
-                    }
-                }
-            });
-        ui.checkbox(&mut state.auto_scroll, "Follow");
-        ui.label(format!("{} / {} retained", state.retained, state.capacity));
-        if state.missed != 0 {
-            ui.colored_label(
-                super::common::color32(super::common::debug_colors(ui).breakpoint),
-                format!("{} missed", state.missed),
-            );
-        }
-    });
+    controls::draw(ui, state, actions);
+    let symbols = match state.target {
+        crate::ui::TraceTarget::Primary => primary_symbols,
+        crate::ui::TraceTarget::Sound => sound_symbols,
+    };
 
     ui.horizontal(|ui| {
         ui.label("Filter");
@@ -73,7 +56,7 @@ pub(crate) fn draw_trace_content(
         sized_label(ui, 72.0, "Sequence");
         if show_timing {
             sized_label(ui, 72.0, "Frame");
-            sized_label(ui, 88.0, "Cycle");
+            sized_label(ui, 160.0, "Cycle / observation start");
         }
         sized_label(ui, 88.0, "PC");
         sized_label(ui, 104.0, "ROM");
@@ -96,9 +79,10 @@ pub(crate) fn draw_trace_content(
                 };
                 let entry = state.entries[entry_index];
                 let decoded = decode_entry(&entry);
-                let symbol = trace_symbol_context(symbols, &entry);
-                let source = entry
-                    .physical_rom_offset
+                let symbol = trace_symbol_for_target(state.target, symbols, &entry);
+                let source = (state.target == crate::ui::TraceTarget::Primary)
+                    .then_some(entry.physical_rom_offset)
+                    .flatten()
                     .and_then(|offset| symbols.source_reference_at_rom_offset(offset));
                 let source_label = source.as_ref().map(|source| {
                     std::path::Path::new(&source.display_path)
@@ -111,8 +95,8 @@ pub(crate) fn draw_trace_content(
                         ui.style_mut().override_font_id = Some(mono.clone());
                         sized_label(ui, 72.0, &entry.sequence.to_string());
                         if show_timing {
-                            sized_label(ui, 72.0, &entry.frame.to_string());
-                            sized_label(ui, 88.0, &entry.cycle.to_string());
+                            sized_label(ui, 72.0, &trace_frame_label(&entry));
+                            sized_label(ui, 160.0, &format_cycle(&entry));
                         }
                         colored_sized_label(
                             ui,
@@ -150,17 +134,27 @@ pub(crate) fn draw_trace_content(
                 } else {
                     response
                 };
-                if response.clicked() {
-                    actions.disasm_target = Some(DisassemblyTarget {
-                        cpu_address: Address::from(entry.pc),
-                        storage_offset: entry.physical_rom_offset,
-                        bank: entry.bank,
-                        thumb: match entry.mode {
-                            TraceExecMode::Thumb => Some(true),
-                            TraceExecMode::Arm => Some(false),
-                            _ => None,
-                        },
-                    });
+                if response.clicked()
+                    && state.target == crate::ui::TraceTarget::Primary
+                    && actions.target == crate::debug::DebugTarget::Primary
+                {
+                    let target = if entry.mode == TraceExecMode::M68000 {
+                        crate::debug::CpuDisassemblyTarget::m68000(Address::from(
+                            trace_cpu_address(&entry),
+                        ))
+                    } else {
+                        crate::debug::CpuDisassemblyTarget {
+                            cpu_address: Address::from(trace_cpu_address(&entry)),
+                            storage_offset: entry.physical_rom_offset,
+                            bank: entry.bank,
+                            thumb: match entry.mode {
+                                TraceExecMode::Thumb => Some(true),
+                                TraceExecMode::Arm => Some(false),
+                                _ => None,
+                            },
+                        }
+                    };
+                    actions.disasm_target = Some(DisassemblyTarget::Cpu(target));
                     actions.focus_tab = Some(DebugTab::Disassembler);
                 }
             }
@@ -184,12 +178,43 @@ fn refresh_filter(state: &mut TraceViewerState, symbols: &crate::symbols::Symbol
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, entry)| entry_matches(entry, &query, symbols))
+            .filter(|(_, entry)| {
+                if state.target == crate::ui::TraceTarget::Primary {
+                    entry_matches(entry, &query, symbols)
+                } else {
+                    entry_matches_target(state.target, entry, &query, symbols)
+                }
+            })
             .map(|(index, _)| index),
     );
 }
 
+fn trace_symbol_for_target(
+    target: crate::ui::TraceTarget,
+    symbols: &crate::symbols::SymbolSession,
+    entry: &InstructionTraceRecord,
+) -> Option<String> {
+    match (target, symbols.target()) {
+        (crate::ui::TraceTarget::Primary, crate::debug::DebugTarget::Primary) => {
+            trace_symbol_context(symbols, entry)
+        }
+        (crate::ui::TraceTarget::Sound, crate::debug::DebugTarget::Sound) => symbols
+            .unique_symbol_name_at_cpu_address(u64::from(entry.pc))
+            .map(str::to_owned),
+        _ => None,
+    }
+}
+
 fn entry_matches(
+    entry: &InstructionTraceRecord,
+    query: &str,
+    symbols: &crate::symbols::SymbolSession,
+) -> bool {
+    entry_matches_target(crate::ui::TraceTarget::Primary, entry, query, symbols)
+}
+
+fn entry_matches_target(
+    target: crate::ui::TraceTarget,
     entry: &InstructionTraceRecord,
     query: &str,
     symbols: &crate::symbols::SymbolSession,
@@ -198,12 +223,12 @@ fn entry_matches(
         return range_contains(range, entry.pc);
     }
     if let Some(range) = query.strip_prefix("write:").and_then(parse_range) {
-        return entry
-            .writes()
-            .iter()
-            .any(|write| range_contains(range, write.address));
+        return entry.writes().iter().any(|write| {
+            (0..write.width as u32)
+                .any(|offset| range_contains(range, write.address.wrapping_add(offset)))
+        });
     }
-    trace_symbol_context(symbols, entry)
+    trace_symbol_for_target(target, symbols, entry)
         .is_some_and(|symbol| symbol.to_ascii_lowercase().contains(query))
         || format_pc(entry).to_ascii_lowercase().contains(query)
         || entry
@@ -253,102 +278,62 @@ fn trace_symbol_context(
                     .map(str::to_owned);
             }
             symbols
-                .unique_symbol_name_at_cpu_address(u64::from(entry.pc))
+                .unique_symbol_name_at_cpu_address(u64::from(trace_cpu_address(entry)))
                 .map(str::to_owned)
         })
 }
 
-struct DecodedTrace {
-    bytes: String,
-    mnemonic: String,
-}
-
-fn decode_entry(entry: &InstructionTraceRecord) -> DecodedTrace {
-    if entry.instruction_len == 0 {
-        return DecodedTrace {
-            bytes: "--".to_string(),
-            mnemonic: entry
-                .event
-                .map_or_else(|| "Idle".to_string(), |event| event.label().to_string()),
-        };
-    }
-    let bytes = &entry.instruction[..usize::from(entry.instruction_len)];
-    let line = match entry.mode {
-        TraceExecMode::Sm83 => super::disassemble_around(
-            |address| trace_read16(bytes, entry.pc as u16, address),
-            entry.pc as u16,
-            0,
-            1,
-        ),
-        TraceExecMode::Mos6502 => super::nes_disassemble_around(
-            |address| trace_read16(bytes, entry.pc as u16, address),
-            entry.pc as u16,
-            0,
-            1,
-        ),
-        TraceExecMode::HuC6280 => super::huc6280_disassemble_around(
-            |address| trace_read16(bytes, entry.pc as u16, address),
-            entry.pc as u16,
-            0,
-            1,
-        ),
-        TraceExecMode::Z80 => super::z80_disassemble_around(
-            |address| trace_read16(bytes, entry.pc as u16, address),
-            entry.pc as u16,
-            0,
-            1,
-        ),
-        TraceExecMode::Arm | TraceExecMode::Thumb => super::gba_disassemble_around(
-            |address| trace_read32(bytes, entry.pc, address),
-            entry.pc,
-            entry.mode == TraceExecMode::Thumb,
-            0,
-            1,
-        ),
-        TraceExecMode::V30 => super::v30_disassemble_around(
-            |address| trace_read32(bytes, entry.pc, address),
-            entry.pc,
-            0,
-            1,
-        ),
-    }
-    .into_iter()
-    .next();
-    if let Some(line) = line {
-        DecodedTrace {
-            bytes: line
-                .bytes
-                .iter()
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<Vec<_>>()
-                .join(" "),
-            mnemonic: line.mnemonic.to_string(),
-        }
-    } else {
-        DecodedTrace {
-            bytes: format!("{:02X}", bytes[0]),
-            mnemonic: format!("DB ${:02X}", bytes[0]),
-        }
-    }
-}
-
-fn trace_read16(bytes: &[u8], pc: u16, address: u16) -> u8 {
-    bytes
-        .get(usize::from(address.wrapping_sub(pc)))
-        .copied()
-        .unwrap_or(0)
-}
-
-fn trace_read32(bytes: &[u8], pc: u32, address: u32) -> u8 {
-    bytes
-        .get(address.wrapping_sub(pc) as usize)
-        .copied()
-        .unwrap_or(0)
-}
-
 fn format_changes(entry: &InstructionTraceRecord) -> String {
     let mut text = String::new();
+    let suffix = entry.observation.start == TraceObservationStart::Suffix;
+    let interrupted = entry.observation.end != TraceObservationEnd::Retired;
+    if suffix {
+        let _ = write!(
+            text,
+            "Observation start {}; unknown instruction prefix",
+            entry.cycle
+        );
+    }
+    if interrupted {
+        if !text.is_empty() {
+            text.push_str("; ");
+        }
+        let _ = write!(
+            text,
+            "Observation interrupted: {}",
+            observation_end_label(entry.observation.end)
+        );
+    }
+    if let Some(boundary) = entry.boundary {
+        if suffix || interrupted {
+            if !text.is_empty() {
+                text.push_str("; ");
+            }
+            let _ = write!(
+                text,
+                "Observation span {} CPU clocks; {}",
+                boundary.cpu_clocks,
+                boundary_label(boundary.kind)
+            );
+        } else {
+            let _ = write!(
+                text,
+                "{}; {} CPU clocks",
+                boundary_label(boundary.kind),
+                boundary.cpu_clocks
+            );
+        }
+        if let Some(vector) = boundary.final_exception {
+            let _ = write!(text, "; final exception {vector}");
+        }
+        if boundary.machine_fault {
+            text.push_str("; machine fault");
+        }
+    }
     if let Some(event) = entry.event {
+        if !text.is_empty() {
+            text.push(' ');
+        }
         text.push_str(event.label());
     }
     for delta in entry.register_deltas() {
@@ -375,23 +360,62 @@ fn format_changes(entry: &InstructionTraceRecord) -> String {
             u32::from(entry.register_delta_overflow) + u32::from(entry.write_overflow)
         );
     }
+    if entry.instruction_overflow == u16::MAX {
+        let _ = write!(
+            text,
+            " +at least {} instruction bytes (saturated)",
+            entry.instruction_overflow
+        );
+    } else if entry.instruction_overflow != 0 {
+        let _ = write!(text, " +{} instruction bytes", entry.instruction_overflow);
+    }
     text
 }
 
-fn format_write(write: &TraceWrite) -> String {
-    let prefix = if write.kind == TraceWriteKind::Io {
-        "IO"
+fn format_cycle(entry: &InstructionTraceRecord) -> String {
+    if entry.observation.start == TraceObservationStart::Suffix {
+        format!("Observation start {}", entry.cycle)
     } else {
-        ""
+        entry.cycle.to_string()
+    }
+}
+
+fn observation_end_label(end: TraceObservationEnd) -> &'static str {
+    match end {
+        TraceObservationEnd::Retired => "retired",
+        TraceObservationEnd::Fault => "fault",
+        TraceObservationEnd::Reset => "reset",
+        TraceObservationEnd::Disabled => "disabled",
+    }
+}
+
+fn boundary_label(kind: TraceBoundaryKind) -> &'static str {
+    match kind {
+        TraceBoundaryKind::Instruction => "Instruction",
+        TraceBoundaryKind::Interrupt => "IRQ service",
+        TraceBoundaryKind::Trace => "Trace service",
+        TraceBoundaryKind::Stopped => "Stopped",
+        TraceBoundaryKind::Fault => "Boundary failed",
+    }
+}
+
+fn format_write(write: &TraceWrite) -> String {
+    let prefix = match write.kind {
+        TraceWriteKind::Io => "IO",
+        TraceWriteKind::Bus => "BUS",
+        TraceWriteKind::Memory => "",
     };
     let digits = match write.width {
         TraceWriteWidth::Byte => 2,
         TraceWriteWidth::Halfword => 4,
         TraceWriteWidth::Word => 8,
     };
+    let old = write
+        .old_value
+        .map_or_else(|| "??".into(), |value| format!("{value:0digits$X}"));
     format!(
-        "{prefix}[{:X}]={:0digits$X}>{:0digits$X}",
-        write.address, write.old_value, write.new_value
+        "{prefix}[{:X}]={old}>{:0digits$X}",
+        write.address, write.new_value
     )
 }
 
@@ -408,12 +432,17 @@ fn register_name(mode: TraceExecMode, register: u8) -> &'static str {
     const V30: [&str; 14] = [
         "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI", "ES", "CS", "SS", "DS", "IP", "F",
     ];
+    const M68000: [&str; 19] = [
+        "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "A0", "A1", "A2", "A3", "A4", "A5", "A6",
+        "USP", "SSP", "PC", "SR",
+    ];
     match mode {
         TraceExecMode::Sm83 => GB.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::Mos6502 => NES.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::HuC6280 => HUC6280.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::Z80 => Z80.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::V30 => V30.get(register as usize).copied().unwrap_or("?"),
+        TraceExecMode::M68000 => M68000.get(register as usize).copied().unwrap_or("?"),
         TraceExecMode::Arm | TraceExecMode::Thumb => match register {
             0 => "R0",
             1 => "R1",
@@ -437,9 +466,16 @@ fn register_name(mode: TraceExecMode, register: u8) -> &'static str {
     }
 }
 
+pub(crate) fn trace_frame_label(entry: &InstructionTraceRecord) -> String {
+    match entry.observation.frame_knowledge {
+        TraceFrameKnowledge::Exact => entry.frame.to_string(),
+        TraceFrameKnowledge::Unknown => "Unknown".to_string(),
+    }
+}
+
 fn format_pc(entry: &InstructionTraceRecord) -> String {
     match entry.mode {
-        TraceExecMode::Arm | TraceExecMode::Thumb | TraceExecMode::V30 => {
+        TraceExecMode::Arm | TraceExecMode::Thumb | TraceExecMode::V30 | TraceExecMode::M68000 => {
             format!("{:08X}", entry.pc)
         }
         _ => format!("{:04X}", entry.pc),
@@ -470,26 +506,7 @@ fn colored_sized_label(ui: &mut egui::Ui, width: f32, text: &str, color: egui::C
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    #[test]
-    fn huc6280_trace_entries_decode_and_name_mapping_registers() {
-        let mut entry = InstructionTraceRecord::new(
-            TraceExecMode::HuC6280,
-            0xE000,
-            Some(0x20_000),
-            3,
-            45,
-            &[0x73, 0x34, 0x12, 0x78, 0x56, 0xBC, 0x9A],
-        );
-        entry.bank = Some(0x10);
-
-        let decoded = decode_entry(&entry);
-        assert_eq!(decoded.bytes, "73 34 12 78 56 BC 9A");
-        assert_eq!(decoded.mnemonic, "TII $1234,$5678,$9ABC");
-        assert_eq!(register_name(TraceExecMode::HuC6280, 6), "MPR0");
-        assert_eq!(register_name(TraceExecMode::HuC6280, 14), "SPD");
-        assert_eq!(format_pc(&entry), "E000");
-    }
-}
+#[cfg(test)]
+mod observation_tests;

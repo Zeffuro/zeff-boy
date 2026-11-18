@@ -353,7 +353,7 @@ pub(super) fn assert_rich_ui_data_match(left: &FrameResult, right: &FrameResult)
         .disassembly_view
         .as_ref()
         .expect("disassembly data");
-    assert_eq!(left_disassembly.pc, right_disassembly.pc);
+    assert_eq!(left_disassembly.cursor, right_disassembly.cursor);
     assert_eq!(left_disassembly.mapping, right_disassembly.mapping);
     assert_eq!(
         left_disassembly.is_navigation_target,

@@ -274,7 +274,17 @@ pub(super) struct ReplaySaveResult {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SymbolLoadBinding {
+    pub(super) owner: u64,
+    pub(super) target: crate::debug::DebugTarget,
+    pub(super) rom_hash: [u8; 32],
+    pub(super) request_id: u64,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) struct PendingSymbolLoad {
+    pub(super) binding: SymbolLoadBinding,
     pub(super) request_id: u64,
     pub(super) receiver: mpsc::Receiver<SymbolLoadResult>,
 }
@@ -314,6 +324,7 @@ pub(super) enum RomPreparationOutcome {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) struct SymbolLoadResult {
+    pub(super) binding: SymbolLoadBinding,
     pub(super) request_id: u64,
     pub(super) elapsed: Duration,
     pub(super) session: crate::symbols::SymbolSession,
@@ -367,6 +378,8 @@ pub(super) struct CachedRomInfo {
     pub(super) source_path: Option<PathBuf>,
     pub(super) rom_hash: Option<[u8; 32]>,
     pub(super) pce_controller_profile_hash: Option<[u8; 32]>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) md_tas_profile: Option<crate::emu_backend::loader::MdTasProfile>,
     pub(super) replay_metadata: Option<zeff_emu_common::replay::ReplayMetadata>,
 }
 
