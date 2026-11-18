@@ -18,6 +18,8 @@ mod nes_policy;
 pub(in crate::emu_backend) mod netplay;
 mod source;
 pub(crate) use source::LoadedBackend;
+#[cfg(not(target_arch = "wasm32"))]
+use source::zip_tas_source_media;
 use source::{RomSource, has_extension};
 mod pce_cd;
 mod systems;
@@ -109,33 +111,6 @@ pub(crate) use tas::{
 };
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use tas::{register_test_pce_cd_ppf_stack, register_test_pce_cd_system_card};
-
-#[cfg(not(target_arch = "wasm32"))]
-fn zip_tas_source_media(
-    source_path: &Path,
-    rom_path: &Path,
-    extension: &str,
-    max_member_bytes: u64,
-    raw_sha256: [u8; 32],
-    sync: impl FnOnce(&str) -> [u8; 32],
-) -> Option<([u8; 32], usize, [u8; 32])> {
-    has_extension(source_path, "zip")
-        .then(|| {
-            crate::rom_archive::extract_bounded_zip_member(
-                source_path,
-                Some(rom_path),
-                extension,
-                128 * 1024 * 1024,
-                max_member_bytes,
-            )
-        })?
-        .ok()
-        .filter(|selected| zeff_firmware::sha256_bytes(&selected.bytes) == raw_sha256)
-        .map(|selected| {
-            let sync = sync(&selected.member_name);
-            (selected.archive_sha256, selected.archive_len, sync)
-        })
-}
 
 pub(crate) fn load_backend_from_rom_source(
     system: ActiveSystem,

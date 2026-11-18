@@ -9,7 +9,6 @@ version = 1
 "crates/zeff-gb-core/src/hardware/ppu/tests.rs" = 1549
 "crates/zeff-gb-core/src/hardware/ppu/timing.rs" = 1030
 "crates/zeff-gba-core/src/hardware/cpu.rs" = 1211
-"crates/zeff-libretro/src/core/tests.rs" = 1061
 "crates/zeff-libretro/src/libretro_harness.rs" = 1565
 "crates/zeff-nes-core/src/hardware/cartridge/mappers/fds/tests.rs" = 907
 "crates/zeff-nes-core/src/hardware/cpu/conformance_tests/conformance_vectors.rs" = 984
@@ -40,13 +39,8 @@ version = 1
 "src/emu_backend/pce_cd_overlay.rs" = 1025
 "src/emu_thread/wasm/tests.rs" = 968
 "src/link/gb/tests.rs" = 1427
-"src/settings/structs.rs" = 915
 "src/settings/tests.rs" = 913
 "src/ui/pce_snapshot.rs" = 1519
-
-[exceptions."src/app/remote.rs"]
-max_lines = 905
-reason = "Remote command dispatch and its protocol checks remain together; cap the existing dispatcher."
 
 [exceptions."src/app/tas_editor.rs"]
 max_lines = 1002
@@ -67,10 +61,6 @@ reason = "Binding capture and editing share UI state; cap the existing editor."
 [exceptions."src/debug/settings_window/controls/controller_diagram.rs"]
 max_lines = 1161
 reason = "Controller drawing routines share painter geometry and interaction logic; cap the existing renderer."
-
-[exceptions."src/debug/settings_window/mod.rs"]
-max_lines = 1016
-reason = "Settings navigation and reset behavior share window state; cap the existing module including native fixture declaration."
 
 [exceptions."src/debug/tas_editor/branch_diff_editor.rs"]
 max_lines = 972
@@ -97,28 +87,20 @@ max_lines = 953
 reason = "PCE CD media profile validation shares layout and digest rules; cap the existing profile implementation."
 
 [exceptions."src/emu_thread/wasm/tests.rs"]
-max_lines = 996
-reason = "WASM thread transaction regressions share backend fixtures; cap the existing test suite."
+max_lines = 1001
+reason = "WASM thread transaction regressions share backend and frame-input fixtures with Mega Drive persistence tests."
 
 [exceptions."src/input/routing/tests.rs"]
-max_lines = 920
-reason = "Input routing regressions share synthetic device configuration; cap the existing test suite."
+max_lines = 922
+reason = "Mega Drive input routing tests are registered here to share the synthetic device fixtures."
 
 [exceptions."src/platform/atomic_file.rs"]
 max_lines = 964
 reason = "Atomic replacement implementation and failure recovery tests remain together; cap the existing storage module."
 
-[exceptions."src/settings/document.rs"]
-max_lines = 1231
-reason = "Settings document migration and preservation checks remain together; cap the existing persistence format module."
-
 [exceptions."src/settings/input_scopes.rs"]
 max_lines = 1084
 reason = "Input scope resolution and inheritance regressions remain together; cap the existing implementation."
-
-[exceptions."src/settings/structs.rs"]
-max_lines = 935
-reason = "Serialized settings types and defaults define one compatibility schema; cap the existing schema module."
 
 [exceptions."src/settings/tests.rs"]
 max_lines = 934
