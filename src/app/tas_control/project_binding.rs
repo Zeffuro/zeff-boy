@@ -145,6 +145,12 @@ impl TasEditorControlSnapshot {
         snapshot: TasEditorControlSnapshot,
         cache_candidate_cursors: &[u64],
     ) -> Result<TasAcquiredProjectBinding> {
+        if crate::emu_backend::loader::md_product::md_pad_profile(snapshot.profile).is_some() {
+            crate::emu_backend::loader::md_product::validate_md_tas_branch_scope(
+                session.project(),
+                &snapshot.branch_id,
+            )?;
+        }
         if snapshot.profile == TasExecutionProfile::DirectFdsDisk {
             validate_fds_tas_branch_scope(session.project(), &snapshot.branch_id)?;
         }
@@ -289,6 +295,9 @@ fn materialize_profile_input(
     profile: TasExecutionProfile,
 ) -> Result<TasInputFrame> {
     let input = branch.input_at(cursor);
+    if crate::emu_backend::loader::md_product::md_pad_profile(profile).is_some() {
+        crate::emu_backend::loader::md_product::validate_md_tas_project_input(profile, input)?;
+    }
     let [p3, p4, p5] = if matches!(
         profile,
         TasExecutionProfile::DirectPceMultitapHuCard | TasExecutionProfile::DirectPceMultitapCd
@@ -393,6 +402,9 @@ fn validate_profile_input(profile: TasExecutionProfile, input: TasInputFrame) ->
         anyhow::bail!("the selected TAS input contains an FDS drive event");
     }
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            crate::emu_backend::loader::md_product::validate_md_tas_worker_input(profile, input)?;
+        }
         TasExecutionProfile::DirectNesCartridge | TasExecutionProfile::DirectFdsDisk
             if input.coleco != [crate::tas_project::TasColecoControllerInput::default(); 2] =>
         {
@@ -538,3 +550,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod md_tests;

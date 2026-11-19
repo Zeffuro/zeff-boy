@@ -3,17 +3,20 @@ use std::path::PathBuf;
 
 use zeff_emu_common::system::System;
 
+#[cfg(test)]
+use super::AddressSpaceId;
 use super::identity::IdentityStatus;
 use super::identity::RomIdentity;
 use super::store::SymbolStore;
 use super::{
-    AddressSpaceId, CpuLocation, DebugSegment, ImageId, LoadInstance, ProvenanceKind, RegionId,
-    SourceFile, SourceLine, StorageLocation, SymbolId, SymbolKind, SymbolRecord,
+    CpuLocation, DebugSegment, ImageId, LoadInstance, ProvenanceKind, RegionId, SourceFile,
+    SourceLine, StorageLocation, SymbolId, SymbolKind, SymbolRecord,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
 mod discovery;
 mod loading;
+mod sound;
 mod source;
 
 #[derive(Debug)]
@@ -52,6 +55,7 @@ pub(crate) struct SymbolSession {
     source_by_cpu: BTreeMap<CpuLocation, SourceLine>,
     source_offsets_by_line: HashMap<(usize, u32), Vec<u64>>,
     source_addresses_by_line: HashMap<(usize, u32), Vec<zeff_emu_common::address::Address>>,
+    target: crate::debug::DebugTarget,
     loading: bool,
     identity: Option<RomIdentity>,
     user_symbols: Vec<SymbolRecord>,
@@ -70,13 +74,25 @@ impl SymbolSession {
         self.loading
     }
 
+    pub(crate) fn matches_rom(&self, system: System, sha256: [u8; 32]) -> bool {
+        self.identity == Some(RomIdentity { system, sha256 })
+    }
+
+    pub(crate) fn target(&self) -> crate::debug::DebugTarget {
+        self.target
+    }
+
     pub(crate) fn exec_mode(&self) -> super::ExecMode {
+        if self.target == crate::debug::DebugTarget::Sound {
+            return super::ExecMode::Z80;
+        }
         match self.identity.map(|identity| identity.system) {
             Some(System::Gb) => super::ExecMode::Sm83,
             Some(System::Gba) => super::ExecMode::Arm,
             Some(System::Nes) => super::ExecMode::Mos6502,
             Some(System::Coleco) => super::ExecMode::Z80,
             Some(System::Pce) => super::ExecMode::Unknown,
+            Some(System::Md) => super::ExecMode::M68000,
             Some(System::Ws) => super::ExecMode::V30,
             Some(System::Sms | System::Gg | System::Sg) => super::ExecMode::Z80,
             None => super::ExecMode::Unknown,
@@ -135,14 +151,14 @@ impl SymbolSession {
         let direct = self
             .store
             .lookup_cpu(CpuLocation {
-                space: AddressSpaceId(0),
+                space: self.target.cpu_space(),
                 address,
             })
             .max_by_key(|symbol| symbol_priority(symbol.provenance.kind))
             .map(|symbol| symbol.name.as_str());
         direct.or_else(|| {
             let resolved = self.resolve_load_instance(CpuLocation {
-                space: AddressSpaceId(0),
+                space: self.target.cpu_space(),
                 address,
             })?;
             self.store
@@ -154,7 +170,7 @@ impl SymbolSession {
 
     pub(crate) fn unique_symbol_name_at_cpu_address(&self, address: u64) -> Option<&str> {
         let cpu = CpuLocation {
-            space: AddressSpaceId(0),
+            space: self.target.cpu_space(),
             address,
         };
         let mut symbols = self.store.lookup_cpu(cpu);
@@ -226,7 +242,7 @@ impl SymbolSession {
 
         let storage = self
             .resolve_load_instance(CpuLocation {
-                space: AddressSpaceId(0),
+                space: self.target.cpu_space(),
                 address: cpu_address,
             })
             .map(|resolved| resolved.storage);
@@ -240,7 +256,7 @@ impl SymbolSession {
 
         self.store
             .lookup_cpu(CpuLocation {
-                space: AddressSpaceId(0),
+                space: self.target.cpu_space(),
                 address: cpu_address,
             })
             .filter(|symbol| matches!(symbol.kind, SymbolKind::Function | SymbolKind::Label))
@@ -284,6 +300,7 @@ impl SymbolSession {
                     .and_then(|storage| self.runtime_cpu_for_storage(storage));
                 runtime
                     .or(symbol.location.cpu)
+                    .filter(|location| location.space == self.target.cpu_space())
                     .map(|location| (symbol_priority(symbol.provenance.kind), location.address))
             })
             .max_by_key(|(priority, _)| *priority)
@@ -351,5 +368,7 @@ fn symbol_priority(kind: ProvenanceKind) -> u8 {
     }
 }
 
+#[cfg(test)]
+mod md_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

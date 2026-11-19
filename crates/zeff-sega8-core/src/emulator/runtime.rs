@@ -302,7 +302,7 @@ fn append_sega_writes(record: &mut InstructionTraceRecord, events: &[CpuAccessTr
                 ..
             } => TraceWrite {
                 address: addr,
-                old_value,
+                old_value: Some(old_value),
                 new_value,
                 width: TraceWriteWidth::Byte,
                 kind: TraceWriteKind::Memory,
@@ -316,7 +316,7 @@ fn append_sega_writes(record: &mut InstructionTraceRecord, events: &[CpuAccessTr
                 ..
             } => TraceWrite {
                 address: addr,
-                old_value,
+                old_value: Some(old_value),
                 new_value,
                 width: TraceWriteWidth::Byte,
                 kind: TraceWriteKind::Io,

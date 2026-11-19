@@ -17,7 +17,7 @@ impl Observation {
         while thread.try_recv_frame().is_some() {}
         while let Some(response) = thread.try_recv_response() {
             match response {
-                EmuResponse::Netplay(Response::Ready) => {
+                EmuResponse::Netplay(Response::Ready { md_input: None }) => {
                     ensure!(!self.ready, "duplicate browser readiness");
                     self.ready = true;
                 }

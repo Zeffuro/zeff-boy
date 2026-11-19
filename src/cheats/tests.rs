@@ -104,6 +104,26 @@ fn collect_enabled_patches_resolves_user_parameter_values() {
 }
 
 #[test]
+fn md_rom_cheat_hash_and_export_keep_high_address_bits_and_enabled_state() {
+    let mut codes = parse_cht_file_for_system(
+        "cheat0_code = \"012345:A55A\"\ncheat0_enable = true\n",
+        ActiveSystem::Md,
+    );
+    assert_eq!(codes.len(), 1);
+    let high = enabled_patch_hash(&codes, &[]).unwrap();
+    let mut low = codes.clone();
+    low[0].patches = parse_cheat_for_system("002345:A55A", ActiveSystem::Md)
+        .unwrap()
+        .0;
+    assert_ne!(enabled_patch_hash(&low, &[]).unwrap(), high);
+    let imported = parse_cht_file_for_system(&export_cht_file(&codes), ActiveSystem::Md);
+    assert_eq!(imported[0].patches, codes[0].patches);
+    assert_eq!(enabled_patch_hash(&imported, &[]), Some(high));
+    codes[0].enabled = false;
+    assert_eq!(enabled_patch_hash(&codes, &[]), None);
+}
+
+#[test]
 fn enabled_patch_hash_tracks_resolved_enabled_cheats() {
     let mut cheat = CheatCode {
         name: "Parameterized".to_string(),

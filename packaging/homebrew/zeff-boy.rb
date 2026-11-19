@@ -4,7 +4,7 @@ cask "zeff-boy" do
 
   url "https://github.com/Zeffuro/zeff-boy/releases/download/v#{version}/zeff-boy-v#{version}-aarch64-apple-darwin.dmg"
   name "zeff-boy"
-  desc "A Game Boy, Game Boy Advance, NES, WonderSwan, and Sega 8-bit emulator written in Rust"
+  desc "A Game Boy, Game Boy Advance, NES, WonderSwan, Sega 8-bit, and experimental Mega Drive emulator written in Rust"
   homepage "https://github.com/Zeffuro/zeff-boy"
 
   depends_on arch: :arm64

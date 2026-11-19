@@ -11,6 +11,8 @@ mod huc6280;
 pub use game_boy::{GameBoyVgmExport, GameBoyVgmUnavailable, encode_game_boy};
 mod nes;
 pub use nes::{NesVgmExport, NesVgmUnavailable};
+mod md;
+pub use md::{MdVgmExport, MdVgmUnavailable, encode as encode_md, validate_md_trace};
 mod sn76489;
 mod stream;
 mod wonderswan;
@@ -46,6 +48,8 @@ pub struct VgmCaptureMetadata {
     pub game_boy: Option<GameBoyCaptureMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nes: Option<NesCaptureMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub md: Option<MdCaptureMetadata>,
     pub preamble_write_count: u32,
     pub guest_write_count: u32,
     pub wait_command_count: u32,
@@ -89,6 +93,24 @@ pub struct NesCaptureMetadata {
     pub clock_rounding: &'static str,
     pub reset: &'static str,
     pub status_read_observation_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MdCaptureMetadata {
+    pub region: &'static str,
+    pub master_clock_hz: u64,
+    pub psg_clock_hz_numerator: u64,
+    pub psg_clock_hz_denominator: u32,
+    pub psg_vgm_clock_hz: u32,
+    pub opn2_clock_hz_numerator: u64,
+    pub opn2_clock_hz_denominator: u32,
+    pub opn2_vgm_clock_hz: u32,
+    pub clock_rounding: &'static str,
+    pub reset: &'static str,
+    pub native_event_count: u32,
+    pub psg_write_count: u32,
+    pub opn2_address_write_count: u32,
+    pub opn2_register_write_count: u32,
 }
 
 fn is_one(value: &u32) -> bool {
@@ -137,6 +159,8 @@ pub fn encode_nes(trace: &NesAudioTrace, cancel: &AtomicBool) -> Result<NesVgmEx
 mod game_boy_tests;
 #[cfg(test)]
 mod huc6280_tests;
+#[cfg(test)]
+mod md_tests;
 #[cfg(test)]
 mod nes_tests;
 #[cfg(test)]

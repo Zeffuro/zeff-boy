@@ -687,7 +687,7 @@ impl CpuBus for TimedMachineBus<'_> {
             if let Some(old_value) = old_value {
                 self.record_trace_write(TraceWrite {
                     address: u32::from(port.offset()),
-                    old_value: u32::from(old_value),
+                    old_value: Some(u32::from(old_value)),
                     new_value: u32::from(value),
                     width: TraceWriteWidth::Byte,
                     kind: TraceWriteKind::Io,
@@ -740,7 +740,7 @@ impl CpuBus for TimedMachineBus<'_> {
         debug_assert_eq!(pending_addr, physical_addr);
         self.record_trace_write(TraceWrite {
             address: u32::from(logical_addr),
-            old_value: u32::from(old_value),
+            old_value: Some(u32::from(old_value)),
             new_value: u32::from(value),
             width: TraceWriteWidth::Byte,
             kind: TraceWriteKind::Memory,

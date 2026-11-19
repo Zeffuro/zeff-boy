@@ -93,14 +93,10 @@ impl Profile {
         }
         // Fixed groups and their sequence closure require the exact qualified PRG.
         let hash = zeff_firmware::sha256_hex(&bytes[16..end]);
-        if hash == self.prg_hash {
-            return Ok(true);
-        }
+        let matching_hash = hash == self.prg_hash;
         #[cfg(any(test, feature = "test-support"))]
-        if super::closed_tests::fixture_hash(self, &hash) {
-            return Ok(true);
-        }
-        Ok(false)
+        let matching_hash = matching_hash || super::closed_tests::fixture_hash(self, &hash);
+        Ok(matching_hash)
     }
 
     fn song(&self, bytes: &[u8], group: &Group) -> NesToseSong {

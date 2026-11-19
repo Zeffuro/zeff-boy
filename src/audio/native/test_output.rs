@@ -1,5 +1,7 @@
 use super::*;
 
+mod host;
+
 pub(crate) struct AudioTestDriver {
     consumer: rtrb::Consumer<QueuedAudioSample>,
     state: AudioPlaybackState,

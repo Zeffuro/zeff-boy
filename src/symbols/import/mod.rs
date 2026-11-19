@@ -4,6 +4,7 @@ pub(crate) mod elf;
 pub(crate) mod etripator;
 pub(crate) mod fceux;
 pub(crate) mod gnu_nm;
+mod md_nm;
 pub(crate) mod nocash;
 pub(crate) mod pceas;
 pub(crate) mod rgbds;
@@ -62,11 +63,39 @@ pub(crate) trait SymbolImporter: Send + Sync {
     fn import(&self, data: &[u8], ctx: &ImportContext) -> anyhow::Result<SymbolModule>;
 }
 
+pub(crate) fn import_md_sound_symbols(
+    file_name: &str,
+    data: &[u8],
+    ctx: &ImportContext,
+) -> anyhow::Result<SymbolModule> {
+    anyhow::ensure!(
+        ctx.target.system == System::Md && ctx.cpu_space == AddressSpaceId(1),
+        "SOUND symbol imports require an explicit Mega Drive space 1 context"
+    );
+    wla::import_md_sound(file_name, data, ctx)
+}
+
 pub(crate) fn import_symbols(
     file_name: &str,
     data: &[u8],
     ctx: &ImportContext,
 ) -> anyhow::Result<SymbolModule> {
+    if ctx.target.system == System::Md {
+        #[cfg(not(target_arch = "wasm32"))]
+        if elf::ElfImporter.probe(file_name, data, &ctx.target) > 0 {
+            let mut module = elf::ElfImporter.import(data, ctx)?;
+            module.format = elf::ElfImporter.name().to_owned();
+            return Ok(module);
+        }
+        let importer = md_nm::MdNmImporter;
+        anyhow::ensure!(
+            importer.probe(file_name, data, &ctx.target) > 0,
+            "unsupported Mega Drive symbol file: {file_name}; expected GNU nm .sym"
+        );
+        let mut module = importer.import(data, ctx)?;
+        module.format = importer.name().to_owned();
+        return Ok(module);
+    }
     let ca65 = ca65::Ca65DbgImporter;
     #[cfg(not(target_arch = "wasm32"))]
     let elf = elf::ElfImporter;
@@ -110,6 +139,24 @@ mod tests {
             rom_region: RegionId(0),
             cpu_space: AddressSpaceId(0),
             source_name: Some("game.sym".into()),
+        }
+    }
+
+    #[test]
+    fn md_symbol_imports_reject_unqualified_dialects() {
+        let mut ctx = context();
+        ctx.target.system = System::Md;
+        for (name, data) in [
+            ("game.sym", b"000200 Entry".as_slice()),
+            ("game.dbg", b"version\tmajor=2,minor=0".as_slice()),
+        ] {
+            assert!(
+                import_symbols(name, data, &ctx)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("Mega Drive")
+            );
         }
     }
 

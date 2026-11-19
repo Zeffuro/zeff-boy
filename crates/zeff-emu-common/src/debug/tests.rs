@@ -74,6 +74,12 @@ fn event_breakpoints_are_persistent_and_clear_hits() {
     dc.clear_hits();
     assert_eq!(dc.hit_event, None);
     assert!(dc.has_event_breakpoint(DebugEvent::Interrupt));
+    dc.set_event_breakpoint(DebugEvent::Exception, true);
+    assert!(dc.check_event(DebugEvent::Exception));
+    assert_eq!(dc.hit_event, Some(DebugEvent::Exception));
+    dc.clear_hits();
+    assert!(dc.has_event_breakpoint(DebugEvent::Interrupt));
+    assert!(dc.has_event_breakpoint(DebugEvent::Exception));
 
     let mut dc = AddressDebugController::new();
     dc.set_event_breakpoint(DebugEvent::Dma, true);
@@ -84,6 +90,12 @@ fn event_breakpoints_are_persistent_and_clear_hits() {
     );
     dc.set_event_breakpoint(DebugEvent::Dma, false);
     assert!(!dc.check_event(DebugEvent::Dma));
+    dc.set_event_breakpoint(DebugEvent::Exception, true);
+    assert!(dc.check_event(DebugEvent::Exception));
+    assert_eq!(
+        dc.iter_event_breakpoints().collect::<Vec<_>>(),
+        [DebugEvent::Exception]
+    );
 }
 
 #[test]
@@ -323,7 +335,7 @@ fn instruction_trace_preserves_delta_and_write_order_with_overflow() {
     for address in 0..MAX_TRACE_WRITES as u32 + 2 {
         entry.push_write(TraceWrite {
             address,
-            old_value: address,
+            old_value: Some(address),
             new_value: address + 1,
             width: TraceWriteWidth::Word,
             kind: TraceWriteKind::Io,
@@ -363,7 +375,7 @@ fn instruction_trace_preserves_full_public_payload_on_overwrite() {
     };
     entry.writes[MAX_TRACE_WRITES - 1] = TraceWrite {
         address: 0x89AB_CDEF,
-        old_value: 1,
+        old_value: Some(1),
         new_value: 2,
         width: TraceWriteWidth::Halfword,
         kind: TraceWriteKind::Io,

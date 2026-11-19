@@ -1,8 +1,9 @@
 use serde_json::{Value, json};
 use zeff_emu_common::system::CoreFamily;
 
-use super::{memory_region_json, save_ram_kind_json};
+use super::memory_region_json;
 use crate::emu_backend::CoreCapabilities;
+use zeff_emu_common::save_ram::SaveRamKind;
 
 pub(super) fn core_features_json(features: &CoreCapabilities) -> Value {
     json!({
@@ -22,7 +23,17 @@ pub(super) fn core_features_json(features: &CoreCapabilities) -> Value {
         "supports_cheats": features.supports_cheats,
         "supports_guest_calls": features.supports_guest_calls,
         "supports_debugger": features.supports_debugger,
+        "supports_rom_breakpoints": features.supports_rom_breakpoints,
+        "supports_symbol_loading": features.supports_symbol_loading,
+        "supports_instruction_trace": features.supports_instruction_trace,
         "supports_execution_controls": features.supports_execution_controls,
+        "supports_pc_breakpoints": features.supports_pc_breakpoints,
+        "supports_memory_watchpoints": features.supports_memory_watchpoints,
+        "memory_editing": features.memory_editing.map(|editing| json!({
+            "ranges": editing.ranges,
+            "enabled": editing.enabled,
+            "requires_pause": editing.requires_pause,
+        })),
         "supports_opcode_history": features.supports_opcode_history,
         "tas_execution_primitives": tas_execution_primitives_json(&features.tas_execution_primitives),
     })
@@ -105,11 +116,37 @@ fn core_family_label(family: CoreFamily) -> &'static str {
     match family {
         CoreFamily::GameBoy => "game_boy",
         CoreFamily::GameBoyAdvance => "game_boy_advance",
+        CoreFamily::MegaDrive => "mega_drive",
         CoreFamily::Nes => "nes",
         CoreFamily::ColecoVision => "coleco_vision",
         CoreFamily::PcEngine => "pc_engine",
         CoreFamily::WonderSwan => "wonder_swan",
         CoreFamily::Sega8 => "sega8",
+    }
+}
+
+fn save_ram_kind_json(kind: SaveRamKind) -> Value {
+    match kind {
+        SaveRamKind::None => json!({
+            "kind": "none",
+            "size": 0,
+        }),
+        SaveRamKind::KnownVolatile { size } => json!({
+            "kind": "known_volatile",
+            "size": size,
+        }),
+        SaveRamKind::KnownBatteryBacked { size } => json!({
+            "kind": "known_battery_backed",
+            "size": size,
+        }),
+        SaveRamKind::KnownNonVolatile { size } => json!({
+            "kind": "known_nonvolatile",
+            "size": size,
+        }),
+        SaveRamKind::MapperRamUnknown { size } => json!({
+            "kind": "mapper_ram_unknown",
+            "size": size,
+        }),
     }
 }
 

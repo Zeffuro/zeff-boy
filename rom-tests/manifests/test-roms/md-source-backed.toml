@@ -1,0 +1,113 @@
+manifest_version = 1
+
+[suite]
+id = "md-source-backed"
+name = "Mega Drive published diagnostic checkpoints"
+core = "md"
+license = "GPL-2.0"
+
+[[tests]]
+id = "md/240p-1.32/ntsc-menu"
+core = "md"
+model = "ntsc"
+tier = "local"
+max_frames = 364
+tags = ["md", "ntsc", "source-backed", "vdp"]
+notes = "Published 240p Suite 1.32 menu regression checkpoint. Exact output is a local baseline, not a full diagnostic or hardware verdict."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://artemiourbina.itch.io/240p-test-suite"
+source_version = "Genesis 1.32"
+
+[tests.rom]
+path = "rom-tests/cache/md-diagnostics/240p/240pSuite-1.32.bin"
+sha256 = "fe448a879eda25daffa1548385aff464d5373c687db0cccf18f071c31d0976c7"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 364
+screenshot_sha256 = "a75c2d522ca48b8cac0696e6fc1e67ce30c2547c3178abaabbe10236c80e59a4"
+
+[[tests]]
+id = "md/240p-1.32/pal-menu"
+core = "md"
+model = "pal"
+tier = "local"
+max_frames = 304
+tags = ["md", "pal", "source-backed", "vdp"]
+notes = "Published 240p Suite 1.32 PAL V30 menu regression checkpoint. Exact output is a local baseline, not a full diagnostic or hardware verdict."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://artemiourbina.itch.io/240p-test-suite"
+source_version = "Genesis 1.32"
+
+[tests.rom]
+path = "rom-tests/cache/md-diagnostics/240p/240pSuite-1.32.bin"
+sha256 = "fe448a879eda25daffa1548385aff464d5373c687db0cccf18f071c31d0976c7"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 304
+screenshot_sha256 = "0b194f90ee1d6c15f68f91eeff24eacb0da7c46449f950644322faadbc95d626"
+
+[[tests]]
+id = "md/240p-1.32/ntsc-gray-ramp"
+core = "md"
+model = "ntsc"
+tier = "local"
+max_frames = 900
+input = ["x@400-403,x@460-463,down@580-583,down@610-613,down@640-643,down@670-673,down@700-703,down@730-733,x@790-793"]
+tags = ["md", "ntsc", "source-backed", "vdp", "shadow-highlight"]
+notes = "Published gray ramp exercises plane-priority shadow and normal intensity. Exact output is a local regression baseline."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://artemiourbina.itch.io/240p-test-suite"
+source_version = "Genesis 1.32"
+
+[tests.rom]
+path = "rom-tests/cache/md-diagnostics/240p/240pSuite-1.32.bin"
+sha256 = "fe448a879eda25daffa1548385aff464d5373c687db0cccf18f071c31d0976c7"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 900
+screenshot_sha256 = "fa16a26e9c5eb11278954fadf787a8d51edf15553e74cf0f02b4c14c0660830b"
+
+[[tests]]
+id = "md/240p-1.32/pal-gray-ramp"
+core = "md"
+model = "pal"
+tier = "local"
+max_frames = 900
+input = ["x@400-403,x@460-463,down@580-583,down@610-613,down@640-643,down@670-673,down@700-703,down@730-733,x@790-793"]
+tags = ["md", "pal", "source-backed", "vdp", "shadow-highlight"]
+notes = "Published gray ramp exercises plane-priority shadow and normal intensity. Exact output is a local regression baseline."
+
+[tests.artifact]
+kind = "test_rom"
+license = "GPL-2.0"
+license_confidence = "verified"
+redistributable = false
+source_url = "https://artemiourbina.itch.io/240p-test-suite"
+source_version = "Genesis 1.32"
+
+[tests.rom]
+path = "rom-tests/cache/md-diagnostics/240p/240pSuite-1.32.bin"
+sha256 = "fe448a879eda25daffa1548385aff464d5373c687db0cccf18f071c31d0976c7"
+
+[tests.pass]
+kind = "screenshot_exact"
+screenshot_frame = 900
+screenshot_sha256 = "5de7313f362c0a57f8fa8d375fc83ea7ba8c1dbcd4ada07a9e8a27da234f9729"

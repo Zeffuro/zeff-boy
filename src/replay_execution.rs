@@ -6,7 +6,11 @@ use crate::emu_backend::{ActiveSystem, EmuBackend};
 
 pub(crate) fn validate_replay_playback(player: &ReplayPlayer, backend: &EmuBackend) -> Result<()> {
     validate_replay_metadata(player.metadata(), backend)?;
-    validate_replay_input_devices(player, backend)
+    validate_replay_input_devices(player, backend)?;
+    if backend.system() == ActiveSystem::Md {
+        backend.probe_replay_state_load(player.save_state(), None, false, false)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_game_boy_replay_start_tick(
@@ -149,6 +153,9 @@ fn validate_replay_metadata(metadata: &ReplayMetadata, backend: &EmuBackend) -> 
 }
 
 fn validate_replay_input_devices(player: &ReplayPlayer, backend: &EmuBackend) -> Result<()> {
+    if backend.system() == ActiveSystem::Md {
+        validate_md_replay_input(player)?;
+    }
     if player.version() == 3 && backend.system() != ActiveSystem::Coleco {
         anyhow::bail!("ZRPL v3 controller input records require a ColecoVision game");
     }
@@ -191,6 +198,48 @@ fn validate_replay_input_devices(player: &ReplayPlayer, backend: &EmuBackend) ->
                 zeff_emu_common::replay::POCKET_CAMERA_FRAME_BYTES
             );
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_md_replay_input(player: &ReplayPlayer) -> Result<()> {
+    anyhow::ensure!(
+        player.version() == 2,
+        "Mega Drive replay requires ZRPL v2 pad records"
+    );
+    anyhow::ensure!(
+        player.metadata().events.is_empty()
+            && player.metadata().game_boy_link_start_state.is_none()
+            && player
+                .metadata()
+                .game_boy_link_coordinator_start_state
+                .is_none()
+            && player.metadata().game_boy_link_start_tick.is_none()
+            && player.metadata().wonder_swan_link_start_tick.is_none(),
+        "Mega Drive replay does not support media or link events"
+    );
+    anyhow::ensure!(
+        !player.uses_zapper_input()
+            && !player.uses_coleco_input()
+            && !player.uses_host_tilt_input()
+            && !player.uses_host_camera_input(),
+        "Mega Drive replay supports two standard pads only"
+    );
+    for offset in (0..player.total_frames()).step_by(256) {
+        anyhow::ensure!(
+            player.peek_joypad_frames(offset, 256).iter().all(|frame| {
+                frame.buttons_p3
+                    | frame.dpad_p3
+                    | frame.buttons_p4
+                    | frame.dpad_p4
+                    | frame.buttons_p5
+                    | frame.dpad_p5
+                    == 0
+                    && frame.dpad & !15 == 0
+                    && frame.dpad_p2 & !15 == 0
+            }),
+            "Mega Drive replay contains input outside its two-pad topology"
+        );
     }
     Ok(())
 }

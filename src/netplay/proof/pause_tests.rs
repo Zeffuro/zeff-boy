@@ -120,7 +120,7 @@ fn pause_exact(timing: zeff_nes_core::hardware::cartridge::TimingMode) {
     while !ready.iter().all(|v| *v) {
         for (index, backend) in [&mut one, &mut two].into_iter().enumerate() {
             if let Some(response) = sessions[index].poll(backend).unwrap() {
-                assert!(matches!(response, Response::Ready));
+                assert!(matches!(response, Response::Ready { md_input: None }));
                 ready[index] = true;
             }
         }

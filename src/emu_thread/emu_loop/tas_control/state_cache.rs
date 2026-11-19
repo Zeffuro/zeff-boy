@@ -5,6 +5,8 @@ use crate::tas_project::TasDigest;
 
 use super::{BackendAuthority, TasControl};
 
+mod md;
+
 const MAX_ENTRIES: usize = 16;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 
@@ -22,15 +24,29 @@ struct CacheKey {
     proof: TasExecutionCacheProof,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+enum CacheState {
+    Bytes(Arc<CachedTasState>),
+    Md(Arc<crate::emu_backend::md::tas::MdTasLiveSnapshot>),
+}
+
 struct CacheEntry {
     key: CacheKey,
-    state: Arc<CachedTasState>,
+    state: CacheState,
+}
+
+impl CacheEntry {
+    fn byte_len(&self) -> usize {
+        match &self.state {
+            CacheState::Bytes(state) => state.bytes.len(),
+            CacheState::Md(_) => 0,
+        }
+    }
 }
 
 pub(super) struct WorkerTasStateCache {
     entries: VecDeque<CacheEntry>,
     total_bytes: usize,
+    md: md::MdWorkerCache,
 }
 
 impl WorkerTasStateCache {
@@ -38,6 +54,7 @@ impl WorkerTasStateCache {
         Self {
             entries: VecDeque::new(),
             total_bytes: 0,
+            md: md::MdWorkerCache::default(),
         }
     }
 
@@ -53,11 +70,15 @@ impl WorkerTasStateCache {
                 && entry.key.proof == proof
         })?;
         let entry = self.entries.remove(index)?;
-        if super::tas_state_digest(profile, &entry.state.bytes) != entry.state.sha256 {
-            self.total_bytes = self.total_bytes.saturating_sub(entry.state.bytes.len());
+        let CacheState::Bytes(state) = &entry.state else {
+            self.entries.push_back(entry);
+            return None;
+        };
+        if super::tas_state_digest(profile, &state.bytes) != state.sha256 {
+            self.total_bytes = self.total_bytes.saturating_sub(entry.byte_len());
             return None;
         }
-        let state = Arc::clone(&entry.state);
+        let state = Arc::clone(state);
         self.entries.push_back(entry);
         Some(state)
     }
@@ -92,18 +113,18 @@ impl WorkerTasStateCache {
         if let Some(index) = self.entries.iter().position(|entry| entry.key == key)
             && let Some(replaced) = self.entries.remove(index)
         {
-            self.total_bytes = self.total_bytes.saturating_sub(replaced.state.bytes.len());
+            self.total_bytes = self.total_bytes.saturating_sub(replaced.byte_len());
         }
         self.total_bytes = self.total_bytes.saturating_add(state.bytes.len());
         self.entries.push_back(CacheEntry {
             key,
-            state: Arc::new(state),
+            state: CacheState::Bytes(Arc::new(state)),
         });
         while self.entries.len() > MAX_ENTRIES || self.total_bytes > MAX_BYTES {
             let Some(evicted) = self.entries.pop_front() else {
                 break;
             };
-            self.total_bytes = self.total_bytes.saturating_sub(evicted.state.bytes.len());
+            self.total_bytes = self.total_bytes.saturating_sub(evicted.byte_len());
         }
     }
 
@@ -122,7 +143,10 @@ impl WorkerTasStateCache {
             return false;
         };
         let grew = {
-            let state = Arc::make_mut(&mut entry.state);
+            let CacheState::Bytes(state) = &mut entry.state else {
+                return false;
+            };
+            let state = Arc::make_mut(state);
             if let Some(byte) = state.bytes.first_mut() {
                 *byte ^= 0xFF;
                 false
@@ -198,7 +222,7 @@ impl TasControl {
             .insert(profile, state_format_compatibility_id, proof, state);
     }
 
-    fn candidate_cache_proof(&self) -> Option<TasExecutionCacheProof> {
+    pub(super) fn candidate_cache_proof(&self) -> Option<TasExecutionCacheProof> {
         let BackendAuthority::Leased {
             candidate: Some(candidate),
             intermediate_cache_proofs,

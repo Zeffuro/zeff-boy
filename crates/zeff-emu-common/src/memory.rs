@@ -15,6 +15,7 @@ pub enum MemoryRegionKind {
     IoRegisters,
     SaveRam,
     Framebuffer,
+    VideoScrollRam,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -175,6 +176,22 @@ impl MemoryRegionDescriptor {
             copyable: true,
             view: MemoryRegionView::Physical,
             aliases: VIDEO_RAM_ALIASES,
+        }
+    }
+
+    pub const fn video_scroll_ram(size: usize) -> Self {
+        Self {
+            id: "vsram",
+            label: "Video scroll RAM",
+            kind: MemoryRegionKind::VideoScrollRam,
+            size: Some(size),
+            address_bits: None,
+            readable: true,
+            writable: false,
+            side_effect_free: true,
+            copyable: true,
+            view: MemoryRegionView::Physical,
+            aliases: &["video_scroll_ram", "scrollram"],
         }
     }
 
@@ -368,6 +385,33 @@ pub fn standard_memory_regions_with_extended(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_scroll_ram_resolves_without_aliasing_video_ram() {
+        let regions = [
+            MemoryRegionDescriptor::video_ram(65536),
+            MemoryRegionDescriptor::video_scroll_ram(80),
+        ];
+        for alias in [
+            "vsram",
+            "video_scroll_ram",
+            "video.scroll.ram",
+            "SCROLL-RAM",
+        ] {
+            let region = resolve_memory_region(&regions, alias).unwrap();
+            assert_eq!(region.id, "vsram");
+            assert_eq!(region.kind, MemoryRegionKind::VideoScrollRam);
+            assert_eq!(region.size, Some(80));
+            assert_eq!(region.view, MemoryRegionView::Physical);
+            assert!(region.readable && region.copyable && region.side_effect_free);
+            assert!(!region.writable);
+            assert_eq!(region.address_bits, None);
+        }
+        assert_eq!(
+            resolve_memory_region(&regions, "vram").unwrap().id,
+            "video_ram"
+        );
+    }
 
     #[test]
     fn cpu_region_uses_address_bits_not_byte_size() {

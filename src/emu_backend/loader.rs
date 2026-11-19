@@ -7,10 +7,19 @@ use super::{ActiveSystem, EmuBackend};
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod audio_discovery_tests;
 mod config;
+mod md;
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::emu_backend) mod md_tas;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use md_tas::MdTasProfile;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tas::md_product;
 mod nes_policy;
-mod netplay;
+pub(in crate::emu_backend) mod netplay;
 mod source;
 pub(crate) use source::LoadedBackend;
+#[cfg(not(target_arch = "wasm32"))]
+use source::zip_tas_source_media;
 use source::{RomSource, has_extension};
 mod pce_cd;
 mod systems;
@@ -34,10 +43,11 @@ pub(crate) use pce_cd::{
 pub(crate) use tas::{
     DirectColecoTasExecutionLoader, DirectFdsTasExecutionLoader, DirectGameGearTasExecutionLoader,
     DirectGbTasExecutionLoader, DirectGbaTasExecutionLoader, DirectGbcTasExecutionLoader,
-    DirectNesTasExecutionLoader, DirectPceCdTasExecutionLoader, DirectPceTasExecutionLoader,
-    DirectSg1000TasExecutionLoader, DirectSmsTasExecutionLoader, DirectWsTasExecutionLoader,
-    GbRtcPersistenceWitness, PrivateTasExecutionLoader, classify_direct_tas_execution_profile,
-    gb_rtc_persistence_witness, is_direct_pce_cd_archive_ppf_tas_sync_config_sha256,
+    DirectMdTasExecutionLoader, DirectNesTasExecutionLoader, DirectPceCdTasExecutionLoader,
+    DirectPceTasExecutionLoader, DirectSg1000TasExecutionLoader, DirectSmsTasExecutionLoader,
+    DirectWsTasExecutionLoader, GbRtcPersistenceWitness, PrivateTasExecutionLoader,
+    classify_direct_tas_execution_profile, gb_rtc_persistence_witness,
+    is_direct_pce_cd_archive_ppf_tas_sync_config_sha256,
     is_direct_pce_multitap_cd_archive_ppf_tas_sync_config_sha256,
     is_direct_pce_multitap_cd_ppf_tas_sync_config_sha256, select_private_tas_execution_attachment,
     select_private_tas_execution_loader, select_private_tas_execution_loader_for_project,
@@ -101,33 +111,6 @@ pub(crate) use tas::{
 };
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use tas::{register_test_pce_cd_ppf_stack, register_test_pce_cd_system_card};
-
-#[cfg(not(target_arch = "wasm32"))]
-fn zip_tas_source_media(
-    source_path: &Path,
-    rom_path: &Path,
-    extension: &str,
-    max_member_bytes: u64,
-    raw_sha256: [u8; 32],
-    sync: impl FnOnce(&str) -> [u8; 32],
-) -> Option<([u8; 32], usize, [u8; 32])> {
-    has_extension(source_path, "zip")
-        .then(|| {
-            crate::rom_archive::extract_bounded_zip_member(
-                source_path,
-                Some(rom_path),
-                extension,
-                128 * 1024 * 1024,
-                max_member_bytes,
-            )
-        })?
-        .ok()
-        .filter(|selected| zeff_firmware::sha256_bytes(&selected.bytes) == raw_sha256)
-        .map(|selected| {
-            let sync = sync(&selected.member_name);
-            (selected.archive_sha256, selected.archive_len, sync)
-        })
-}
 
 pub(crate) fn load_backend_from_rom_source(
     system: ActiveSystem,
@@ -215,6 +198,7 @@ fn load_backend_from_rom_source_inner(
     }
     let mut rom_data = match preloaded_data {
         Some(data) => data,
+        None if system == ActiveSystem::Md => md::read_rom(source_path)?,
         None => std::fs::read(source_path).with_context(|| {
             format!("Failed to read {} ROM", systems::system_load_label(system))
         })?,
@@ -797,6 +781,7 @@ fn load_backend_from_rom_source_inner(
             &config,
             gba_provenance.expect("GBA load provenance must exist for GBA"),
         )?,
+        ActiveSystem::Md => md::load(&rom_data, source_path, rom_path, &config)?,
         ActiveSystem::WonderSwan => systems::load_ws_backend(
             &rom_data,
             source_path,
@@ -824,6 +809,7 @@ fn load_backend_from_rom_source_inner(
             ActiveSystem::GameBoy => System::Gb,
             ActiveSystem::GameBoyAdvance => unreachable!("GBA owns its cartridge snapshot"),
             ActiveSystem::Nes => System::Nes,
+            ActiveSystem::Md => System::Md,
             ActiveSystem::Coleco => System::Coleco,
             ActiveSystem::Pce => System::Pce,
             ActiveSystem::WonderSwan => System::Ws,
@@ -934,6 +920,19 @@ fn load_backend_from_rom_source_inner(
         raw_source_media_len,
         !mod_load.any_enabled && !mod_load.any_applied,
     )?;
+    #[cfg(not(target_arch = "wasm32"))]
+    md_tas::capture(
+        &mut backend,
+        md_tas::MdTasLoadContext {
+            source: source_path,
+            rom: rom_path,
+            from_path: loaded_from_source_path,
+            settings: &config,
+            raw_sha256: raw_source_media_sha256,
+            len: raw_source_media_len,
+            unmodified: !mod_load.any_enabled && !mod_load.any_applied,
+        },
+    );
     Ok(LoadedBackend {
         backend,
         original_crc32: mod_load.original_crc32,

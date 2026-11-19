@@ -19,6 +19,7 @@ pub(crate) mod gb_trace;
 pub(crate) mod gba;
 pub(crate) mod huc6280_trace;
 mod huge;
+pub(crate) mod md_trace;
 mod nes;
 pub(crate) mod nes_trace;
 mod sega;

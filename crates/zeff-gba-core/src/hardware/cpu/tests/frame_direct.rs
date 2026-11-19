@@ -62,8 +62,8 @@ fn fixture(instruction_set: InstructionSet, base: u32) -> Emulator {
     if instruction_set == InstructionSet::Thumb {
         emu.cpu.cpsr |= CPSR_THUMB;
     }
-    for register in 0..15 {
-        emu.cpu.regs[register] = (register as u32).wrapping_mul(0x71B6_D943);
+    for (register, value) in emu.cpu.regs[..15].iter_mut().enumerate() {
+        *value = (register as u32).wrapping_mul(0x71B6_D943);
     }
     for (address, value) in [
         (0x0400_0084, 0x80),

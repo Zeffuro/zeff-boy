@@ -4,6 +4,7 @@ use std::os::raw::c_uint;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct InputDescriptorConfig {
+    pub(crate) md_layout: bool,
     pub(crate) supports_shoulders: bool,
     pub(crate) supports_p2_joypad: bool,
     pub(crate) supports_p2_lightgun: bool,
@@ -68,6 +69,10 @@ pub(crate) fn set_input_descriptors(config: InputDescriptorConfig) {
     use std::os::raw::c_void;
 
     let mut descs = Vec::new();
+    if config.md_layout {
+        set_md_input_descriptors();
+        return;
+    }
     push_joypad_descriptors(&mut descs, 0, config.supports_shoulders);
 
     if config.supports_p2_joypad {
@@ -189,4 +194,91 @@ fn push_joypad_descriptors(
             },
         ]);
     }
+}
+
+pub(crate) const MD_SIX_BUTTON_DEVICE: u32 = RETRO_DEVICE_JOYPAD | (1 << 8);
+
+pub(crate) fn poll_md_joypad_port(port: c_uint) -> (u8, u8) {
+    let (mut buttons, dpad) = poll_joypad_port(port);
+    buttons = (buttons & !3) | ((buttons & 1) << 1) | ((buttons & 2) >> 1);
+    let cb = *lock(&CB_INPUT_STATE);
+    for (id, bit) in [(RETRO_DEVICE_ID_JOYPAD_Y, 6), (RETRO_DEVICE_ID_JOYPAD_X, 7)] {
+        if cb.is_some_and(|cb| unsafe { cb(port, RETRO_DEVICE_JOYPAD, 0, id) != 0 }) {
+            buttons |= 1 << bit;
+        }
+    }
+    (buttons, dpad)
+}
+
+fn set_md_input_descriptors() {
+    const TYPES: &[retro_controller_description] = &[
+        retro_controller_description {
+            desc: c"MD 3-button pad".as_ptr(),
+            id: RETRO_DEVICE_JOYPAD,
+        },
+        retro_controller_description {
+            desc: c"MD 6-button pad".as_ptr(),
+            id: MD_SIX_BUTTON_DEVICE,
+        },
+    ];
+    const CONTROLLERS: &[retro_controller_info] = &[
+        retro_controller_info {
+            types: TYPES.as_ptr(),
+            num_types: TYPES.len() as u32,
+        },
+        retro_controller_info {
+            types: TYPES.as_ptr(),
+            num_types: TYPES.len() as u32,
+        },
+        retro_controller_info {
+            types: std::ptr::null(),
+            num_types: 0,
+        },
+    ];
+    const DESCRIPTORS: [retro_input_descriptor; 25] = {
+        let buttons = [
+            (RETRO_DEVICE_ID_JOYPAD_Y, c"A"),
+            (RETRO_DEVICE_ID_JOYPAD_B, c"B"),
+            (RETRO_DEVICE_ID_JOYPAD_A, c"C"),
+            (RETRO_DEVICE_ID_JOYPAD_L, c"X"),
+            (RETRO_DEVICE_ID_JOYPAD_X, c"Y"),
+            (RETRO_DEVICE_ID_JOYPAD_R, c"Z"),
+            (RETRO_DEVICE_ID_JOYPAD_SELECT, c"Mode (6-button)"),
+            (RETRO_DEVICE_ID_JOYPAD_START, c"Start"),
+            (RETRO_DEVICE_ID_JOYPAD_UP, c"Up"),
+            (RETRO_DEVICE_ID_JOYPAD_DOWN, c"Down"),
+            (RETRO_DEVICE_ID_JOYPAD_LEFT, c"Left"),
+            (RETRO_DEVICE_ID_JOYPAD_RIGHT, c"Right"),
+        ];
+        let mut descriptors = [const {
+            retro_input_descriptor {
+                port: 0,
+                device: RETRO_DEVICE_NONE,
+                index: 0,
+                id: 0,
+                description: std::ptr::null(),
+            }
+        }; 25];
+        let mut index = 0;
+        while index < 24 {
+            let (id, name) = buttons[index % 12];
+            descriptors[index] = retro_input_descriptor {
+                port: (index / 12) as u32,
+                device: RETRO_DEVICE_JOYPAD,
+                index: 0,
+                id,
+                description: name.as_ptr(),
+            };
+            index += 1;
+        }
+        descriptors
+    };
+    crate::callbacks::env_cmd(
+        RETRO_ENVIRONMENT_SET_CONTROLLER_INFO,
+        CONTROLLERS.as_ptr().cast_mut().cast(),
+    );
+    crate::callbacks::env_cmd(
+        RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,
+        DESCRIPTORS.as_ptr().cast_mut().cast(),
+    );
 }

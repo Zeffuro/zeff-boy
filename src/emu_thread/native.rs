@@ -25,6 +25,8 @@ pub(crate) enum EmuResponsePoll {
 }
 
 pub(crate) struct EmuThread {
+    #[cfg(test)]
+    audio_timing: Option<Arc<super::audio_timing::Shared>>,
     cmd_tx: Sender<EmuCommand>,
     frame_rx: Receiver<FrameResult>,
     resp_rx: Receiver<EmuResponse>,
@@ -125,9 +127,15 @@ impl EmuThread {
         let emu_fb = shared_fb.clone();
         let emu_frame_duration_ns = Arc::clone(&shared_frame_duration_ns);
 
+        #[cfg(test)]
+        let audio_timing = super::audio_timing::current();
+        #[cfg(test)]
+        let worker_audio_timing = audio_timing.clone();
         let join = thread::Builder::new()
             .name("zeff-emu".to_owned())
             .spawn(move || {
+                #[cfg(test)]
+                super::audio_timing::install(worker_audio_timing);
                 let mut emu_loop = emu_loop::EmuLoop::new(
                     backend,
                     cmd_rx,
@@ -149,6 +157,8 @@ impl EmuThread {
             })?;
 
         Ok(Self {
+            #[cfg(test)]
+            audio_timing,
             cmd_tx,
             frame_rx,
             resp_rx,
@@ -190,7 +200,31 @@ impl EmuThread {
     }
 
     pub(crate) fn send_checked(&self, cmd: EmuCommand) -> bool {
-        if self.cmd_tx.send(cmd).is_err() {
+        #[cfg(test)]
+        let (cmd, trace_id) = {
+            let mut cmd = cmd;
+            let id = if let Some(shared) = &self.audio_timing {
+                if let EmuCommand::StepFrames(input) = &mut cmd {
+                    input.audio_timing_request = super::audio_timing::dispatch(
+                        shared,
+                        input.frames,
+                        input.audio_timing_pacing,
+                    );
+                    input.audio_timing_request
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            (cmd, id)
+        };
+        let sent = self.cmd_tx.send(cmd).is_ok();
+        #[cfg(test)]
+        if trace_id != 0 {
+            super::audio_timing::dispatched(self.audio_timing.as_ref().unwrap(), trace_id, sent);
+        }
+        if !sent {
             log::warn!("Failed to send command to emu thread (channel closed)");
             false
         } else {
@@ -341,7 +375,18 @@ impl EmuThread {
     }
 
     pub(crate) fn try_recv_frame(&self) -> Option<FrameResult> {
-        self.frame_rx.try_recv().ok()
+        let result = self.frame_rx.try_recv().ok();
+        #[cfg(test)]
+        if let Some(result) = &result {
+            super::audio_timing::delivery(
+                &result.audio_timing_requests,
+                "app_dequeue",
+                result.advanced_frames,
+                result.audio_samples.len(),
+                u64::from(result.delivery_merged),
+            );
+        }
+        result
     }
 
     pub(crate) fn recv(&self) -> Option<EmuResponse> {

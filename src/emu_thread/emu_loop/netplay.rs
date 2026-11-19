@@ -4,15 +4,51 @@ use super::EmuLoop;
 use crate::emu_thread::{EmuCommand, EmuResponse};
 use crate::netplay::{Response, session::Session};
 
+pub(super) struct MdWorkerBaseline {
+    battery: super::BatteryFlushSchedule,
+    discontinuities: Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
+    recovery: super::RecoveryCoordinator,
+    save_recovery: bool,
+}
+
+impl MdWorkerBaseline {
+    fn capture(worker: &EmuLoop) -> Self {
+        Self {
+            battery: worker.battery_flush.clone(),
+            discontinuities: worker.pending_audio_discontinuities.clone(),
+            recovery: worker.recovery.clone(),
+            save_recovery: worker.save_recovery_on_shutdown,
+        }
+    }
+
+    fn verify(&self, worker: &EmuLoop) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.battery == worker.battery_flush
+                && self.discontinuities == worker.pending_audio_discontinuities
+                && self.recovery == worker.recovery
+                && self.save_recovery == worker.save_recovery_on_shutdown,
+            "MD worker persistence baseline differs"
+        );
+        Ok(())
+    }
+}
+
 impl EmuLoop {
     pub(super) fn dispatch_netplay(
         &mut self,
         command: EmuCommand,
     ) -> ControlFlow<bool, EmuCommand> {
         if self.netplay_restore_failed && !matches!(command, EmuCommand::Shutdown) {
-            return ControlFlow::Break(self.send_resp(EmuResponse::Netplay(Response::Rejected(
-                "netplay restoration failed; worker requires replacement".into(),
-            ))));
+            let reason = "netplay restoration failed; worker requires replacement".into();
+            let response = if matches!(self.backend, crate::emu_backend::EmuBackend::Md(_)) {
+                Response::Stopped {
+                    reason,
+                    restored: false,
+                }
+            } else {
+                Response::Rejected(reason)
+            };
+            return ControlFlow::Break(self.send_resp(EmuResponse::Netplay(response)));
         }
         let result = match command {
             EmuCommand::StartNetplay(start) => {
@@ -33,10 +69,35 @@ impl EmuLoop {
                         "worker is occupied by another execution owner"
                     ))
                 } else {
-                    Session::start(&mut self.backend, *start).map(|session| {
-                        self.netplay = Some(session);
-                        self.speculation.invalidate();
-                    })
+                    let baseline = matches!(self.backend, crate::emu_backend::EmuBackend::Md(_))
+                        .then(|| MdWorkerBaseline::capture(self));
+                    match Session::start(&mut self.backend, *start) {
+                        Ok(session) => {
+                            self.md_netplay_baseline = baseline;
+                            self.netplay = Some(session);
+                            self.speculation.invalidate();
+                            Ok(())
+                        }
+                        Err(mut error) => {
+                            self.netplay_restore_failed = matches!(&self.backend,
+                                crate::emu_backend::EmuBackend::Md(md) if md.rollback_owned());
+                            if let Some(baseline) = baseline
+                                && let Err(worker) = baseline.verify(self)
+                            {
+                                self.netplay_restore_failed = true;
+                                error = error.context(format!("MD worker verification: {worker}"));
+                            }
+                            if self.netplay_restore_failed {
+                                return ControlFlow::Break(self.send_resp(EmuResponse::Netplay(
+                                    Response::Stopped {
+                                        reason: error.to_string(),
+                                        restored: false,
+                                    },
+                                )));
+                            }
+                            Err(error)
+                        }
+                    }
                 }
             }
             EmuCommand::StepNetplay(buttons) => match self.netplay.as_mut() {
@@ -86,11 +147,17 @@ impl EmuLoop {
     }
 
     pub(super) fn poll_netplay(&mut self) {
+        let mut service = true;
         for _ in 0..64 {
             let Some(session) = self.netplay.as_mut() else {
                 return;
             };
-            let result = session.poll(&mut self.backend);
+            let result = if service {
+                service = false;
+                session.poll(&mut self.backend)
+            } else {
+                Ok(session.take_response())
+            };
             if !self.deliver_netplay_response(result) {
                 return;
             }
@@ -102,6 +169,11 @@ impl EmuLoop {
         timeout: std::time::Duration,
     ) -> Result<Option<EmuCommand>, crossbeam_channel::RecvError> {
         let session = self.netplay.as_ref().unwrap();
+        let timeout = if session.has_pending_work() {
+            std::time::Duration::ZERO
+        } else {
+            timeout
+        };
         crossbeam_channel::select! {
             recv(self.cmd_rx) -> command => command.map(Some),
             recv(session.events()) -> event => {
@@ -139,7 +211,21 @@ impl EmuLoop {
         let Some(session) = self.netplay.take() else {
             return;
         };
-        let result = session.restore(&mut self.backend);
+        let baseline = self.md_netplay_baseline.take();
+        let worker = match &baseline {
+            Some(baseline) => baseline.verify(self),
+            None if matches!(self.backend, crate::emu_backend::EmuBackend::Md(_)) => {
+                Err(anyhow::anyhow!("MD worker baseline is missing"))
+            }
+            None => Ok(()),
+        };
+        let result = if baseline.is_none()
+            && !matches!(self.backend, crate::emu_backend::EmuBackend::Md(_))
+        {
+            session.restore(&mut self.backend)
+        } else {
+            session.restore_with_worker(&mut self.backend, worker)
+        };
         self.netplay_restore_failed = result.is_err();
         let restored = !self.netplay_restore_failed;
         let reason = match result {
@@ -151,7 +237,9 @@ impl EmuLoop {
                 &self.shared_framebuffer,
                 &self.backend,
             );
-            self.pending_audio_discontinuities.clear();
+            if baseline.is_none() {
+                self.pending_audio_discontinuities.clear();
+            }
         }
         let _ = self.send_resp(EmuResponse::Netplay(Response::Stopped { reason, restored }));
     }

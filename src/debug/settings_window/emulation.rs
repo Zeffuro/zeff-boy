@@ -1,9 +1,10 @@
 use crate::debug::ui_helpers::EnumLabel;
 use crate::emu_backend::ActiveSystem;
 use crate::settings::{
-    PceArcadeCardPreference, PceCdArchiveMemoryLimit, PceConsoleWiringPreference,
-    PceControllerPreference, PceMemoryBasePreference, PceMouseCursorMode, RewindMode,
-    Sega8ConsoleRegionPreference, Sega8VideoStandardPreference, Settings,
+    MdControllerPreference, MdRegionPreference, MdTimingPreference, PceArcadeCardPreference,
+    PceCdArchiveMemoryLimit, PceConsoleWiringPreference, PceControllerPreference,
+    PceMemoryBasePreference, PceMouseCursorMode, RewindMode, Sega8ConsoleRegionPreference,
+    Sega8VideoStandardPreference, Settings,
 };
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 
@@ -19,6 +20,47 @@ impl EnumLabel for HardwareModePreference {
 
     fn all_variants() -> &'static [Self] {
         &[Self::Auto, Self::ForceDmg, Self::ForceSgb, Self::ForceCgb]
+    }
+}
+
+impl EnumLabel for MdRegionPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::NtscUs => "NTSC (US)",
+            Self::NtscJapan => "NTSC (Japan)",
+            Self::Pal => "PAL (Europe)",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Auto, Self::NtscUs, Self::NtscJapan, Self::Pal]
+    }
+}
+
+impl EnumLabel for MdTimingPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::Precise => "Precise (slow)",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::Standard, Self::Precise]
+    }
+}
+
+impl EnumLabel for MdControllerPreference {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ThreeButton => "3-button",
+            Self::SixButton => "6-button",
+        }
+    }
+
+    fn all_variants() -> &'static [Self] {
+        &[Self::ThreeButton, Self::SixButton]
     }
 }
 
@@ -372,6 +414,49 @@ pub(super) fn draw(
             egui::Slider::new(&mut settings.emulation.pce_mouse_sensitivity, 0.25..=4.0),
         )
     });
+
+    ui.add_space(22.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.heading("Mega Drive / Genesis");
+        if active_system == Some(ActiveSystem::Md) {
+            ui.label(egui::RichText::new("(active)").weak().italics().small());
+        }
+    });
+    enum_combo(
+        ui,
+        Id::EmulationMdRegion,
+        "emulation_md_region",
+        None,
+        &mut settings.emulation.md_region,
+    );
+    enum_combo(
+        ui,
+        Id::EmulationMdTiming,
+        "emulation_md_timing",
+        None,
+        &mut settings.emulation.md_timing,
+    );
+    enum_combo(
+        ui,
+        Id::EmulationMdController,
+        "emulation_md_controller",
+        None,
+        &mut settings.emulation.md_controller,
+    );
+    helper(
+        ui,
+        "Applies to both ports. Reload the ROM after changing the controller.",
+    );
+    checkbox(
+        ui,
+        Id::EmulationMdTmss,
+        None,
+        &mut settings.emulation.md_use_tmss,
+    );
+    helper(
+        ui,
+        "Requires recognized bios_MD.bin in Settings > Firmware and Standard timing. Reload the ROM after changing this setting.",
+    );
 
     ui.add_space(22.0);
     let sega_active = matches!(

@@ -9,6 +9,8 @@ pub(super) use super::HeadlessOptions;
 #[cfg(not(target_arch = "wasm32"))]
 mod diagnostics;
 mod endpoint;
+mod md;
+pub(super) use md::{run_md_replay_headless, validate_md_replay_options};
 #[cfg(not(target_arch = "wasm32"))]
 mod paired_direct;
 #[cfg(not(target_arch = "wasm32"))]

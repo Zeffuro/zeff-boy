@@ -47,7 +47,7 @@ pub(super) fn publish_committed(cache: &mut HashMap<String, Vec<u8>>, writes: &[
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct DirtyEpoch<T> {
     epoch: u64,
     observed: Option<T>,

@@ -21,11 +21,7 @@ pub(in crate::cli::headless_runner) fn should_trace_ws_op(
         return false;
     }
 
-    if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&op) {
-        return false;
-    }
-
-    true
+    opts.trace_opcode_filter.is_empty() || opts.trace_opcode_filter.contains(&op)
 }
 
 pub(in crate::cli::headless_runner) fn should_trace_ws_bus_event(
@@ -56,6 +52,18 @@ pub(in crate::cli::headless_runner) fn format_ws_bus_trace_line(
     event: WsBusTraceEvent,
 ) -> String {
     let access = match event {
+        WsBusTraceEvent::Read {
+            space: TraceWriteKind::Bus,
+            addr,
+            value,
+            ..
+        } => format!("busread addr={addr:X} value={value:X}"),
+        WsBusTraceEvent::Write {
+            space: TraceWriteKind::Bus,
+            addr,
+            written_value,
+            ..
+        } => format!("buswrite addr={addr:X} value={written_value:X}"),
         WsBusTraceEvent::Read {
             space: TraceWriteKind::Memory,
             addr,

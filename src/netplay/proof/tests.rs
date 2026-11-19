@@ -30,7 +30,10 @@ fn worker_cancels_pending_admission_and_pending_input_promptly() {
         })));
         let _peer = if admitted {
             let peer = wire::admit(remote, Player::Two, &admission, &[5; 32]).unwrap();
-            assert!(matches!(next(&worker).unwrap(), Response::Ready));
+            assert!(matches!(
+                next(&worker).unwrap(),
+                Response::Ready { md_input: None }
+            ));
             worker.send(EmuCommand::StepNetplay(3));
             Some(peer)
         } else {
@@ -63,7 +66,10 @@ fn idle_disconnect_restores_without_another_step() {
         secret: [5; 32],
     })));
     let peer = wire::admit(remote, Player::Two, &admission, &[5; 32]).unwrap();
-    assert!(matches!(next(&worker).unwrap(), Response::Ready));
+    assert!(matches!(
+        next(&worker).unwrap(),
+        Response::Ready { md_input: None }
+    ));
     drop(peer);
     let reason = stopped(&worker).unwrap();
     assert!(

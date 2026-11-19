@@ -588,12 +588,18 @@ impl App {
             Ok(repaired_worker) => {
                 self.emu_worker_generation = repaired_generation;
                 self.latest_frame = repaired_worker.shared_framebuffer().load_full();
+                self.debug_windows
+                    .md_timed_ports
+                    .cancel_session("Worker ownership changed");
                 self.emu_thread = Some(repaired_worker);
                 self.tas_control.clear_readiness();
                 self.recompute_pause();
                 Ok(())
             }
             Err(failure) => {
+                self.debug_windows
+                    .md_timed_ports
+                    .cancel_session("Worker ownership changed");
                 self.emu_thread = failure.original_worker.map(|worker| *worker);
                 Err(anyhow::anyhow!(
                     "TAS repair activation failed: {:?}",
@@ -631,6 +637,9 @@ impl App {
                 });
                 self.emu_worker_generation = restored.worker_generation;
                 self.latest_frame = latest_frame;
+                self.debug_windows
+                    .md_timed_ports
+                    .cancel_session("Worker ownership changed");
                 self.emu_thread = Some(restored.worker);
                 self.tas_control.clear_readiness();
                 self.recompute_pause();
@@ -640,6 +649,9 @@ impl App {
                 Ok(restored.repaired_release_warning)
             }
             Err((reason, worker)) => {
+                self.debug_windows
+                    .md_timed_ports
+                    .cancel_session("Worker ownership changed");
                 self.emu_thread = worker.map(|worker| *worker);
                 Err(anyhow::anyhow!("TAS repair restore failed: {reason:?}"))
             }
@@ -768,6 +780,9 @@ fn validate_prepared_backend(
         return Err(TasRepairPrepareFailure::EffectiveMediaMismatch);
     }
     let configured_matches = match identity.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            observation.initial_sample_rate == Some(identity.required_sample_rate)
+        }
         TasExecutionProfile::DirectNesCartridge => observation
             .configured_at_load_sample_rate
             .is_none_or(|rate| rate == identity.required_sample_rate),

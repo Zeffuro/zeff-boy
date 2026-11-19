@@ -81,6 +81,13 @@ pub(in crate::emu_thread) fn build_tas_witness(
     profile: TasExecutionProfile,
 ) -> Result<TasControlLeaseWitness, Rejected> {
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            crate::emu_backend::loader::md_product::build_md_tas_witness(
+                backend,
+                cheats_present,
+                profile,
+            )
+        }
         TasExecutionProfile::DirectNesCartridge => {
             build_direct_nes_witness(backend, cheats_present)
         }

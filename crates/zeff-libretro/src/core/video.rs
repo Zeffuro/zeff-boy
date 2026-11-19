@@ -8,8 +8,67 @@ use zeff_nes_core::hardware::ppu::NesPaletteMode;
 use zeff_sega8_core::hardware::cartridge::Sega8System;
 
 impl CoreState {
+    pub(crate) fn present_video(
+        &mut self,
+        callback: crate::api::retro_video_refresh_t,
+        generation: Option<u64>,
+        xrgb: bool,
+    ) {
+        if self
+            .last_presented_video
+            .is_some_and(|(old, _, _)| Some(old) != generation)
+        {
+            self.last_presented_video = None;
+        }
+        let geometry = self.video_geometry();
+        let (width, height) = (geometry.base_width, geometry.base_height);
+        if !self.framebuffer_available() {
+            if let Some((_, width, height)) = self.last_presented_video {
+                let mut can_dupe = false;
+                if crate::callbacks::env_cmd(
+                    crate::api::RETRO_ENVIRONMENT_GET_CAN_DUPE,
+                    std::ptr::from_mut(&mut can_dupe).cast(),
+                ) && can_dupe
+                {
+                    unsafe { callback(std::ptr::null(), width, height, 0) };
+                }
+            }
+            return;
+        }
+        if xrgb {
+            let pixels = self.framebuffer_as_xrgb8888();
+            unsafe {
+                callback(
+                    pixels.as_ptr().cast(),
+                    width,
+                    height,
+                    width as usize * RGBA_BYTES_PER_PIXEL,
+                )
+            };
+        } else {
+            let pixels = self.framebuffer_as_rgb565();
+            unsafe {
+                callback(
+                    pixels.as_ptr().cast(),
+                    width,
+                    height,
+                    width as usize * LIBRETRO_RGB565_BYTES_PER_PIXEL,
+                )
+            };
+        }
+        self.last_presented_video = generation.map(|generation| (generation, width, height));
+    }
+
+    pub(crate) fn framebuffer_available(&self) -> bool {
+        !matches!(&self.core, ActiveCore::Md(emu) if !emu.framebuffer_available())
+    }
+
     pub(crate) fn video_geometry(&self) -> retro_game_geometry {
         let (base_width, base_height) = match &self.core {
+            ActiveCore::Md(emu) => {
+                let (width, height) = emu.framebuffer_dimensions();
+                (width as u32, height as u32)
+            }
             ActiveCore::Gb(emu) => {
                 let (width, height) = emu.framebuffer_dimensions();
                 (width as u32, height as u32)
@@ -38,13 +97,17 @@ impl CoreState {
                 base_width.max(zeff_pce_core::hardware::PCE_HOST_FRAME_WIDTH as u32),
                 base_height.max(zeff_pce_core::hardware::PCE_HOST_FRAME_HEIGHT as u32),
             )
+        } else if matches!(self.core, ActiveCore::Md(_)) {
+            (320, 480)
         } else {
             NES_SCREEN_SIZE
         };
-        let aspect_ratio = if matches!(self.core, ActiveCore::Pce(_)) {
-            4.0 / 3.0
-        } else {
-            0.0
+        let aspect_ratio = match &self.core {
+            ActiveCore::Pce(_) => 4.0 / 3.0,
+            ActiveCore::Md(_) if matches!(base_height, 448 | 480) => {
+                base_width as f32 / (base_height / 2) as f32
+            }
+            _ => 0.0,
         };
         Self::video_geometry_for_size(base_width, base_height, max_width, max_height, aspect_ratio)
     }
@@ -108,6 +171,7 @@ impl CoreState {
             return &self.xrgb_buf;
         }
         let fb = match &self.core {
+            ActiveCore::Md(emu) => emu.framebuffer(),
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
@@ -146,6 +210,7 @@ impl CoreState {
             return &self.rgb565_buf;
         }
         let fb = match &self.core {
+            ActiveCore::Md(emu) => emu.framebuffer(),
             ActiveCore::Gb(emu) => emu.framebuffer(),
             ActiveCore::Gba(emu) => emu.framebuffer(),
             ActiveCore::Nes(emu) => emu.framebuffer(),
@@ -227,6 +292,7 @@ impl CoreState {
 
     pub fn system_label(&self) -> &'static str {
         match &self.core {
+            ActiveCore::Md(_) => "Mega Drive / Genesis",
             ActiveCore::Gb(_) => "GB/GBC",
             ActiveCore::Gba(_) => "GBA",
             ActiveCore::Nes(_) => "NES",

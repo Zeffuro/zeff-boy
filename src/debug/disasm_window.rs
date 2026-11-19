@@ -80,8 +80,16 @@ pub(super) fn draw_disassembler_content(
     view: &DisassemblyView,
     supports_rewind: bool,
     supports_breakpoints: bool,
+    supports_rom_breakpoints: bool,
     supports_execution_controls: bool,
 ) -> DisassemblerActions {
+    let source_only = view.cursor.is_source();
+    let physical = source_only || view.is_static_target;
+    let supports_breakpoints = if physical {
+        supports_rom_breakpoints
+    } else {
+        supports_breakpoints
+    };
     let mut actions = DisassemblerActions {
         toggle_breakpoints: Vec::new(),
         toggle_rom_breakpoints: Vec::new(),
@@ -134,7 +142,7 @@ pub(super) fn draw_disassembler_content(
 
     if view.is_navigation_target {
         ui.horizontal(|ui| {
-            ui.label(if view.is_static_target {
+            ui.label(if physical {
                 "Viewing ROM target"
             } else {
                 "Viewing execution point"
@@ -149,7 +157,7 @@ pub(super) fn draw_disassembler_content(
                 actions.follow_pc_requested = true;
             }
         });
-        ui.label(if supports_breakpoints && view.is_static_target {
+        ui.label(if supports_breakpoints && physical {
             "Click toggles a ROM breakpoint. Right-click for more."
         } else if supports_breakpoints {
             "Click toggles a breakpoint. Right-click for more."
@@ -172,6 +180,12 @@ pub(super) fn draw_disassembler_content(
                     .color(color32(debug_colors(ui).symbol)),
             );
         });
+    }
+    if view.lines.is_empty()
+        && source_only
+        && let crate::debug::DisassemblyCursor::RomStorage(offset) = view.cursor
+    {
+        ui.label(format!("ROM offset +{offset:X}: unavailable"));
     }
     ui.separator();
 
@@ -219,7 +233,15 @@ pub(super) fn draw_disassembler_content(
 
     let mut header = egui::text::LayoutJob::default();
     header.append("     ", 0.0, fmt_addr.clone());
-    header.append("Addr   ", 0.0, fmt_addr.clone());
+    header.append(
+        if source_only {
+            "ROM offset "
+        } else {
+            "Addr   "
+        },
+        0.0,
+        fmt_addr.clone(),
+    );
     if layout.byte_limit > 0 {
         let width = layout.byte_limit * 3 - 1;
         header.append(&format!("{:<width$} ", "Bytes"), 0.0, fmt_addr.clone());
@@ -231,15 +253,14 @@ pub(super) fn draw_disassembler_content(
         let mut addr_buf = String::with_capacity(8);
         let mut padded = String::with_capacity(12);
         for line in &view.lines {
-            let is_pc = line.address == view.pc;
-            let has_breakpoint = if view.is_static_target {
+            let is_pc = view.cursor.cpu_address() == Some(line.address);
+            let has_breakpoint = if physical {
                 line.storage_offset
                     .is_some_and(|offset| rom_breakpoints.contains(&offset))
             } else {
                 breakpoints.contains(&line.address)
             };
-            let is_one_shot =
-                !view.is_static_target && one_shot_breakpoints.contains(&line.address);
+            let is_one_shot = !physical && one_shot_breakpoints.contains(&line.address);
 
             let scratch = format_instruction_bytes(&line.bytes, layout.byte_limit);
 
@@ -255,7 +276,7 @@ pub(super) fn draw_disassembler_content(
             }
 
             addr_buf.clear();
-            let _ = write!(addr_buf, "{}: ", format_addr(line.address));
+            let _ = write!(addr_buf, "{}: ", row_address(view, line));
             job.append(&addr_buf, 0.0, fmt_addr.clone());
 
             let mut row_bytes = fmt_bytes.clone();
@@ -288,6 +309,20 @@ pub(super) fn draw_disassembler_content(
 
             let mut label = ui.add(egui::Label::new(job).sense(egui::Sense::click()));
             let mut hover = Vec::new();
+            if let Some(status) = line.decode_status {
+                match status {
+                    zeff_m68k::disassembly::DecodeStatus::Complete => {}
+                    zeff_m68k::disassembly::DecodeStatus::Invalid => {
+                        hover.push("Invalid opcode".into())
+                    }
+                    zeff_m68k::disassembly::DecodeStatus::Unavailable => {
+                        hover.push("Incomplete instruction at ROM end".into())
+                    }
+                    zeff_m68k::disassembly::DecodeStatus::Unaligned => {
+                        hover.push("Unaligned instruction".into())
+                    }
+                }
+            }
             if line.control_target_storage.is_some() {
                 hover.push("Double-click to follow target".to_owned());
             }
@@ -312,19 +347,16 @@ pub(super) fn draw_disassembler_content(
                     "Add breakpoint"
                 };
                 if ui
-                    .add_enabled(supports_breakpoints, egui::Button::new(toggle_label))
+                    .add_enabled(
+                        supports_breakpoints && (!physical || line.storage_offset.is_some()),
+                        egui::Button::new(toggle_label),
+                    )
                     .clicked()
                 {
-                    if view.is_static_target {
-                        if let Some(offset) = line.storage_offset {
-                            actions.toggle_rom_breakpoints.push(offset);
-                        }
-                    } else {
-                        actions.toggle_breakpoints.push(line.address);
-                    }
+                    queue_row_breakpoint(view, line, supports_breakpoints, &mut actions);
                     ui.close();
                 }
-                if !view.is_static_target {
+                if !physical {
                     if ui
                         .add_enabled(supports_breakpoints, egui::Button::new("Break once"))
                         .clicked()
@@ -341,21 +373,23 @@ pub(super) fn draw_disassembler_content(
                         ui.close();
                     }
                 }
-                if let Some(cpu_address) = line.control_target
+                if !source_only
+                    && let Some(cpu_address) = line.control_target
                     && (line.control_target_storage.is_some() || line.control_target_bank.is_some())
                     && ui.button("Follow target").clicked()
                 {
-                    actions.disasm_target = Some(DisassemblyTarget {
-                        cpu_address,
-                        storage_offset: line.control_target_storage,
-                        bank: line.control_target_bank,
-                        thumb: None,
-                    });
+                    actions.disasm_target =
+                        Some(DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+                            cpu_address,
+                            storage_offset: line.control_target_storage,
+                            bank: line.control_target_bank,
+                            thumb: None,
+                        }));
                     ui.close();
                 }
                 ui.separator();
                 if ui.button("Copy address").clicked() {
-                    ui.ctx().copy_text(format_addr(line.address));
+                    ui.ctx().copy_text(row_address(view, line));
                     ui.close();
                 }
                 if let Some(symbol) = &line.symbol
@@ -365,20 +399,22 @@ pub(super) fn draw_disassembler_content(
                     ui.close();
                 }
             });
-            if label.double_clicked()
+            if !source_only
+                && label.double_clicked()
                 && let Some(cpu_address) = line.control_target
                 && (line.control_target_storage.is_some() || line.control_target_bank.is_some())
             {
-                actions.disasm_target = Some(DisassemblyTarget {
-                    cpu_address,
-                    storage_offset: line.control_target_storage,
-                    bank: line.control_target_bank,
-                    thumb: None,
-                });
+                actions.disasm_target =
+                    Some(DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+                        cpu_address,
+                        storage_offset: line.control_target_storage,
+                        bank: line.control_target_bank,
+                        thumb: None,
+                    }));
             } else if supports_breakpoints && label.clicked() {
-                if view.is_static_target {
+                if physical {
                     if let Some(offset) = line.storage_offset {
-                        actions.toggle_rom_breakpoints.push(offset);
+                        queue_row_breakpoint(view, line, supports_breakpoints, &mut actions);
                         if has_breakpoint {
                             rom_breakpoints.remove(&offset);
                         } else {
@@ -386,7 +422,7 @@ pub(super) fn draw_disassembler_content(
                         }
                     }
                 } else {
-                    actions.toggle_breakpoints.push(line.address);
+                    queue_row_breakpoint(view, line, supports_breakpoints, &mut actions);
                     if has_breakpoint {
                         breakpoints.remove(&line.address);
                     } else {
@@ -421,5 +457,90 @@ mod tests {
             "01 02 03 .."
         );
         assert!(format_instruction_bytes(&[0x01], 0).is_empty());
+    }
+}
+
+fn row_address(view: &DisassemblyView, line: &crate::debug::DisassembledLine) -> String {
+    if view.cursor.is_source() {
+        line.storage_offset
+            .map_or_else(|| "--".into(), |offset| format!("+{offset:X}"))
+    } else {
+        format_addr(line.address)
+    }
+}
+
+fn queue_row_breakpoint(
+    view: &DisassemblyView,
+    line: &crate::debug::DisassembledLine,
+    enabled: bool,
+    actions: &mut DisassemblerActions,
+) {
+    if !enabled {
+        return;
+    }
+    if view.cursor.is_source() || view.is_static_target {
+        if let Some(offset) = line.storage_offset {
+            actions.toggle_rom_breakpoints.push(offset);
+        }
+    } else {
+        actions.toggle_breakpoints.push(line.address);
+    }
+}
+
+#[cfg(test)]
+mod source_action_tests {
+    use super::*;
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn source_disassembly_breakpoint_actions_never_emit_cpu_or_one_shot_addresses() {
+        let mut view = DisassemblyView::unavailable_rom(0x400);
+        let line = crate::debug::DisassembledLine {
+            address: 0x400,
+            decode_status: None,
+            storage_offset: Some(0x400),
+            bank: None,
+            symbol: None,
+            control_target: None,
+            control_target_storage: None,
+            control_target_bank: None,
+            control_target_symbol: None,
+            source: None,
+            bytes: [0x4e, 0x71].into_iter().collect(),
+            mnemonic: "NOP".try_into().unwrap(),
+        };
+        let mut actions = DisassemblerActions {
+            toggle_breakpoints: Vec::new(),
+            toggle_rom_breakpoints: Vec::new(),
+            add_one_shot_breakpoint: None,
+            step_requested: false,
+            next_frame_requested: false,
+            continue_requested: false,
+            backstep_requested: false,
+            follow_pc_requested: false,
+            back_requested: false,
+            forward_requested: false,
+            disasm_target: None,
+        };
+        queue_row_breakpoint(&view, &line, false, &mut actions);
+        assert!(actions.toggle_rom_breakpoints.is_empty() && actions.toggle_breakpoints.is_empty());
+        view.is_static_target = false;
+        queue_row_breakpoint(&view, &line, true, &mut actions);
+        assert_eq!(actions.toggle_rom_breakpoints, [0x400]);
+        assert!(actions.toggle_breakpoints.is_empty() && actions.add_one_shot_breakpoint.is_none());
+        assert!(!actions.continue_requested && actions.disasm_target.is_none());
+        assert_eq!(row_address(&view, &line), "+400");
+        let mut unavailable = line.clone();
+        unavailable.storage_offset = None;
+        queue_row_breakpoint(&view, &unavailable, true, &mut actions);
+        assert_eq!(actions.toggle_rom_breakpoints, [0x400]);
+        view.cursor = crate::debug::DisassemblyCursor::Cpu(0x400);
+        let mut cpu_line = line.clone();
+        cpu_line.address = 0x400;
+        queue_row_breakpoint(&view, &cpu_line, true, &mut actions);
+        assert_eq!(actions.toggle_breakpoints, [0x400]);
+        view.is_static_target = true;
+        queue_row_breakpoint(&view, &line, true, &mut actions);
+        assert_eq!(actions.toggle_rom_breakpoints, [0x400, 0x400]);
     }
 }

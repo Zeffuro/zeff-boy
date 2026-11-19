@@ -32,7 +32,7 @@ impl PreparedPack {
         for index in 0..pack.len() {
             check_cancel(cancel)?;
             let mut entry = pack.by_index(index)?;
-            let original = entry.name().to_owned();
+            let original = entry.name()?.into_owned();
             ensure!(
                 !original.is_empty()
                     && !original.contains(['/', '\\', ':'])

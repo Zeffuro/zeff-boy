@@ -304,6 +304,9 @@ pub(in crate::app) fn evaluate(
 
     let required_sample_rate = 48_000;
     let load_sample_rate_matches = match observation.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            observation.initial_sample_rate == Some(required_sample_rate)
+        }
         TasExecutionProfile::DirectNesCartridge => observation
             .configured_at_load_sample_rate
             .is_none_or(|rate| rate == required_sample_rate),
@@ -395,7 +398,10 @@ pub(in crate::app) fn evaluate(
         (
             TasReadinessCode::Controllers,
             TasReadinessResource::ControllerTopology,
-            observation.controller_profile_matches,
+            observation.controller_profile_matches
+                && (crate::emu_backend::loader::md_product::md_pad_profile(observation.profile)
+                    .is_none()
+                    || observation.sync_config_sha256 == Some(identity.sync_config_sha256)),
             TasReadinessRepair::ResolveProfileMismatch,
         ),
         (
@@ -462,6 +468,9 @@ pub(in crate::app) fn evaluate_for_test(
 
 fn expected_system(profile: TasExecutionProfile) -> ActiveSystem {
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            ActiveSystem::Md
+        }
         TasExecutionProfile::DirectNesCartridge | TasExecutionProfile::DirectFdsDisk => {
             ActiveSystem::Nes
         }
@@ -582,6 +591,7 @@ mod tests {
         let identity = project.identity();
         let observation = TasLoadedProfileObservation {
             profile: TasExecutionProfile::DirectNesCartridge,
+            sync_config_sha256: None,
             system: ActiveSystem::Nes,
             identity_metadata_matches: true,
             load_provenance_available: true,
@@ -839,3 +849,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod md_tests;

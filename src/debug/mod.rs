@@ -20,6 +20,8 @@ pub(crate) mod hex_search;
 pub(crate) mod hex_viewer;
 mod input_viewer;
 mod libretro_cheats;
+mod md_tile_viewer;
+pub(crate) mod md_timed_ports;
 mod memory_viewer;
 mod menu_bar;
 mod mods_window;
@@ -36,8 +38,10 @@ mod rom_info;
 mod rom_viewer;
 mod sega8_tile_viewer;
 pub(crate) mod settings_window;
+pub(crate) mod sound_watchpoints;
 mod source_viewer;
 mod symbol_browser;
+mod target;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas_editor;
 mod tile_viewer;
@@ -48,16 +52,20 @@ pub(crate) mod toast;
 mod trace_viewer;
 pub(crate) mod types;
 mod ui;
+pub(crate) use target::DebugTarget;
 pub(crate) mod ui_helpers;
 
 pub(crate) use audio_discovery::{AudioDiscoveryState, draw_audio_explorer};
 pub(crate) use barcode_boy::draw_scan_window as draw_barcode_boy_scan_window;
 pub(crate) use cheats_window::draw_cheats_content;
+#[cfg(test)]
+pub(crate) use cheats_window::poll_libretro_results_for_test;
 pub(crate) use console::{ConsoleReadSpace, DebugConsoleState};
 pub(crate) use disassembler::{
-    DisassembledLine, DisassemblyTarget, DisassemblyView, disassemble_around,
-    gba_disassemble_around, huc6280_disassemble_around, nes_disassemble_around,
-    v30_disassemble_around, z80_disassemble_around,
+    CpuDisassemblyTarget, DisassembledLine, DisassemblyCursor, DisassemblyTarget, DisassemblyView,
+    InstructionBytes, Mnemonic, disassemble_around, gba_disassemble_around,
+    huc6280_disassemble_around, m68k_disassemble_forward, nes_disassemble_around,
+    v30_disassemble_around, z80_decode_known_instruction, z80_disassemble_around,
 };
 pub(crate) use dock::{
     DebugTab, DebugTabViewer, DebugWorkspacePreset, activate_dock_tab, compute_tab_requirements,
@@ -79,9 +87,9 @@ pub(crate) use toast::ToastManager;
 pub(crate) use types::{
     ApuChannelDebug, ApuDebugInfo, CallStackDisplay, ConsoleGraphicsData, CpuDebugSnapshot,
     DebugSection, GbGraphicsData, GbaGraphicsData, InputDebugInfo, IoBitDisplay, IoRegisterDisplay,
-    NesGraphicsData, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug, PaletteRowDebug,
-    PceGraphicsData, PceVdcGraphicsData, RecentOpcodeDisplay, RomDebugInfo, RomInfoSection,
-    Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
+    MdGraphicsData, NesGraphicsData, OamDebugInfo, PaletteDebugInfo, PaletteGroupDebug,
+    PaletteRowDebug, PceGraphicsData, PceVdcGraphicsData, RecentOpcodeDisplay, RomDebugInfo,
+    RomInfoSection, Sega8GraphicsData, WatchHitDisplay, WatchpointDisplay,
 };
 pub(crate) use types::{
     BreakpointState, CheatState, DebugDataRefs, DebugWindowState, LibretroAsyncResult,
@@ -91,6 +99,9 @@ pub(crate) use types::{
 #[cfg(target_arch = "wasm32")]
 pub(crate) use ui::draw_settings_window;
 pub(crate) use ui::{
-    DebugUiActions, MenuAction, MenuBarContext, MenuBarResult, SettingsContext, draw_menu_bar,
-    draw_settings_content,
+    DebugUiActions, MenuAction, MenuBarContext, MenuBarResult, SettingsContext, SoundTraceActions,
+    draw_menu_bar, draw_settings_content,
 };
+
+#[cfg(test)]
+pub(crate) use trace_viewer::trace_frame_label;

@@ -12,6 +12,7 @@ pub(crate) fn symbols(system: System) -> Vec<SymbolRecord> {
         System::Nes => (&NES_REGISTERS, ExecMode::Mos6502, "NES hardware"),
         System::Coleco => (&[], ExecMode::Z80, "ColecoVision hardware"),
         System::Pce => (&[], ExecMode::Unknown, "PC Engine"),
+        System::Md => (&MD_REGISTERS, ExecMode::M68000, "Mega Drive / Genesis"),
         System::Sms | System::Gg | System::Sg => {
             (&SEGA8_MAPPER, ExecMode::Z80, "Sega 8-bit mapper")
         }
@@ -126,6 +127,24 @@ const SEGA8_MAPPER: [(u64, &str); 4] = [
     (0xFFFD, "MAPPER_BANK0"),
     (0xFFFE, "MAPPER_BANK1"),
     (0xFFFF, "MAPPER_BANK2"),
+];
+
+const MD_REGISTERS: [(u64, &str); 15] = [
+    (0xA10001, "IO_VERSION"),
+    (0xA10003, "IO_DATA1"),
+    (0xA10005, "IO_DATA2"),
+    (0xA10007, "IO_DATA3"),
+    (0xA10009, "IO_CONTROL1"),
+    (0xA1000B, "IO_CONTROL2"),
+    (0xA1000D, "IO_CONTROL3"),
+    (0xA11100, "Z80_BUS_REQUEST"),
+    (0xA11200, "Z80_RESET"),
+    (0xC00000, "VDP_DATA"),
+    (0xC00004, "VDP_CONTROL"),
+    (0xC00008, "VDP_HV_COUNTER"),
+    (0xC00011, "PSG_DATA"),
+    (0xA04000, "YM2612_ADDRESS0"),
+    (0xA04002, "YM2612_ADDRESS1"),
 ];
 
 #[cfg(test)]

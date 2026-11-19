@@ -24,6 +24,7 @@ struct Inner {
     backend: EmuBackend,
     netplay: Option<crate::netplay::session::Session>,
     netplay_restore_failed: bool,
+    md_netplay_baseline: Option<netplay::MdWorkerBaseline>,
     pending_frames: VecDeque<FrameResult>,
     pending_responses: VecDeque<EmuResponse>,
     uncapped_mode: bool,
@@ -73,6 +74,7 @@ impl EmuThread {
                 backend,
                 netplay: None,
                 netplay_restore_failed: false,
+                md_netplay_baseline: None,
                 pending_frames: VecDeque::new(),
                 pending_responses: VecDeque::new(),
                 uncapped_mode: false,
@@ -211,6 +213,7 @@ impl EmuThread {
             deferred_storage_commands: _,
             netplay: _,
             netplay_restore_failed: _,
+            md_netplay_baseline: _,
         } = inner;
         let cmd = match (super::commands::CommonCommandContext {
             backend,
@@ -237,9 +240,36 @@ impl EmuThread {
         };
         match cmd {
             EmuCommand::StepFrames(input) => {
+                if input.debug_actions.md_timed_ports.is_some() {
+                    let (result, response, dirty) = Self::handle_md_timed_ports(
+                        backend,
+                        *input,
+                        rewind_buffer.fill_ratio(),
+                        runtime_fault,
+                        *audio_recording_capture,
+                        pending_audio_discontinuities,
+                    );
+                    if dirty {
+                        *battery_potentially_dirty = true;
+                    }
+                    types::publish_backend_framebuffer(&self.shared_framebuffer, backend);
+                    pending_frames.push_back(result);
+                    pending_responses.push_back(response);
+                    return;
+                }
                 let input = *input;
                 *audio_recording_capture = input.audio.recording_capture;
-                let debugger_mutation = !input.debug_actions.memory_writes.is_empty();
+                let debugger_mutation = match backend
+                    .debugger_memory_mutation(&input.debug_actions, runtime_fault.can_step())
+                {
+                    Ok(accepted) => accepted,
+                    Err(error) => {
+                        pending_responses.push_back(EmuResponse::MemoryWriteRejected(error));
+                        false
+                    }
+                };
+                let instruction_step_requested = input.debug_step && !input.debug_continue;
+                let md_time_before = backend.md_execution_time();
                 let detached_request = speculation.request_detached_frame(
                     backend,
                     &input,
@@ -266,6 +296,7 @@ impl EmuThread {
                 let potentially_dirty = super::commands::finalize_step_result(
                     &mut result,
                     debugger_mutation,
+                    instruction_step_requested || md_time_before != backend.md_execution_time(),
                     *audio_recording_capture,
                     pending_audio_discontinuities,
                     runtime_fault,
@@ -304,6 +335,7 @@ impl EmuThread {
                     cheats: last_cheats,
                     audio_recording_capture: *audio_recording_capture,
                     pending_audio_discontinuities,
+                    runtime_fault,
                 })
                 .finalize(&resp, |loaded_frame_duration| {
                     *frame_duration_ns = loaded_frame_duration;
@@ -326,8 +358,7 @@ impl EmuThread {
                     backend,
                     result,
                     path.display().to_string(),
-                    buttons_pressed,
-                    dpad_pressed,
+                    Some((buttons_pressed, dpad_pressed)),
                     &self.shared_framebuffer,
                 );
                 let loaded = (super::commands::LoadFinalizationContext {
@@ -337,6 +368,7 @@ impl EmuThread {
                     cheats: last_cheats,
                     audio_recording_capture: *audio_recording_capture,
                     pending_audio_discontinuities,
+                    runtime_fault,
                 })
                 .finalize(&resp, |loaded_frame_duration| {
                     *frame_duration_ns = loaded_frame_duration;
@@ -356,8 +388,7 @@ impl EmuThread {
                     backend,
                     result,
                     "bytes".to_string(),
-                    buttons_pressed,
-                    dpad_pressed,
+                    Some((buttons_pressed, dpad_pressed)),
                     &self.shared_framebuffer,
                 );
                 let loaded = (super::commands::LoadFinalizationContext {
@@ -367,6 +398,7 @@ impl EmuThread {
                     cheats: last_cheats,
                     audio_recording_capture: *audio_recording_capture,
                     pending_audio_discontinuities,
+                    runtime_fault,
                 })
                 .finalize(&resp, |loaded_frame_duration| {
                     *frame_duration_ns = loaded_frame_duration;
@@ -394,8 +426,7 @@ impl EmuThread {
                             backend,
                             result,
                             path.display().to_string(),
-                            buttons_pressed,
-                            dpad_pressed,
+                            Some((buttons_pressed, dpad_pressed)),
                             &self.shared_framebuffer,
                         )
                     }
@@ -410,6 +441,7 @@ impl EmuThread {
                     cheats: last_cheats,
                     audio_recording_capture: *audio_recording_capture,
                     pending_audio_discontinuities,
+                    runtime_fault,
                 })
                 .finalize(&resp, |loaded_frame_duration| {
                     *frame_duration_ns = loaded_frame_duration;
@@ -432,19 +464,29 @@ impl EmuThread {
                 state_bytes,
                 buttons_pressed,
                 dpad_pressed,
-                replay_events: _,
+                replay_events,
                 game_boy_link_start_state: _,
                 game_boy_link_coordinator_start_state: _,
                 game_boy_link_start_tick: _,
                 wonder_swan_link_start_tick: _,
             } => {
-                let result = backend.load_state_from_bytes(state_bytes);
+                let input = if matches!(backend, EmuBackend::Md(_)) && replay_events.is_some() {
+                    None
+                } else {
+                    Some((buttons_pressed, dpad_pressed))
+                };
+                let result = if input.is_none() {
+                    backend
+                        .probe_replay_state_load(&state_bytes, None, false, false)
+                        .and_then(|_| backend.load_state_from_bytes(state_bytes))
+                } else {
+                    backend.load_state_from_bytes(state_bytes)
+                };
                 let resp = Self::respond_load_state(
                     backend,
                     result,
                     "bytes".to_string(),
-                    buttons_pressed,
-                    dpad_pressed,
+                    input,
                     &self.shared_framebuffer,
                 );
                 let loaded = (super::commands::LoadFinalizationContext {
@@ -454,6 +496,7 @@ impl EmuThread {
                     cheats: last_cheats,
                     audio_recording_capture: *audio_recording_capture,
                     pending_audio_discontinuities,
+                    runtime_fault,
                 })
                 .finalize(&resp, |loaded_frame_duration| {
                     *frame_duration_ns = loaded_frame_duration;
@@ -548,3 +591,7 @@ impl EmuThread {
 
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests;
+
+#[cfg(all(test, target_arch = "wasm32"))]
+#[path = "wasm/tests/md_step_persistence.rs"]
+mod md_step_persistence_tests;

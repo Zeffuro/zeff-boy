@@ -10,6 +10,7 @@ use crate::emu_thread::GuestCallRequest;
 
 pub(crate) struct BackendRuntimeConfig<'a> {
     pub(crate) debug_actions: &'a DebugUiActions,
+    pub(crate) debug_view: (crate::debug::DebugTarget, u64),
     pub(crate) opcode_log_enabled: bool,
     pub(crate) debug_continue: bool,
     pub(crate) debug_step: bool,
@@ -30,6 +31,7 @@ impl<'a> BackendRuntimeConfig<'a> {
     pub(crate) fn new(debug_actions: &'a DebugUiActions) -> Self {
         Self {
             debug_actions,
+            debug_view: (crate::debug::DebugTarget::Primary, 0),
             opcode_log_enabled: false,
             debug_continue: false,
             debug_step: false,
@@ -61,6 +63,23 @@ enum DebugAction {
 }
 
 impl EmuBackend {
+    pub(crate) fn debugger_memory_mutation(
+        &self,
+        actions: &DebugUiActions,
+        worker_can_step: bool,
+    ) -> Result<bool, String> {
+        if actions.memory_writes.is_empty() {
+            return Ok(false);
+        }
+        if let Self::Md(md) = self {
+            if !worker_can_step {
+                return Err("cannot edit memory while the Mega Drive worker is faulted".into());
+            }
+            md.validate_memory_writes(&actions.memory_writes)?;
+        }
+        Ok(true)
+    }
+
     pub(crate) fn apply_runtime_config(&mut self, config: BackendRuntimeConfig<'_>) {
         if let Some(mutes) = &config.debug_actions.apu_channel_mutes {
             self.set_apu_channel_mutes(mutes);
@@ -69,6 +88,30 @@ impl EmuBackend {
         let supports_execution_controls = self.supports_execution_controls();
 
         match self {
+            Self::Md(md) => {
+                md.set_opcode_history_enabled(config.opcode_log_enabled);
+                let sound_view_current = md.observe_sound_watch_view(config.debug_view);
+                md.apply_debug_actions(config.debug_actions);
+                if config.debug_actions.target == crate::debug::DebugTarget::Primary {
+                    md.apply_memory_writes(&config.debug_actions.memory_writes);
+                }
+                if sound_view_current
+                    && config.debug_view.0 == crate::debug::DebugTarget::Sound
+                    && config.debug_actions.target == config.debug_view.0
+                    && config.debug_actions.target_revision == Some(config.debug_view.1)
+                    && config.debug_view.1 != u64::MAX
+                    && let Some(request) = config.debug_actions.sound_trace.watch
+                    && request.binding.revision == config.debug_view.1
+                {
+                    md.apply_sound_watch_actions(request);
+                }
+                if !config.uncapped_mode {
+                    md.set_apu_sample_generation_enabled(!config.skip_audio);
+                }
+                if supports_execution_controls {
+                    md.apply_execution_controls(config.debug_continue, config.debug_step);
+                }
+            }
             Self::Gb(gb) => {
                 if supports_debugger {
                     apply_gb_debug_actions(&mut gb.emu, config.debug_actions);
@@ -181,8 +224,12 @@ impl EmuBackend {
         );
         anyhow::ensure!(self.is_suspended(), "CPU must be suspended");
         self.validate_guest_call_target(request)?;
+        if let Self::Md(backend) = self {
+            return backend.execute_guest_call(request);
+        }
         let saved = self.encode_state_bytes()?;
         let result = match self {
+            Self::Md(_) => unreachable!("MD guest calls use their frontend checkpoint"),
             Self::Gb(backend) => {
                 let target = u16::try_from(request.target)
                     .map_err(|_| anyhow::anyhow!("target is out of range"))?;
@@ -269,6 +316,13 @@ impl EmuBackend {
         }
     }
 
+    pub(crate) fn undo_guest_call(&mut self, state: Vec<u8>) -> anyhow::Result<()> {
+        match self {
+            Self::Md(backend) => backend.undo_guest_call(&state),
+            _ => self.load_state_from_bytes(state).map(|_| ()),
+        }
+    }
+
     fn validate_guest_call_target(&self, request: &GuestCallRequest) -> anyhow::Result<()> {
         let Some(expected) = request.storage_offset else {
             return Ok(());
@@ -277,6 +331,7 @@ impl EmuBackend {
             return Ok(());
         }
         let actual = match self {
+            Self::Md(backend) => backend.core().rom_offset_for_cpu_address(request.target),
             Self::Gb(backend) => u16::try_from(request.target)
                 .ok()
                 .and_then(|target| backend.emu.rom_offset_for_cpu_address(target)),

@@ -21,7 +21,6 @@ pub(crate) struct DebuggerRenderContext<'a> {
     pub(crate) settings: &'a Settings,
     pub(crate) dock_state: &'a mut egui_dock::DockState<DebugTab>,
     pub(crate) supports_rewind: bool,
-    pub(crate) supports_debugger: bool,
     pub(crate) supports_execution_controls: bool,
 }
 
@@ -146,7 +145,6 @@ impl DebuggerWindow {
             window_state: ctx.debug_windows,
             actions: DebugUiActions::none(),
             supports_rewind: ctx.supports_rewind,
-            supports_debugger: ctx.supports_debugger,
             supports_execution_controls: ctx.supports_execution_controls,
             game_texture_id: None,
             game_native_size: (160, 144),

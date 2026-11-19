@@ -73,6 +73,7 @@ pub(super) fn decode_instruction(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Di
 
 fn decode_prefixed(addr: u16, bytes: InstructionBytes, mnemonic: Mnemonic) -> DisassembledLine {
     DisassembledLine {
+        decode_status: None,
         address: addr.into(),
         storage_offset: None,
         bank: None,
@@ -93,6 +94,7 @@ fn decode_base(bus_read: &impl Fn(u16) -> u8, addr: u16) -> DisassembledLine {
     let bytes = instruction_bytes(bus_read, addr, len);
     let mnemonic = base_mnemonic(bus_read, addr, opcode, BASE_REGISTER_NAMES);
     DisassembledLine {
+        decode_status: None,
         address: addr.into(),
         storage_offset: None,
         bank: None,
@@ -135,6 +137,7 @@ fn decode_indexed(
     };
 
     DisassembledLine {
+        decode_status: None,
         address: addr.into(),
         storage_offset: None,
         bank: None,
@@ -241,10 +244,16 @@ fn base_mnemonic(
         reg16_af,
         hl_name,
     } = registers;
-    let d8 = bus_read(addr.wrapping_add(1));
-    let d16 = read_u16(bus_read, addr.wrapping_add(1));
-    let rel = d8 as i8;
-    let rel_target = addr.wrapping_add(2).wrapping_add_signed(rel as i16);
+    let d8 = || bus_read(addr.wrapping_add(1));
+    let d16 = || read_u16(bus_read, addr.wrapping_add(1));
+    let relative = || {
+        let displacement = d8() as i8;
+        fmt_rel(
+            displacement,
+            addr.wrapping_add(2)
+                .wrapping_add_signed(i16::from(displacement)),
+        )
+    };
     let x = opcode >> 6;
     let y = (opcode >> 3) & 0x07;
     let z = opcode & 0x07;
@@ -256,18 +265,14 @@ fn base_mnemonic(
             0 => match y {
                 0 => mn!("NOP"),
                 1 => mn!("EX AF,AF'"),
-                2 => mn!("DJNZ {}", fmt_rel(rel, rel_target)),
-                3 => mn!("JR {}", fmt_rel(rel, rel_target)),
-                4..=7 => mn!(
-                    "JR {},{}",
-                    CONDITIONS[(y - 4) as usize],
-                    fmt_rel(rel, rel_target)
-                ),
+                2 => mn!("DJNZ {}", relative()),
+                3 => mn!("JR {}", relative()),
+                4..=7 => mn!("JR {},{}", CONDITIONS[(y - 4) as usize], relative()),
                 _ => unreachable!(),
             },
             1 => {
                 if q == 0 {
-                    mn!("LD {},${:04X}", reg16[p as usize], d16)
+                    mn!("LD {},${:04X}", reg16[p as usize], d16())
                 } else {
                     mn!("ADD {},{}", hl_name, reg16[p as usize])
                 }
@@ -277,10 +282,10 @@ fn base_mnemonic(
                 (1, 0) => mn!("LD A,(BC)"),
                 (0, 1) => mn!("LD (DE),A"),
                 (1, 1) => mn!("LD A,(DE)"),
-                (0, 2) => mn!("LD (${:04X}),{}", d16, hl_name),
-                (1, 2) => mn!("LD {},(${:04X})", hl_name, d16),
-                (0, 3) => mn!("LD (${:04X}),A", d16),
-                (1, 3) => mn!("LD A,(${:04X})", d16),
+                (0, 2) => mn!("LD (${:04X}),{}", d16(), hl_name),
+                (1, 2) => mn!("LD {},(${:04X})", hl_name, d16()),
+                (0, 3) => mn!("LD (${:04X}),A", d16()),
+                (1, 3) => mn!("LD A,(${:04X})", d16()),
                 _ => unreachable!(),
             },
             3 => {
@@ -292,7 +297,7 @@ fn base_mnemonic(
             }
             4 => mn!("INC {}", reg8[y as usize]),
             5 => mn!("DEC {}", reg8[y as usize]),
-            6 => mn!("LD {},${:02X}", reg8[y as usize], d8),
+            6 => mn!("LD {},${:02X}", reg8[y as usize], d8()),
             7 => match y {
                 0 => mn!("RLCA"),
                 1 => mn!("RRCA"),
@@ -329,25 +334,25 @@ fn base_mnemonic(
                     }
                 }
             }
-            2 => mn!("JP {},${:04X}", CONDITIONS[y as usize], d16),
+            2 => mn!("JP {},${:04X}", CONDITIONS[y as usize], d16()),
             3 => match y {
-                0 => mn!("JP ${:04X}", d16),
+                0 => mn!("JP ${:04X}", d16()),
                 1 => mn!("PREFIX CB"),
-                2 => mn!("OUT (${:02X}),A", d8),
-                3 => mn!("IN A,(${:02X})", d8),
+                2 => mn!("OUT (${:02X}),A", d8()),
+                3 => mn!("IN A,(${:02X})", d8()),
                 4 => mn!("EX (SP),{}", hl_name),
                 5 => mn!("EX DE,HL"),
                 6 => mn!("DI"),
                 7 => mn!("EI"),
                 _ => unreachable!(),
             },
-            4 => mn!("CALL {},${:04X}", CONDITIONS[y as usize], d16),
+            4 => mn!("CALL {},${:04X}", CONDITIONS[y as usize], d16()),
             5 => {
                 if q == 0 {
                     mn!("PUSH {}", reg16_af[p as usize])
                 } else {
                     match p {
-                        0 => mn!("CALL ${:04X}", d16),
+                        0 => mn!("CALL ${:04X}", d16()),
                         1 => mn!("PREFIX DD"),
                         2 => mn!("PREFIX ED"),
                         3 => mn!("PREFIX FD"),
@@ -355,7 +360,7 @@ fn base_mnemonic(
                     }
                 }
             }
-            6 => alu_mnemonic_immediate(y, d8),
+            6 => alu_mnemonic_immediate(y, d8()),
             7 => mn!("RST ${:02X}", y * 8),
             _ => unreachable!(),
         },
@@ -371,14 +376,13 @@ fn indexed_displacement_mnemonic(
 ) -> Mnemonic {
     let displacement = bus_read(addr.wrapping_add(2)) as i8;
     let operand = indexed_operand(index, displacement);
-    let imm = bus_read(addr.wrapping_add(3));
     let y = (opcode >> 3) & 0x07;
     let z = opcode & 0x07;
 
     match opcode {
         0x34 => mn!("INC {}", operand),
         0x35 => mn!("DEC {}", operand),
-        0x36 => mn!("LD {},${:02X}", operand, imm),
+        0x36 => mn!("LD {},${:02X}", operand, bus_read(addr.wrapping_add(3))),
         0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
             mn!("LD {},{}", REG8[y as usize], operand)
         }
@@ -463,7 +467,6 @@ fn ed_mnemonic(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Mnemonic {
     let z = opcode & 0x07;
     let p = y >> 1;
     let q = y & 0x01;
-    let d16 = read_u16(bus_read, addr.wrapping_add(2));
 
     match (x, z) {
         (1, 0) => {
@@ -488,6 +491,7 @@ fn ed_mnemonic(bus_read: &impl Fn(u16) -> u8, addr: u16) -> Mnemonic {
             }
         }
         (1, 3) => {
+            let d16 = read_u16(bus_read, addr.wrapping_add(2));
             if q == 0 {
                 mn!("LD (${:04X}),{}", d16, REG16[p as usize])
             } else {
@@ -569,54 +573,4 @@ fn instruction_bytes(bus_read: &impl Fn(u16) -> u8, addr: u16, len: usize) -> In
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn read(bytes: &[u8], addr: u16) -> u8 {
-        bytes.get(addr as usize).copied().unwrap_or(0)
-    }
-
-    #[test]
-    fn decodes_common_sms_io_setup_sequence() {
-        let bytes = [0x3E, 0x90, 0xD3, 0x7F, 0x76];
-
-        let ld = decode_instruction(&|addr| read(&bytes, addr), 0);
-        let out = decode_instruction(&|addr| read(&bytes, addr), 2);
-        let halt = decode_instruction(&|addr| read(&bytes, addr), 4);
-
-        assert_eq!(ld.bytes.as_slice(), &[0x3E, 0x90]);
-        assert_eq!(ld.mnemonic.as_str(), "LD A,$90");
-        assert_eq!(out.bytes.as_slice(), &[0xD3, 0x7F]);
-        assert_eq!(out.mnemonic.as_str(), "OUT ($7F),A");
-        assert_eq!(halt.mnemonic.as_str(), "HALT");
-    }
-
-    #[test]
-    fn decodes_indexed_displacement_and_cb_forms() {
-        let indexed_ld = [0xDD, 0x36, 0xFE, 0x5A];
-        let indexed_cb = [0xFD, 0xCB, 0x02, 0x46];
-
-        let ld = decode_instruction(&|addr| read(&indexed_ld, addr), 0);
-        let bit = decode_instruction(&|addr| read(&indexed_cb, addr), 0);
-
-        assert_eq!(instruction_len(&|addr| read(&indexed_ld, addr), 0), 4);
-        assert_eq!(ld.bytes.as_slice(), &[0xDD, 0x36, 0xFE, 0x5A]);
-        assert_eq!(ld.mnemonic.as_str(), "LD (IX-$02),$5A");
-        assert_eq!(instruction_len(&|addr| read(&indexed_cb, addr), 0), 4);
-        assert_eq!(bit.mnemonic.as_str(), "BIT 0,(IY+$02)");
-    }
-
-    #[test]
-    fn decodes_ed_memory_and_block_forms() {
-        let ld = [0xED, 0x43, 0x34, 0x12];
-        let ldir = [0xED, 0xB0];
-
-        let ld_line = decode_instruction(&|addr| read(&ld, addr), 0);
-        let ldir_line = decode_instruction(&|addr| read(&ldir, addr), 0);
-
-        assert_eq!(instruction_len(&|addr| read(&ld, addr), 0), 4);
-        assert_eq!(ld_line.mnemonic.as_str(), "LD ($1234),BC");
-        assert_eq!(instruction_len(&|addr| read(&ldir, addr), 0), 2);
-        assert_eq!(ldir_line.mnemonic.as_str(), "LDIR");
-    }
-}
+mod tests;

@@ -146,6 +146,7 @@ pub fn encode_game_boy(trace: &GameBoyAudioTrace, cancel: &AtomicBool) -> Result
                 observed_timing_event_count,
             }),
             nes: None,
+            md: None,
             limitations: LIMITATIONS,
         },
         cancel,

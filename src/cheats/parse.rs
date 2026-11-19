@@ -82,6 +82,7 @@ fn try_parse_single_for_system(
     system: ActiveSystem,
 ) -> Option<(Vec<CheatPatch>, CheatType)> {
     match system {
+        ActiveSystem::Md => zeff_md_core::cheats::parse_cheats(input),
         ActiveSystem::GameBoy => zeff_gb_core::cheats::parse_cheat(input).ok(),
         ActiveSystem::Nes => zeff_gb_core::cheats::parse_cheat(input)
             .ok()
@@ -111,6 +112,11 @@ pub(crate) fn parse_cheat_for_system(
     input: &str,
     system: ActiveSystem,
 ) -> Result<(Vec<CheatPatch>, CheatType), &'static str> {
+    if system == ActiveSystem::Md {
+        return try_parse_single_for_system(input, system).ok_or(
+            "Use MD raw byte/word, physical ROM:OOOOOOOO:VV (or VVVV at an even source), or ROM Game Genie (XXXX-XXXX)",
+        );
+    }
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err("Empty cheat code");

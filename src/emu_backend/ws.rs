@@ -427,6 +427,7 @@ impl EmulatorCore for WsBackend {
             MemoryRegionKind::PaletteRam
             | MemoryRegionKind::Oam
             | MemoryRegionKind::IoRegisters
+            | MemoryRegionKind::VideoScrollRam
             | MemoryRegionKind::ExternalWorkRam
             | MemoryRegionKind::InternalWorkRam => {
                 return Err(anyhow::anyhow!(

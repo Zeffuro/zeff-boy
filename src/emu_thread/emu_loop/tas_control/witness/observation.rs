@@ -10,6 +10,13 @@ pub(in crate::emu_thread) fn observe_loaded_profile(
     profile: TasExecutionProfile,
 ) -> TasLoadedProfileObservation {
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            crate::emu_backend::loader::md_product::observe_md_tas_profile(
+                backend,
+                cheats_present,
+                profile,
+            )
+        }
         TasExecutionProfile::DirectNesCartridge => observe_direct_nes(backend, cheats_present),
         TasExecutionProfile::DirectFdsDisk => observe_direct_fds(backend, cheats_present),
         TasExecutionProfile::DirectGbCartridgeDmg => gb::observe_direct_gb(backend, cheats_present),
@@ -67,6 +74,7 @@ fn observe_direct_fds(backend: &EmuBackend, cheats_present: bool) -> TasLoadedPr
         .is_some_and(|nes| !nes.host_persistence_enabled());
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectFdsDisk,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref() == Some(ActiveSystem::Nes.code())
             && metadata.core_family.as_deref()
@@ -99,6 +107,7 @@ fn observe_direct_nes(backend: &EmuBackend, cheats_present: bool) -> TasLoadedPr
     let expected_core_family = format!("{:?}", zeff_emu_common::system::CoreFamily::Nes);
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectNesCartridge,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref() == Some(ActiveSystem::Nes.code())
             && metadata.core_family.as_deref() == Some(expected_core_family.as_str()),
@@ -140,6 +149,7 @@ fn observe_direct_coleco(
     let expected_core_family = format!("{:?}", zeff_emu_common::system::CoreFamily::ColecoVision);
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectColecoCartridge,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref() == Some(ActiveSystem::Coleco.code())
             && metadata.core_family.as_deref() == Some(expected_core_family.as_str()),
@@ -190,6 +200,7 @@ fn observe_direct_sms(backend: &EmuBackend, cheats_present: bool) -> TasLoadedPr
     );
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectSmsCartridge,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref()
             == Some(ActiveSystem::MasterSystem.code())
@@ -245,6 +256,7 @@ fn observe_direct_game_gear(
     });
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectGameGearCartridge,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref()
             == Some(ActiveSystem::GameGear.code())
@@ -298,6 +310,7 @@ fn observe_direct_sg1000(
     let expected_core_family = format!("{:?}", zeff_emu_common::system::CoreFamily::Sega8);
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectSg1000Cartridge,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref() == Some(ActiveSystem::Sg1000.code())
             && metadata.core_family.as_deref() == Some(expected_core_family.as_str()),
@@ -339,6 +352,7 @@ fn observe_direct_ws(backend: &EmuBackend, cheats_present: bool) -> TasLoadedPro
     let expected_core_family = format!("{:?}", zeff_emu_common::system::CoreFamily::WonderSwan);
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectWsCartridge,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref()
             == Some(ActiveSystem::WonderSwan.code())
@@ -423,6 +437,7 @@ fn observe_direct_pce(
     };
     TasLoadedProfileObservation {
         profile,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref() == Some(ActiveSystem::Pce.code())
             && metadata.core_family.as_deref() == Some(expected_core_family.as_str()),
@@ -483,6 +498,7 @@ fn observe_direct_gba(backend: &EmuBackend, cheats_present: bool) -> TasLoadedPr
     let expected_core_family = format!("{:?}", zeff_emu_common::system::CoreFamily::GameBoyAdvance);
     TasLoadedProfileObservation {
         profile: TasExecutionProfile::DirectGbaCartridge,
+        sync_config_sha256: None,
         system: backend.system(),
         identity_metadata_matches: metadata.system.as_deref()
             == Some(ActiveSystem::GameBoyAdvance.code())

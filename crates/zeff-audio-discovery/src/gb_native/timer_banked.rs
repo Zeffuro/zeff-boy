@@ -144,17 +144,10 @@ pub(super) fn candidate(bytes: &[u8]) -> bool {
 }
 
 pub(super) fn owns(profile: &str) -> bool {
-    if PROFILES.iter().any(|candidate| candidate.id == profile) {
-        return true;
-    }
+    let known_profile = PROFILES.iter().any(|candidate| candidate.id == profile);
     #[cfg(any(test, feature = "test-support"))]
-    {
-        profile == fixture::PROFILE_ID
-    }
-    #[cfg(not(any(test, feature = "test-support")))]
-    {
-        false
-    }
+    let known_profile = known_profile || profile == fixture::PROFILE_ID;
+    known_profile
 }
 
 fn recognized(

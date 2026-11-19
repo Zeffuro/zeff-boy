@@ -3,11 +3,28 @@ use crate::cheats::CheatPatch;
 use crate::emu_core_trait::EmulatorCore;
 
 impl EmuBackend {
+    pub(crate) fn try_install_rom_patches(&mut self, cheats: &[CheatPatch]) -> anyhow::Result<()> {
+        if let Self::Md(md) = self {
+            md.try_install_rom_patches(cheats)
+        } else {
+            self.install_rom_patches(cheats);
+            Ok(())
+        }
+    }
+
     pub(crate) fn install_rom_patches(&mut self, cheats: &[CheatPatch]) {
         if !self.supports_cheats() {
             return;
         }
         match self {
+            Self::Md(md) => {
+                if md.rollback_owned() {
+                    return;
+                }
+                if let Err(error) = md.try_install_rom_patches(cheats) {
+                    log::warn!("Mega Drive ROM cheats rejected: {error}");
+                }
+            }
             Self::Gb(backend) => backend.install_rom_patches(cheats),
             Self::Gba(backend) => backend.install_rom_patches(cheats),
             Self::Nes(backend) => backend.install_rom_patches(cheats),
@@ -23,6 +40,7 @@ impl EmuBackend {
             return;
         }
         match self {
+            Self::Md(backend) => backend.apply_ram_cheats(cheats),
             Self::Gb(backend) => backend.apply_ram_cheats(cheats),
             Self::Gba(backend) => backend.apply_ram_cheats(cheats),
             Self::Nes(backend) => backend.apply_ram_cheats(cheats),

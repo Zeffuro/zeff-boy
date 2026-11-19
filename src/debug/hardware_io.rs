@@ -7,6 +7,10 @@ pub(super) fn draw_hardware_io_content(
     info: &CpuDebugSnapshot,
     state: &mut CpuDebugViewState,
     actions: &mut DebugUiActions,
+    md: Option<(
+        &crate::debug::md_timed_ports::MdTimedPortView,
+        &mut crate::debug::md_timed_ports::MdTimedPortUi,
+    )>,
 ) {
     state.sync(info);
     if info.sections.is_empty() {
@@ -24,6 +28,9 @@ pub(super) fn draw_hardware_io_content(
     });
 
     draw_decoded_registers(ui, info, actions);
+    if let Some((view, md_state)) = md {
+        crate::debug::md_timed_ports::draw(ui, view, md_state, actions);
+    }
 
     for (section_index, section) in info.sections.iter().enumerate() {
         let section_color = section_color(ui, section.heading);

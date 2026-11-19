@@ -34,6 +34,7 @@ impl EmuLoop {
             || self.tcp_link.is_some()
             || self.netplay.is_some()
             || self.netplay_restore_failed
+            || matches!(&self.backend, crate::emu_backend::EmuBackend::Md(md) if md.rollback_owned())
     }
 
     pub(in crate::emu_thread::emu_loop) fn prepare_tas_control_retirement(
@@ -42,6 +43,15 @@ impl EmuLoop {
         let Some(lease_id) = self.tas_control.active_lease_id() else {
             return Ok(());
         };
+        if self.md_tas.is_some() {
+            return match self.rollback_md_tas(lease_id) {
+                EmuResponse::TasControlRolledBack { .. } => Ok(()),
+                EmuResponse::TasControlRollbackRejected { reason, .. } => {
+                    Err(format!("MD TAS original return remains fenced: {reason:?}"))
+                }
+                _ => unreachable!(),
+            };
+        }
         let backend = &mut self.backend;
         let persistence = self.tas_repair.identity.map_or(
             crate::emu_thread::TasPersistenceContract::Absent,
@@ -107,12 +117,12 @@ impl EmuLoop {
             cheats: &self.last_cheats,
             audio_recording_capture: self.audio_recording_capture,
             pending_audio_discontinuities: &mut self.pending_audio_discontinuities,
+            runtime_fault: &mut self.runtime_fault,
         })
         .finalize(&response, |frame_duration_ns| {
             self.frame_duration_ns
                 .store(frame_duration_ns, std::sync::atomic::Ordering::Release);
         });
         debug_assert!(loaded);
-        self.runtime_fault = crate::emu_thread::WorkerRuntimeFault::default();
     }
 }

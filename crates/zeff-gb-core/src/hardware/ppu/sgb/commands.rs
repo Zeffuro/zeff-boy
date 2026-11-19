@@ -279,9 +279,9 @@ impl PPU {
         let trn = self.capture_sgb_trn_buffer(vram);
         log_transfer_stats("PCT_TRN", &trn);
 
-        for i in 0..SGB_BORDER_TILEMAP_SIZE {
+        for (i, entry) in self.sgb_border_tilemap.iter_mut().enumerate() {
             let offset = i * 2;
-            self.sgb_border_tilemap[i] = u16::from_le_bytes([trn[offset], trn[offset + 1]]);
+            *entry = u16::from_le_bytes([trn[offset], trn[offset + 1]]);
         }
 
         let palette_offset = SGB_BORDER_TILEMAP_SIZE * 2;

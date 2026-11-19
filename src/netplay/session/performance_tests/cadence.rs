@@ -153,7 +153,7 @@ impl Peer {
                     self.max_retained = self.max_retained.max(retained_bytes);
                     continue;
                 }
-                Response::Ready | Response::NetworkStats(_) => continue,
+                Response::Ready { md_input: None } | Response::NetworkStats(_) => continue,
                 _ => panic!("unexpected cost fixture response"),
             };
             assert_eq!(frame, self.confirmed + 1);
@@ -168,7 +168,7 @@ impl Peer {
             );
             self.confirmed = frame;
         }
-        self.max_retained = self.max_retained.max(session.retained_bytes());
+        self.max_retained = self.max_retained.max(session.retained_bytes().unwrap());
         self.max_snapshots = self.max_snapshots.max(session.snapshots.len());
         self.max_outputs = self.max_outputs.max(session.outputs.len());
         assert!(session.snapshots.len() <= PREDICTION_WINDOW as usize + 1);

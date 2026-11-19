@@ -58,6 +58,8 @@ pub(super) struct Frontend {
     audio_prebuffer_frames: usize,
     rollback_frames: u64,
     admitted: bool,
+    player: Option<zeff_netplay::lockstep::Player>,
+    md_input: Option<crate::netplay::md_input::MdNetplayInputProfile>,
     paused: bool,
     local_pause: bool,
     next_frame: Option<Instant>,
@@ -72,6 +74,31 @@ pub(super) struct Frontend {
 }
 
 impl Frontend {
+    fn terminal_restore(&self, response: &Response) -> Option<bool> {
+        match response {
+            Response::Stopped { restored, .. } => Some(*restored),
+            Response::Rejected(_)
+                if !self.admitted && matches!(self.phase, Phase::Admission | Phase::Stopping) =>
+            {
+                Some(true)
+            }
+            _ => None,
+        }
+    }
+
+    fn finish(&mut self, restored: bool) {
+        *self = Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            proof: self.proof.take(),
+            phase: if restored {
+                Phase::Idle
+            } else {
+                Phase::Poisoned
+            },
+            ..Self::default()
+        };
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub(in crate::app) fn preparation_failed(&mut self, error: String) {
         if matches!(self.phase, Phase::Preparing(_)) {
@@ -258,6 +285,10 @@ impl App {
 
     pub(in crate::app) fn pump_netplay(&mut self) {
         #[cfg(target_arch = "wasm32")]
+        if let Some(thread) = &self.emu_thread {
+            thread.service_netplay();
+        }
+        #[cfg(target_arch = "wasm32")]
         if matches!(self.netplay.phase, Phase::Preparing(_)) && self.frames_in_flight == 0 {
             if !self.netplay.preparing_started {
                 let result =
@@ -343,6 +374,7 @@ impl App {
                     #[cfg(not(target_arch = "wasm32"))]
                     let mut start = start;
                     self.debug_windows.netplay.input_delay = start.input_delay.frames();
+                    self.netplay.player = Some(start.player);
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         start.verify_every_frame = self.netplay.proof.is_some() || cfg!(test);
@@ -404,7 +436,21 @@ impl App {
             } else {
                 (0, 0)
             };
-            let raw = if self.active_system == crate::emu_backend::ActiveSystem::WonderSwan {
+            let raw = if self.active_system == crate::emu_backend::ActiveSystem::Md {
+                let Some(profile) = self.netplay.md_input else {
+                    self.debug_windows.netplay.status = "MD input metadata is unavailable".into();
+                    self.request_netplay_stop();
+                    return;
+                };
+                match profile.project_local(buttons, dpad) {
+                    Ok(raw) => raw,
+                    Err(error) => {
+                        self.debug_windows.netplay.status = error.to_string();
+                        self.request_netplay_stop();
+                        return;
+                    }
+                }
+            } else if self.active_system == crate::emu_backend::ActiveSystem::WonderSwan {
                 host_to_ws(buttons, dpad)
             } else {
                 u16::from(host_to_nes(buttons, dpad))
@@ -480,16 +526,7 @@ impl App {
     }
 
     fn finish_netplay(&mut self, reason: String, restored: bool) {
-        self.netplay = Frontend {
-            #[cfg(not(target_arch = "wasm32"))]
-            proof: self.netplay.proof.take(),
-            phase: if restored {
-                Phase::Idle
-            } else {
-                Phase::Poisoned
-            },
-            ..Frontend::default()
-        };
+        self.netplay.finish(restored);
         self.debug_windows.netplay.active = !restored;
         self.debug_windows.netplay.connected = false;
         self.debug_windows.netplay.chat_failed(String::new());
@@ -575,6 +612,10 @@ mod visibility_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod chat_tests;
+#[cfg(test)]
+mod md_failure_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 

@@ -9,6 +9,7 @@ use crate::save_paths::recovery_state::{
     recovery_state_path,
 };
 
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct RecoveryCoordinator {
     system: String,
     discriminator: String,
@@ -76,6 +77,13 @@ pub(super) fn browser_battery_flush_due(forced: bool, potentially_dirty: bool, d
 }
 
 impl RecoveryCoordinator {
+    pub(super) fn retained_heap_bytes(&self) -> usize {
+        self.system.capacity()
+            + self.discriminator.capacity()
+            + self.generation_path.capacity()
+            + self.state_path.capacity()
+    }
+
     pub(super) fn new(backend: &EmuBackend) -> Self {
         let system = backend.system().storage_subdir();
         let media_sha256 = backend.rom_hash();

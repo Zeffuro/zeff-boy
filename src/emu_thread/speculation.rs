@@ -124,6 +124,9 @@ impl SpeculationBoundary {
         backend: &crate::emu_backend::EmuBackend,
         detached_frame: Option<DetachedFrameOutput>,
     ) {
+        if !backend.framebuffer_available() {
+            return;
+        }
         #[cfg(test)]
         {
             self.committed_frames += 1;

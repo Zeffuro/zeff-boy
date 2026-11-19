@@ -22,14 +22,24 @@ class WindowsPgoPhaseTests(unittest.TestCase):
             host = "x86_64-pc-windows-msvc"
             primary = target / host / "release" / "zeff-boy.exe"
             primary.parent.mkdir(parents=True)
-            fixture = root / "fixture.gba"
-            fixture.write_bytes(b"fixture")
-            fixtures = [{"id": core, "core_crate": core, "path": fixture,
-                         "frames": 1} for core in sorted(DRIVER.REQUIRED_CORES)]
             calls = {}
 
             def execute(command, repository, environment, log, *args, **kwargs):
                 calls[log.name] = environment.get("CARGO_ENCODED_RUSTFLAGS", "")
+                if log.name == "corpus.log":
+                    corpus_dir = Path(command[command.index("--output-dir") + 1])
+                    corpus_dir.mkdir()
+                    fixture = corpus_dir / "fixture.rom"
+                    fixture.write_bytes(b"fixture")
+                    fixture_hash = DRIVER.digest(fixture)
+                    fixtures = [
+                        {"id": system, "system": system, "path": fixture.name,
+                         "sha256": fixture_hash, "frames": 1}
+                        for system in DRIVER.CORES
+                    ]
+                    (corpus_dir / "manifest.json").write_text(json.dumps({
+                        "schema": 1, "fixtures": fixtures,
+                    }))
                 if command[:2] == ["cargo", "build"]:
                     primary.write_bytes(log.name.encode())
                 if log.name == "merge.log":
@@ -40,6 +50,8 @@ class WindowsPgoPhaseTests(unittest.TestCase):
                     return " ".join(DRIVER.REQUIRED_CORES | {"zeff_coleco_core"})
                 if "--screenshot" in command:
                     Path(command[command.index("--screenshot") + 1]).write_bytes(b"png")
+                    if "--audio-dump" in command:
+                        Path(command[command.index("--audio-dump") + 1]).write_bytes(b"pcm")
                     return "frames=1"
                 if "coleco" in log.name:
                     return "{}"
@@ -51,7 +63,6 @@ class WindowsPgoPhaseTests(unittest.TestCase):
                  mock.patch.object(DRIVER, "fingerprint", return_value={}), \
                  mock.patch.object(DRIVER, "reject_native_config_rustflags"), \
                  mock.patch.object(DRIVER, "configure_macos_c_wrappers"), \
-                 mock.patch.object(DRIVER, "corpus", return_value=fixtures), \
                  mock.patch.object(DRIVER, "execute", side_effect=execute):
                 self.assertEqual(DRIVER.main([
                     "--artifact", "desktop", "--output-dir", str(output),
@@ -66,6 +77,9 @@ class WindowsPgoPhaseTests(unittest.TestCase):
             self.assertNotIn("-Cprofile-", calls["control.log"])
             report = json.loads((output / "manifest.json").read_text())
             self.assertEqual(report["base_rustflags"], [static])
+            md_check = next(row for row in report["verification"] if row["id"] == "MD")
+            self.assertTrue(md_check["baseline_equal"])
+            self.assertEqual(md_check["evidence"], "encoded PNG and PCM equality")
 
 
 if __name__ == "__main__":

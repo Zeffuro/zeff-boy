@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 pub(super) const BATTERY_FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct BatteryFlushSchedule {
     next_attempt: Instant,
     potentially_dirty: bool,

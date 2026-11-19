@@ -1,5 +1,5 @@
 use super::{ActiveCore, CoreState, LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ};
-use chrono::{Datelike, Local, Timelike};
+use zeff_emu_common::host_clock;
 use zeff_gb_core::hardware::types::hardware_mode::HardwareModePreference;
 use zeff_gba_core::hardware::cartridge::RtcDateTime;
 use zeff_sega8_core::emulator::Sega8LoadConfig;
@@ -16,6 +16,8 @@ impl CoreState {
         let sample_rate = LIBRETRO_DEFAULT_OUTPUT_SAMPLE_RATE_HZ;
 
         let core = match ext.as_str() {
+            "md" | "gen" => ActiveCore::Md(Box::new(super::md::load(data, sample_rate)?)),
+            "smd" | "32x" => anyhow::bail!("Unsupported Mega Drive media format"),
             "col" => anyhow::bail!("ColecoVision is not available in zeff-libretro"),
             "pce" => {
                 let host = zeff_pce_core::hardware::PceHuCardHost::new(data.to_vec(), sample_rate)?;
@@ -52,16 +54,30 @@ impl CoreState {
             }
         };
 
+        let md_reported_av = if let ActiveCore::Md(emu) = &core {
+            let (width, height) = emu.framebuffer_dimensions();
+            Some((
+                width as u32,
+                height as u32,
+                1_000_000_000.0 / emu.nominal_frame_duration_ns() as f64,
+            ))
+        } else {
+            None
+        };
         Ok(Self {
             core,
             rom_data: data.to_vec(),
             ram_cheats: Vec::new(),
+            md_cheat_slots: Default::default(),
             gba_codebreaker_state: zeff_emu_common::cheats::GbaCodeBreakerState::default(),
+            md_runtime_fault: None,
+            md_reported_av,
             audio_buf: Vec::with_capacity(4096),
             audio_i16_buf: Vec::with_capacity(4096),
             sample_rate,
             xrgb_buf: Vec::new(),
             rgb565_buf: Vec::new(),
+            last_presented_video: None,
             system_ram_buf: Vec::new(),
             video_ram_buf: Vec::new(),
             port_device: [crate::api::RETRO_DEVICE_JOYPAD; 2],
@@ -71,6 +87,13 @@ impl CoreState {
     }
 
     pub fn reset(&mut self) -> anyhow::Result<()> {
+        if let ActiveCore::Md(emu) = &self.core {
+            let mut candidate = emu.clone();
+            zeff_emu_common::time::Reset::reset(candidate.as_mut());
+            self.core = ActiveCore::Md(candidate);
+            self.md_runtime_fault = None;
+            return Ok(());
+        }
         let battery_sram = self.battery_sram();
         match &mut self.core {
             ActiveCore::Gb(_) => {
@@ -85,6 +108,7 @@ impl CoreState {
                 self.core = ActiveCore::Gb(Box::new(emu));
                 return Ok(());
             }
+            ActiveCore::Md(_) => unreachable!(),
             ActiveCore::Gba(emu) => emu.reset(),
             ActiveCore::Nes(emu) => emu.reset(),
             ActiveCore::Pce(host) => host.reset(),
@@ -100,12 +124,12 @@ impl CoreState {
 }
 
 fn local_rtc_date_time() -> Option<RtcDateTime> {
-    let now = Local::now();
+    let now = host_clock::now();
     RtcDateTime::new(
         u16::try_from(now.year()).ok()?,
         now.month() as u8,
         now.day() as u8,
-        now.weekday().num_days_from_sunday() as u8,
+        now.weekday().to_sunday_zero_offset() as u8,
         [now.hour() as u8, now.minute() as u8, now.second() as u8],
     )
     .ok()

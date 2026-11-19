@@ -9,6 +9,8 @@ use zeff_emu_common::time::FrameLifecycle;
 mod gba;
 #[path = "profile_cores/manifests.rs"]
 mod manifests;
+#[path = "profile_cores/md.rs"]
+mod md;
 #[path = "profile_cores/pce_audio.rs"]
 mod pce_audio;
 
@@ -950,6 +952,7 @@ fn main() {
         };
 
         match core.as_str() {
+            "md" => md::profile(frames, sample_generation_enabled, instruction_trace_enabled),
             "all" => profile_synthetic(
                 frames,
                 sample_generation_enabled,
@@ -999,7 +1002,7 @@ fn main() {
                 suffix,
             ),
             _ => panic!(
-                "unknown core {core:?}; expected all, gb, gba, nes, coleco, pce, sega8, or ws"
+                "unknown core {core:?}; expected all, gb, gba, md, nes, coleco, pce, sega8, or ws"
             ),
         }
         return;

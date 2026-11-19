@@ -125,6 +125,10 @@ setting_registry! {
     EmulationMemoryBase128, Emulation, Controls, "Memory Base 128", "pc engine pce storage accessory";
     EmulationPcEngineMouseCursor, Emulation, Controls, "PC Engine mouse cursor", "pce captured free";
     EmulationPcEngineMouseSensitivity, Emulation, Controls, "PC Engine mouse sensitivity", "pce motion";
+    EmulationMdRegion, Emulation, Controls, "Mega Drive region", "genesis md japan japanese ntsc pal us europe";
+    EmulationMdTiming, Emulation, Controls, "Mega Drive timing", "genesis md standard precise";
+    EmulationMdController, Emulation, Controls, "Mega Drive controller", "genesis md three six 3 6 button pad";
+    EmulationMdTmss, Emulation, Controls, "Use Mega Drive TMSS boot ROM", "genesis md bios firmware startup";
     EmulationSegaVideoStandard, Emulation, Controls, "Sega video standard", "master system game gear sg1000 sms ntsc pal";
     EmulationSegaConsoleRegion, Emulation, Controls, "Sega console region", "master system game gear sg1000 sms japanese export pbc";
     FirmwareGameBoyBootRomStartup, Firmware, Controls, "Game Boy boot ROM startup", "gb gbc dmg cgb bios skip external firmware";

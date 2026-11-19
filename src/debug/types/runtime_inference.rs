@@ -139,6 +139,7 @@ pub(super) fn direct_call_target(entry: &InstructionTraceRecord) -> Option<u32> 
             changed_register(entry, 15)
         }
         TraceExecMode::V30 => v30_call_target(entry, bytes),
+        TraceExecMode::M68000 => None,
     }
 }
 
@@ -203,6 +204,7 @@ pub(super) fn mapped_target(entry: &InstructionTraceRecord, target: u32) -> Opti
         TraceExecMode::Z80 => same_window_offset(entry.pc, source, target, 0x2000)?,
         TraceExecMode::Arm | TraceExecMode::Thumb => gba_rom_offset(target)?,
         TraceExecMode::V30 => same_window_offset(entry.pc, source, target, 0x1_0000)?,
+        TraceExecMode::M68000 => return None,
     };
     Some(SymbolLocation {
         cpu: Some(CpuLocation {
@@ -248,5 +250,6 @@ fn trace_exec_mode(mode: TraceExecMode) -> crate::symbols::ExecMode {
         TraceExecMode::Z80 => crate::symbols::ExecMode::Z80,
         TraceExecMode::V30 => crate::symbols::ExecMode::V30,
         TraceExecMode::HuC6280 => crate::symbols::ExecMode::HuC6280,
+        TraceExecMode::M68000 => crate::symbols::ExecMode::M68000,
     }
 }

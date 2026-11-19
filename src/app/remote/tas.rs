@@ -432,6 +432,8 @@ fn tas_readiness_report_json(
 
 fn tas_execution_profile_name(profile: crate::emu_thread::TasExecutionProfile) -> &'static str {
     match profile {
+        crate::emu_thread::TasExecutionProfile::DirectMdThreeButton => "direct_md_three_button",
+        crate::emu_thread::TasExecutionProfile::DirectMdSixButton => "direct_md_six_button",
         crate::emu_thread::TasExecutionProfile::DirectNesCartridge => "direct_nes_cartridge",
         crate::emu_thread::TasExecutionProfile::DirectFdsDisk => "direct_fds_disk",
         crate::emu_thread::TasExecutionProfile::DirectGbCartridgeDmg => "direct_gb_cartridge_dmg",

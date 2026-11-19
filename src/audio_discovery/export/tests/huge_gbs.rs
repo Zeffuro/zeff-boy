@@ -60,13 +60,14 @@ fn huge_gbs_export_validates_before_atomic_publication() -> Result<()> {
         (1, 0, 0)
     );
     let mut zip = zip::ZipArchive::new(std::fs::File::open(batch_path)?)?;
-    let filename = zip
+    let index = zip
         .file_names()
-        .find(|name| name.ends_with(".gbs"))
-        .unwrap()
-        .to_owned();
+        .collect::<zip::result::ZipResult<Vec<_>>>()?
+        .iter()
+        .position(|name| name.ends_with(".gbs"))
+        .unwrap();
     let mut extracted = Vec::new();
-    zip.by_name(&filename)?.read_to_end(&mut extracted)?;
+    zip.by_index(index)?.read_to_end(&mut extracted)?;
     assert_eq!(extracted, bytes);
     Ok(())
 }

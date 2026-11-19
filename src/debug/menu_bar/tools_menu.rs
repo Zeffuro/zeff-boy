@@ -200,13 +200,8 @@ pub(super) fn draw(
     ui.add_enabled_ui(debug_windows.layer_enable_bg, |ui| {
         ui.horizontal(|ui| {
             ui.label("GBA");
-            for bg in 0..4 {
-                gba_bg_changed |= ui
-                    .checkbox(
-                        &mut debug_windows.gba_layer_enable_bg[bg],
-                        format!("BG{bg}"),
-                    )
-                    .changed();
+            for (bg, enabled) in debug_windows.gba_layer_enable_bg.iter_mut().enumerate() {
+                gba_bg_changed |= ui.checkbox(enabled, format!("BG{bg}")).changed();
             }
         });
     });

@@ -48,6 +48,7 @@ pub fn encode(trace: &AudioTrace, cancel: &AtomicBool) -> Result<VgmCapture> {
             wonder_swan: None,
             game_boy: None,
             nes: None,
+            md: None,
             limitations: if trace.cycle_hz_denominator == 1 {
                 LIMITATIONS
             } else {

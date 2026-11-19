@@ -16,6 +16,10 @@ use crate::emu_backend::EmuBackend;
 
 mod checks;
 mod core;
+mod md;
+#[cfg(test)]
+mod md_tests;
+mod md_work;
 use core::{Lease, Snapshot};
 mod execution;
 mod pause;
@@ -35,6 +39,7 @@ pub(crate) struct Session {
     player: Player,
     timeline: Timeline,
     lease: Lease,
+    md_work: Option<md_work::MdWork>,
     restore_snapshot: Snapshot,
     snapshots: BTreeMap<u64, Snapshot>,
     outputs: BTreeMap<u64, FrameBucket>,
@@ -72,27 +77,72 @@ impl Session {
             super::compatibility::describe(backend, start.allow_different_versions);
         let checkpoint = backend.encode_state_bytes()?;
         let publication = core::persistence(backend, None)?;
+        if matches!(backend, EmuBackend::Md(_)) {
+            ensure!(
+                !start.allow_different_versions,
+                "MD requires identical qualified artifacts"
+            );
+        }
         let lease = Lease::begin(backend, start.player)?;
-        let snapshot = lease.capture(backend)?;
-        let restore_snapshot = lease.capture(backend)?;
-        ensure!(
-            snapshot.frame() == 0,
-            "netplay rollback requires fresh frame zero"
-        );
-        let network = Network::spawn_transport(
-            start.stream,
-            start.player,
-            admission.clone(),
-            start.secret,
-            start.scope,
-            start.input_delay,
-        )?;
-        core::persistence(backend, Some(false))?;
+        let prepared: Result<(Snapshot, Snapshot, Network)> = (|| {
+            #[cfg(test)]
+            self::md_start_failure::at(&lease, backend, md_start_failure::Stage::FirstCapture)?;
+            let snapshot = lease.capture(backend)?;
+            #[cfg(test)]
+            self::md_start_failure::at(&lease, backend, md_start_failure::Stage::SecondCapture)?;
+            let restore_snapshot = lease.capture(backend)?;
+            #[cfg(test)]
+            self::md_start_failure::at(&lease, backend, md_start_failure::Stage::FrameZero)?;
+            ensure!(
+                snapshot.frame() == 0,
+                "netplay rollback requires fresh frame zero"
+            );
+            #[cfg(test)]
+            self::md_start_failure::at(&lease, backend, md_start_failure::Stage::Network)?;
+            let network = Network::spawn_transport(
+                start.stream,
+                start.player,
+                admission.clone(),
+                start.secret,
+                start.scope,
+                start.input_delay,
+            )?;
+            #[cfg(test)]
+            let mut network = network;
+            #[cfg(test)]
+            if let Err(error) =
+                self::md_start_failure::at(&lease, backend, md_start_failure::Stage::AfterNetwork)
+            {
+                network.cancel();
+                return Err(error);
+            }
+            if !lease.is_md() {
+                core::persistence(backend, Some(false))?;
+            }
+            Ok((snapshot, restore_snapshot, network))
+        })();
+        let (snapshot, restore_snapshot, network) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let restore_checkpoint = checkpoint.as_slice();
+                #[cfg(test)]
+                let failed_checkpoint =
+                    self::md_start_failure::abort_checkpoint(&error, restore_checkpoint);
+                #[cfg(test)]
+                let restore_checkpoint = failed_checkpoint.as_deref().unwrap_or(restore_checkpoint);
+                if let Err(restore) = lease.abort_md_start(backend, restore_checkpoint) {
+                    return Err(error.context(format!("MD failed-start restoration: {restore}")));
+                }
+                return Err(error);
+            }
+        };
+        let md_work = lease.is_md().then(md_work::MdWork::default);
         Ok(Self {
             network,
             player: start.player,
             timeline: Timeline::with_delay(start.player, start.input_delay),
             lease,
+            md_work,
             restore_snapshot,
             snapshots: BTreeMap::from([(0, snapshot)]),
             outputs: BTreeMap::new(),
@@ -120,7 +170,10 @@ impl Session {
     }
 
     pub(crate) fn step(&mut self, backend: &mut EmuBackend, buttons: u16) -> Result<()> {
-        self.lease.validate_input(buttons)?;
+        if self.lease.is_md() {
+            return self.step_md(buttons);
+        }
+        self.lease.validate_input(self.player, buttons)?;
         self.check_waiting()?;
         ensure!(self.ready, "netplay admission is pending");
         let rollback_frames = self.batch(backend, None)?;
@@ -151,7 +204,12 @@ impl Session {
         self.commit()?;
         self.report_pause()?;
         self.send_progress(true)?;
-        self.present(true, advanced || rollback_frames != 0, rollback_frames)?;
+        self.present(
+            backend,
+            true,
+            advanced || rollback_frames != 0,
+            rollback_frames,
+        )?;
         self.check_waiting()
     }
 
@@ -173,6 +231,9 @@ impl Session {
     }
 
     pub(crate) fn poll(&mut self, backend: &mut EmuBackend) -> Result<Option<Response>> {
+        if self.lease.is_md() {
+            return self.poll_md(backend);
+        }
         self.check_waiting()?;
         if let Some(response) = self.responses.pop_front() {
             return Ok(Some(response));
@@ -180,7 +241,7 @@ impl Session {
         let before = self.committed;
         let rollback_frames = self.batch(backend, None)?;
         if rollback_frames != 0 || self.committed != before {
-            self.present(false, rollback_frames != 0, rollback_frames)?;
+            self.present(backend, false, rollback_frames != 0, rollback_frames)?;
         }
         Ok(self.responses.pop_front())
     }
@@ -196,13 +257,20 @@ impl Session {
         backend: &mut EmuBackend,
         event: Event,
     ) -> Result<Option<Response>> {
+        if self.lease.is_md() {
+            return self.accept_md_event(event);
+        }
         self.check_waiting()?;
         let before = self.committed;
         let rollback_frames = self.batch(backend, Some(event))?;
         if rollback_frames != 0 || self.committed != before {
-            self.present(false, rollback_frames != 0, rollback_frames)?;
+            self.present(backend, false, rollback_frames != 0, rollback_frames)?;
         }
         Ok(self.responses.pop_front())
+    }
+
+    pub(crate) fn take_response(&mut self) -> Option<Response> {
+        self.responses.pop_front()
     }
 
     fn batch(&mut self, backend: &mut EmuBackend, first: Option<Event>) -> Result<u64> {
@@ -250,7 +318,9 @@ impl Session {
             Event::Ready => {
                 ensure!(!self.ready, "unexpected admission completion");
                 self.ready = true;
-                self.queue(Response::Ready)?;
+                self.queue(Response::Ready {
+                    md_input: self.lease.md_input(self.player),
+                })?;
             }
             Event::Failed(reason) => anyhow::bail!(reason),
             Event::Message(message) => {
@@ -267,7 +337,7 @@ impl Session {
                         buttons,
                     } => {
                         ensure!(player != self.player, "remote input owns the local port");
-                        self.lease.validate_input(buttons)?;
+                        self.lease.validate_input(player, buttons)?;
                         self.timeline.receive_remote(frame, buttons)?;
                     }
                     Message::Progress { frame, confirmed } => {
@@ -359,13 +429,31 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) fn restore(mut self, backend: &mut EmuBackend) -> Result<()> {
+    pub(crate) fn restore(self, backend: &mut EmuBackend) -> Result<()> {
+        self.restore_with_worker(backend, Ok(()))
+    }
+
+    pub(crate) fn restore_with_worker(
+        mut self,
+        backend: &mut EmuBackend,
+        worker: Result<()>,
+    ) -> Result<()> {
         if self.ready {
             self.network.close(self.timeline.frame());
         } else {
             let mut network = self.network;
             network.cancel();
         }
+        if self.lease.is_md() {
+            return self.lease.finish_md(
+                backend,
+                &self.restore_snapshot,
+                &self.checkpoint,
+                self.persistent,
+                worker,
+            );
+        }
+        worker?;
         self.lease
             .restore_checkpoint(backend, &self.restore_snapshot, self.checkpoint.clone())?;
         ensure!(
@@ -402,3 +490,6 @@ mod tests;
 mod performance_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod ws_tests;
+
+#[cfg(test)]
+pub(crate) mod md_start_failure;

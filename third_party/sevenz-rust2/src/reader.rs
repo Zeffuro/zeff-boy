@@ -1015,12 +1015,12 @@ impl Archive {
         let mut nid = header.read_u8()?;
         if nid == K_CRC {
             let crcs_defined = read_all_or_bits(header, num_blocks)?;
-            for i in 0..num_blocks {
+            for (i, block) in archive.blocks[..num_blocks].iter_mut().enumerate() {
                 if crcs_defined.contains(i) {
-                    archive.blocks[i].has_crc = true;
-                    archive.blocks[i].crc = header.read_u32()? as u64;
+                    block.has_crc = true;
+                    block.crc = header.read_u32()? as u64;
                 } else {
-                    archive.blocks[i].has_crc = false;
+                    block.has_crc = false;
                 }
             }
             nid = header.read_u8()?;
@@ -1555,8 +1555,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
             && let Some(sub_streams_info) = archive.sub_streams_info.as_ref()
         {
             let mut substream_index = 0;
-            for i in 0..block_index {
-                substream_index += archive.blocks[i].num_unpack_sub_streams;
+            for block in &archive.blocks[..block_index] {
+                substream_index += block.num_unpack_sub_streams;
             }
 
             // Only when there is a single stream, we can use it's CRC to verify the compressed block data.
@@ -2090,8 +2090,8 @@ impl<'a, R: Read + Seek> BlockDecoder<'a, R> {
         let start = archive.stream_map.block_first_file_index[block_index];
         let file_count = archive.blocks[block_index].num_unpack_sub_streams;
 
-        for file_index in start..(file_count + start) {
-            let file = &archive.files[file_index];
+        let files = (start..file_count + start).map(|index| &archive.files[index]);
+        for file in files {
             if file.has_stream && file.size > 0 {
                 let mut decoder: Box<dyn Read> =
                     Box::new(BoundedReader::new(&mut block_reader, file.size as usize));

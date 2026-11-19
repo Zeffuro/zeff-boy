@@ -485,11 +485,11 @@ fn replay_case(timing: TimingMode, delay: zeff_netplay::rollback::InputDelay) {
     assert_eq!(session.snapshots.len(), 1);
     assert!(session.outputs.is_empty());
     assert!(
-        session.retained_bytes()
+        session.retained_bytes().unwrap()
             >= session
                 .snapshots
                 .values()
-                .map(Snapshot::retained_bytes)
+                .map(|state| state.retained_bytes().unwrap())
                 .sum()
     );
     for (index, (checkpoint, ports, audio)) in published.into_iter().enumerate() {

@@ -1,5 +1,8 @@
 use super::ActiveSystem;
 
+mod md;
+pub(crate) use md::{resolve_md_svp_with_manifest, resolve_md_tmss_with_manifest};
+
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedFirmwareBytes {
     pub(crate) bytes: Vec<u8>,
@@ -17,7 +20,7 @@ pub(crate) fn firmware_plan_for_active_system(
         ActiveSystem::GameBoyAdvance => ExistingCoreSystem::GameBoyAdvance,
         ActiveSystem::Nes => ExistingCoreSystem::Nes,
         ActiveSystem::Coleco => ExistingCoreSystem::ColecoVision,
-        ActiveSystem::Pce => return Vec::new(),
+        ActiveSystem::Pce | ActiveSystem::Md => return Vec::new(),
         ActiveSystem::WonderSwan => ExistingCoreSystem::WonderSwan,
         ActiveSystem::MasterSystem => ExistingCoreSystem::MasterSystem,
         ActiveSystem::GameGear => ExistingCoreSystem::GameGear,

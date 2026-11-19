@@ -4,10 +4,13 @@ This crate generates small, deterministic emulator inputs owned by this
 repository. It does not download, embed, or redistribute game ROMs, BIOS dumps,
 or third-party test suites.
 
-The normal corpus covers GB, GBC, GBA, NES, PC Engine, SMS, Game Gear,
+The normal corpus covers GB, GBC, GBA, NES, Mega Drive, PC Engine, SMS, Game Gear,
 WonderSwan, and WonderSwan Color. Each output is intended for headless training
 of the instrumented release executable. The manifest has relative paths and
 SHA-256 identities so a consumer can verify what it executes.
+
+The Mega Drive guest initializes a striped tile plane, PSG tone and FM DAC,
+then continuously updates work RAM and DAC samples with a CPU counter.
 
 GBA inputs initialize Mode 0 text backgrounds, visible sprites, palette/tile
 data, a timer and PSG audio entirely in guest code. ARM and Thumb loops mix

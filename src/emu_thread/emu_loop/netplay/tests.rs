@@ -5,6 +5,7 @@ use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use zeff_netplay::lockstep::Player;
 
+mod md;
 mod wake_tests;
 
 #[test]

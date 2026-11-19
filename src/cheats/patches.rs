@@ -82,6 +82,21 @@ fn encode_patch(out: &mut Vec<u8>, patch: CheatPatch) {
             encode_value(out, value);
             encode_value(out, compare);
         }
+        CheatPatch::WideRomWrite { address, value } => {
+            out.push(6);
+            out.extend_from_slice(&address.to_le_bytes());
+            encode_value(out, value);
+        }
+        CheatPatch::WideRomWriteIfEquals {
+            address,
+            value,
+            compare,
+        } => {
+            out.push(7);
+            out.extend_from_slice(&address.to_le_bytes());
+            encode_value(out, value);
+            encode_value(out, compare);
+        }
     }
 }
 

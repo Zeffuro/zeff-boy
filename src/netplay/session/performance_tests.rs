@@ -143,8 +143,8 @@ fn measure(case: Case, rounds: usize) -> serde_json::Value {
         }
         samples.replay.push(micros(replay_started));
         assert_eq!(window.len(), PREDICTION_WINDOW as usize);
-        let owned = |state: &Snapshot| state.retained_bytes() - state.shared_media_bytes();
-        let retained = original.retained_bytes()
+        let owned = |state: &Snapshot| state.retained_bytes().unwrap() - state.shared_media_bytes();
+        let retained = original.retained_bytes().unwrap()
             + owned(&base)
             + window.iter().map(owned).sum::<usize>()
             + pcm
@@ -243,7 +243,7 @@ fn measure(case: Case, rounds: usize) -> serde_json::Value {
         "scope": "rollback_lease_operations", "fixture": label,
         "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
         "rounds": rounds, "replay_frames": PREDICTION_WINDOW, "warmup_frames": BASE,
-        "restore_snapshot_retained_bytes": original.retained_bytes(),
+        "restore_snapshot_retained_bytes": original.retained_bytes().unwrap(),
         "reported_snapshots_and_pcm_bytes": max_retained,
         "advance": summary(&samples.advance), "capture": summary(&samples.capture),
         "restore": summary(&samples.restore), "checkpoint": summary(&samples.checkpoint),

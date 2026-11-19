@@ -1,4 +1,5 @@
 pub(crate) enum ActiveCore {
+    Md(Box<zeff_md_core::Emulator>),
     Gb(Box<zeff_gb_core::emulator::Emulator>),
     Gba(Box<zeff_gba_core::emulator::Emulator>),
     Nes(Box<zeff_nes_core::emulator::Emulator>),
@@ -15,12 +16,16 @@ pub(crate) struct CoreState {
     pub core: ActiveCore,
     pub rom_data: Vec<u8>,
     pub ram_cheats: Vec<zeff_emu_common::cheats::CheatPatch>,
+    md_cheat_slots: std::collections::BTreeMap<u32, Vec<zeff_emu_common::cheats::CheatPatch>>,
     pub gba_codebreaker_state: zeff_emu_common::cheats::GbaCodeBreakerState,
+    pub md_runtime_fault: Option<String>,
+    pub md_reported_av: Option<(u32, u32, f64)>,
     pub audio_buf: Vec<f32>,
     pub audio_i16_buf: Vec<i16>,
     pub sample_rate: u32,
     pub xrgb_buf: Vec<u8>,
     pub rgb565_buf: Vec<u8>,
+    pub last_presented_video: Option<(u64, u32, u32)>,
     pub system_ram_buf: Vec<u8>,
     pub video_ram_buf: Vec<u8>,
     pub port_device: [u32; 2],
@@ -30,6 +35,7 @@ pub(crate) struct CoreState {
 
 mod cheats;
 mod lifecycle;
+mod md;
 mod memory;
 mod runtime;
 mod video;

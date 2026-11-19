@@ -83,17 +83,17 @@ impl Mbc3 {
             let rtc = &mut self.rtc;
 
             let footer = &bytes[ram_len..ram_len + 44];
-            for i in 0..RTC_REG_COUNT {
+            for (i, value) in rtc.internal.iter_mut().enumerate() {
                 let start = i * 4;
                 let mut reg = [0u8; 4];
                 reg.copy_from_slice(&footer[start..start + 4]);
-                rtc.internal[i] = sanitize_rtc_register(i, u32::from_le_bytes(reg) as u8);
+                *value = sanitize_rtc_register(i, u32::from_le_bytes(reg) as u8);
             }
-            for i in 0..RTC_REG_COUNT {
+            for (i, value) in rtc.latched.iter_mut().enumerate() {
                 let start = (RTC_REG_COUNT + i) * 4;
                 let mut reg = [0u8; 4];
                 reg.copy_from_slice(&footer[start..start + 4]);
-                rtc.latched[i] = sanitize_rtc_register(i, u32::from_le_bytes(reg) as u8);
+                *value = sanitize_rtc_register(i, u32::from_le_bytes(reg) as u8);
             }
 
             // Read the saved wall-clock timestamp (in seconds) and catch up.

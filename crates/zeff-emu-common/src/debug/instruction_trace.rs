@@ -3,8 +3,8 @@ use super::DebugEvent;
 pub const MIN_TRACE_CAPACITY: usize = 1_000;
 pub const MAX_TRACE_CAPACITY: usize = 100_000;
 pub const MAX_TRACE_INSTRUCTION_BYTES: usize = 16;
-pub const MAX_TRACE_REGISTER_DELTAS: usize = 16;
-pub const MAX_TRACE_WRITES: usize = 16;
+pub const MAX_TRACE_REGISTER_DELTAS: usize = 20;
+pub const MAX_TRACE_WRITES: usize = 48;
 
 pub type TraceEntry = InstructionTraceRecord;
 
@@ -19,6 +19,7 @@ pub enum TraceExecMode {
     Z80,
     V30,
     HuC6280,
+    M68000,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -42,15 +43,64 @@ pub enum TraceWriteKind {
     #[default]
     Memory,
     Io,
+    Bus,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TraceWrite {
     pub address: u32,
-    pub old_value: u32,
+    pub old_value: Option<u32>,
     pub new_value: u32,
     pub width: TraceWriteWidth,
     pub kind: TraceWriteKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceBoundaryKind {
+    Instruction,
+    Interrupt,
+    Trace,
+    Stopped,
+    Fault,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceBoundary {
+    pub kind: TraceBoundaryKind,
+    pub cpu_clocks: u64,
+    pub final_exception: Option<u8>,
+    pub machine_fault: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TraceObservationStart {
+    #[default]
+    Instruction,
+    Suffix,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TraceObservationEnd {
+    #[default]
+    Retired,
+    Fault,
+    Reset,
+    Disabled,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TraceFrameKnowledge {
+    #[default]
+    Exact,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TraceObservation {
+    pub frame_knowledge: TraceFrameKnowledge,
+    // Suffix history is unknown; instruction_overflow counts only observed loss.
+    pub start: TraceObservationStart,
+    pub end: TraceObservationEnd,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,7 +114,10 @@ pub struct InstructionTraceRecord {
     pub mode: TraceExecMode,
     pub instruction: [u8; MAX_TRACE_INSTRUCTION_BYTES],
     pub instruction_len: u8,
+    pub instruction_overflow: u16,
+    pub observation: TraceObservation,
     pub event: Option<DebugEvent>,
+    pub boundary: Option<TraceBoundary>,
     pub register_deltas: [RegisterDelta; MAX_TRACE_REGISTER_DELTAS],
     pub register_delta_len: u8,
     pub register_delta_overflow: u16,
@@ -99,7 +152,10 @@ impl InstructionTraceRecord {
             mode,
             instruction: [0; MAX_TRACE_INSTRUCTION_BYTES],
             instruction_len: 0,
+            instruction_overflow: 0,
+            observation: TraceObservation::default(),
             event: None,
+            boundary: None,
             register_deltas: [RegisterDelta::default(); MAX_TRACE_REGISTER_DELTAS],
             register_delta_len: 0,
             register_delta_overflow: 0,
@@ -117,6 +173,10 @@ impl InstructionTraceRecord {
         self.instruction[..len].copy_from_slice(&instruction[..len]);
         self.instruction[len..].fill(0);
         self.instruction_len = len as u8;
+        self.instruction_overflow = instruction
+            .len()
+            .saturating_sub(MAX_TRACE_INSTRUCTION_BYTES)
+            .min(u16::MAX as usize) as u16;
         instruction.len() > MAX_TRACE_INSTRUCTION_BYTES
     }
 
@@ -184,6 +244,15 @@ impl Default for InstructionTraceStore {
 }
 
 impl InstructionTraceStore {
+    pub fn inactive_observation(&self) -> Option<(usize, usize, usize, u64)> {
+        (!self.enabled && self.entries.is_empty()).then_some((
+            self.capacity,
+            self.entries.capacity(),
+            self.start,
+            self.next_sequence,
+        ))
+    }
+
     pub fn new(capacity: usize) -> Self {
         Self {
             entries: Vec::new(),
@@ -310,7 +379,7 @@ const fn clamp_capacity(capacity: usize) -> usize {
     }
 }
 
-const fn sequence_is_after(sequence: u64, cursor: u64) -> bool {
+pub const fn sequence_is_after(sequence: u64, cursor: u64) -> bool {
     sequence != cursor && sequence.wrapping_sub(cursor) < (1_u64 << 63)
 }
 

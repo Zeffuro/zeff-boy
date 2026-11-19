@@ -5,6 +5,8 @@ use crate::settings::{ColorCorrection, DmgPalettePreset, NesPaletteMode};
 
 fn snapshot_request() -> SnapshotRequest {
     SnapshotRequest {
+        debug_target: crate::debug::DebugTarget::Primary,
+        debug_revision: 0,
         want_debug_info: true,
         want_perf_info: true,
         any_viewer_open: true,
@@ -17,7 +19,7 @@ fn snapshot_request() -> SnapshotRequest {
         memory_view_start: 0,
         show_rom_viewer: true,
         show_instruction_trace: false,
-        trace_after_sequence: None,
+        trace_cursor: Default::default(),
         rom_view_start: 0,
         last_disasm_pc: None,
         last_disasm_mapping: None,

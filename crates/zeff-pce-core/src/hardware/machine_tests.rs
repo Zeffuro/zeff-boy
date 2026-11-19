@@ -499,7 +499,7 @@ fn instruction_trace_records_exact_fetches_mapping_registers_and_logical_writes(
     assert_eq!(entries[1].instruction_bytes(), &[0x8D, 0x00, 0x40]);
     assert_eq!(entries[1].writes().len(), 1);
     assert_eq!(entries[1].writes()[0].address, 0x4000);
-    assert_eq!(entries[1].writes()[0].old_value, 0);
+    assert_eq!(entries[1].writes()[0].old_value, Some(0));
     assert_eq!(entries[1].writes()[0].new_value, 0x5A);
     assert_eq!(entries[1].writes()[0].width, TraceWriteWidth::Byte);
     assert_eq!(entries[1].writes()[0].kind, TraceWriteKind::Memory);
@@ -537,7 +537,7 @@ fn instruction_trace_records_direct_vdc_port_writes_as_io() {
     assert_eq!(entry.instruction_bytes(), &[0x03, 0x0C]);
     assert_eq!(entry.writes().len(), 1);
     assert_eq!(entry.writes()[0].address, 0);
-    assert_eq!(entry.writes()[0].old_value, 0xFF);
+    assert_eq!(entry.writes()[0].old_value, Some(0xFF));
     assert_eq!(entry.writes()[0].new_value, 0x0C);
     assert_eq!(entry.writes()[0].kind, TraceWriteKind::Io);
 }

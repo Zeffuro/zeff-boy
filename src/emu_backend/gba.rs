@@ -592,6 +592,9 @@ impl EmulatorCore for GbaBackend {
                 copy_optional_region_to_vec(out, self.emu.dump_battery_sram(), region.id)?
             }
             MemoryRegionKind::Framebuffer => copy_slice_to_vec(out, self.emu.framebuffer()),
+            MemoryRegionKind::VideoScrollRam => {
+                anyhow::bail!("GBA has no video scroll RAM region");
+            }
             MemoryRegionKind::CpuAddressSpace => {
                 return Err(anyhow::anyhow!(
                     "GBA CPU address space is not copyable as a finite memory region"

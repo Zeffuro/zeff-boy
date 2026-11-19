@@ -8,6 +8,9 @@ impl App {
     }
 
     fn retire_emu_thread(&mut self, notify_stop: bool) {
+        self.debug_windows
+            .md_timed_ports
+            .cancel_session("Worker session ended");
         #[cfg(not(target_arch = "wasm32"))]
         self.retire_netplay_frontend();
         #[cfg(not(target_arch = "wasm32"))]

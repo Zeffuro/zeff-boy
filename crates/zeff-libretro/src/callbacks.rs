@@ -15,7 +15,32 @@ pub(crate) static FRAME_COUNTER: Mutex<u64> = Mutex::new(0);
 pub(crate) static ABI_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) static CB_ENVIRONMENT: Mutex<Option<retro_environment_t>> = Mutex::new(None);
-pub(crate) static CB_VIDEO_REFRESH: Mutex<Option<retro_video_refresh_t>> = Mutex::new(None);
+pub(crate) struct VideoCallback {
+    callback: Option<retro_video_refresh_t>,
+    generation: Option<u64>,
+}
+
+impl VideoCallback {
+    const fn new() -> Self {
+        Self {
+            callback: None,
+            generation: Some(0),
+        }
+    }
+
+    pub(crate) fn install(&mut self, callback: Option<retro_video_refresh_t>) {
+        self.generation = self
+            .generation
+            .and_then(|generation| generation.checked_add(1));
+        self.callback = callback;
+    }
+
+    pub(crate) fn snapshot(&self) -> (Option<retro_video_refresh_t>, Option<u64>) {
+        (self.callback, self.generation)
+    }
+}
+
+pub(crate) static CB_VIDEO_REFRESH: Mutex<VideoCallback> = Mutex::new(VideoCallback::new());
 pub(crate) static CB_AUDIO_SAMPLE: Mutex<Option<retro_audio_sample_t>> = Mutex::new(None);
 pub(crate) static CB_AUDIO_SAMPLE_BATCH: Mutex<Option<retro_audio_sample_batch_t>> =
     Mutex::new(None);
@@ -34,7 +59,7 @@ pub(crate) const LIB_VERSION: &CStr = const {
         Err(_) => unreachable!(),
     }
 };
-pub(crate) const VALID_EXTENSIONS: &CStr = c"gb|gbc|sgb|gba|nes|fds|pce|ws|wsc|sms|gg|sg|sc";
+pub(crate) const VALID_EXTENSIONS: &CStr = c"gb|gbc|sgb|gba|nes|fds|pce|ws|wsc|sms|gg|sg|sc|md|gen";
 
 pub(crate) fn env_cmd(cmd: c_uint, data: *mut c_void) -> bool {
     if let Some(cb) = *lock(&CB_ENVIRONMENT) {

@@ -8,13 +8,18 @@ use zeff_netplay::endpoint::ConnectionScope;
 use zeff_netplay::lockstep::Player;
 use zeff_netplay::rollback::InputDelay;
 use zeff_netplay::wire::{Admission, Identity, Message, PacketCodec};
-use zeff_netplay_connect::browser::BrowserPeer;
 
 use super::metrics::{Metrics, Stats};
 use crate::platform::Instant;
 
 #[path = "browser/closing.rs"]
 mod closing;
+#[cfg(test)]
+#[path = "browser/paired.rs"]
+pub(crate) mod paired;
+#[path = "browser/peer.rs"]
+mod peer;
+use peer::Peer;
 
 pub(crate) enum Event {
     Ready,
@@ -23,7 +28,7 @@ pub(crate) enum Event {
 }
 
 struct Pump {
-    peer: BrowserPeer,
+    peer: Peer,
     admission: Option<Admission>,
     codec: Option<PacketCodec>,
     inputs: InputChannel,
@@ -39,18 +44,6 @@ struct Pump {
 
 pub(crate) struct Network(RefCell<Pump>);
 
-fn js_error(error: wasm_bindgen::JsValue) -> anyhow::Error {
-    use wasm_bindgen::JsCast;
-    anyhow::anyhow!(
-        error
-            .as_string()
-            .or_else(|| error
-                .dyn_ref::<js_sys::Error>()
-                .and_then(|error| error.message().as_string()))
-            .unwrap_or_else(|| "Peer connection failed".into())
-    )
-}
-
 impl Network {
     pub(crate) fn spawn_transport(
         transport: super::Transport,
@@ -60,9 +53,13 @@ impl Network {
         _: ConnectionScope,
         delay: InputDelay,
     ) -> Result<Self> {
-        let super::Transport::Browser(peer) = transport;
+        let peer = match transport {
+            super::Transport::Browser(peer) => Peer::Browser(peer),
+            #[cfg(test)]
+            super::Transport::Paired(peer) => Peer::Paired(peer),
+        };
         let admission = Admission::new(player, identity, secret)?;
-        peer.send_control(admission.hello()).map_err(js_error)?;
+        peer.send_control(admission.hello())?;
         let now = Instant::now();
         Ok(Self(RefCell::new(Pump {
             peer,
@@ -99,7 +96,7 @@ impl Network {
                     .as_mut()
                     .ok_or_else(|| anyhow::anyhow!("admission pending"))?
                     .encode(&message)?;
-                pump.peer.send_control(&bytes).map_err(js_error)?;
+                pump.peer.send_control(&bytes)?;
                 pump.metrics.sent(bytes.len());
             }
         }
@@ -133,7 +130,7 @@ impl Network {
         if pump.closed {
             pump.peer.close();
         } else if let Some(codec) = pump.codec {
-            closing::start(pump.peer, codec, frame);
+            pump.peer.finish(codec, frame);
         } else {
             pump.peer.close();
         }
@@ -165,14 +162,14 @@ impl Pump {
             if self.events.len() >= 32 {
                 break;
             }
-            let Some((kind, bytes)) = self.peer.try_receive().map_err(js_error)? else {
+            let Some((kind, bytes)) = self.peer.try_receive()? else {
                 break;
             };
             self.heard = Instant::now();
             if let Some(admission) = &mut self.admission {
                 if kind == 0 {
                     if let Some(reply) = admission.receive(&bytes)? {
-                        self.peer.send_control(&reply).map_err(js_error)?;
+                        self.peer.send_control(&reply)?;
                     }
                     if admission.complete() {
                         self.codec = Some(self.admission.take().unwrap().into_codec()?);
@@ -253,7 +250,7 @@ impl Pump {
             && let Some(packet) = self.inputs.encode(codec)?
         {
             let attempted_at = Instant::now();
-            let _sent = self.peer.send_input(&packet).map_err(js_error)?;
+            let _sent = self.peer.send_input(&packet)?;
             self.metrics.sent(packet.len());
             self.metrics
                 .input_attempt(self.inputs.pending_batch(), attempted_at);

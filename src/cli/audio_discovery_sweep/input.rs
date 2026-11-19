@@ -345,16 +345,16 @@ pub(super) fn zip_candidates(path: &Path) -> Result<ZipCandidates> {
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name();
+        let name = crate::rom_archive::decode_zip_member_name(&entry).into_owned();
         ensure!(entry.enclosed_name().is_some(), "ZIP member path is unsafe");
         ensure!(
-            names.insert(name.to_owned()),
+            names.insert(name.clone()),
             "ZIP contains duplicate member {name:?}"
         );
-        if crate::emu_backend::ActiveSystem::from_path(Path::new(name)).is_some() {
+        if crate::emu_backend::ActiveSystem::from_path(Path::new(&name)).is_some() {
             candidates += 1;
-            if let Some(system) = cartridge_system(Path::new(name)) {
-                selected = Some((name.to_owned(), system));
+            if let Some(system) = cartridge_system(Path::new(&name)) {
+                selected = Some((name, system));
             }
         }
     }

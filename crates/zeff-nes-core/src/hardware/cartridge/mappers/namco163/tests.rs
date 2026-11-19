@@ -117,9 +117,7 @@ fn audio_output_nonzero_when_channel_active() {
     let mut m = make_test_mapper();
     m.audio.ram[0x7F] = 0x0F;
 
-    for i in 0..8 {
-        m.audio.ram[i] = 0xFF;
-    }
+    m.audio.ram[..8].fill(0xFF);
 
     m.audio.ram[0x78] = 0x00;
     m.audio.ram[0x79] = 0x00;

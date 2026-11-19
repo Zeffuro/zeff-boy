@@ -7,17 +7,20 @@ use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use serde_json::Value;
 use zeff_emu_common::audio_trace::{
-    AudioTrace, GameBoyAudioTrace, Huc6280AudioTrace, NesAudioTrace, WonderSwanAudioTrace,
+    AudioTrace, GameBoyAudioTrace, Huc6280AudioTrace, MdAudioTrace, NesAudioTrace,
+    WonderSwanAudioTrace,
 };
 
 use super::{
     pcm::{
         PcmSession, gb_trace::GbTraceSession, huc6280_trace::Huc6280TraceSession,
-        nes_trace::NesTraceSession, sn_trace::SnTraceSession, ws_trace::WonderSwanTraceSession,
+        md_trace::MdTraceSession, nes_trace::NesTraceSession, sn_trace::SnTraceSession,
+        ws_trace::WonderSwanTraceSession,
     },
     render::RenderOptions,
 };
 
+mod md;
 mod sn_gaps;
 mod writers;
 
@@ -46,6 +49,7 @@ enum NativeTrace {
     Huc6280(Box<Huc6280AudioTrace>),
     GameBoy(GameBoyAudioTrace),
     WonderSwan(WonderSwanAudioTrace),
+    Md(Box<MdAudioTrace>),
 }
 
 pub(crate) struct CaptureArtifact {
@@ -157,9 +161,12 @@ impl CaptureArtifact {
         let mut names = BTreeSet::new();
         for index in 0..zip.len() {
             let entry = zip.by_index(index)?;
+            let name = entry.name()?;
             ensure!(
-                matches!(entry.name(), "manifest.json" | "trace.json" | "capture.vgm")
-                    && names.insert(entry.name().to_owned()),
+                matches!(
+                    name.as_ref(),
+                    "manifest.json" | "trace.json" | "capture.vgm"
+                ) && names.insert(name.into_owned()),
                 "unexpected or duplicate capture entry"
             );
         }
@@ -217,7 +224,15 @@ impl CaptureArtifact {
         let trace: NativeTrace = serde_json::from_slice(&self.trace)
             .context("unsupported native audio trace descriptor")?;
         let context = &self.manifest["context"];
+        ensure!(
+            context["system"] != "md" || matches!(&trace, NativeTrace::Md(_)),
+            "Mega Drive replay requires a native MD trace descriptor"
+        );
         match trace {
+            NativeTrace::Md(trace) => {
+                md::validate_context(&trace, context, cancel)?;
+                Ok(Box::new(MdTraceSession::new(*trace, options, cancel)?))
+            }
             NativeTrace::Sn(trace) => {
                 super::trace_capture::validate_provenance(&trace, context)?;
                 Ok(Box::new(SnTraceSession::new(trace, options, cancel)?))
@@ -311,3 +326,6 @@ fn read_entry(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, limit: u64) 
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod md_tests;

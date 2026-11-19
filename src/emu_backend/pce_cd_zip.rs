@@ -398,12 +398,12 @@ fn validated_manifest<R: Read + std::io::Seek>(
         if entry.is_dir() {
             continue;
         }
-        let raw_name = entry.name();
+        let raw_name = crate::rom_archive::decode_zip_member_name(&entry);
         if entry.enclosed_name().is_none() {
-            return Err(PceCdLoadError::UnsafeArchiveEntry(raw_name.to_owned()));
+            return Err(PceCdLoadError::UnsafeArchiveEntry(raw_name.into_owned()));
         }
-        let name = normalize_portable_path(raw_name)
-            .map_err(|_| PceCdLoadError::UnsafeArchiveEntry(raw_name.to_owned()))?;
+        let name = normalize_portable_path(raw_name.as_ref())
+            .map_err(|_| PceCdLoadError::UnsafeArchiveEntry(raw_name.into_owned()))?;
         if !names.insert(name.to_ascii_lowercase()) {
             return Err(PceCdLoadError::DuplicateArchiveEntry(name));
         }
@@ -482,7 +482,9 @@ fn extract_member(
         .try_reserve_exact(capacity)
         .map_err(|_| PceCdLoadError::ArchiveAllocationFailed)?;
     let mut entry = archive.by_index(member.index).map_err(map_zip_error)?;
-    if entry.name() != member.name || entry.size() != member.size {
+    if crate::rom_archive::decode_zip_member_name(&entry) != member.name
+        || entry.size() != member.size
+    {
         return Err(PceCdLoadError::ArchiveChanged);
     }
     let mut chunk = [0; 64 * 1024];

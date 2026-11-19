@@ -20,6 +20,8 @@ fn minimal_ws_rom() -> Vec<u8> {
 
 fn snapshot_request() -> SnapshotRequest {
     SnapshotRequest {
+        debug_target: crate::debug::DebugTarget::Primary,
+        debug_revision: 0,
         want_debug_info: true,
         want_perf_info: true,
         any_viewer_open: false,
@@ -32,7 +34,7 @@ fn snapshot_request() -> SnapshotRequest {
         memory_view_start: 0,
         show_rom_viewer: true,
         show_instruction_trace: false,
-        trace_after_sequence: None,
+        trace_cursor: Default::default(),
         rom_view_start: 0,
         last_disasm_pc: None,
         last_disasm_mapping: None,
@@ -87,7 +89,7 @@ fn wonder_swan_snapshot_exposes_data_for_app_rendering() {
         cpu.hit_watchpoint
             .as_ref()
             .map(|hit| (hit.address, hit.new_value)),
-        Some((0x0000, 0x5A))
+        Some((0x0000, Some(0x5A)))
     );
     assert!(data.rom_debug.is_some());
     assert!(data.memory_page.is_some());
@@ -172,12 +174,14 @@ fn wonder_swan_static_disassembly_reads_the_target_rom_offset() {
     let emu = Emulator::from_rom_data(&rom).unwrap();
     let request = SnapshotRequest {
         show_disassembler: true,
-        disasm_target: Some(crate::debug::DisassemblyTarget {
-            cpu_address: 0x4_0020,
-            storage_offset: Some(0x20),
-            bank: None,
-            thumb: None,
-        }),
+        disasm_target: Some(crate::debug::DisassemblyTarget::Cpu(
+            crate::debug::CpuDisassemblyTarget {
+                cpu_address: 0x4_0020,
+                storage_offset: Some(0x20),
+                bank: None,
+                thumb: None,
+            },
+        )),
         ..snapshot_request()
     };
     let data = collect_ws_snapshot(

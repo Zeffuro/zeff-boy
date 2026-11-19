@@ -8,6 +8,7 @@ pub(crate) fn classify_direct_tas_execution_profile(
 ) -> Result<TasExecutionProfile> {
     project.validate()?;
     match project.identity().system.as_str() {
+        system if system == ActiveSystem::Md.code() => md_product::classify_md_tas_project(project),
         system if system == ActiveSystem::Nes.code() => {
             if validate_fds_tas_project_identity(project).is_ok() {
                 return Ok(TasExecutionProfile::DirectFdsDisk);
@@ -94,6 +95,9 @@ pub(crate) fn validate_tas_project_witness(
         "worker execution profile does not match the TAS project"
     );
     match witness.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            md_product::validate_md_tas_project_witness(project, branch_id, witness)
+        }
         TasExecutionProfile::DirectNesCartridge => validate_direct_nes_tas_project_witness(
             project,
             branch_id,

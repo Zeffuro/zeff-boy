@@ -4,15 +4,17 @@ use crate::address::Address;
 pub enum DebugEvent {
     Interrupt,
     Dma,
+    Exception,
 }
 
 impl DebugEvent {
-    pub const ALL: [Self; 2] = [Self::Interrupt, Self::Dma];
+    pub const ALL: [Self; 3] = [Self::Interrupt, Self::Dma, Self::Exception];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Interrupt => "IRQ / NMI",
             Self::Dma => "DMA transfer",
+            Self::Exception => "CPU exception",
         }
     }
 
@@ -20,6 +22,7 @@ impl DebugEvent {
         match self {
             Self::Interrupt => 0,
             Self::Dma => 1,
+            Self::Exception => 2,
         }
     }
 }

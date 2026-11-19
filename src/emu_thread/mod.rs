@@ -1,3 +1,5 @@
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod audio_timing;
 mod commands;
 #[cfg(not(target_arch = "wasm32"))]
 mod emu_loop;
@@ -43,6 +45,10 @@ pub(crate) use types::{
     PceMouseInput, PublishedFramebuffer, RenderSettings, ReplayJoypadFrame, ReplayStartState,
     ReusableBuffers, SharedFramebuffer, SnapshotRequest, SpeculationBlockers,
     TasControlCommandKind, WorkerRuntimeFault, ZapperInput,
+};
+pub(crate) use types::{
+    MdTimedPortFailure, MdTimedPortFailureKind, MdTimedPortOutcome, MdTimedPortReply,
+    MdTimedPortRequest,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use types::{

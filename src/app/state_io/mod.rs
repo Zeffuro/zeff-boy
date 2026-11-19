@@ -49,6 +49,9 @@ impl App {
             let response = match self.emu_thread.as_ref()?.recv_checked() {
                 Ok(response) => response,
                 Err(()) => {
+                    self.debug_windows
+                        .md_timed_ports
+                        .cancel_session("Emulator worker disconnected");
                     self.terminalize_tas_control_response_loss();
                     return None;
                 }
@@ -77,6 +80,10 @@ impl App {
                 Some(response) => response,
                 None => continue,
             };
+            if let EmuResponse::MdTimedPortsFinished(reply) = response {
+                self.consume_md_timed_ports(reply);
+                continue;
+            }
             let response = match self.consume_serial_device_response(response) {
                 Some(response) => response,
                 None => continue,
@@ -106,6 +113,9 @@ impl App {
             };
             self.emu_worker_generation = next_generation;
         }
+        self.debug_windows
+            .md_timed_ports
+            .cancel_session("Worker session changed");
         self.emu_thread = Some(EmuThread::spawn(
             backend,
             self.settings.emulation.save_recovery_state,

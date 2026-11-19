@@ -136,6 +136,14 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
         BackendLoadConfig {
             authenticated_zip_member: detected.authenticated_zip_member,
             gb_hardware_mode_preference: settings.emulation.hardware_mode_preference,
+            md_region: settings.emulation.md_region.forced_region(),
+            md_timing: settings.emulation.md_timing.core_model(),
+            md_controller: settings.emulation.md_controller.core_kind(),
+            md_use_tmss: settings.emulation.md_use_tmss,
+            md_svp_functional_profile: settings
+                .emulation
+                .md_svp_functional_profile
+                .map(|profile| profile.core_profile()),
             sega8_video_standard: settings.emulation.sega8_video_standard.forced_standard(),
             sega8_console_region: settings.emulation.sega8_console_region.forced_region(),
             pce_console_wiring: settings.emulation.pce_console_wiring.forced_wiring(),
@@ -157,6 +165,39 @@ fn create_backend(rom_path_arg: &str, settings: &Settings) -> anyhow::Result<Emu
         },
     )?;
     Ok(loaded.backend)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn direct_md_rom_startup_uses_the_saved_controller_type() {
+    use crate::settings::MdControllerPreference;
+    use zeff_md_core::ControllerPort;
+
+    let directory = crate::test_support::test_directory("md-startup-controller").unwrap();
+    let path = directory.path().join("controller.md");
+    let mut rom = vec![0; 0x400];
+    rom[..8].copy_from_slice(&[0, 0xff, 0xff, 0xfc, 0, 0, 2, 0]);
+    rom[0x100..0x110].copy_from_slice(b"SEGA MEGA DRIVE ");
+    rom[0x1f0] = b'U';
+    rom[0x200..0x204].copy_from_slice(&[0x60, 0xfe, 0x4e, 0x71]);
+    std::fs::write(&path, rom).unwrap();
+    let mut settings = Settings::default();
+    for controller in [
+        MdControllerPreference::ThreeButton,
+        MdControllerPreference::SixButton,
+    ] {
+        settings.emulation.md_controller = controller;
+        let EmuBackend::Md(backend) = create_backend(path.to_str().unwrap(), &settings).unwrap()
+        else {
+            panic!("expected a Mega Drive backend");
+        };
+        for port in [ControllerPort::One, ControllerPort::Two] {
+            assert_eq!(
+                backend.core().input().controller_kind(port),
+                controller.core_kind()
+            );
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

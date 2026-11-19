@@ -443,6 +443,7 @@ impl EmulatorCore for Sega8Backend {
             }
             MemoryRegionKind::Oam
             | MemoryRegionKind::IoRegisters
+            | MemoryRegionKind::VideoScrollRam
             | MemoryRegionKind::ExternalWorkRam
             | MemoryRegionKind::InternalWorkRam => {
                 return Err(anyhow::anyhow!(

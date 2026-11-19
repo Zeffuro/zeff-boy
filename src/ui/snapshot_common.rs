@@ -63,7 +63,7 @@ pub(crate) fn build_disassembly_view(
     let mut one_shot_breakpoints: Vec<Address> = one_shot_breakpoints_iter.collect();
     one_shot_breakpoints.sort_unstable();
     Some(DisassemblyView {
-        pc: current_pc,
+        cursor: crate::debug::DisassemblyCursor::Cpu(current_pc),
         mapping: current_mapping,
         is_navigation_target: false,
         is_static_target: false,
@@ -135,8 +135,8 @@ where
         hit_watchpoint: sources.hit_watchpoint.map(
             |(address, old_value, new_value, watch_type)| WatchHitDisplay {
                 address,
-                old_value,
-                new_value,
+                old_value: Some(old_value),
+                new_value: Some(new_value),
                 watch_type,
             },
         ),
@@ -160,10 +160,20 @@ pub(crate) fn build_memory_search_ranges(
     ranges: &[(Address, Address)],
     peek: impl Fn(Address) -> u8,
 ) -> Option<Vec<MemorySearchResult>> {
+    build_known_memory_search_ranges(search, ranges, |address| Some(peek(address)))
+}
+
+pub(crate) fn build_known_memory_search_ranges(
+    search: Option<&MemorySearchRequest>,
+    ranges: &[(Address, Address)],
+    peek: impl Fn(Address) -> Option<u8>,
+) -> Option<Vec<MemorySearchResult>> {
     let search = search?;
     let mut results = Vec::new();
     if !search.pattern.is_empty() {
-        let pattern_len = search.pattern.len() as Address;
+        let Ok(pattern_len) = Address::try_from(search.pattern.len()) else {
+            return Some(results);
+        };
         for &(range_start, range_end) in ranges {
             let Some(last_start) = pattern_len
                 .checked_sub(1)
@@ -179,10 +189,9 @@ pub(crate) fn build_memory_search_ranges(
                 if results.len() >= search.max_results {
                     break;
                 }
-                let matched =
-                    search.pattern.iter().enumerate().all(|(j, expected)| {
-                        peek(start_addr.wrapping_add(j as Address)) == *expected
-                    });
+                let matched = search.pattern.iter().enumerate().all(|(j, expected)| {
+                    peek(start_addr.wrapping_add(j as Address)) == Some(*expected)
+                });
                 if matched {
                     results.push(MemorySearchResult {
                         address: start_addr,

@@ -1,5 +1,8 @@
 use std::path::PathBuf;
 
+mod md_timed_ports;
+pub(crate) use md_timed_ports::*;
+
 use crate::debug::DebugUiActions;
 use crate::ui;
 use zeff_emu_common::address::Address;
@@ -25,6 +28,8 @@ pub(crate) struct RenderSettings {
 }
 
 pub(crate) struct SnapshotRequest {
+    pub(crate) debug_target: crate::debug::DebugTarget,
+    pub(crate) debug_revision: u64,
     pub(crate) want_debug_info: bool,
     pub(crate) want_perf_info: bool,
     pub(crate) any_viewer_open: bool,
@@ -37,7 +42,7 @@ pub(crate) struct SnapshotRequest {
     pub(crate) memory_view_start: Address,
     pub(crate) show_rom_viewer: bool,
     pub(crate) show_instruction_trace: bool,
-    pub(crate) trace_after_sequence: Option<u64>,
+    pub(crate) trace_cursor: ui::TraceCursor,
     pub(crate) rom_view_start: u32,
     pub(crate) last_disasm_pc: Option<Address>,
     pub(crate) last_disasm_mapping: Option<u64>,
@@ -172,6 +177,10 @@ impl SpeculationBlockers {
 }
 
 pub(crate) struct FrameInput {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) audio_timing_request: u64,
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) audio_timing_pacing: (u64, u64),
     pub(crate) frames: usize,
     pub(crate) speculation_blockers: SpeculationBlockers,
     pub(crate) replay_joypad_frames: Option<Vec<ReplayJoypadFrame>>,
@@ -192,6 +201,8 @@ pub(crate) struct FrameInput {
 }
 
 pub(crate) struct FrameResult {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) audio_timing_requests: Vec<u64>,
     pub(crate) advanced_frames: usize,
     pub(crate) completed_step_requests: usize,
     pub(crate) staged_input_frames: usize,
@@ -215,13 +226,17 @@ pub(crate) struct FrameResult {
         Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct WorkerRuntimeFault {
     faulted: bool,
     pending_delivery: Option<String>,
 }
 
 impl WorkerRuntimeFault {
+    pub(super) fn retained_heap_bytes(&self) -> usize {
+        self.pending_delivery.as_ref().map_or(0, String::capacity)
+    }
+
     pub(crate) fn can_step(&self) -> bool {
         !self.faulted
     }
@@ -514,6 +529,9 @@ impl LoadStateWarning {
 
 pub(crate) enum EmuResponse {
     Netplay(crate::netplay::Response),
+    CheatsUpdateFailed(String),
+    MemoryWriteRejected(String),
+    MdTimedPortsFinished(MdTimedPortReply),
     SaveStateOk {
         path: PathBuf,
         backup_created: bool,
@@ -642,6 +660,13 @@ pub(crate) enum EmuResponse {
         request_id: u64,
         lease_id: u64,
         witness: Box<TasControlLeaseWitness>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    TasControlAcquireFenced {
+        request_id: u64,
+        lease_id: u64,
+        witness: Box<TasControlLeaseWitness>,
+        error: String,
     },
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]

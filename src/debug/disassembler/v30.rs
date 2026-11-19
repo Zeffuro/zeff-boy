@@ -63,6 +63,7 @@ fn decode(bus_read: &impl Fn(u32) -> u8, address: u32) -> DisassembledLine {
         bytes.push(read(bus_read, address, i));
     }
     let mut line = DisassembledLine {
+        decode_status: None,
         address,
         storage_offset: None,
         bank: None,

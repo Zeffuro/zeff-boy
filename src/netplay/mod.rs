@@ -13,6 +13,9 @@ pub(crate) mod connect;
 #[path = "connect/browser.rs"]
 pub(crate) mod connect;
 pub(crate) mod identity;
+#[cfg(test)]
+pub(crate) mod md_fixture;
+pub(crate) mod md_input;
 pub(crate) mod metrics;
 #[cfg(all(test, any(not(target_arch = "wasm32"), feature = "wasm-browser-tests")))]
 pub(crate) mod mixed_fixture;
@@ -38,6 +41,8 @@ pub(crate) enum Transport {
     Direct(Box<DirectPeer>),
     #[cfg(target_arch = "wasm32")]
     Browser(zeff_netplay_connect::browser::BrowserPeer),
+    #[cfg(all(test, target_arch = "wasm32"))]
+    Paired(network::paired::Endpoint),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -82,7 +87,9 @@ pub(crate) struct Start {
 }
 
 pub(crate) enum Response {
-    Ready,
+    Ready {
+        md_input: Option<md_input::MdNetplayInputProfile>,
+    },
     NetworkStats(metrics::Stats),
     Chat {
         local: bool,

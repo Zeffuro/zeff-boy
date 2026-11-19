@@ -63,14 +63,17 @@ pub(crate) fn collect_emu_snapshot(
         None
     };
 
-    let disasm_target = req.disasm_target.and_then(|target| {
-        target.storage_offset.and_then(|storage_offset| {
-            u16::try_from(target.cpu_address)
-                .ok()
-                .filter(|address| *address < 0x8000)
-                .map(|address| (target, address, storage_offset))
-        })
-    });
+    let disasm_target = req
+        .disasm_target
+        .and_then(crate::debug::DisassemblyTarget::as_cpu)
+        .and_then(|target| {
+            target.storage_offset.and_then(|storage_offset| {
+                u16::try_from(target.cpu_address)
+                    .ok()
+                    .filter(|address| *address < 0x8000)
+                    .map(|address| (target, address, storage_offset))
+            })
+        });
     let current_disasm = disasm_target.map_or_else(
         || (emu.cpu_pc().into(), Some(emu.rom_mapping_token())),
         |(_, address, storage_offset)| (Address::from(address), Some(storage_offset)),
@@ -169,8 +172,12 @@ pub(crate) fn collect_emu_snapshot(
     });
 
     UiFrameData {
+        debug_target: crate::debug::DebugTarget::Primary,
+        debug_revision: 0,
         core_features: None,
         cpu_debug,
+        md_timed_ports: None,
+        md_sound_watch: None,
         perf_info,
         apu_debug,
         oam_debug,
@@ -189,7 +196,7 @@ pub(crate) fn collect_emu_snapshot(
 }
 
 fn target_rom_offset(
-    target: crate::debug::DisassemblyTarget,
+    target: crate::debug::CpuDisassemblyTarget,
     target_address: u16,
     address: u16,
 ) -> Option<u64> {
@@ -205,7 +212,7 @@ fn target_rom_offset(
 
 fn target_rom_byte(
     rom: &[u8],
-    target: crate::debug::DisassemblyTarget,
+    target: crate::debug::CpuDisassemblyTarget,
     target_address: u16,
     address: u16,
 ) -> u8 {
@@ -222,7 +229,7 @@ mod tests {
 
     #[test]
     fn target_rom_mapping_stays_in_the_symbols_bank() {
-        let target = crate::debug::DisassemblyTarget {
+        let target = crate::debug::CpuDisassemblyTarget {
             cpu_address: 0x4560,
             storage_offset: Some(0x8560),
             bank: None,

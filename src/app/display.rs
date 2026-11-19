@@ -75,9 +75,8 @@ impl App {
 
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.set_native_size(native_w, native_h);
-            if self.active_system == ActiveSystem::Pce {
-                gfx.set_presentation_size(640, 480);
-            }
+            let (width, height) = presentation_size(self.active_system, native_w, native_h);
+            gfx.set_presentation_size(width, height);
             if let Some(frame) = display_frame.as_ref() {
                 gfx.upload_framebuffer(frame);
             }
@@ -95,13 +94,14 @@ fn frame_dimensions(
     frame: &PublishedFramebuffer,
 ) -> Option<(u32, u32)> {
     if let Some((width, height)) = frame.dimensions() {
-        if system != ActiveSystem::Pce
-            || width == 0
-            || height == 0
-            || width > 640
-            || height > 480
-            || frame.len() != width as usize * height as usize * RGBA_BYTES_PER_PIXEL
-        {
+        let valid = match system {
+            ActiveSystem::Pce => width > 0 && height > 0 && width <= 640 && height <= 480,
+            ActiveSystem::Md => {
+                matches!(width, 256 | 320) && matches!(height, 224 | 240 | 448 | 480)
+            }
+            _ => false,
+        };
+        if !valid || frame.len() != width as usize * height as usize * RGBA_BYTES_PER_PIXEL {
             return None;
         }
         return Some((width, height));
@@ -117,6 +117,14 @@ fn frame_dimensions(
         Some((height, width))
     } else {
         Some(system.screen_size())
+    }
+}
+
+pub(super) fn presentation_size(system: ActiveSystem, width: u32, height: u32) -> (u32, u32) {
+    match system {
+        ActiveSystem::Pce => (640, 480),
+        ActiveSystem::Md if matches!(height, 448 | 480) => (width, height / 2),
+        _ => (width, height),
     }
 }
 
@@ -175,6 +183,61 @@ mod tests {
             frame_dimensions(ActiveSystem::Pce, false, &fixed),
             Some((640, 480))
         );
+    }
+
+    #[test]
+    fn md_published_dimensions_follow_mode_changes_and_reject_invalid_frames() {
+        use crate::emu_thread::framebuffer::{
+            new_shared_framebuffer, publish_framebuffer_with_dimensions,
+        };
+        let shared = new_shared_framebuffer();
+        for (width, height) in [
+            (320, 224),
+            (256, 224),
+            (320, 240),
+            (256, 240),
+            (320, 448),
+            (256, 448),
+            (320, 480),
+            (256, 480),
+            (320, 224),
+        ] {
+            let pixels = vec![0; width as usize * height as usize * RGBA_BYTES_PER_PIXEL];
+            publish_framebuffer_with_dimensions(&shared, &pixels, Some((width, height)));
+            let frame = shared.load_full().unwrap();
+            assert_eq!(
+                frame_dimensions(ActiveSystem::Md, false, &frame),
+                Some((width, height))
+            );
+            assert_eq!(frame_dimensions(ActiveSystem::GameBoy, false, &frame), None);
+            assert_eq!(
+                presentation_size(ActiveSystem::Md, width, height),
+                (width, if height > 240 { height / 2 } else { height })
+            );
+
+            for dimensions in [
+                (256, 225),
+                (319, 224),
+                (0, 224),
+                (320, 0),
+                (u32::MAX, u32::MAX),
+            ] {
+                publish_framebuffer_with_dimensions(&shared, &pixels, Some(dimensions));
+                assert_eq!(
+                    frame_dimensions(ActiveSystem::Md, false, &shared.load_full().unwrap()),
+                    None
+                );
+            }
+            publish_framebuffer_with_dimensions(
+                &shared,
+                &pixels[..pixels.len() - 1],
+                Some((width, height)),
+            );
+            assert_eq!(
+                frame_dimensions(ActiveSystem::Md, false, &shared.load_full().unwrap()),
+                None
+            );
+        }
     }
 
     #[test]

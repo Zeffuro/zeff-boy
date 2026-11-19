@@ -7,6 +7,18 @@ use crate::input::HostButton;
 use super::ActiveSystem;
 
 impl super::EmuBackend {
+    pub(crate) fn supports_rom_breakpoints(&self) -> bool {
+        match self {
+            Self::Gb(_) => true,
+            Self::Md(md) => md.supports_rom_breakpoints(),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn supports_instruction_trace(&self) -> bool {
+        matches!(self, Self::Md(_)) || self.supports_debugger()
+    }
+
     pub(super) fn with_coleco_tas_load_provenance(
         self,
         provenance: super::coleco::ColecoTasLoadProvenanceSeed,
@@ -57,6 +69,8 @@ impl super::EmuBackend {
 
     pub(crate) fn tas_source_media_identity(&self) -> Option<TasSourceMediaIdentity> {
         match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Md(backend) => backend.tas_source_media_identity(),
             Self::Coleco(backend) => backend.tas_source_media_identity(),
             Self::Gb(backend) => backend.tas_source_media_identity(),
             Self::Gba(backend) => backend.tas_source_media_identity(),
@@ -71,6 +85,13 @@ impl super::EmuBackend {
     }
 
     pub(crate) fn capabilities(&self) -> CoreCapabilities {
+        let mut cheat_features = CheatCapabilities::for_system(self.system());
+        if let Self::Md(md) = self {
+            cheat_features.supports_rom_patches = md.core().supports_rom_cheats();
+            if cheat_features.supports_rom_patches {
+                cheat_features.formats = &["Raw", "Game Genie"];
+            }
+        }
         CoreCapabilities {
             core_family: self.core_family(),
             save_ram_kind: self.save_ram_kind(),
@@ -78,8 +99,9 @@ impl super::EmuBackend {
             system_ram_len: self.system_ram_len(),
             video_ram_len: self.video_ram_len(),
             memory_regions: self.memory_regions(),
+            memory_editing: MemoryEditingCapabilities::for_backend(self),
             input_features: InputCapabilities::for_system(self.system()),
-            cheat_features: CheatCapabilities::for_system(self.system()),
+            cheat_features,
             supports_save_states: self.supports_save_states(),
             supports_state_capture: self.supports_state_capture(),
             supports_rewind: self.supports_rewind(),
@@ -88,7 +110,12 @@ impl super::EmuBackend {
             supports_cheats: self.supports_cheats(),
             supports_guest_calls: self.supports_guest_calls(),
             supports_debugger: self.supports_debugger(),
+            supports_symbol_loading: self.supports_symbol_loading(),
+            supports_instruction_trace: self.supports_instruction_trace(),
             supports_execution_controls: self.supports_execution_controls(),
+            supports_pc_breakpoints: self.supports_pc_breakpoints(),
+            supports_rom_breakpoints: self.supports_rom_breakpoints(),
+            supports_memory_watchpoints: self.supports_memory_watchpoints(),
             supports_opcode_history: self.supports_opcode_history(),
             tas_execution_primitives: TasCoreCapabilityProbe::for_backend(self),
         }
@@ -103,6 +130,7 @@ pub(crate) struct CoreCapabilities {
     pub(crate) system_ram_len: usize,
     pub(crate) video_ram_len: usize,
     pub(crate) memory_regions: Vec<MemoryRegionDescriptor>,
+    pub(crate) memory_editing: Option<MemoryEditingCapabilities>,
     pub(crate) input_features: InputCapabilities,
     pub(crate) cheat_features: CheatCapabilities,
     pub(crate) supports_save_states: bool,
@@ -113,9 +141,66 @@ pub(crate) struct CoreCapabilities {
     pub(crate) supports_cheats: bool,
     pub(crate) supports_guest_calls: bool,
     pub(crate) supports_debugger: bool,
+    pub(crate) supports_symbol_loading: bool,
+    pub(crate) supports_instruction_trace: bool,
     pub(crate) supports_execution_controls: bool,
+    pub(crate) supports_pc_breakpoints: bool,
+    pub(crate) supports_rom_breakpoints: bool,
+    pub(crate) supports_memory_watchpoints: bool,
     pub(crate) supports_opcode_history: bool,
     pub(crate) tas_execution_primitives: TasCoreCapabilityProbe,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MemoryEditingCapabilities {
+    pub(crate) ranges: &'static [(u32, u32)],
+    pub(crate) enabled: bool,
+    pub(crate) requires_pause: bool,
+}
+
+impl MemoryEditingCapabilities {
+    fn for_backend(backend: &super::EmuBackend) -> Option<Self> {
+        if let super::EmuBackend::Md(md) = backend {
+            return Some(Self {
+                ranges: zeff_md_core::emulator::DEBUG_MEMORY_RANGES,
+                enabled: md.memory_writes_ready(),
+                requires_pause: true,
+            });
+        }
+        if !backend.supports_debugger() {
+            return None;
+        }
+        let bits = backend
+            .memory_regions()
+            .into_iter()
+            .find(|region| {
+                region.kind == zeff_emu_common::memory::MemoryRegionKind::CpuAddressSpace
+            })?
+            .address_bits?;
+        static CPU_RANGES: [(u32, u32); 32] = {
+            let mut ranges = [(0, 0); 32];
+            let mut index = 0;
+            while index < ranges.len() {
+                ranges[index] = (0, u32::MAX >> (31 - index));
+                index += 1;
+            }
+            ranges
+        };
+        let index = usize::from(bits.checked_sub(1)?);
+        Some(Self {
+            ranges: CPU_RANGES.get(index..=index)?,
+            enabled: true,
+            requires_pause: false,
+        })
+    }
+
+    pub(crate) fn permits(self, address: u32) -> bool {
+        self.enabled
+            && self
+                .ranges
+                .iter()
+                .any(|&(start, end)| (start..=end).contains(&address))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,7 +278,9 @@ impl TasPersistentStateIdentity {
         match save_ram_kind {
             SaveRamKind::None => Self::Absent,
             SaveRamKind::KnownVolatile { size } => Self::VolatileOnly { size },
-            SaveRamKind::KnownBatteryBacked { size } => Self::ExternalPersistent { size },
+            SaveRamKind::KnownBatteryBacked { size } | SaveRamKind::KnownNonVolatile { size } => {
+                Self::ExternalPersistent { size }
+            }
             SaveRamKind::MapperRamUnknown { size } => Self::Unknown { size },
         }
     }
@@ -217,7 +304,8 @@ impl TasInputModel {
             ActiveSystem::Nes
             | ActiveSystem::MasterSystem
             | ActiveSystem::Sg1000
-            | ActiveSystem::GameGear => Self::StandardDigitalPads { max_players: 2 },
+            | ActiveSystem::GameGear
+            | ActiveSystem::Md => Self::StandardDigitalPads { max_players: 2 },
             ActiveSystem::Pce => Self::StandardDigitalPads { max_players: 5 },
         }
     }
@@ -264,6 +352,12 @@ impl InputCapabilities {
                 supports_lightgun: false,
                 supports_wonderswan_direct_buttons: true,
             },
+            ActiveSystem::Md => Self {
+                buttons: HostButton::WITH_SIX_BUTTONS,
+                max_players: 2,
+                supports_lightgun: false,
+                supports_wonderswan_direct_buttons: false,
+            },
             ActiveSystem::Pce => Self {
                 buttons: HostButton::WITH_SIX_BUTTONS,
                 max_players: 5,
@@ -292,6 +386,13 @@ pub(crate) struct CheatCapabilities {
 impl CheatCapabilities {
     pub(crate) fn for_system(system: ActiveSystem) -> Self {
         match system {
+            ActiveSystem::Md => Self {
+                supports_user_cheats: true,
+                supports_libretro_database: true,
+                supports_ram_writes: true,
+                supports_rom_patches: false,
+                formats: &["Raw"],
+            },
             ActiveSystem::GameBoy => Self {
                 supports_user_cheats: true,
                 supports_libretro_database: true,

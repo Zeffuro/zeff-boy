@@ -48,7 +48,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) supports_rewind: bool,
     pub(crate) supports_replay: bool,
     pub(crate) supports_audio: bool,
-    pub(crate) supports_debugger: bool,
+    pub(crate) supports_symbol_loading: bool,
     pub(crate) supports_execution_controls: bool,
     pub(crate) is_rewinding: bool,
     pub(crate) rewind_seconds_back: f32,
@@ -496,7 +496,7 @@ impl Graphics {
                     supports_save_states: ctx.supports_save_states,
                     supports_replay: ctx.supports_replay,
                     supports_audio: ctx.supports_audio,
-                    supports_debugger: ctx.supports_debugger,
+                    supports_symbol_loading: ctx.supports_symbol_loading,
                     is_paused: ctx.is_paused,
                     active_system: ctx
                         .active_system
@@ -632,7 +632,6 @@ impl Graphics {
                 window_state: ctx.debug_windows,
                 actions: DebugUiActions::none(),
                 supports_rewind: ctx.supports_rewind,
-                supports_debugger: ctx.supports_debugger,
                 supports_execution_controls: ctx.supports_execution_controls,
                 game_texture_id,
                 game_native_size: self.framebuffer.presentation_size(),

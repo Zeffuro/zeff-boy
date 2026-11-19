@@ -3,6 +3,15 @@ use super::*;
 pub(super) fn core_cases() -> &'static [CoreCase] {
     const PASS: &[FailureClass] = &[];
     const AUDIO_CADENCE: &[FailureClass] = &[FailureClass::AudioCadence];
+    const MD: &[IneligibilityReason] = &[
+        IneligibilityReason::NoSpeculativeWorker,
+        IneligibilityReason::SramDiskWriteIsolationUnproven,
+        IneligibilityReason::RecoveryGenerationIsolationUnproven,
+        IneligibilityReason::UiPersistenceIsolationUnproven,
+        IneligibilityReason::ReplayIsolationUnproven,
+        IneligibilityReason::RemoteIsolationUnproven,
+        IneligibilityReason::ObservedAudioCadenceMismatch,
+    ];
     const GB: &[IneligibilityReason] = &[
         IneligibilityReason::NoSpeculativeWorker,
         IneligibilityReason::SramDiskWriteIsolationUnproven,
@@ -69,6 +78,16 @@ pub(super) fn core_cases() -> &'static [CoreCase] {
         IneligibilityReason::ObservedAudioCadenceMismatch,
     ];
     const CASES: &[CoreCase] = &[
+        CoreCase {
+            eligibility: EligibilityResult {
+                core_family: CoreFamily::MegaDrive,
+                fixture_system: ActiveSystem::Md,
+                support: RunAheadSupport::Unsupported,
+                reasons: MD,
+            },
+            build: build_md_backend,
+            expected_local_failures: [AUDIO_CADENCE, PASS, AUDIO_CADENCE],
+        },
         CoreCase {
             eligibility: EligibilityResult {
                 core_family: CoreFamily::GameBoy,
@@ -161,6 +180,14 @@ pub(super) fn core_cases() -> &'static [CoreCase] {
         },
     ];
     CASES
+}
+
+fn build_md_backend() -> EmuBackend {
+    super::super::fixtures::load_test_backend_with_shared_loader(
+        ActiveSystem::Md,
+        "test.md",
+        super::super::md::rom(b'U', &[0x60fe, 0x4e71]),
+    )
 }
 
 fn sega_backend(

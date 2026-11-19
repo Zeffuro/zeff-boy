@@ -13,6 +13,7 @@ mod fds;
 mod game_gear;
 mod gba;
 mod gbc;
+mod md;
 mod nes;
 mod pce;
 mod sms;

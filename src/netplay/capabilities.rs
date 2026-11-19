@@ -4,6 +4,7 @@ pub(crate) fn rollback_session(system: ActiveSystem) -> bool {
     matches!(
         system,
         ActiveSystem::Nes
+            | ActiveSystem::Md
             | ActiveSystem::MasterSystem
             | ActiveSystem::Sg1000
             | ActiveSystem::Pce
@@ -37,27 +38,27 @@ mod tests {
 
     #[test]
     fn every_system_exposes_only_implemented_session_adapters() {
+        let expected = [
+            (ActiveSystem::GameBoy, false, true),
+            (ActiveSystem::GameBoyAdvance, false, false),
+            (ActiveSystem::Nes, true, false),
+            (ActiveSystem::Coleco, false, false),
+            (ActiveSystem::Pce, true, false),
+            (ActiveSystem::WonderSwan, true, true),
+            (ActiveSystem::MasterSystem, true, false),
+            (ActiveSystem::GameGear, false, false),
+            (ActiveSystem::Sg1000, true, false),
+            (ActiveSystem::Md, true, false),
+        ];
         let specs = crate::emu_backend::system_specs();
-        assert_eq!(specs.len(), 9);
-        for spec in specs {
-            assert_eq!(
-                rollback_session(spec.system),
-                matches!(
-                    spec.system,
-                    ActiveSystem::Nes
-                        | ActiveSystem::MasterSystem
-                        | ActiveSystem::Sg1000
-                        | ActiveSystem::Pce
-                        | ActiveSystem::WonderSwan
-                )
+        assert_eq!(specs.len(), expected.len());
+        for (system, rollback, linked) in expected {
+            assert!(
+                specs.iter().any(|spec| spec.system == system),
+                "{system:?} is missing from system specs"
             );
-            assert_eq!(
-                linked_devices(spec.system),
-                matches!(
-                    spec.system,
-                    ActiveSystem::GameBoy | ActiveSystem::WonderSwan
-                )
-            );
+            assert_eq!(rollback_session(system), rollback, "{system:?}");
+            assert_eq!(linked_devices(system), linked, "{system:?}");
         }
     }
 }

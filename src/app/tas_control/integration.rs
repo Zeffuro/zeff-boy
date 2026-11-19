@@ -218,7 +218,13 @@ impl App {
             .debug_windows
             .tas_editor
             .active_session()
-            .and_then(|session| TasEditorControlSnapshot::capture(session).ok());
+            .and_then(|session| {
+                let cursor = self
+                    .tas_control
+                    .project_binding_cursor()
+                    .unwrap_or(session.cursor());
+                TasEditorControlSnapshot::capture_at(session, cursor).ok()
+            });
         let command = self
             .tas_control
             .commit(current.as_ref())
@@ -304,6 +310,7 @@ impl App {
         let repair_failure = matches!(
             &response,
             EmuResponse::TasControlAcquireRejected { .. }
+                | EmuResponse::TasControlAcquireFenced { .. }
                 | EmuResponse::TasExecutionRejected { .. }
                 | EmuResponse::TasFrameAdvanceRejected { .. }
                 | EmuResponse::TasControlRollbackRejected { .. }

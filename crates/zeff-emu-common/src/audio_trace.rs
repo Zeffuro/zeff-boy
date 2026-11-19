@@ -10,6 +10,8 @@ mod game_boy;
 pub use game_boy::*;
 mod nes;
 pub use nes::*;
+mod md;
+pub use md::*;
 
 use crate::time::ClockRate;
 
@@ -213,7 +215,7 @@ impl<C: AudioTraceChip, W> ChipAudioTrace<C, W> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChipAudioTraceRecorder<C, W> {
     generation: u64,
     trace: Option<ChipAudioTrace<C, W>>,
@@ -296,6 +298,24 @@ impl<C: AudioTraceChip, W> ChipAudioTraceRecorder<C, W> {
     #[inline]
     pub fn is_active(&self) -> bool {
         self.trace.is_some()
+    }
+
+    pub fn inactive_metadata(&self) -> Option<(u64, usize)> {
+        let Self {
+            generation,
+            trace,
+            max_events,
+        } = self;
+        trace.is_none().then_some((*generation, *max_events))
+    }
+
+    pub fn retained_event_capacity(&self) -> usize {
+        let Self {
+            generation: _,
+            trace,
+            max_events: _,
+        } = self;
+        trace.as_ref().map_or(0, |trace| trace.events.capacity())
     }
 
     pub fn record(&mut self, event: AudioTraceEvent<W>) {

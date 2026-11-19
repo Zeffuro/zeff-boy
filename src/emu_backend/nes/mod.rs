@@ -462,7 +462,8 @@ impl EmulatorCore for NesBackend {
                     "NES CPU address space is not copyable as a finite memory region"
                 ));
             }
-            MemoryRegionKind::IoRegisters
+            MemoryRegionKind::VideoScrollRam
+            | MemoryRegionKind::IoRegisters
             | MemoryRegionKind::ExternalWorkRam
             | MemoryRegionKind::InternalWorkRam => {
                 return Err(anyhow::anyhow!(

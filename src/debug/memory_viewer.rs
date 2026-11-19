@@ -3,6 +3,7 @@ use super::{data_inspector, hex_search, hex_viewer};
 use crate::debug::common::WatchType;
 use crate::debug::types::{CpuDebugSnapshot, MemoryViewerState};
 use crate::debug::ui::DebugUiActions;
+use crate::emu_backend::capabilities::MemoryEditingCapabilities;
 use zeff_emu_common::address::Address;
 
 const FLASH_DURATION_TICKS: u8 = 12;
@@ -10,7 +11,8 @@ const FLASH_DURATION_TICKS: u8 = 12;
 pub(super) struct MemoryViewerDebugContext<'a> {
     pub(super) symbols: &'a crate::symbols::SymbolSession,
     pub(super) cpu: Option<&'a CpuDebugSnapshot>,
-    pub(super) enabled: bool,
+    pub(super) memory_editing: Option<MemoryEditingCapabilities>,
+    pub(super) watchpoints: bool,
 }
 
 pub(super) fn draw_memory_viewer_content(
@@ -94,7 +96,7 @@ pub(super) fn draw_memory_viewer_content(
 
     ui.separator();
 
-    if debug.enabled {
+    if debug.watchpoints {
         draw_watch_range(ui, state, memory_page, debug.cpu, actions);
     }
 
@@ -140,51 +142,72 @@ pub(super) fn draw_memory_viewer_content(
         state.jump_input = address_space.format(state.view_start);
     }
 
-    if debug.enabled && state.enable_editing {
+    if state.enable_editing
+        && let Some(editing) = debug.memory_editing
+    {
         ui.separator();
-        if let Some(addr) = state.edit_addr {
-            ui.horizontal(|ui| {
-                ui.monospace(format!("Edit {}:", address_space.format(addr)));
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.edit_value)
-                        .desired_width(50.0)
-                        .char_limit(2),
-                );
-                if ui.button("Write").clicked() {
-                    if let Some(value) = parse_hex_u8(&state.edit_value) {
-                        writes.push((addr, value));
+        let ranges = editing
+            .ranges
+            .iter()
+            .map(|&(start, end)| {
+                format!(
+                    "{}..{}",
+                    address_space.format(start),
+                    address_space.format(end)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        ui.weak(format!("Writable: {ranges}"));
+        if editing.requires_pause {
+            ui.weak("Pause at a healthy CPU boundary to edit RAM.");
+        }
+        ui.add_enabled_ui(editing.enabled, |ui| {
+            if let Some(addr) = state.edit_addr {
+                ui.horizontal(|ui| {
+                    ui.monospace(format!("Edit {}:", address_space.format(addr)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.edit_value)
+                            .desired_width(50.0)
+                            .char_limit(2),
+                    );
+                    if ui
+                        .add_enabled(editing.permits(addr), egui::Button::new("Write"))
+                        .on_disabled_hover_text("Address is outside the writable range")
+                        .clicked()
+                    {
+                        writes.extend(commit_memory_edit(state, debug.memory_editing));
                     }
-                    state.edit_addr = None;
-                }
-                if ui.button("Cancel").clicked() {
-                    state.edit_addr = None;
+                    if ui.button("Cancel").clicked() {
+                        state.edit_addr = None;
+                    }
+                });
+            }
+            ui.horizontal(|ui| {
+                ui.label("Edit addr:");
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut state.edit_addr_input)
+                        .desired_width(if address_space.addr_width <= 4 {
+                            60.0
+                        } else {
+                            80.0
+                        })
+                        .char_limit(address_space.addr_width)
+                        .hint_text("hex addr"),
+                );
+                if resp.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && let Some(addr) = parse_hex_u32(&state.edit_addr_input)
+                {
+                    state.edit_addr = Some(addr);
+                    let val = memory_page
+                        .iter()
+                        .find(|(a, _)| *a == addr)
+                        .map(|(_, v)| *v)
+                        .unwrap_or(0);
+                    state.edit_value = format!("{:02X}", val);
                 }
             });
-        }
-        ui.horizontal(|ui| {
-            ui.label("Edit addr:");
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut state.edit_addr_input)
-                    .desired_width(if address_space.addr_width <= 4 {
-                        60.0
-                    } else {
-                        80.0
-                    })
-                    .char_limit(address_space.addr_width)
-                    .hint_text("hex addr"),
-            );
-            if resp.lost_focus()
-                && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                && let Some(addr) = parse_hex_u32(&state.edit_addr_input)
-            {
-                state.edit_addr = Some(addr);
-                let val = memory_page
-                    .iter()
-                    .find(|(a, _)| *a == addr)
-                    .map(|(_, v)| *v)
-                    .unwrap_or(0);
-                state.edit_value = format!("{:02X}", val);
-            }
         });
     }
 
@@ -250,6 +273,22 @@ pub(super) fn draw_memory_viewer_content(
     writes
 }
 
+fn commit_memory_edit(
+    state: &mut MemoryViewerState,
+    editing: Option<MemoryEditingCapabilities>,
+) -> Option<(Address, u8)> {
+    let address = state.edit_addr?;
+    if !state.enable_editing || !editing.is_some_and(|editing| editing.permits(address)) {
+        return None;
+    }
+    let value = parse_hex_u8(&state.edit_value)?;
+    state.edit_addr = None;
+    Some((address, value))
+}
+
+#[cfg(test)]
+mod tests;
+
 fn draw_watch_range(
     ui: &mut egui::Ui,
     state: &mut MemoryViewerState,
@@ -285,10 +324,22 @@ fn draw_watch_range(
             state.watch_start_input = state.address_space.format(*start);
             state.watch_end_input = state.address_space.format(*end);
         }
-        if ui.small_button("Add").clicked()
-            && let Some(start) = parse_hex_u32(&state.watch_start_input)
+        let start = parse_hex_u32(&state.watch_start_input);
+        let end = if state.watch_end_input.trim().is_empty() {
+            start
+        } else {
+            parse_hex_u32(&state.watch_end_input)
+        };
+        let range = start.zip(end).filter(|&(start, end)| {
+            let max = state.address_space.max_start.saturating_add(0xff);
+            start <= max && end <= max
+        });
+        if ui
+            .add_enabled(range.is_some(), egui::Button::new("Add").small())
+            .on_disabled_hover_text("Enter addresses within the CPU address range")
+            .clicked()
+            && let Some((start, end)) = range
         {
-            let end = parse_hex_u32(&state.watch_end_input).unwrap_or(start);
             actions.add_watchpoint = Some((start.min(end), start.max(end), state.watch_type));
         }
     });

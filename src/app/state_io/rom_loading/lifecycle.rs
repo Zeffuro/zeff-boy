@@ -1,14 +1,191 @@
 use std::path::{Path, PathBuf};
 
-use crate::emu_backend::{ROM_AND_ARCHIVE_EXTENSIONS, archive_extensions, system_specs};
+use crate::emu_backend::{
+    ActiveSystem, EmuBackend, ROM_AND_ARCHIVE_EXTENSIONS, archive_extensions, system_specs,
+};
 use crate::emu_thread::EmuCommand;
 use crate::rom_archive::PendingArchiveSelection;
+use zeff_emu_common::time::MachineTiming;
+use zeff_ws_core::hardware::cartridge::RomOrientation;
 
+#[cfg(target_arch = "wasm32")]
+use super::automatic_symbol_loading_available;
 #[cfg(not(target_arch = "wasm32"))]
 use super::is_native_archive_path;
-use super::{App, is_zip_path};
+use super::{App, PreparedRomLoad, is_zip_path, should_inspect_recovery};
 
 impl App {
+    pub(super) fn commit_prepared_rom(&mut self, prepared: PreparedRomLoad) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.release_pce_mouse(false);
+        let PreparedRomLoad {
+            source_path,
+            rom_path,
+            system,
+            auto_load_state,
+            backend,
+            original_crc,
+        } = prepared;
+        let is_same_rom_reset = !auto_load_state
+            && self.rom_info.source_path.as_deref() == Some(source_path.as_path())
+            && self.rom_info.rom_path.as_deref() == Some(rom_path.as_path());
+        let previous_audio_context = self
+            .emu_thread
+            .as_ref()
+            .and_then(crate::emu_thread::EmuThread::audio_recording_context);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.tcp_link_active = false;
+        }
+        self.stop_emu_thread();
+        if let Some(audio) = &mut self.audio {
+            audio.discard_queued_samples();
+        }
+        self.stop_camera_capture();
+        self.media_slot_snapshot = None;
+        self.recording.pending_media_commands.clear();
+
+        self.frames_in_flight = 0;
+        self.cached_ui_data = None;
+        self.debug_windows.trace.reset_backend();
+        self.debug_windows.execution_coverage.reset_backend();
+        self.recycled.clear();
+        self.latest_frame = None;
+        self.last_core_frame = None;
+        self.last_displayed_frame = None;
+        self.debug_windows.last_disasm_pc = None;
+        self.debug_windows.last_disasm_mapping = None;
+        self.debug_windows.disasm_target = None;
+        self.undo_load_state = None;
+        self.undo_save_state_path = None;
+        self.recovery_state_available = false;
+
+        if self.recording.audio_recorder.is_some() {
+            let next_audio_context = backend.audio_topology().map(|topology| {
+                crate::audio_tooling::AudioRecordingContext {
+                    system: backend.system(),
+                    topology,
+                    clock_rate: backend.timing_snapshot().rate(),
+                }
+            });
+            if is_same_rom_reset && previous_audio_context == next_audio_context {
+                if let Some(recorder) = &mut self.recording.audio_recorder {
+                    recorder.begin_semantic_timeline_epoch(
+                        crate::audio_recorder::AudioTimelineDiscontinuity::Reset,
+                    );
+                }
+            } else {
+                self.finish_audio_recording_for_teardown();
+            }
+        }
+
+        let rom_name = rom_path
+            .file_name()
+            .or_else(|| source_path.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("ROM")
+            .to_string();
+        log::info!("Loaded ROM: {}", rom_path.display());
+
+        self.finalize_rom_load(
+            &backend,
+            system,
+            backend.rom_path().to_path_buf(),
+            backend.source_path().to_path_buf(),
+        );
+
+        self.setup_cheats_for_rom(system, &rom_path, &backend);
+        self.setup_mods_for_rom(system, original_crc);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.reevaluate_tas_execution_attachment();
+        self.spawn_emu_thread(backend);
+
+        self.settings.add_recent_rom(&source_path);
+        self.settings.save();
+        if is_same_rom_reset {
+            self.toast_manager.success("Game reset");
+        } else {
+            self.toast_manager.info(format!("Loaded {rom_name}"));
+        }
+
+        if should_inspect_recovery(auto_load_state, self.core_supports_save_states()) {
+            self.inspect_recovery_after_normal_open();
+        }
+        self.refresh_slot_info();
+    }
+
+    pub(in crate::app) fn finalize_rom_load(
+        &mut self,
+        backend: &EmuBackend,
+        system: ActiveSystem,
+        rom_path_buf: PathBuf,
+        source_path_buf: PathBuf,
+    ) {
+        let input_digest = backend
+            .pce()
+            .and_then(|pce| pce.normalized_disc_hash())
+            .unwrap_or_else(|| backend.rom_hash());
+        let input_game = crate::settings::InputGameKey::new(system.into(), input_digest);
+        let input_name = rom_path_buf
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        self.set_loaded_input_game(Some(input_game), input_name);
+        self.rom_info.is_mbc7 = backend.is_mbc7();
+        self.rom_info.is_gba_tilt = backend.is_gba_tilt();
+        self.rom_info.is_pocket_camera = backend.is_pocket_camera();
+        self.rom_info.rom_path = Some(rom_path_buf);
+        self.rom_info.source_path = Some(source_path_buf);
+        self.rom_info.rom_hash = Some(backend.rom_hash());
+        self.rom_info.pce_controller_profile_hash = backend.pce_controller_profile_hash();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.rom_info.md_tas_profile =
+                crate::emu_backend::loader::md_product::loaded_md_tas_profile(backend);
+        }
+        self.rom_info.replay_metadata = Some(backend.replay_metadata());
+        self.media_slot_snapshot = backend.media_slot_snapshot();
+        self.debug_windows.reset_target_sessions();
+        self.sound_symbols = if system == ActiveSystem::Md {
+            crate::symbols::SymbolSession::for_md_sound(backend.rom_hash())
+        } else {
+            crate::symbols::SymbolSession::default()
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        self.start_symbol_load(backend);
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.symbols = if automatic_symbol_loading_available(backend) {
+                crate::symbols::SymbolSession::load_for_backend(backend)
+            } else {
+                crate::symbols::SymbolSession::default()
+            };
+        }
+        self.active_system = system;
+        self.ws_display_rotated = backend
+            .ws()
+            .is_some_and(|ws| ws.preferred_orientation() == RomOrientation::Vertical);
+        if system == ActiveSystem::WonderSwan {
+            log::info!(
+                "WonderSwan display orientation: {}",
+                if self.ws_display_rotated {
+                    "vertical"
+                } else {
+                    "horizontal"
+                }
+            );
+        }
+        self.debug_windows.memory.configure_for_system(system);
+
+        let (native_w, native_h) = self.active_display_size();
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.set_native_size(native_w, native_h);
+            let (width, height) =
+                crate::app::display::presentation_size(self.active_system, native_w, native_h);
+            gfx.set_presentation_size(width, height);
+        }
+    }
+
     pub(in crate::app) fn reset_game(&mut self) {
         if let Err(error) = self.preflight_emu_command(&EmuCommand::Reset) {
             self.toast_manager.error(error.to_string());
@@ -129,8 +306,8 @@ impl App {
 
         self.frames_in_flight = 0;
         self.cached_ui_data = None;
-        self.debug_windows.trace.clear();
-        self.debug_windows.execution_coverage.clear();
+        self.debug_windows.trace.reset_backend();
+        self.debug_windows.execution_coverage.reset_backend();
         self.recycled.clear();
         self.latest_frame = None;
         self.last_core_frame = None;
@@ -147,11 +324,19 @@ impl App {
         self.rom_info.rom_hash = None;
         self.set_loaded_input_game(None, None);
         self.rom_info.pce_controller_profile_hash = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.rom_info.md_tas_profile = None;
+        }
         self.rom_info.replay_metadata = None;
         self.symbols = crate::symbols::SymbolSession::default();
+        self.sound_symbols = crate::symbols::SymbolSession::default();
+        self.debug_windows.reset_target_sessions();
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pending_symbol_load = None;
+            self.pending_sound_symbol_load = None;
+            self.symbol_load_owner = self.symbol_load_owner.saturating_add(1);
         }
         self.rom_info.is_mbc7 = false;
         self.rom_info.is_gba_tilt = false;

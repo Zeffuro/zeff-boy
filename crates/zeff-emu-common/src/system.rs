@@ -12,17 +12,17 @@ const PCE_ROM_EXTENSIONS: &[&str] = &["pce"];
 const WS_ROM_EXTENSIONS: [&str; 2] = ["ws", "wsc"];
 const SMS_ROM_EXTENSIONS: [&str; 1] = ["sms"];
 const GG_ROM_EXTENSIONS: [&str; 1] = ["gg"];
+const MD_ROM_EXTENSIONS: [&str; 2] = ["md", "gen"];
 const SG_ROM_EXTENSIONS: [&str; 2] = ["sg", "sc"];
 #[cfg(not(target_arch = "wasm32"))]
 const ARCHIVE_EXTENSION_LIST: [&str; 3] = ["zip", "7z", "rar"];
 #[cfg(target_arch = "wasm32")]
 const ARCHIVE_EXTENSION_LIST: [&str; 1] = ["zip"];
 #[cfg(not(target_arch = "wasm32"))]
-const SUPPORTED_EXTENSIONS_LABEL: &str = ".gb, .gbc, .sgb, .gba, .nes, .fds, .col, .pce, .cue, .chd, .iso, .ws, .wsc, .sms, .gg, .sg, .sc, .zip, .7z, .rar";
+const SUPPORTED_EXTENSIONS_LABEL: &str = ".gb, .gbc, .sgb, .gba, .nes, .fds, .col, .pce, .cue, .chd, .iso, .ws, .wsc, .sms, .gg, .sg, .sc, .md, .gen, .bin, .zip, .7z, .rar";
 #[cfg(target_arch = "wasm32")]
-const SUPPORTED_EXTENSIONS_LABEL: &str =
-    ".gb, .gbc, .sgb, .gba, .nes, .fds, .col, .pce, .ws, .wsc, .sms, .gg, .sg, .sc, .zip";
-const SUPPORTED_SYSTEM_VALUES: &str = "gb|gba|nes|coleco|pce|ws|sms|gg|sg";
+const SUPPORTED_EXTENSIONS_LABEL: &str = ".gb, .gbc, .sgb, .gba, .nes, .fds, .col, .pce, .ws, .wsc, .sms, .gg, .sg, .sc, .md, .gen, .bin, .zip";
+const SUPPORTED_SYSTEM_VALUES: &str = "gb|gba|nes|coleco|pce|ws|sms|gg|sg|md";
 
 pub const RGBA_BYTES_PER_PIXEL: usize = 4;
 pub const GAME_BOY_SCREEN_SIZE: (u32, u32) = (160, 144);
@@ -34,7 +34,16 @@ pub const PCE_SCREEN_SIZE: (u32, u32) = (640, 480);
 pub const WS_SCREEN_SIZE: (u32, u32) = (224, 144);
 pub const SMS_SCREEN_SIZE: (u32, u32) = (256, 192);
 pub const GG_SCREEN_SIZE: (u32, u32) = (160, 144);
+pub const MD_SCREEN_SIZE: (u32, u32) = (320, 240);
 pub const SG_SCREEN_SIZE: (u32, u32) = SMS_SCREEN_SIZE;
+
+pub const MD_NTSC_MASTER_HZ: u64 = 53_693_175;
+pub const MD_LINE_MASTER_TICKS: u64 = 3420;
+pub const MD_NTSC_FRAME_LINES: u64 = 262;
+pub const MD_NTSC_FRAME_DURATION_NS: u64 =
+    (MD_LINE_MASTER_TICKS * MD_NTSC_FRAME_LINES * 1_000_000_000 + MD_NTSC_MASTER_HZ / 2)
+        / MD_NTSC_MASTER_HZ;
+pub const MEDIA_PROBE_LEN: usize = 0x110;
 
 pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 pub const GAME_BOY_FRAME_DURATION_NS: u64 = 16_742_706;
@@ -76,6 +85,8 @@ pub const ROM_EXTENSIONS: &[&str] = &[
     GG_ROM_EXTENSIONS[0],
     SG_ROM_EXTENSIONS[0],
     SG_ROM_EXTENSIONS[1],
+    MD_ROM_EXTENSIONS[0],
+    MD_ROM_EXTENSIONS[1],
 ];
 pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     GB_ROM_EXTENSIONS[0],
@@ -98,6 +109,9 @@ pub const ROM_AND_ARCHIVE_EXTENSIONS: &[&str] = &[
     GG_ROM_EXTENSIONS[0],
     SG_ROM_EXTENSIONS[0],
     SG_ROM_EXTENSIONS[1],
+    MD_ROM_EXTENSIONS[0],
+    MD_ROM_EXTENSIONS[1],
+    "bin",
     ARCHIVE_EXTENSION_LIST[0],
     #[cfg(not(target_arch = "wasm32"))]
     ARCHIVE_EXTENSION_LIST[1],
@@ -121,6 +135,7 @@ pub enum System {
     Sms,
     Gg,
     Sg,
+    Md,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -137,6 +152,7 @@ pub enum CoreFamily {
     PcEngine,
     WonderSwan,
     Sega8,
+    MegaDrive,
 }
 
 #[allow(non_upper_case_globals)]
@@ -147,6 +163,7 @@ impl System {
     pub const PcEngine: Self = Self::Pce;
     pub const MasterSystem: Self = Self::Sms;
     pub const GameGear: Self = Self::Gg;
+    pub const MegaDrive: Self = Self::Md;
     pub const Sg1000: Self = Self::Sg;
 }
 
@@ -273,6 +290,18 @@ const SYSTEM_SPECS: &[SystemSpec] = &[
         frame_duration_ns: SG_FRAME_DURATION_NS,
         rom_extensions: &SG_ROM_EXTENSIONS,
     },
+    SystemSpec {
+        system: System::Md,
+        core_family: CoreFamily::MegaDrive,
+        file_dialog_filter_name: "Mega Drive / Genesis ROMs",
+        code: "md",
+        short_code: "md",
+        storage_subdir: "md",
+        state_extension: "mdstate",
+        screen_size: MD_SCREEN_SIZE,
+        frame_duration_ns: MD_NTSC_FRAME_DURATION_NS,
+        rom_extensions: &MD_ROM_EXTENSIONS,
+    },
 ];
 
 impl SystemSpec {
@@ -338,6 +367,18 @@ impl System {
         Self::from_extension(&ext)
     }
 
+    pub fn from_media(path: &Path, prefix: &[u8]) -> Option<Self> {
+        if let Some(system) = Self::from_path(path) {
+            return Some(system);
+        }
+        if !path.extension()?.to_str()?.eq_ignore_ascii_case("bin") {
+            return None;
+        }
+        let console = prefix.get(0x100..MEDIA_PROBE_LEN)?;
+        let console = std::str::from_utf8(console).ok()?.trim_end_matches(' ');
+        matches!(console, "SEGA MEGA DRIVE" | "SEGA GENESIS" | "SEGA").then_some(Self::Md)
+    }
+
     pub fn from_extension(ext: &str) -> Option<Self> {
         let ext = ext.trim_start_matches('.').to_ascii_lowercase();
         Self::specs()
@@ -391,175 +432,4 @@ pub fn archive_extensions() -> &'static [&'static str] {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::BTreeSet;
-    use std::path::PathBuf;
-
-    #[test]
-    fn detects_supported_rom_extensions() {
-        assert_eq!(
-            System::from_path(&PathBuf::from("GAME.GB")),
-            Some(System::Gb)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.gbc")),
-            Some(System::Gb)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.sgb")),
-            Some(System::Gb)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.gba")),
-            Some(System::Gba)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.nes")),
-            Some(System::Nes)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.fds")),
-            Some(System::Nes)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.col")),
-            Some(System::Coleco)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.pce")),
-            Some(System::Pce)
-        );
-        #[cfg(not(target_arch = "wasm32"))]
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.cue")),
-            Some(System::Pce)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.chd")),
-            Some(System::Pce)
-        );
-        #[cfg(not(target_arch = "wasm32"))]
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.iso")),
-            Some(System::Pce)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.ws")),
-            Some(System::Ws)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.wsc")),
-            Some(System::Ws)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.sms")),
-            Some(System::Sms)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.gg")),
-            Some(System::Gg)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.sg")),
-            Some(System::Sg)
-        );
-        assert_eq!(
-            System::from_path(&PathBuf::from("game.sc")),
-            Some(System::Sg)
-        );
-    }
-
-    #[test]
-    fn package_archive_is_native_only_and_never_a_rom_extension() {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            assert_eq!(archive_extensions(), &["zip", "7z", "rar"]);
-            assert!(ROM_AND_ARCHIVE_EXTENSIONS.contains(&"7z"));
-            assert!(ROM_AND_ARCHIVE_EXTENSIONS.contains(&"rar"));
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            assert_eq!(archive_extensions(), &["zip"]);
-            assert!(!ROM_AND_ARCHIVE_EXTENSIONS.contains(&"7z"));
-        }
-        assert!(!ROM_EXTENSIONS.contains(&"7z"));
-        assert!(!ROM_EXTENSIONS.contains(&"rar"));
-        assert_eq!(System::from_path(Path::new("disc.7z")), None);
-    }
-
-    #[test]
-    fn specs_cover_supported_rom_extensions() {
-        let from_specs = system_specs()
-            .iter()
-            .flat_map(|spec| spec.rom_extensions.iter().copied())
-            .collect::<BTreeSet<_>>();
-        let from_constant = ROM_EXTENSIONS.iter().copied().collect::<BTreeSet<_>>();
-
-        assert_eq!(from_specs, from_constant);
-        for spec in system_specs() {
-            for extension in spec.rom_extensions {
-                assert_eq!(System::from_extension(extension), Some(spec.system));
-            }
-            assert_eq!(System::from_code(spec.code), Some(spec.system));
-            assert!(!spec.storage_subdir.is_empty());
-            assert!(!spec.state_extension.is_empty());
-            assert!(!spec.file_dialog_filter_name.is_empty());
-            assert!(spec.frame_duration_ns > 0);
-            assert!(spec.target_fps() > 0.0);
-            assert_eq!(
-                spec.framebuffer_len(),
-                rgba_framebuffer_len(spec.screen_size)
-            );
-        }
-    }
-
-    #[test]
-    fn app_aliases_match_romtest_style_variants() {
-        assert_eq!(System::GameBoy, System::Gb);
-        assert_eq!(System::GameBoyAdvance, System::Gba);
-        assert_eq!(System::WonderSwan, System::Ws);
-        assert_eq!(System::PcEngine, System::Pce);
-        assert_eq!(System::MasterSystem, System::Sms);
-        assert_eq!(System::GameGear, System::Gg);
-        assert_eq!(System::Sg1000, System::Sg);
-    }
-
-    #[test]
-    fn systems_map_to_expected_core_families() {
-        assert_eq!(System::Gb.core_family(), CoreFamily::GameBoy);
-        assert_eq!(System::Gba.core_family(), CoreFamily::GameBoyAdvance);
-        assert_eq!(System::Nes.core_family(), CoreFamily::Nes);
-        assert_eq!(System::Coleco.core_family(), CoreFamily::ColecoVision);
-        assert_eq!(System::Pce.core_family(), CoreFamily::PcEngine);
-        assert_eq!(System::Ws.core_family(), CoreFamily::WonderSwan);
-        assert_eq!(System::Sms.core_family(), CoreFamily::Sega8);
-        assert_eq!(System::Gg.core_family(), CoreFamily::Sega8);
-        assert_eq!(System::Sg.core_family(), CoreFamily::Sega8);
-    }
-
-    #[test]
-    fn pce_uses_the_provisional_263_line_nominal_frame_duration() {
-        assert_eq!(
-            System::Pce.frame_duration_ns(),
-            PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS
-        );
-        assert_eq!(PROVISIONAL_PCE_263_LINE_FRAME_DURATION_NS, 16_715_111);
-    }
-
-    #[test]
-    fn coleco_uses_the_ntsc_z80_cycle_derived_nominal_frame_duration() {
-        assert_eq!(COLECO_NTSC_Z80_CLOCK_HZ, 3_579_545);
-        assert_eq!(COLECO_NTSC_Z80_CYCLES_PER_FRAME, 59_736);
-        assert_eq!(
-            COLECO_NTSC_FRAME_DURATION_NS,
-            (COLECO_NTSC_Z80_CYCLES_PER_FRAME * 1_000_000_000 + COLECO_NTSC_Z80_CLOCK_HZ / 2)
-                / COLECO_NTSC_Z80_CLOCK_HZ
-        );
-        assert_eq!(COLECO_NTSC_FRAME_DURATION_NS, 16_688_155);
-        assert_eq!(
-            System::Coleco.frame_duration_ns(),
-            COLECO_NTSC_FRAME_DURATION_NS
-        );
-    }
-}
+mod tests;

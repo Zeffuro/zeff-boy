@@ -110,10 +110,7 @@ fn should_trace_sega8_op(
     {
         return false;
     }
-    if !opts.trace_opcode_filter.is_empty() && !opts.trace_opcode_filter.contains(&fetched.opcode) {
-        return false;
-    }
-    true
+    opts.trace_opcode_filter.is_empty() || opts.trace_opcode_filter.contains(&fetched.opcode)
 }
 
 fn format_sega8_op_line(
@@ -177,6 +174,18 @@ fn format_sega8_bus_trace_line(
     event: Sega8BusTraceEvent,
 ) -> String {
     let access = match event {
+        Sega8BusTraceEvent::Read {
+            space: TraceWriteKind::Bus,
+            addr,
+            value,
+            ..
+        } => format!("busread addr={addr:X} value={value:X}"),
+        Sega8BusTraceEvent::Write {
+            space: TraceWriteKind::Bus,
+            addr,
+            written_value,
+            ..
+        } => format!("buswrite addr={addr:X} value={written_value:X}"),
         Sega8BusTraceEvent::Read {
             space: TraceWriteKind::Memory,
             addr,

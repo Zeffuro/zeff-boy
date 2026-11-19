@@ -336,12 +336,13 @@ fn annotates_disassembly_by_physical_rom_offset() {
     module.symbols[0].size = Some(8);
     session.store.extend(module.symbols);
     let mut view = crate::debug::DisassemblyView {
-        pc: 0x4560,
+        cursor: crate::debug::DisassemblyCursor::Cpu(0x4560),
         mapping: Some(2),
         is_navigation_target: false,
         is_static_target: false,
         location_symbol: None,
         lines: vec![crate::debug::DisassembledLine {
+            decode_status: None,
             address: 0x4560,
             storage_offset: Some(0x8560),
             bank: None,
@@ -397,12 +398,13 @@ fn annotates_disassembly_with_wla_source_location() {
     session.extend_source_metadata(module.source_files, module.source_lines, None);
     session.store.extend(module.symbols.drain(..));
     let mut view = crate::debug::DisassemblyView {
-        pc: 0x4560,
+        cursor: crate::debug::DisassemblyCursor::Cpu(0x4560),
         mapping: Some(2),
         is_navigation_target: false,
         is_static_target: false,
         location_symbol: None,
         lines: vec![crate::debug::DisassembledLine {
+            decode_status: None,
             address: 0x4560,
             storage_offset: Some(0x8560),
             bank: None,
@@ -464,12 +466,13 @@ fn annotates_pce_disassembly_with_the_active_physical_page() {
     .unwrap();
     session.store.extend(module.symbols);
     let mut view = crate::debug::DisassemblyView {
-        pc: 0xA123,
+        cursor: crate::debug::DisassemblyCursor::Cpu(0xA123),
         mapping: None,
         is_navigation_target: false,
         is_static_target: false,
         location_symbol: None,
         lines: vec![crate::debug::DisassembledLine {
+            decode_status: None,
             address: 0xA123,
             storage_offset: None,
             bank: Some(2),
@@ -564,12 +567,13 @@ fn resolves_explicit_overlay_instances() {
     );
 
     let mut view = crate::debug::DisassemblyView {
-        pc: 0xC000,
+        cursor: crate::debug::DisassemblyCursor::Cpu(0xC000),
         mapping: None,
         is_navigation_target: false,
         is_static_target: false,
         location_symbol: None,
         lines: vec![crate::debug::DisassembledLine {
+            decode_status: None,
             address: 0xC000,
             storage_offset: None,
             bank: None,

@@ -315,7 +315,7 @@ fn append_ws_writes(record: &mut InstructionTraceRecord, events: &[DebugTraceEve
                 ..
             } => TraceWrite {
                 address: addr,
-                old_value,
+                old_value: Some(old_value),
                 new_value,
                 width,
                 kind: space,

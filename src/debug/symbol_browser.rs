@@ -386,16 +386,17 @@ fn draw_runtime_candidate(
             && let Some(cpu) = candidate.location.cpu
             && let Ok(cpu_address) = u32::try_from(cpu.address)
         {
-            actions.disasm_target = Some(DisassemblyTarget {
-                cpu_address,
-                storage_offset: candidate.location.storage.map(|storage| storage.offset),
-                bank: candidate.location.bank,
-                thumb: match candidate.location.exec_mode {
-                    ExecMode::Thumb => Some(true),
-                    ExecMode::Arm => Some(false),
-                    _ => None,
-                },
-            });
+            actions.disasm_target =
+                Some(DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+                    cpu_address,
+                    storage_offset: candidate.location.storage.map(|storage| storage.offset),
+                    bank: candidate.location.bank,
+                    thumb: match candidate.location.exec_mode {
+                        ExecMode::Thumb => Some(true),
+                        ExecMode::Arm => Some(false),
+                        _ => None,
+                    },
+                }));
             actions.focus_tab = Some(DebugTab::Disassembler);
         }
         if ui.small_button("Promote").clicked() {
@@ -572,20 +573,30 @@ fn draw_symbol_row(
                 || symbol.location.bank.is_some()
                 || row.exec_mode == ExecMode::Arm
                     && (0x0800_0000..=0x0DFF_FFFF).contains(&cpu.address)
-                || symbol.location.exec_mode == ExecMode::V30 && cpu.address <= 0x0F_FFFF)
+                || symbol.location.exec_mode == ExecMode::V30 && cpu.address <= 0x0F_FFFF
+                || symbol.location.exec_mode == ExecMode::M68000 && cpu.address <= 0xFF_FFFF)
                 && let Ok(cpu_address) = u32::try_from(cpu.address)
                 && ui.small_button("Code").clicked()
             {
-                row.actions.disasm_target = Some(DisassemblyTarget {
-                    cpu_address,
-                    storage_offset: symbol.location.storage.map(|storage| storage.offset),
-                    bank: symbol.location.bank,
-                    thumb: match symbol.location.exec_mode {
-                        ExecMode::Thumb => Some(true),
-                        ExecMode::Arm => Some(false),
-                        _ => None,
-                    },
-                });
+                row.actions.disasm_target =
+                    Some(DisassemblyTarget::Cpu(crate::debug::CpuDisassemblyTarget {
+                        cpu_address,
+                        storage_offset: if symbol.location.exec_mode == ExecMode::M68000 {
+                            None
+                        } else {
+                            symbol.location.storage.map(|storage| storage.offset)
+                        },
+                        bank: if symbol.location.exec_mode == ExecMode::M68000 {
+                            None
+                        } else {
+                            symbol.location.bank
+                        },
+                        thumb: match symbol.location.exec_mode {
+                            ExecMode::Thumb => Some(true),
+                            ExecMode::Arm => Some(false),
+                            _ => None,
+                        },
+                    }));
                 row.actions.focus_tab = Some(DebugTab::Disassembler);
             }
             if let Some(storage) = symbol.location.storage {

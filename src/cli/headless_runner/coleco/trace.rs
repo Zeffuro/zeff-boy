@@ -135,6 +135,18 @@ fn format_coleco_bus_trace_line(
 ) -> String {
     let access = match event {
         BusAccessEvent::Read {
+            space: TraceWriteKind::Bus,
+            addr,
+            value,
+            ..
+        } => format!("busread addr={addr:X} value={value:X}"),
+        BusAccessEvent::Write {
+            space: TraceWriteKind::Bus,
+            addr,
+            written_value,
+            ..
+        } => format!("buswrite addr={addr:X} value={written_value:X}"),
+        BusAccessEvent::Read {
             space: TraceWriteKind::Memory,
             addr,
             value,

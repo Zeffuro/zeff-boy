@@ -21,6 +21,21 @@ impl EmuBackend {
         has_wonder_swan_link: bool,
     ) -> anyhow::Result<(u64, Option<u64>, Option<u64>)> {
         match self {
+            Self::Md(md) => {
+                anyhow::ensure!(
+                    !has_game_boy_link && !has_wonder_swan_link,
+                    "replay link data does not match the current system"
+                );
+                let mut candidate = md.core().clone();
+                candidate.decode_state(bytes)?;
+                anyhow::ensure!(
+                    candidate.timing_model() == md.core().timing_model(),
+                    "Mega Drive replay timing mismatch: state={:?}, current={:?}",
+                    candidate.timing_model(),
+                    md.core().timing_model()
+                );
+                Ok((candidate.pacing_field_count(), None, None))
+            }
             Self::Gb(gb) => {
                 anyhow::ensure!(
                     !has_wonder_swan_link,

@@ -138,7 +138,7 @@ impl App {
             .map(|press| press.button);
         self.debug_windows.settings_ui.gamepad_snapshot = snapshot;
 
-        // Always deliver reducer transitions: entering capture/disconnecting must release old input.
+        // Capture and disconnect transitions must release held input.
         for (key, pressed) in poll.events {
             self.host_input.set_gamepad(key, pressed);
         }
@@ -779,6 +779,8 @@ mod tests {
         app.prepare_replay_joypad_batch(2, buttons, dpad, (0.0, 0.0), None)
             .unwrap();
         app.process_frame_result(FrameResult {
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            audio_timing_requests: Vec::new(),
             advanced_frames: 1,
             completed_step_requests: 1,
             staged_input_frames: 1,

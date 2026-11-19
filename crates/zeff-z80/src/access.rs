@@ -1,5 +1,13 @@
 use super::*;
 
+mod state;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Fetch {
+    Memory,
+    Interrupt,
+}
+
 impl Cpu {
     pub(super) fn write_io<B: Z80Bus>(
         &mut self,
@@ -25,14 +33,15 @@ impl Cpu {
         u32::from(self.last_m1_fetch_count) * CYCLES_M1
     }
 
-    pub(super) fn ed_block_output_t_states_before(&self) -> u32 {
-        self.ed_io_t_states_before() + CYCLES_ED_BLOCK_OUTPUT_LEAD
+    pub(super) fn apply_relative_jump(&mut self, displacement: i8) {
+        self.regs.pc = self.regs.pc.wrapping_add_signed(i16::from(displacement));
+        self.set_memptr(self.regs.pc);
     }
 
     pub(super) fn conditional_relative_jump<B: Z80Bus>(&mut self, bus: &B, condition: u8) -> u32 {
         let displacement = self.fetch_u8(bus) as i8;
         if self.condition_is_true(condition) {
-            self.regs.pc = self.regs.pc.wrapping_add_signed(i16::from(displacement));
+            self.apply_relative_jump(displacement);
             CYCLES_JR
         } else {
             CYCLES_JR_NOT_TAKEN
@@ -94,6 +103,13 @@ impl Cpu {
     }
 
     pub(super) fn read_reg8<B: Z80Bus>(&self, bus: &B, register: u8) -> u8 {
+        if register == REGISTER_MEMORY_INDEX {
+            return bus.cpu_read(self.regs.hl());
+        }
+        self.read_register8(register)
+    }
+
+    pub(super) fn read_register8(&self, register: u8) -> u8 {
         match register {
             0 => self.regs.b,
             1 => self.regs.c,
@@ -101,9 +117,8 @@ impl Cpu {
             3 => self.regs.e,
             4 => self.regs.h,
             5 => self.regs.l,
-            REGISTER_MEMORY_INDEX => bus.cpu_read(self.regs.hl()),
             REGISTER_A_INDEX => self.regs.a,
-            _ => unreachable!("8-bit register index is always three bits"),
+            _ => unreachable!("register index excludes indirect memory"),
         }
     }
 
@@ -129,40 +144,18 @@ impl Cpu {
         bus.cpu_write(self.regs.sp, lo);
     }
 
-    pub(super) fn pop_u16<B: Z80Bus>(&mut self, bus: &B) -> u16 {
-        let lo = bus.cpu_read(self.regs.sp);
-        self.regs.sp = self.regs.sp.wrapping_add(1);
-        let hi = bus.cpu_read(self.regs.sp);
-        self.regs.sp = self.regs.sp.wrapping_add(1);
-        u16::from_le_bytes([lo, hi])
-    }
-
-    pub(super) fn read_mem_u16<B: Z80Bus>(&self, bus: &B, addr: u16) -> u16 {
-        let lo = bus.cpu_read(addr);
-        let hi = bus.cpu_read(addr.wrapping_add(1));
-        u16::from_le_bytes([lo, hi])
-    }
-
-    pub(super) fn write_mem_u16<B: Z80Bus>(&self, bus: &mut B, addr: u16, value: u16) {
-        let [lo, hi] = value.to_le_bytes();
-        bus.cpu_write(addr, lo);
-        bus.cpu_write(addr.wrapping_add(1), hi);
-    }
-
     pub(super) fn fetch_u8<B: Z80Bus>(&mut self, bus: &B) -> u8 {
-        let value = bus.cpu_read(self.regs.pc);
+        let value = bus.cpu_read_instruction(self.regs.pc);
+        self.accept_fetched_byte(value);
+        value
+    }
+
+    pub(super) fn accept_fetched_byte(&mut self, value: u8) {
         self.regs.pc = self.regs.pc.wrapping_add(1);
         if usize::from(self.instruction_byte_count) < self.instruction_bytes.len() {
             self.instruction_bytes[usize::from(self.instruction_byte_count)] = value;
             self.instruction_byte_count += 1;
         }
-        value
-    }
-
-    pub(super) fn fetch_u16<B: Z80Bus>(&mut self, bus: &B) -> u16 {
-        let lo = self.fetch_u8(bus);
-        let hi = self.fetch_u8(bus);
-        u16::from_le_bytes([lo, hi])
     }
 
     pub(super) fn increment_refresh_register(&mut self) {

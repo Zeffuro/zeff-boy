@@ -1,6 +1,7 @@
 mod autofire;
 mod binding_actions;
 mod document;
+mod emulation;
 mod enums;
 mod gamepad;
 mod input_bindings;
@@ -10,6 +11,7 @@ mod input_profiles;
 mod input_scopes;
 mod keyboard_bindings;
 mod keycode_serde;
+mod md;
 mod shortcuts;
 mod structs;
 mod tilt_bindings;
@@ -17,6 +19,7 @@ mod validation;
 
 pub(crate) use autofire::{AutofireOverride, AutofirePattern, AutofireTarget, ResolvedAutofire};
 pub(crate) use binding_actions::{BindingAction, InputBindingAction, WonderSwanButton};
+pub(crate) use emulation::EmulationSettings;
 pub(crate) use enums::{
     AudioBufferPolicy, AudioRecordingFormat, ColorCorrection, DebugPresentation, DmgPalettePreset,
     EffectPreset, EffectiveColorCorrection, GbaColorCorrection, LeftStickMode, NesPaletteMode,
@@ -42,9 +45,10 @@ pub(crate) use input_scopes::{
 };
 pub(crate) use keyboard_bindings::{KeyBindings, PceMultitapKeyBindings, WonderSwanKeyBindings};
 pub(crate) use keycode_serde::keycode_from_string;
+pub(crate) use md::{MdControllerPreference, MdRegionPreference, MdTimingPreference};
 pub(crate) use shortcuts::{ShortcutAction, ShortcutBindings};
 pub(crate) use structs::{
-    AudioSettings, CameraSettings, DebugColors, EmulationSettings, GbBootRomMode, GbaBiosMode,
+    AudioSettings, CameraSettings, DebugColors, GbBootRomMode, GbaBiosMode,
     PceArcadeCardPreference, PceCdArchiveMemoryLimit, PceConsoleWiringPreference,
     PceControllerPreference, PceMemoryBasePreference, PceMouseCursorMode, RecentRomEntry,
     RewindMode, RewindSettings, Sega8ConsoleRegionPreference, Sega8VideoStandardPreference,

@@ -114,9 +114,16 @@ pub(in crate::app) fn app_with_worker(
             source_path: Some(rom_path),
             rom_hash: None,
             pce_controller_profile_hash: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            md_tas_profile: None,
             replay_metadata: None,
         },
         symbols: crate::symbols::SymbolSession::default(),
+        sound_symbols: crate::symbols::SymbolSession::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        pending_sound_symbol_load: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        symbol_load_owner: 0,
         pending_symbol_load: None,
         next_symbol_load_id: 0,
         pending_rom_preparation: None,

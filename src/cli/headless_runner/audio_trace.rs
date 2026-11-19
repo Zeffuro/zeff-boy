@@ -47,9 +47,9 @@ pub(super) fn validate_system(system: &str, options: &HeadlessOptions) -> Result
         options.audio_trace_path.is_none()
             || matches!(
                 system,
-                "gb" | "gba" | "nes" | "sms" | "gg" | "sg" | "coleco" | "pce" | "ws"
+                "gb" | "gba" | "nes" | "md" | "sms" | "gg" | "sg" | "coleco" | "pce" | "ws"
             ),
-        "--audio-trace currently supports GB/GBC, GBA FIFO feeds, base NES, Master System, Game Gear, SG-1000, ColecoVision, PC Engine HuCards and WonderSwan cartridges"
+        "--audio-trace currently supports GB/GBC, GBA FIFO feeds, base NES, Mega Drive, Master System, Game Gear, SG-1000, ColecoVision, PC Engine HuCards and WonderSwan cartridges"
     );
     if system == "gb" && options.audio_trace_path.is_some() {
         ensure!(
@@ -61,10 +61,10 @@ pub(super) fn validate_system(system: &str, options: &HeadlessOptions) -> Result
             "GB/GBC --audio-trace requires the requested reset-to-end interval; --expect-test-pass and --break-at can end it early"
         );
     }
-    if system == "nes" && options.audio_trace_path.is_some() {
+    if matches!(system, "nes" | "md") && options.audio_trace_path.is_some() {
         ensure!(
             !options.no_apu && !options.expect_test_pass && options.break_at.is_none(),
-            "NES --audio-trace requires active sample generation and a full fresh interval; --no-apu, --expect-test-pass and --break-at are unsupported"
+            "NES/MD --audio-trace requires active sample generation and a full fresh interval; --no-apu, --expect-test-pass and --break-at are unsupported"
         );
     }
     if system == "gba" && options.audio_trace_path.is_some() {
@@ -92,6 +92,35 @@ pub(super) struct Capture {
 }
 
 impl Capture {
+    pub(super) fn finish_md(
+        mut self,
+        capture: Option<zeff_emu_common::audio_trace::MdAudioTraceCapture>,
+        frames_run: u64,
+        settings: Value,
+    ) -> Result<()> {
+        let capture =
+            capture.ok_or_else(|| anyhow::anyhow!("MD audio trace capture is missing"))?;
+        self.metadata["system"] = json!("md");
+        self.metadata["frames_run"] = json!(frames_run);
+        self.metadata["frame_count_unit"] = json!("pacing_fields");
+        self.metadata["settings"] = settings;
+        self.metadata["firmware"] = Value::Null;
+        self.metadata["source"]["effective_rom"] = self.metadata["source"]["loaded_media"].clone();
+        self.metadata["source"]["effective_rom"]["address_space"] = json!("effective_core_rom");
+        crate::audio_discovery::trace_capture::write_md_new(
+            &self.path,
+            &capture,
+            self.metadata,
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
+        println!(
+            "[headless] audio-trace={} events={} cycles={}",
+            self.path.display(),
+            capture.trace.events.len(),
+            capture.trace.end_cycle
+        );
+        Ok(())
+    }
     pub(super) fn finish_gba(
         mut self,
         trace: Option<zeff_emu_common::audio_trace::GbaAudioTrace>,
@@ -349,6 +378,9 @@ mod gb_tests;
 
 #[cfg(test)]
 mod nes_tests;
+
+#[cfg(test)]
+mod md_tests;
 
 #[cfg(test)]
 mod gba_tests;

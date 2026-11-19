@@ -247,9 +247,9 @@ impl Ppu {
     #[inline]
     pub(crate) fn io_latch_value_at(&self, ppu_cycles: u64) -> u8 {
         let mut value = self.io_latch;
-        for bit in 0..8 {
+        for (bit, &decay_at) in self.io_latch_decay_at_ppu_cycle.iter().enumerate() {
             let mask = 1u8 << bit;
-            if value & mask != 0 && ppu_cycles >= self.io_latch_decay_at_ppu_cycle[bit] {
+            if value & mask != 0 && ppu_cycles >= decay_at {
                 value &= !mask;
             }
         }
@@ -268,9 +268,9 @@ impl Ppu {
         self.io_latch = latch;
 
         let decay_at = ppu_cycles.saturating_add(PPU_IO_LATCH_DECAY_PPU_CYCLES);
-        for bit in 0..8 {
+        for (bit, deadline) in self.io_latch_decay_at_ppu_cycle.iter_mut().enumerate() {
             if mask & (1u8 << bit) != 0 {
-                self.io_latch_decay_at_ppu_cycle[bit] = decay_at;
+                *deadline = decay_at;
             }
         }
     }

@@ -8,6 +8,7 @@ use crate::emu_thread::{
 };
 use crate::tas_project::TasPreparedLiveFrame;
 
+mod acquisition_fence;
 mod integration;
 mod lifecycle;
 mod linked_session;
@@ -281,6 +282,7 @@ impl TasControlCoordinator {
                 &response,
                 EmuResponse::TasControlAcquired { .. }
                     | EmuResponse::TasControlAcquireRejected { .. }
+                    | EmuResponse::TasControlAcquireFenced { .. }
                     | EmuResponse::TasExecutionCompleted { .. }
                     | EmuResponse::TasExecutionRejected { .. }
                     | EmuResponse::TasFrameAdvanced { .. }
@@ -375,6 +377,9 @@ impl TasControlCoordinator {
                         )),
                     }
                 }
+            }
+            response @ EmuResponse::TasControlAcquireFenced { .. } => {
+                self.consume_acquisition_fence(worker_generation, response)
             }
             EmuResponse::TasControlAcquireRejected { request_id, reason } => {
                 let TasControlState::AcquirePending {

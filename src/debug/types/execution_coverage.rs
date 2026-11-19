@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use zeff_emu_common::debug::{InstructionTraceRecord, TraceExecMode};
+use zeff_emu_common::debug::{InstructionTraceRecord, TraceExecMode, sequence_is_after};
 
 use crate::symbols::{SymbolId, SymbolSession};
-use crate::ui::InstructionTraceBatch;
+use crate::ui::{InstructionTraceBatch, TraceCursor, TraceStreamId, TraceUpdate};
 
 use super::runtime_inference::{RuntimeInference, RuntimeSymbolCandidate};
 
@@ -21,6 +21,7 @@ pub(crate) struct ExecutionCoverage {
     runtime_inference: RuntimeInference,
     symbol_generation: u64,
     last_sequence: Option<u64>,
+    stream: Option<TraceStreamId>,
     revision: u64,
     total: u64,
 }
@@ -34,6 +35,23 @@ impl ExecutionCoverage {
     }
 
     pub(crate) fn merge(&mut self, batch: &InstructionTraceBatch, symbols: &SymbolSession) {
+        if batch.target != crate::ui::TraceTarget::Primary {
+            return;
+        }
+        let cursor = TraceCursor {
+            target: crate::ui::TraceTarget::Primary,
+            stream: self.stream,
+            after_sequence: self.last_sequence,
+        };
+        match cursor.update(batch.stream, batch.newest_sequence) {
+            TraceUpdate::Ignore => return,
+            TraceUpdate::Replace => {
+                self.clear();
+                self.stream = batch.stream;
+                self.revision = self.revision.wrapping_add(1);
+            }
+            TraceUpdate::Same => {}
+        }
         if batch.retained == 0 && batch.newest_sequence.is_none() {
             self.clear();
             return;
@@ -41,22 +59,21 @@ impl ExecutionCoverage {
         if self.symbol_generation != symbols.store.generation() {
             self.rebuild(symbols);
         }
-        if let (Some(last), Some(newest)) = (self.last_sequence, batch.newest_sequence)
-            && newest < last
-        {
-            self.clear();
-            self.symbol_generation = symbols.store.generation();
-        }
 
         let mut changed = false;
         for entry in &batch.entries {
             if self
                 .last_sequence
-                .is_some_and(|sequence| entry.sequence <= sequence)
+                .is_some_and(|sequence| !sequence_is_after(entry.sequence, sequence))
             {
                 continue;
             }
             self.last_sequence = Some(entry.sequence);
+            if entry.boundary.is_some_and(|boundary| {
+                boundary.kind != zeff_emu_common::debug::TraceBoundaryKind::Instruction
+            }) {
+                continue;
+            }
             self.record(entry, symbols, 1);
             self.runtime_inference.observe(entry, symbols);
             changed = true;
@@ -76,7 +93,7 @@ impl ExecutionCoverage {
             symbols
                 .execution_symbol_ids(
                     entry.physical_rom_offset,
-                    u64::from(entry.pc),
+                    u64::from(cpu_address(entry)),
                     trace_exec_mode(entry.mode),
                 )
                 .into_boxed_slice()
@@ -103,6 +120,11 @@ impl ExecutionCoverage {
             self.location_symbols.insert(location, ids);
         }
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub(crate) fn reset_backend(&mut self) {
+        self.clear();
+        self.stream = None;
     }
 
     pub(crate) fn clear(&mut self) {
@@ -149,10 +171,18 @@ fn execution_location(entry: &InstructionTraceRecord) -> ExecutionLocation {
     entry.physical_rom_offset.map_or(
         ExecutionLocation::Cpu {
             mode: entry.mode as u8,
-            address: entry.pc,
+            address: cpu_address(entry),
         },
         ExecutionLocation::Rom,
     )
+}
+
+fn cpu_address(entry: &InstructionTraceRecord) -> u32 {
+    if entry.mode == TraceExecMode::M68000 {
+        entry.pc & 0xff_ffff
+    } else {
+        entry.pc
+    }
 }
 
 fn location_parts(location: ExecutionLocation) -> (Option<u64>, u64, crate::symbols::ExecMode) {
@@ -173,6 +203,7 @@ fn trace_exec_mode(mode: TraceExecMode) -> crate::symbols::ExecMode {
         TraceExecMode::Z80 => crate::symbols::ExecMode::Z80,
         TraceExecMode::V30 => crate::symbols::ExecMode::V30,
         TraceExecMode::HuC6280 => crate::symbols::ExecMode::HuC6280,
+        TraceExecMode::M68000 => crate::symbols::ExecMode::M68000,
     }
 }
 
@@ -185,6 +216,7 @@ fn stored_exec_mode(mode: u8) -> crate::symbols::ExecMode {
         value if value == TraceExecMode::Z80 as u8 => crate::symbols::ExecMode::Z80,
         value if value == TraceExecMode::V30 as u8 => crate::symbols::ExecMode::V30,
         value if value == TraceExecMode::HuC6280 as u8 => crate::symbols::ExecMode::HuC6280,
+        value if value == TraceExecMode::M68000 as u8 => crate::symbols::ExecMode::M68000,
         _ => crate::symbols::ExecMode::Unknown,
     }
 }
@@ -231,6 +263,9 @@ mod tests {
 
     fn batch(entries: Vec<InstructionTraceRecord>) -> InstructionTraceBatch {
         InstructionTraceBatch {
+            target: crate::ui::TraceTarget::Primary,
+            sound: None,
+            stream: None,
             enabled: true,
             capacity: 1_000,
             retained: entries.len(),
@@ -268,6 +303,89 @@ mod tests {
             InstructionTraceRecord::new(TraceExecMode::Sm83, pc, Some(offset), 0, sequence, &[0]);
         entry.sequence = sequence;
         entry
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn trace_stream_replacement_clears_symbol_hits_locations_and_runtime_inference() {
+        let mut symbols = SymbolSession::default();
+        let id = symbols.store.insert(symbol("Caller", 0x8560, 3));
+        let mut old = batch(vec![
+            gb_call(1, 0x4560, 0x8560, 0x4660, true),
+            gb_instruction(2, 0x4660, 0x8660),
+            gb_call(3, 0x4560, 0x8560, 0x4660, true),
+        ]);
+        old.stream = Some(TraceStreamId::allocate());
+        let mut coverage = ExecutionCoverage::default();
+        coverage.merge(&old, &symbols);
+        assert_eq!(coverage.hits(id), 2);
+        assert_eq!(coverage.runtime_candidates().count(), 1);
+        let mut fresh = batch(Vec::new());
+        fresh.stream = Some(TraceStreamId::allocate());
+        coverage.merge(&fresh, &symbols);
+        assert_eq!(coverage.total(), 0);
+        assert!(coverage.location_hits.is_empty() && coverage.location_symbols.is_empty());
+        assert_eq!(coverage.hits(id), 0);
+        assert_eq!(coverage.runtime_candidates().count(), 0);
+        let revision = coverage.revision();
+        coverage.merge(&old, &symbols);
+        assert_eq!(coverage.revision(), revision);
+        assert_eq!(coverage.total(), 0);
+        fresh = batch(vec![gb_instruction(1, 0x4560, 0x8560)]);
+        fresh.stream = coverage.stream;
+        coverage.merge(&fresh, &symbols);
+        assert_eq!(coverage.hits(id), 1);
+        assert_eq!(coverage.total(), 1);
+        assert_eq!(coverage.runtime_candidates().count(), 0);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn md_trace_coverage_counts_only_instructions_without_inventing_rom_provenance() {
+        use zeff_emu_common::debug::{TraceBoundary, TraceBoundaryKind};
+        let mut coverage = ExecutionCoverage::default();
+        let symbols = SymbolSession::default();
+        let entries = [
+            TraceBoundaryKind::Instruction,
+            TraceBoundaryKind::Interrupt,
+            TraceBoundaryKind::Trace,
+            TraceBoundaryKind::Fault,
+            TraceBoundaryKind::Stopped,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, kind)| {
+            let mut entry = InstructionTraceRecord::new(
+                TraceExecMode::M68000,
+                0x200,
+                None,
+                0,
+                index as u64,
+                &[0x4e, 0xb9, 0, 0, 3, 0],
+            );
+            entry.sequence = index as u64 + 1;
+            entry.boundary = Some(TraceBoundary {
+                kind,
+                cpu_clocks: 4,
+                final_exception: None,
+                machine_fault: kind == TraceBoundaryKind::Fault,
+            });
+            entry
+        })
+        .collect();
+        let trace = batch(entries);
+        coverage.merge(&trace, &symbols);
+        coverage.merge(&trace, &symbols);
+        assert_eq!(coverage.total(), 1);
+        assert!(
+            coverage
+                .location_hits
+                .contains_key(&ExecutionLocation::Cpu {
+                    mode: TraceExecMode::M68000 as u8,
+                    address: 0x200
+                })
+        );
+        assert_eq!(coverage.runtime_candidates().count(), 0);
     }
 
     #[test]

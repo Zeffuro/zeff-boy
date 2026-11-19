@@ -24,6 +24,11 @@ pub(crate) fn select_private_tas_execution_loader_with_rom_path(
     firmware_search_dirs: Vec<PathBuf>,
 ) -> Result<PrivateTasExecutionLoader> {
     match system {
+        ActiveSystem::Md => md_product::select_md_tas_loader(
+            source_path,
+            rom_path,
+            super::super::md_tas::MdTasProfile::SixButton,
+        ),
         ActiveSystem::Nes if has_extension(&source_path, "fds") => {
             Ok(PrivateTasExecutionLoader::DirectFds(
                 DirectFdsTasExecutionLoader::new(source_path, firmware_search_dirs),
@@ -254,6 +259,29 @@ pub(crate) fn select_private_tas_execution_loader_for_replay(
     firmware_search_dirs: Vec<PathBuf>,
     start_state: &[u8],
 ) -> Result<PrivateTasExecutionLoader> {
+    if system == ActiveSystem::Md {
+        let mut selected = None;
+        for profile in [
+            super::super::md_tas::MdTasProfile::ThreeButton,
+            super::super::md_tas::MdTasProfile::SixButton,
+        ] {
+            let Ok(loader) =
+                md_product::select_md_tas_loader(source_path.clone(), rom_path.clone(), profile)
+            else {
+                continue;
+            };
+            if loader.load_session(start_state).is_ok() {
+                ensure!(
+                    selected.is_none(),
+                    "MD replay does not identify one pad profile"
+                );
+                selected = Some(loader);
+            }
+        }
+        return selected.ok_or_else(|| {
+            anyhow::anyhow!("MD replay is not a fresh authenticated two-pad baseline")
+        });
+    }
     if system == ActiveSystem::Pce
         && (has_extension(&source_path, "cue")
             || has_extension(&source_path, "chd")
@@ -305,6 +333,16 @@ pub(crate) fn select_private_tas_execution_loader_for_project(
     firmware_search_dirs: Vec<PathBuf>,
     project: &TasProject,
 ) -> Result<PrivateTasExecutionLoader> {
+    if system == ActiveSystem::Md {
+        let profile = super::direct_md::project_profile(project)?;
+        let loader = if has_extension(&source_path, "zip") {
+            DirectMdTasExecutionLoader::new_zip_for_project(source_path, project)?
+        } else {
+            DirectMdTasExecutionLoader::new(source_path, profile)
+        };
+        loader.validate_project(project)?;
+        return Ok(PrivateTasExecutionLoader::DirectMd(loader));
+    }
     if system == ActiveSystem::Pce
         && (has_extension(&source_path, "cue")
             || has_extension(&source_path, "chd")
@@ -523,7 +561,8 @@ pub(crate) fn select_private_tas_execution_attachment(
         Err(error)
             if matches!(
                 system,
-                ActiveSystem::Nes
+                ActiveSystem::Md
+                    | ActiveSystem::Nes
                     | ActiveSystem::GameBoy
                     | ActiveSystem::Coleco
                     | ActiveSystem::MasterSystem

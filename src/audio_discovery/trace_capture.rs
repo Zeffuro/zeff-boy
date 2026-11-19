@@ -8,11 +8,13 @@ use zeff_emu_common::audio_trace::{AudioTraceChip, AudioTraceSource, ChipAudioTr
 
 mod game_boy;
 mod gba;
+mod md;
 mod native;
 mod nes;
 
 pub(crate) use game_boy::write_game_boy_new;
 pub(crate) use gba::write_gba_new;
+pub(crate) use md::write_md_new;
 pub(super) use nes::validate_sample_provenance as validate_nes_sample_provenance;
 pub(crate) use nes::write_nes_new;
 

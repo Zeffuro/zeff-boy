@@ -114,7 +114,7 @@ fn render(
                             supports_save_states: false,
                             supports_replay: false,
                             supports_audio: false,
-                            supports_debugger: false,
+                            supports_symbol_loading: false,
                             is_paused: false,
                             active_system: ActiveSystem::Gb,
                             media_slot_snapshot: None,

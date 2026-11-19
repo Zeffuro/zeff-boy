@@ -25,6 +25,28 @@ impl EmuThread {
         result: FrameResult,
         preserve_delivery: bool,
     ) -> bool {
+        #[cfg(test)]
+        let ids = result.audio_timing_requests.clone();
+        #[cfg(test)]
+        super::audio_timing::delivery(
+            &ids,
+            "send_begin",
+            result.advanced_frames,
+            result.audio_samples.len(),
+            u64::from(preserve_delivery),
+        );
+        let sent = Self::send_frame_inner(frame_tx, drain_rx, result, preserve_delivery);
+        #[cfg(test)]
+        super::audio_timing::delivery(&ids, "send_end", 0, 0, u64::from(sent));
+        sent
+    }
+
+    fn send_frame_inner(
+        frame_tx: &Sender<FrameResult>,
+        drain_rx: &crossbeam_channel::Receiver<FrameResult>,
+        result: FrameResult,
+        preserve_delivery: bool,
+    ) -> bool {
         if preserve_delivery {
             return frame_tx.send(result).is_ok();
         }
@@ -61,6 +83,25 @@ impl EmuThread {
         mut replaced: FrameResult,
         mut replacement: FrameResult,
     ) -> FrameResult {
+        #[cfg(test)]
+        {
+            replaced
+                .audio_timing_requests
+                .append(&mut replacement.audio_timing_requests);
+            replacement.audio_timing_requests = replaced.audio_timing_requests;
+            super::audio_timing::delivery(
+                &replacement.audio_timing_requests,
+                "delivery_merged",
+                replacement.advanced_frames + replaced.advanced_frames,
+                replacement.audio_samples.len()
+                    + if replaced.audio_playback_speed == replacement.audio_playback_speed {
+                        replaced.audio_samples.len()
+                    } else {
+                        0
+                    },
+                replacement.audio_timing_requests.len() as u64,
+            );
+        }
         replaced
             .replay_events
             .append(&mut replacement.replay_events);
@@ -191,6 +232,8 @@ impl EmuThread {
         runtime_fault: Option<String>,
     ) -> FrameResult {
         FrameResult {
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            audio_timing_requests: Vec::new(),
             advanced_frames,
             completed_step_requests: 0,
             staged_input_frames: 0,
@@ -222,6 +265,8 @@ mod tests {
 
     fn empty_result() -> FrameResult {
         FrameResult {
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            audio_timing_requests: Vec::new(),
             advanced_frames: 0,
             completed_step_requests: 0,
             staged_input_frames: 0,
@@ -244,6 +289,8 @@ mod tests {
             audio_timeline_discontinuities: Vec::new(),
         }
     }
+
+    mod timing_tests;
 
     #[test]
     fn preserved_frame_delivery_waits_for_channel_capacity_without_dropping() {

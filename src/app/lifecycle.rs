@@ -302,6 +302,9 @@ impl App {
         let (native_w, native_h) = self.active_display_size();
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.set_native_size(native_w, native_h);
+            let (width, height) =
+                crate::app::display::presentation_size(self.active_system, native_w, native_h);
+            gfx.set_presentation_size(width, height);
         }
 
         #[cfg(target_arch = "wasm32")]

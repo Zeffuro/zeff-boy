@@ -47,6 +47,7 @@ pub fn encode(trace: &Huc6280AudioTrace, cancel: &AtomicBool) -> Result<VgmCaptu
             wonder_swan: None,
             game_boy: None,
             nes: None,
+            md: None,
             limitations: LIMITATIONS,
         },
         cancel,

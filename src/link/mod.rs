@@ -23,6 +23,7 @@ pub(crate) fn remote_link_system_for_active_system(
         ActiveSystem::GameBoy => Some(LinkSystemType::GameBoy),
         ActiveSystem::WonderSwan => Some(LinkSystemType::WonderSwan),
         ActiveSystem::GameBoyAdvance
+        | ActiveSystem::Md
         | ActiveSystem::Nes
         | ActiveSystem::Coleco
         | ActiveSystem::Pce
@@ -82,6 +83,7 @@ mod tests {
             remote_link_system_for_active_system(ActiveSystem::Nes),
             None
         );
+        assert_eq!(remote_link_system_for_active_system(ActiveSystem::Md), None);
         assert_eq!(
             remote_link_system_for_active_system(ActiveSystem::MasterSystem),
             None

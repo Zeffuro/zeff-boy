@@ -12,6 +12,8 @@ use crate::emu_thread::TasExecutionProfile;
 use crate::tas_project::{TasDigest, TasProject};
 
 mod conversion;
+mod live_input;
+mod md;
 mod selection;
 mod window;
 pub(super) use conversion::VerifiedReplayExportCoordinator;
@@ -123,6 +125,9 @@ fn validate_tas_editor_branch_scope(
     branch_id: &str,
 ) -> anyhow::Result<()> {
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            crate::emu_backend::loader::md_product::validate_md_tas_branch_scope(project, branch_id)
+        }
         TasExecutionProfile::DirectNesCartridge => {
             crate::emu_backend::loader::DirectNesTasExecutionLoader::validate_project_branch_scope(
                 project, branch_id,
@@ -352,6 +357,14 @@ impl App {
         };
         let source_path = self.rom_info.source_path.as_deref();
         let source_matches = match profile {
+            TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+                self.active_system == crate::emu_backend::ActiveSystem::Md
+                    && tas_source_matches(
+                        source_path,
+                        self.rom_info.rom_path.as_deref(),
+                        crate::emu_backend::loader::md_product::md_source_extension,
+                    )
+            }
             TasExecutionProfile::DirectNesCartridge => {
                 self.active_system == crate::emu_backend::ActiveSystem::Nes
                     && (source_path.is_some_and(has_nes_extension)
@@ -505,88 +518,6 @@ impl App {
         }
     }
 
-    pub(super) fn record_current_tas_input_and_advance(&mut self) -> anyhow::Result<()> {
-        if !self.tas_control.can_record_live_input() {
-            anyhow::bail!("no completed TAS execution is awaiting a live input frame");
-        }
-        let (profile, _) = self.tas_control.linked_identity().ok_or_else(|| {
-            anyhow::anyhow!("no completed TAS execution is awaiting a live input frame")
-        })?;
-        let mut input = crate::tas_project::TasInputFrame::default();
-        match profile {
-            crate::emu_thread::TasExecutionProfile::DirectColecoCartridge => {
-                input.coleco = self.host_input.coleco_tas_controllers()?;
-            }
-            crate::emu_thread::TasExecutionProfile::DirectSmsCartridge
-            | crate::emu_thread::TasExecutionProfile::DirectSg1000Cartridge => {
-                let (p1_buttons, p1_dpad) = self.current_host_joypad_input();
-                let (p2_buttons, p2_dpad) = self.current_host_joypad_p2_input();
-                input.players[0].buttons = p1_buttons;
-                input.players[0].dpad = p1_dpad;
-                input.players[1].buttons = p2_buttons;
-                input.players[1].dpad = p2_dpad;
-            }
-            crate::emu_thread::TasExecutionProfile::DirectPceMultitapHuCard
-            | crate::emu_thread::TasExecutionProfile::DirectPceMultitapCd => {
-                let players = [
-                    self.current_host_joypad_input(),
-                    self.current_host_joypad_p2_input(),
-                    self.current_host_joypad_p3_input(),
-                    self.current_host_joypad_p4_input(),
-                    self.current_host_joypad_p5_input(),
-                ];
-                for (player, (buttons, dpad)) in input.players.iter_mut().zip(players) {
-                    player.buttons = buttons;
-                    player.dpad = dpad;
-                }
-            }
-            crate::emu_thread::TasExecutionProfile::DirectWsCartridge => {
-                let (p1_buttons, p1_dpad) = self.current_host_joypad_input();
-                input.players[0].buttons = p1_buttons;
-                input.players[0].dpad = p1_dpad;
-            }
-            crate::emu_thread::TasExecutionProfile::DirectGameGearCartridge => {
-                let (p1_buttons, p1_dpad) = self.current_host_joypad_input();
-                input.players[0].buttons = p1_buttons;
-                input.players[0].dpad = p1_dpad;
-            }
-            crate::emu_thread::TasExecutionProfile::DirectGbaCartridge => {
-                let (p1_buttons, p1_dpad) = self.current_host_joypad_input();
-                input.players[0].buttons = p1_buttons;
-                input.players[0].dpad = p1_dpad;
-            }
-            profile => {
-                let (p1_buttons, p1_dpad) = self.current_host_joypad_input();
-                input.players[0].buttons = p1_buttons;
-                input.players[0].dpad = p1_dpad;
-                if matches!(
-                    profile,
-                    crate::emu_thread::TasExecutionProfile::DirectNesCartridge
-                        | crate::emu_thread::TasExecutionProfile::DirectFdsDisk
-                ) {
-                    let (p2_buttons, p2_dpad) = self.current_host_joypad_p2_input();
-                    input.players[1].buttons = p2_buttons;
-                    input.players[1].dpad = p2_dpad;
-                    if profile == crate::emu_thread::TasExecutionProfile::DirectNesCartridge {
-                        let zapper = self.nes_zapper_input();
-                        input.zapper.enabled = zapper.enabled;
-                        input.zapper.trigger = zapper.trigger;
-                        input.zapper.hit = zapper.hit;
-                        input.zapper.screen_pos = zapper.screen_pos.map(|(x, y)| [x, y]);
-                    }
-                }
-            }
-        }
-        let autofire = self.preview_autofire_tas_input(&mut input);
-        self.record_live_tas_frame(input)?;
-        self.pending_tas_autofire = self
-            .tas_control
-            .live_frame_in_flight()
-            .then_some(autofire)
-            .flatten();
-        Ok(())
-    }
-
     pub(super) fn handle_tas_editor_file_request(&mut self, request: TasEditorFileRequest) {
         if self.tas_verified_replay_export.is_some() {
             self.toast_manager
@@ -688,7 +619,9 @@ impl App {
         source_path: PathBuf,
         game_gear_no_save: bool,
     ) {
-        let preflight = if game_gear_no_save {
+        let preflight = if self.active_system == crate::emu_backend::ActiveSystem::Md {
+            self.loaded_md_tas_loader().map(|_| ())
+        } else if game_gear_no_save {
             crate::emu_backend::loader::DirectGameGearTasExecutionLoader::new_zip(
                 source_path.clone(),
                 self.rom_info.rom_path.clone(),
@@ -785,7 +718,9 @@ impl App {
         let Some(source_path) = self.rom_info.source_path.clone() else {
             anyhow::bail!("Load a supported direct cartridge first");
         };
-        let loader = if game_gear_no_save {
+        let loader = if self.active_system == crate::emu_backend::ActiveSystem::Md {
+            self.loaded_md_tas_loader()?
+        } else if game_gear_no_save {
             anyhow::ensure!(
                 self.active_system == crate::emu_backend::ActiveSystem::GameGear,
                 "the no-save confirmation is only available for Game Gear cartridges"

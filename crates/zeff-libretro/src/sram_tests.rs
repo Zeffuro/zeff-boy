@@ -29,7 +29,7 @@ fn reset_globals() {
     *lock(&MAX_SERIALIZE_SIZE) = 0;
     *lock(&FRAME_COUNTER) = 0;
     *lock(&CB_INPUT_POLL) = None;
-    *lock(&CB_VIDEO_REFRESH) = None;
+    lock(&CB_VIDEO_REFRESH).install(None);
 }
 
 fn gba_sram_rom() -> Vec<u8> {
@@ -294,7 +294,7 @@ fn abi_run_imports_callback_writes_at_the_correct_frame_boundaries() {
     assert_stable_memory(stable);
 
     *lock(&CB_INPUT_POLL) = None;
-    *lock(&CB_VIDEO_REFRESH) = None;
+    lock(&CB_VIDEO_REFRESH).install(None);
     serialize();
     assert_eq!(core_save_byte(3), 0xB3);
     assert_eq!(exposed_save_byte(3), 0xB3);

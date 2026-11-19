@@ -411,7 +411,14 @@ mod tests {
         let bytes = std::fs::read(&saved.path).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let names = (0..archive.len())
-            .map(|index| archive.by_index(index).unwrap().name().to_owned())
+            .map(|index| {
+                archive
+                    .by_index(index)
+                    .unwrap()
+                    .name()
+                    .unwrap()
+                    .into_owned()
+            })
             .collect::<Vec<_>>();
         assert!(names.iter().any(|name| name == "manifest.json"));
         assert!(names.iter().any(|name| name == "integrity.json"));

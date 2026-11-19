@@ -10,6 +10,7 @@ pub(crate) enum DiagramKind {
     Nes,
     PceTwoButton,
     PceSixButton,
+    MegaDrive,
     SegaMasterSystem,
     GameGear,
     Sg1000,
@@ -18,13 +19,14 @@ pub(crate) enum DiagramKind {
 }
 
 impl DiagramKind {
-    pub(crate) const ALL: [Self; 11] = [
+    pub(crate) const ALL: [Self; 12] = [
         Self::StandardGamepad,
         Self::GameBoy,
         Self::GameBoyAdvance,
         Self::Nes,
         Self::PceTwoButton,
         Self::PceSixButton,
+        Self::MegaDrive,
         Self::SegaMasterSystem,
         Self::GameGear,
         Self::Sg1000,
@@ -38,6 +40,7 @@ impl DiagramKind {
             ActiveSystem::GameBoyAdvance => Self::GameBoyAdvance,
             ActiveSystem::Nes => Self::Nes,
             ActiveSystem::Pce => Self::PceTwoButton,
+            ActiveSystem::Md => Self::MegaDrive,
             ActiveSystem::MasterSystem => Self::SegaMasterSystem,
             ActiveSystem::GameGear => Self::GameGear,
             ActiveSystem::Sg1000 => Self::Sg1000,
@@ -54,6 +57,7 @@ impl DiagramKind {
             Self::Nes => "NES",
             Self::PceTwoButton => "PC Engine 2-button",
             Self::PceSixButton => "PC Engine 6-button",
+            Self::MegaDrive => "Mega Drive / Genesis 6-button",
             Self::SegaMasterSystem => "Master System",
             Self::GameGear => "Game Gear",
             Self::Sg1000 => "SG-1000",
@@ -70,6 +74,7 @@ impl DiagramKind {
             Self::GameBoyAdvance => vec![Up, Down, Left, Right, A, B, L, R, Start, Select],
             Self::PceTwoButton => vec![Up, Down, Left, Right, A, B, Start, Select],
             Self::PceSixButton => vec![Up, Down, Left, Right, A, B, L, R, X, Y, Start, Select],
+            Self::MegaDrive => vec![Up, Down, Left, Right, X, A, B, L, Y, R, Start, Select],
             Self::SegaMasterSystem | Self::Sg1000 => vec![Up, Down, Left, Right, A, B],
             Self::GameGear => vec![Up, Down, Left, Right, A, B, Start],
             Self::Coleco => vec![Up, Down, Left, Right, A, B, Start, Select],
@@ -88,6 +93,13 @@ impl DiagramKind {
         use BindingAction::*;
         match (self, action) {
             (_, DiagramAction::WonderSwan(button)) => button.label(),
+            (Self::MegaDrive, DiagramAction::Joypad(X)) => "A",
+            (Self::MegaDrive, DiagramAction::Joypad(A)) => "B",
+            (Self::MegaDrive, DiagramAction::Joypad(B)) => "C",
+            (Self::MegaDrive, DiagramAction::Joypad(L)) => "X",
+            (Self::MegaDrive, DiagramAction::Joypad(Y)) => "Y",
+            (Self::MegaDrive, DiagramAction::Joypad(R)) => "Z",
+            (Self::MegaDrive, DiagramAction::Joypad(Select)) => "Mode",
             (Self::PceTwoButton | Self::PceSixButton, DiagramAction::Joypad(A)) => "I",
             (Self::PceTwoButton | Self::PceSixButton, DiagramAction::Joypad(B)) => "II",
             (Self::PceSixButton, DiagramAction::Joypad(L)) => "III",
@@ -153,9 +165,10 @@ pub(super) fn draw(
             | DiagramKind::PceTwoButton
             | DiagramKind::SegaMasterSystem
             | DiagramKind::Sg1000 => 180.0,
-            DiagramKind::StandardGamepad | DiagramKind::PceSixButton | DiagramKind::GameGear => {
-                190.0
-            }
+            DiagramKind::StandardGamepad
+            | DiagramKind::PceSixButton
+            | DiagramKind::MegaDrive
+            | DiagramKind::GameGear => 190.0,
         };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
@@ -182,7 +195,7 @@ pub(super) fn draw(
             diagram.draw_nes()
         }
         DiagramKind::PceTwoButton => diagram.draw_pce_two(),
-        DiagramKind::PceSixButton => diagram.draw_pce_six(),
+        DiagramKind::PceSixButton | DiagramKind::MegaDrive => diagram.draw_six_button_pad(),
         DiagramKind::WonderSwan => diagram.draw_wonderswan(),
         DiagramKind::Coleco => diagram.draw_coleco(),
         _ => diagram.draw_pad(),
@@ -449,7 +462,7 @@ impl DiagramPainter<'_> {
         self.draw_center_at(&actions, 153.0, 161.0, 207.0);
     }
 
-    fn draw_pce_six(&mut self) {
+    fn draw_six_button_pad(&mut self) {
         self.title(self.kind.label());
         let body = egui::Rect::from_center_size(
             self.pos(180.0, 112.0),
@@ -459,17 +472,26 @@ impl DiagramPainter<'_> {
         let actions = self.kind.actions();
         self.draw_dpad_at(&actions, 72.0, 116.0);
         self.draw_center_at(&actions, 147.0, 151.0, 196.0);
-        self.draw_face_at(
-            &actions,
-            &[
+        let positions = if self.kind == DiagramKind::MegaDrive {
+            [
+                (BindingAction::L, 238.0, 91.0),
+                (BindingAction::Y, 275.0, 91.0),
+                (BindingAction::R, 312.0, 91.0),
+                (BindingAction::X, 238.0, 132.0),
+                (BindingAction::A, 275.0, 132.0),
+                (BindingAction::B, 312.0, 132.0),
+            ]
+        } else {
+            [
                 (BindingAction::Y, 238.0, 91.0),
                 (BindingAction::X, 275.0, 91.0),
                 (BindingAction::R, 312.0, 91.0),
                 (BindingAction::L, 238.0, 132.0),
                 (BindingAction::B, 275.0, 132.0),
                 (BindingAction::A, 312.0, 132.0),
-            ],
-        );
+            ]
+        };
+        self.draw_face_at(&actions, &positions);
     }
 
     fn draw_pce_two(&mut self) {
@@ -1062,100 +1084,4 @@ const fn action_id(action: DiagramAction) -> u8 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{DiagramAction, DiagramInteraction, DiagramKind, draw};
-    use crate::settings::BindingAction;
-
-    #[test]
-    fn continuous_dpad_keeps_four_actions_and_an_inert_center() {
-        fn frame(context: &egui::Context, events: Vec<egui::Event>) -> DiagramInteraction {
-            let mut interaction = None;
-            let _ = context.run_ui(
-                egui::RawInput {
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    ui.set_width(360.0);
-                    interaction = Some(draw(ui, DiagramKind::StandardGamepad, 0, None, None));
-                },
-            );
-            interaction.unwrap()
-        }
-        for target in [
-            None,
-            Some(BindingAction::Up),
-            Some(BindingAction::Down),
-            Some(BindingAction::Left),
-            Some(BindingAction::Right),
-        ] {
-            let context = egui::Context::default();
-            let initial = frame(&context, vec![]);
-            let center = |action| {
-                initial
-                    .hit_rects
-                    .iter()
-                    .find(|(candidate, _)| *candidate == DiagramAction::Joypad(action))
-                    .unwrap()
-                    .1
-                    .center()
-            };
-            let position = target.map_or_else(
-                || center(BindingAction::Up).lerp(center(BindingAction::Down), 0.5),
-                center,
-            );
-            for pressed in [true, false] {
-                let interaction = frame(
-                    &context,
-                    vec![
-                        egui::Event::PointerMoved(position),
-                        egui::Event::PointerButton {
-                            pos: position,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                );
-                if !pressed {
-                    assert_eq!(interaction.activated, target.map(DiagramAction::Joypad));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn full_size_diagrams_have_distinct_minimum_hit_targets() {
-        for kind in DiagramKind::ALL {
-            let context = egui::Context::default();
-            let mut interaction = None;
-            let _ = context.run_ui(egui::RawInput::default(), |ui| {
-                ui.set_width(360.0);
-                interaction = Some(draw(ui, kind, 0, None, None));
-            });
-            let DiagramInteraction {
-                hit_rects,
-                diagram_rect,
-                ..
-            } = interaction.expect("diagram rendered");
-            assert_eq!(hit_rects.len(), kind.actions().len(), "{kind:?}");
-            for (action, rect) in &hit_rects {
-                assert!(rect.width() >= 36.0, "{kind:?} {action:?}: {rect:?}");
-                assert!(rect.height() >= 36.0, "{kind:?} {action:?}: {rect:?}");
-                assert!(
-                    diagram_rect.expand(0.01).contains_rect(*rect),
-                    "{kind:?} {action:?} escapes {diagram_rect:?}: {rect:?}"
-                );
-            }
-            for (index, (left_action, left)) in hit_rects.iter().enumerate() {
-                for (right_action, right) in &hit_rects[index + 1..] {
-                    let overlap = left.intersect(*right);
-                    assert!(
-                        overlap.width() <= 0.01 || overlap.height() <= 0.01,
-                        "{kind:?} {left_action:?} overlaps {right_action:?}: {overlap:?}"
-                    );
-                }
-            }
-        }
-    }
-}
+mod tests;

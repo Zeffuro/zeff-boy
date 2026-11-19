@@ -182,19 +182,42 @@ class BuildOptimizedTests(unittest.TestCase):
     def test_corpus(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            rom = root / "a.gba"
-            rom.write_bytes(b"x")
             manifest = root / "manifest.json"
-            manifest.write_text(json.dumps({
-                "schema": 1,
-                "fixtures": [{
-                    "id": "a", "system": "GBA", "path": "a.gba",
-                    "sha256": DRIVER.digest(rom), "frames": 2,
-                }],
-            }))
-            self.assertEqual(
-                DRIVER.corpus(manifest)[0]["core_crate"], "zeff_gba_core"
-            )
+            for system, extension, core in (
+                ("GBA", "gba", "zeff_gba_core"), ("MD", "md", "zeff_md_core")
+            ):
+                with self.subTest(system=system):
+                    rom = root / f"a.{extension}"
+                    rom.write_bytes(b"x")
+                    manifest.write_text(json.dumps({
+                        "schema": 1,
+                        "fixtures": [{
+                            "id": "a", "system": system, "path": rom.name,
+                            "sha256": DRIVER.digest(rom), "frames": 2,
+                        }],
+                    }))
+                    self.assertEqual(DRIVER.corpus(manifest)[0]["core_crate"], core)
+                    rom.write_bytes(b"changed")
+                    with self.assertRaisesRegex(RuntimeError, "hash mismatch"):
+                        DRIVER.corpus(manifest)
+
+    def test_md_desktop_audio_mismatch_or_missing_output_fails_verification(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            control = Path(temp_dir) / "control.f32"
+            optimized = Path(temp_dir) / "optimized.f32"
+            pcm = bytes.fromhex("0000803f000080bf")
+            control.write_bytes(pcm)
+            optimized.write_bytes(pcm)
+            DRIVER.verify_desktop_audio(control, optimized, "md-vdp-audio")
+            optimized.write_bytes(bytes.fromhex("0000003f000080bf"))
+            with self.assertRaisesRegex(RuntimeError, "audio mismatch"):
+                DRIVER.verify_desktop_audio(control, optimized, "md-vdp-audio")
+            optimized.unlink()
+            with self.assertRaisesRegex(RuntimeError, "audio mismatch"):
+                DRIVER.verify_desktop_audio(control, optimized, "md-vdp-audio")
+            control.write_bytes(b"")
+            with self.assertRaisesRegex(RuntimeError, "audio output missing"):
+                DRIVER.verify_desktop_audio(control, optimized, "md-vdp-audio")
 
     def test_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp_dir:

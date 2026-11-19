@@ -290,6 +290,7 @@ fn decode_thumb(bus_read: &impl Fn(u32) -> u8, address: u32) -> DisassembledLine
 
 fn line<const N: usize>(address: u32, bytes: [u8; N]) -> DisassembledLine {
     DisassembledLine {
+        decode_status: None,
         address,
         storage_offset: rom_offset(address),
         bank: None,

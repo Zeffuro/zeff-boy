@@ -52,6 +52,7 @@ pub fn encode(trace: &WonderSwanAudioTrace, cancel: &AtomicBool) -> Result<VgmCa
                 hyper_voice: "unsupported; applied color HyperVoice I/O and HyperVoice-target Sound DMA reject capture; monochrome color-only writes are ignored",
                 sound_test: "fast-sweep mode unsupported; writes with bit 1 set reject capture",
             }),
+            md: None,
             limitations: LIMITATIONS,
             game_boy: None,
             nes: None,

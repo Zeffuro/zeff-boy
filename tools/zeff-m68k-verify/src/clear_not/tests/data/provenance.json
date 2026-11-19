@@ -1,0 +1,81 @@
+{
+  "source_commit": "64b253116a3de04aaac4346c43680960dc9b67e5",
+  "license": "MIT",
+  "original_sources": [
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/CLR.w.json.bin",
+      "sha256": "e7ac8f9efb9c71f88bc3930844e5b2f27eb61635761ab9a36ada767185acdd7a",
+      "bytes": 1254165,
+      "git_blob_sha1": "f69b00d5fc6587f92b3a2869a1a1a0f3cc419d43",
+      "records": 2500,
+      "aggregate_fingerprints_sha256": "2d6ec03285c33fbd4dccd17e41bf68058177ee502bb3b2c451368155d51e0256"
+    },
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/CLR.l.json.bin",
+      "sha256": "f41e6a53171fb720d14ca8897e4ccc5c70aff6f78c6f241da9d4ddcba6058d0f",
+      "bytes": 1310945,
+      "git_blob_sha1": "01e8d97ca1e2b989cee893399e17b15d48db6808",
+      "records": 2500,
+      "aggregate_fingerprints_sha256": "a3e486e6b1ecf2db9729486047ec9350ff8531c3a125bb235ceae65e3e60bb91"
+    },
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/NOT.w.json.bin",
+      "sha256": "5ff8f1b45297c0aef0078075976ff1751c18557b1049f1c1f4d6eef2bf66445b",
+      "bytes": 1245475,
+      "git_blob_sha1": "cdb86de2ac19450d41daa9043784c300df211c17",
+      "records": 2500,
+      "aggregate_fingerprints_sha256": "078b9a5f8d76469a7967236f57960cff1a5395e153812d03ac5951e0c23becfb"
+    },
+    {
+      "path": "rom-tests/cache/sources/m68000-64b25311/v1/NOT.l.json.bin",
+      "sha256": "1809fb0b9dc2f657c453b5881da11bb5d813dcd2d909159bc4a8d3320591c3fc",
+      "bytes": 1323637,
+      "git_blob_sha1": "33d58ec95b978454d140bb1849ab1bd0fbc92a95",
+      "records": 2500,
+      "aggregate_fingerprints_sha256": "9c7b3f99e2e12e1aae4e3dd232e540ad2e3bee623e962f5a7c7be86e9f2b06f2"
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "tools/zeff-m68k-verify/src/clear_not/tests/data/firstodd.json",
+      "sha256": "e452b60f5f919eb9e07f8318d04571e9da733ea0d035be1296a9d08f4c418a6e",
+      "bytes": 78471
+    },
+    {
+      "path": "tools/zeff-m68k-verify/src/clear_not/tests/data/completion.json",
+      "sha256": "80c0814f70ca70dc0f7834d969d4989f131de44d7d701972ef7799447bedeea3",
+      "bytes": 44900
+    }
+  ],
+  "parent_exports": [
+    {
+      "name": "reference-phases-unary-v1",
+      "rows": 17500,
+      "cohorts": [
+        "TST.b",
+        "TST.w",
+        "TST.l",
+        "CLR.b",
+        "CLR.w",
+        "CLR.l",
+        "NEGX.l"
+      ],
+      "sha256": "ddedf7c475aef47ba2eb1d753f89c140cc098392f2b15bf4f2e9a8d0a0c35a9d"
+    },
+    {
+      "name": "reference-phases-unary-remaining-v1",
+      "rows": 20000,
+      "cohorts": [
+        "NEG.b",
+        "NEG.w",
+        "NEG.l",
+        "NEGX.b",
+        "NEGX.w",
+        "NOT.b",
+        "NOT.w",
+        "NOT.l"
+      ],
+      "sha256": "377a86ff9662cd37be872897e39d8aace5d299abfacb84165029c36afa7e1607"
+    }
+  ]
+}

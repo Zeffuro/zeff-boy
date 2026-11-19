@@ -14,6 +14,35 @@ impl App {
         ) {
             return None;
         }
+        if let Some(restored) = self.netplay.terminal_restore(&response)
+            && let Response::Stopped { reason, .. } | Response::Rejected(reason) = response
+        {
+            self.finish_netplay(reason, restored);
+            return None;
+        }
+        let response = match response {
+            Response::Ready { md_input } => {
+                let md = self.active_system == crate::emu_backend::ActiveSystem::Md;
+                let valid = match md_input {
+                    Some(profile) => {
+                        md && self.netplay.player == Some(profile.player())
+                            && profile.kinds()[0] == profile.kinds()[1]
+                    }
+                    None => !md,
+                };
+                if !valid {
+                    self.debug_windows.netplay.status =
+                        "Worker Ready input metadata does not match this session".into();
+                    self.request_netplay_stop();
+                    return None;
+                }
+                if self.netplay.phase == Phase::Admission {
+                    self.netplay.md_input = md_input;
+                }
+                Response::Ready { md_input: None }
+            }
+            response => response,
+        };
         match response {
             Response::NetworkStats(stats)
                 if matches!(self.netplay.phase, Phase::Running | Phase::Stopping) =>
@@ -31,14 +60,14 @@ impl App {
             }
             Response::Chat { .. } | Response::ChatError(_)
                 if self.netplay.phase == Phase::Stopping => {}
-            Response::Ready if self.netplay.phase == Phase::Stopping => {
+            Response::Ready { md_input: None } if self.netplay.phase == Phase::Stopping => {
                 self.netplay.admitted = true;
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
                     proof.admitted = true;
                 }
             }
-            Response::Ready if self.netplay.phase == Phase::Admission => {
+            Response::Ready { md_input: None } if self.netplay.phase == Phase::Admission => {
                 self.netplay.admitted = true;
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(proof) = &mut self.netplay.proof {
@@ -170,13 +199,6 @@ impl App {
                     self.netplay.next_frame = None;
                     self.recompute_pause();
                 }
-            }
-            Response::Stopped { reason, restored } => self.finish_netplay(reason, restored),
-            Response::Rejected(reason)
-                if !self.netplay.admitted
-                    && matches!(self.netplay.phase, Phase::Admission | Phase::Stopping) =>
-            {
-                self.finish_netplay(reason, true)
             }
             Response::Rejected(reason) => {
                 self.toast_manager.error(reason);

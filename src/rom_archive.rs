@@ -6,8 +6,37 @@ use anyhow::{Context, Result, ensure};
 use std::io::Read as _;
 
 use crate::emu_backend::ActiveSystem;
+
+pub(crate) fn probe_rom_reader(
+    path: &Path,
+    reader: &mut impl std::io::Read,
+) -> std::io::Result<Option<ActiveSystem>> {
+    if let Some(system) = ActiveSystem::from_path(path) {
+        return Ok(Some(system));
+    }
+    if !path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("bin"))
+    {
+        return Ok(None);
+    }
+    let mut prefix = [0; zeff_emu_common::system::MEDIA_PROBE_LEN];
+    let mut read = 0;
+    while read < prefix.len() {
+        let count = reader.read(&mut prefix[read..])?;
+        if count == 0 {
+            break;
+        }
+        read += count;
+    }
+    Ok(ActiveSystem::from_media(path, &prefix[..read]))
+}
+
 mod zip_directory;
+mod zip_names;
 pub(crate) use zip_directory::{preflight_bounded_zip_directory, validate_bounded_zip_directory};
+pub(crate) use zip_names::{decode_zip_member_name, enclosed_zip_member_path};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ArchiveRomEntry {
@@ -101,7 +130,7 @@ pub(crate) fn inspect_bounded_zip_members(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = decode_zip_member_name(&entry).into_owned();
         ensure!(name.len() <= 4096, "ZIP member name is too long");
         ensure!(
             names.insert(name.clone()),
@@ -114,10 +143,8 @@ pub(crate) fn inspect_bounded_zip_members(
         if !matches {
             continue;
         }
-        let relative_path = entry
-            .enclosed_name()
-            .context("ZIP member path is unsafe")?
-            .to_path_buf();
+        let relative_path =
+            enclosed_zip_member_path(&entry).context("ZIP member path is unsafe")?;
         ensure!(
             entry.size() <= member_limit,
             "ZIP member exceeds the {member_limit}-byte media limit"
@@ -180,19 +207,20 @@ fn extract_bounded_zip_member_inner(
     let mut supported_roms = 0;
     let mut names = std::collections::BTreeSet::new();
     for index in 0..archive.len() {
-        let entry = archive
+        let mut entry = archive
             .by_index(index)
             .with_context(|| format!("failed to inspect ZIP entry #{index}"))?;
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = decode_zip_member_name(&entry).into_owned();
         ensure!(name.len() <= 4096, "ZIP member name is too long");
         ensure!(
             names.insert(name.clone()),
             "ZIP contains duplicate member {name:?}"
         );
-        if ActiveSystem::from_path(Path::new(&name)).is_some() {
+        if require_single_supported_rom && probe_rom_reader(Path::new(&name), &mut entry)?.is_some()
+        {
             supported_roms += 1;
         }
         let is_candidate = Path::new(&name)
@@ -225,11 +253,8 @@ fn extract_bounded_zip_member_inner(
     let mut entry = archive
         .by_index(candidates[0])
         .context("failed to reopen selected ZIP member")?;
-    let member_name = entry.name().to_owned();
-    let relative_path = entry
-        .enclosed_name()
-        .context("ZIP member path is unsafe")?
-        .to_path_buf();
+    let member_name = decode_zip_member_name(&entry).into_owned();
+    let relative_path = enclosed_zip_member_path(&entry).context("ZIP member path is unsafe")?;
     let mut bytes = Vec::with_capacity(usize::try_from(entry.size())?);
     std::io::Read::by_ref(&mut entry)
         .take(member_limit + 1)
@@ -406,6 +431,10 @@ fn system_label(system: ActiveSystem) -> &'static str {
         ActiveSystem::WonderSwan => "WonderSwan",
         ActiveSystem::MasterSystem => "Master System",
         ActiveSystem::GameGear => "Game Gear",
+        ActiveSystem::MegaDrive => "Mega Drive / Genesis",
         ActiveSystem::Sg1000 => "SG-1000/SC-3000",
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod media_tests;

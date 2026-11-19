@@ -12,6 +12,7 @@ use crate::emu_backend::{ActiveSystem, EmuBackend};
 
 const CHECKPOINT_ABI: &[u8] = b"ZeffNetplay-NES-raw-execution-v1/mapper-runtime-v1";
 const CONFIG_DOMAIN: &[u8] = b"ZeffNetplay-App-native-NES/two-standard-controllers/delay0to8-predict8/runtime-snapshot2/hash60/48000/stereo-f32LE/discard-and-restore/v8";
+mod md;
 mod pce;
 mod sega8;
 mod ws;
@@ -47,6 +48,9 @@ pub(crate) fn identity_with_delay(
     build: [u8; 32],
     delay: InputDelay,
 ) -> Result<Identity> {
+    if matches!(backend, EmuBackend::Md(_)) {
+        return md::identity(backend, build, delay);
+    }
     if matches!(backend, EmuBackend::Ws(_)) {
         return ws::identity(backend, build, delay);
     }
@@ -163,6 +167,9 @@ pub(crate) fn checkpoint_with_snapshot(
     snapshot: Option<&crate::emu_backend::pce::PceBackendRollbackSnapshot>,
     ws_snapshot: Option<&crate::emu_backend::ws::WsBackendRollbackSnapshot>,
 ) -> Result<Message> {
+    if matches!(backend, EmuBackend::Md(_)) {
+        return md::checkpoint(backend, frame, audio, config);
+    }
     ensure!(backend.frame_count() == frame, "netplay core frame drift");
     if matches!(backend, EmuBackend::Ws(_)) {
         let state = ws_snapshot.context("paired checkpoint snapshot is unavailable")?;
@@ -234,6 +241,9 @@ fn logical_hash_with_snapshot(
 }
 
 pub(super) fn persistent_hash(backend: &EmuBackend) -> Result<[u8; 32]> {
+    if let EmuBackend::Md(md) = backend {
+        return md.netplay_persistent_hash();
+    }
     if let EmuBackend::Ws(ws) = backend {
         return Ok(ws.netplay_initial_persistent_checksum());
     }

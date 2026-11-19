@@ -37,6 +37,7 @@ mod input_configuration;
 mod keyboard;
 mod lifecycle;
 mod link;
+pub(crate) mod md_timed_ports;
 mod media;
 mod netplay;
 #[cfg(not(target_arch = "wasm32"))]
@@ -213,6 +214,11 @@ struct App {
     cached_ui_data: Option<ui::UiFrameData>,
     rom_info: CachedRomInfo,
     symbols: crate::symbols::SymbolSession,
+    sound_symbols: crate::symbols::SymbolSession,
+    #[cfg(not(target_arch = "wasm32"))]
+    pending_sound_symbol_load: Option<PendingSymbolLoad>,
+    #[cfg(not(target_arch = "wasm32"))]
+    symbol_load_owner: u64,
     #[cfg(not(target_arch = "wasm32"))]
     pending_symbol_load: Option<PendingSymbolLoad>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -359,10 +365,10 @@ impl App {
             .is_some_and(|thread| thread.capabilities().supports_guest_calls)
     }
 
-    pub(super) fn core_supports_debugger(&self) -> bool {
+    pub(super) fn core_supports_symbol_loading(&self) -> bool {
         self.emu_thread
             .as_ref()
-            .is_some_and(|thread| thread.capabilities().supports_debugger)
+            .is_some_and(|thread| thread.capabilities().supports_symbol_loading)
     }
 
     pub(super) fn core_supports_execution_controls(&self) -> bool {
@@ -401,20 +407,21 @@ impl App {
     }
 
     fn debug_workspace_visible(&self) -> bool {
-        if self.active_debug_presentation != DebugPresentation::GameAndDebugger {
-            return true;
-        }
-
+        let docked = self.active_debug_presentation != DebugPresentation::GameAndDebugger;
         #[cfg(not(target_arch = "wasm32"))]
-        return self.settings.ui.debugger_window_open
-            && self
-                .gfx
-                .as_ref()
-                .and_then(Graphics::debugger_window)
-                .is_some_and(|window| window.is_minimized() != Some(true));
-
+        {
+            docked
+                || (self.settings.ui.debugger_window_open
+                    && self
+                        .gfx
+                        .as_ref()
+                        .and_then(Graphics::debugger_window)
+                        .is_some_and(|window| window.is_minimized() != Some(true)))
+        }
         #[cfg(target_arch = "wasm32")]
-        false
+        {
+            docked
+        }
     }
 
     fn speed_mode(&self) -> SpeedMode {

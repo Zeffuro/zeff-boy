@@ -4,8 +4,8 @@ use anyhow::{Result, ensure};
 use zeff_emu_common::audio_trace::{AudioTraceTiming, ChipAudioTrace};
 
 use super::{
-    GameBoyCaptureMetadata, HEADER_LEN, Huc6280CaptureMetadata, NesCaptureMetadata, VGM_VERSION,
-    VgmCapture, VgmCaptureMetadata, WonderSwanCaptureMetadata,
+    GameBoyCaptureMetadata, HEADER_LEN, Huc6280CaptureMetadata, MdCaptureMetadata,
+    NesCaptureMetadata, VGM_VERSION, VgmCapture, VgmCaptureMetadata, WonderSwanCaptureMetadata,
 };
 use crate::vgm::{MAX_COMMANDS, MAX_ROM_BYTES, MAX_SAMPLES, TICKS_PER_SECOND};
 
@@ -22,6 +22,7 @@ pub(super) struct StreamConfig<'a> {
     pub wonder_swan: Option<WonderSwanCaptureMetadata>,
     pub game_boy: Option<GameBoyCaptureMetadata>,
     pub nes: Option<NesCaptureMetadata>,
+    pub md: Option<MdCaptureMetadata>,
     pub limitations: &'static [&'static str],
 }
 
@@ -175,6 +176,7 @@ pub(super) fn encode<C, W>(
             wonder_swan: config.wonder_swan,
             game_boy: config.game_boy,
             nes: config.nes,
+            md: config.md,
             preamble_write_count: config.preamble_write_count as u32,
             guest_write_count,
             wait_command_count,

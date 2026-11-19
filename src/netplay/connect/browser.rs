@@ -208,7 +208,9 @@ mod tests {
             let published = connector.poll().unwrap().unwrap();
             assert_eq!(published.allow_different_versions, consent);
             assert!(connector.poll().unwrap().is_none());
-            let Transport::Browser(peer) = published.stream;
+            let Transport::Browser(peer) = published.stream else {
+                panic!("connector published a paired test transport");
+            };
             peer.close();
         }
     }

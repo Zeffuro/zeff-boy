@@ -66,6 +66,7 @@ pub const RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE: c_uint = 23;
 pub const RETRO_ENVIRONMENT_GET_LOG_INTERFACE: c_uint = 27;
 pub const RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY: c_uint = 31;
 pub const RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: c_uint = 32;
+pub const RETRO_ENVIRONMENT_SET_CONTROLLER_INFO: c_uint = 35;
 pub const RETRO_ENVIRONMENT_SET_GEOMETRY: c_uint = 37;
 pub const RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS: c_uint = 42;
 pub const RETRO_ENVIRONMENT_SET_MEMORY_MAPS: c_uint = 36;
@@ -143,6 +144,18 @@ pub struct retro_game_info {
 pub struct retro_variable {
     pub key: *const c_char,
     pub value: *const c_char,
+}
+
+#[repr(C)]
+pub struct retro_controller_description {
+    pub desc: *const c_char,
+    pub id: c_uint,
+}
+
+#[repr(C)]
+pub struct retro_controller_info {
+    pub types: *const retro_controller_description,
+    pub num_types: c_uint,
 }
 
 #[repr(C)]

@@ -12,6 +12,9 @@ use crate::tas_project::{MAX_EDITOR_SEEK_EXECUTION_FRAMES, MAX_START_STATE_BYTES
 
 use super::state_cache::CachedTasState;
 
+mod proof;
+pub(super) use proof::{validate_intermediate_cache_proofs, validate_predecessor_window};
+
 pub(super) mod fds;
 pub(super) mod game_gear;
 pub(super) mod gb;
@@ -106,6 +109,9 @@ fn execute_fresh_tas(
     discarded_audio_samples: &mut Vec<f32>,
 ) -> Result<TasExecutionResult, Rejected> {
     match request.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            Err(Rejected::NoActiveLease)
+        }
         TasExecutionProfile::DirectNesCartridge => {
             execute_direct_nes_tas(backend, runtime_fault, request)
         }
@@ -169,6 +175,9 @@ fn execute_cached_suffix(
         .get(offset..)
         .ok_or(Rejected::InvalidCacheProof)?;
     match request.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(Rejected::NoActiveLease);
+        }
         TasExecutionProfile::DirectGbCartridgeDmg | TasExecutionProfile::DirectGbCartridgeCgb => {
             validate_gb_inputs(inputs).map_err(|_| Rejected::InvalidInput)?;
         }
@@ -219,6 +228,9 @@ fn execute_cached_suffix(
         .checked_add(transaction_frames)
         .ok_or(Rejected::FrameCountOverflow)?;
     let advanced = match request.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(Rejected::NoActiveLease);
+        }
         TasExecutionProfile::DirectColecoCartridge => {
             step_coleco_inputs(backend, inputs, runtime_fault)?
         }
@@ -484,6 +496,9 @@ fn validate_request_for_cache(
         return Err(Rejected::StartStateTooLarge);
     }
     match request.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(Rejected::NoActiveLease);
+        }
         TasExecutionProfile::DirectNesCartridge => {
             crate::emu_backend::loader::validate_current_nes_start_state(
                 &request.start_state_bytes,
@@ -556,70 +571,6 @@ fn validate_request_for_cache(
     Ok(())
 }
 
-fn validate_predecessor_window(request: &TasExecutionRequest) -> Result<(), Rejected> {
-    let Some(window) = &request.predecessor_window else {
-        return Ok(());
-    };
-    if window.source_proofs.len() < 2 || window.source_proofs.len() > 16 {
-        return Err(Rejected::InvalidCacheProof);
-    }
-    let target = request.cache_proof.target_cursor;
-    let input_len =
-        u64::try_from(window.input_frames.len()).map_err(|_| Rejected::FrameLimitExceeded)?;
-    let input_end_cursor = window
-        .input_start_cursor
-        .checked_add(input_len)
-        .ok_or(Rejected::InvalidCacheProof)?;
-    if window.input_start_cursor == 0
-        || window.input_start_cursor >= target
-        || input_len != (target - window.input_start_cursor).min(MAX_EDITOR_SEEK_EXECUTION_FRAMES)
-    {
-        return Err(Rejected::InvalidCacheProof);
-    }
-    if window.source_proofs.first() != Some(&request.cache_proof)
-        || window.source_proofs.last().map(|proof| proof.target_cursor)
-            != Some(window.input_start_cursor)
-    {
-        return Err(Rejected::InvalidCacheProof);
-    }
-    let mut previous_cursor = None;
-    for proof in &window.source_proofs {
-        if proof.sync_identity_sha256 != request.cache_proof.sync_identity_sha256
-            || proof.target_cursor < window.input_start_cursor
-            || (proof.target_cursor > input_end_cursor && proof.target_cursor != target)
-            || previous_cursor.is_some_and(|previous| proof.target_cursor >= previous)
-        {
-            return Err(Rejected::InvalidCacheProof);
-        }
-        previous_cursor = Some(proof.target_cursor);
-    }
-    Ok(())
-}
-
-fn validate_intermediate_cache_proofs(request: &TasExecutionRequest) -> Result<(), Rejected> {
-    if request
-        .intermediate_cache_proofs
-        .iter()
-        .map(|proof| proof.target_cursor)
-        .ne(tas_intermediate_cache_cursors(
-            request.cache_proof.target_cursor,
-        ))
-    {
-        return Err(Rejected::InvalidCacheProof);
-    }
-    let mut previous = 0;
-    for proof in &request.intermediate_cache_proofs {
-        if proof.sync_identity_sha256 != request.cache_proof.sync_identity_sha256
-            || proof.target_cursor <= previous
-            || proof.target_cursor >= request.cache_proof.target_cursor
-        {
-            return Err(Rejected::InvalidCacheProof);
-        }
-        previous = proof.target_cursor;
-    }
-    Ok(())
-}
-
 fn validate_direct_coleco_start_state(backend: &EmuBackend, state: &[u8]) -> Result<(), Rejected> {
     crate::emu_backend::loader::validate_direct_coleco_tas_execution_runtime(backend, false)
         .map_err(|_| Rejected::InvalidStartState)?;
@@ -644,6 +595,9 @@ fn restore_cached_tas(
         return Err(Rejected::StartStateTooLarge);
     }
     match request.profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(Rejected::NoActiveLease);
+        }
         TasExecutionProfile::DirectNesCartridge => {
             crate::emu_backend::loader::validate_current_nes_start_state(&cached_state.bytes)
                 .map_err(|_| Rejected::InvalidStartState)?;
@@ -721,6 +675,9 @@ fn restore_cached_profile_state(
         return Err(Rejected::InvalidStartState);
     }
     match profile {
+        TasExecutionProfile::DirectMdThreeButton | TasExecutionProfile::DirectMdSixButton => {
+            return Err(Rejected::NoActiveLease);
+        }
         TasExecutionProfile::DirectNesCartridge => {
             crate::emu_backend::loader::validate_current_nes_start_state(&cached_state.bytes)
                 .map_err(|_| Rejected::InvalidStartState)?;

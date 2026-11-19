@@ -85,9 +85,8 @@ pub(super) fn download_cht_content(
     platform: LibretroPlatform,
     cache_dir: &Path,
 ) -> anyhow::Result<String> {
-    let cht_cache_dir = cache_dir.join("libretro-cht");
-    let safe_name = filename.replace(['/', '\\', ':'], "_");
-    let cache_file = cht_cache_dir.join(&safe_name);
+    let cache_file = download_cache_path(filename, platform, cache_dir);
+    let cht_cache_dir = cache_file.parent().expect("cheat cache has a parent");
 
     // Try disk cache
     if let Ok(content) = std::fs::read_to_string(&cache_file) {
@@ -107,7 +106,7 @@ pub(super) fn download_cht_content(
         .read_to_string()
         .context("failed to read cheat file response")?;
 
-    if let Err(e) = std::fs::create_dir_all(&cht_cache_dir) {
+    if let Err(e) = std::fs::create_dir_all(cht_cache_dir) {
         log::warn!(
             "failed to create cht cache dir {}: {e}",
             cht_cache_dir.display()
@@ -117,6 +116,17 @@ pub(super) fn download_cht_content(
     }
 
     Ok(content)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn download_cache_path(filename: &str, platform: LibretroPlatform, cache_dir: &Path) -> PathBuf {
+    let root = cache_dir.join("libretro-cht");
+    let root = if platform == LibretroPlatform::Md {
+        root.join(platform.cache_suffix())
+    } else {
+        root
+    };
+    root.join(filename.replace(['/', '\\', ':'], "_"))
 }
 
 pub(super) fn search_filenames(query: &str, file_list: &[String], limit: usize) -> Vec<String> {

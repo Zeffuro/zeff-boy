@@ -64,7 +64,7 @@ fn record(_source: &[u8], before: State, after: State, bytes: &[u8]) -> Instruct
 fn stack_write(address: u16, value: u8) -> TraceWrite {
     TraceWrite {
         address: u32::from(address),
-        old_value: 0,
+        old_value: Some(0),
         new_value: u32::from(value),
         width: TraceWriteWidth::Byte,
         kind: TraceWriteKind::Memory,

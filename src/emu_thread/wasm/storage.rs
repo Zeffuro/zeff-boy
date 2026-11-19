@@ -124,6 +124,12 @@ impl EmuThread {
         speculation: &mut SpeculationBoundary,
         shutdown: bool,
     ) {
+        if matches!(backend, EmuBackend::Md(md) if md.rollback_owned()) {
+            pending_responses.push_back(EmuResponse::SramFlushFailed(
+                "MD rollback owns persistence".into(),
+            ));
+            return;
+        }
         *shutdown_requested |= shutdown;
         let terminal = *shutdown_requested;
         let terminal_ready = terminal.then(|| speculation.prepare_terminal_persistence());
@@ -225,7 +231,10 @@ impl EmuThread {
         let mut next_command = None;
         {
             let mut inner = self.inner.borrow_mut();
-            if inner.netplay.is_some() || inner.netplay_restore_failed {
+            if inner.netplay.is_some()
+                || inner.netplay_restore_failed
+                || matches!(&inner.backend, EmuBackend::Md(md) if md.rollback_owned())
+            {
                 return;
             }
             let completed = inner.pending_storage.as_ref().and_then(|pending| {
@@ -391,8 +400,7 @@ impl EmuThread {
             backend,
             result,
             path.display().to_string(),
-            buttons_pressed,
-            dpad_pressed,
+            Some((buttons_pressed, dpad_pressed)),
             shared_fb,
         )
     }

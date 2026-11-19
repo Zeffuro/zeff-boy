@@ -4,6 +4,8 @@ use crate::emu_thread::{
     TasControlLeaseWitness, TasControlRollbackRejectedReason, TasExecutionProfile,
 };
 
+pub(in crate::app) mod audio_host;
+
 mod coleco_recording_roundtrip;
 mod execution;
 mod fds_recording_roundtrip;
@@ -12,6 +14,7 @@ mod gba_recording_roundtrip;
 mod gbc_recording_roundtrip;
 pub(in crate::app) mod harness;
 mod live_recording;
+mod md_live;
 mod pause_ownership;
 mod pce_archive_recording_roundtrip;
 mod pce_recording_roundtrip;

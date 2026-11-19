@@ -30,9 +30,11 @@ pub(super) struct CommonCommandEffects {
     pub(super) potentially_dirty: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn finalize_step_result(
     result: &mut super::FrameResult,
     debugger_mutation: bool,
+    instruction_step_requested: bool,
     audio_recording_capture: AudioRecordingCapture,
     pending_audio_discontinuities: &mut Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
     runtime_fault: &WorkerRuntimeFault,
@@ -50,7 +52,7 @@ pub(super) fn finalize_step_result(
     }
     attach_audio_discontinuities(result, pending_audio_discontinuities);
 
-    result.advanced_frames != 0 || debugger_mutation
+    result.advanced_frames != 0 || debugger_mutation || instruction_step_requested
 }
 
 pub(super) struct LoadFinalizationContext<'a> {
@@ -61,6 +63,7 @@ pub(super) struct LoadFinalizationContext<'a> {
     pub(super) audio_recording_capture: AudioRecordingCapture,
     pub(super) pending_audio_discontinuities:
         &'a mut Vec<crate::audio_recorder::AudioTimelineDiscontinuity>,
+    pub(super) runtime_fault: &'a mut WorkerRuntimeFault,
 }
 
 impl LoadFinalizationContext<'_> {
@@ -78,6 +81,7 @@ impl LoadFinalizationContext<'_> {
             publish_frame_duration,
         );
         if loaded {
+            *self.runtime_fault = WorkerRuntimeFault::default();
             mark_audio_discontinuity(
                 self.audio_recording_capture,
                 self.pending_audio_discontinuities,
@@ -168,7 +172,14 @@ impl CommonCommandContext<'_> {
             }
             EmuCommand::ExecuteGuestCall(request) => {
                 let name = request.name.clone();
-                let response = match self.backend.execute_guest_call(&request) {
+                let result = if matches!(self.backend, EmuBackend::Md(_))
+                    && !self.runtime_fault.can_step()
+                {
+                    Err(anyhow::anyhow!("Mega Drive worker execution is faulted"))
+                } else {
+                    self.backend.execute_guest_call(&request)
+                };
+                let response = match result {
                     Ok((instructions, undo_state)) => EmuResponse::GuestCallCompleted {
                         name,
                         instructions,
@@ -189,8 +200,14 @@ impl CommonCommandContext<'_> {
                 effects.response = Some(response);
             }
             EmuCommand::UndoGuestCall(state) => {
-                let response = if self.backend.supports_guest_calls() {
-                    match self.backend.load_state_from_bytes(state) {
+                let response = if matches!(self.backend, EmuBackend::Md(_))
+                    && !self.runtime_fault.can_step()
+                {
+                    EmuResponse::GuestCallUndoFailed(
+                        "Mega Drive worker execution is faulted".into(),
+                    )
+                } else if self.backend.supports_guest_calls() {
+                    match self.backend.undo_guest_call(state) {
                         Ok(_) => EmuResponse::GuestCallUndone,
                         Err(error) => EmuResponse::GuestCallUndoFailed(error.to_string()),
                     }
@@ -248,8 +265,13 @@ impl CommonCommandContext<'_> {
             }
             EmuCommand::UpdateCheats(cheats) => {
                 if self.backend.supports_cheats() {
-                    *self.last_cheats = cheats;
-                    self.backend.install_rom_patches(self.last_cheats);
+                    match self.backend.try_install_rom_patches(&cheats) {
+                        Ok(()) => *self.last_cheats = cheats,
+                        Err(error) => {
+                            effects.response =
+                                Some(EmuResponse::CheatsUpdateFailed(error.to_string()));
+                        }
+                    }
                 } else {
                     self.last_cheats.clear();
                 }
@@ -262,6 +284,7 @@ impl CommonCommandContext<'_> {
                     steps,
                 );
                 if matches!(&response, EmuResponse::RewindOk { .. }) {
+                    *self.runtime_fault = WorkerRuntimeFault::default();
                     effects.potentially_dirty = true;
                     self.backend.discard_game_boy_printer_jobs();
                     self.backend.install_rom_patches(self.last_cheats);

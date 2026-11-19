@@ -8,6 +8,7 @@ use crate::emu_backend::CoreCapabilities;
 use crate::input::HostButton;
 use crate::live_control::{LiveCommand, LiveInput, LiveReply, PendingButtonRelease};
 use zeff_emu_common::memory::{MemoryRegionDescriptor, MemoryRegionKind, MemoryRegionView};
+#[cfg(test)]
 use zeff_emu_common::save_ram::SaveRamKind;
 #[cfg(test)]
 use zeff_emu_common::system::CoreFamily;
@@ -16,6 +17,8 @@ mod artifacts;
 mod core_features;
 mod graphics;
 mod json_helpers;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod md_register_tests;
 mod memory;
 #[cfg(not(target_arch = "wasm32"))]
 mod tas;
@@ -685,6 +688,7 @@ fn memory_region_kind_label(kind: MemoryRegionKind) -> &'static str {
         MemoryRegionKind::ExternalWorkRam => "external_work_ram",
         MemoryRegionKind::InternalWorkRam => "internal_work_ram",
         MemoryRegionKind::VideoRam => "video_ram",
+        MemoryRegionKind::VideoScrollRam => "video_scroll_ram",
         MemoryRegionKind::PaletteRam => "palette_ram",
         MemoryRegionKind::Oam => "oam",
         MemoryRegionKind::IoRegisters => "io_registers",
@@ -699,27 +703,6 @@ fn memory_region_view_label(view: MemoryRegionView) -> &'static str {
         MemoryRegionView::Physical => "physical",
         MemoryRegionView::Aggregate => "aggregate",
         MemoryRegionView::Derived => "derived",
-    }
-}
-
-fn save_ram_kind_json(kind: SaveRamKind) -> Value {
-    match kind {
-        SaveRamKind::None => json!({
-            "kind": "none",
-            "size": 0,
-        }),
-        SaveRamKind::KnownVolatile { size } => json!({
-            "kind": "known_volatile",
-            "size": size,
-        }),
-        SaveRamKind::KnownBatteryBacked { size } => json!({
-            "kind": "known_battery_backed",
-            "size": size,
-        }),
-        SaveRamKind::MapperRamUnknown { size } => json!({
-            "kind": "mapper_ram_unknown",
-            "size": size,
-        }),
     }
 }
 
@@ -804,6 +787,7 @@ mod tests {
     #[test]
     fn core_features_json_exposes_opcode_history_support() {
         let features = CoreCapabilities {
+            memory_editing: None,
             core_family: CoreFamily::Sega8,
             save_ram_kind: SaveRamKind::MapperRamUnknown { size: 0x8000 },
             has_battery: false,
@@ -824,7 +808,12 @@ mod tests {
             supports_cheats: true,
             supports_guest_calls: true,
             supports_debugger: true,
+            supports_symbol_loading: true,
+            supports_instruction_trace: true,
             supports_execution_controls: true,
+            supports_pc_breakpoints: true,
+            supports_rom_breakpoints: false,
+            supports_memory_watchpoints: true,
             supports_opcode_history: true,
             tas_execution_primitives: crate::emu_backend::capabilities::TasCoreCapabilityProbe {
                 system_identity_observed: true,
@@ -848,7 +837,10 @@ mod tests {
 
         assert_eq!(json["core_family"], "sega8");
         assert_eq!(json["supports_debugger"], true);
+        assert_eq!(json["supports_symbol_loading"], true);
         assert_eq!(json["supports_execution_controls"], true);
+        assert_eq!(json["supports_pc_breakpoints"], true);
+        assert_eq!(json["supports_memory_watchpoints"], true);
         assert_eq!(json["supports_opcode_history"], true);
         assert_eq!(json["supports_save_states"], true);
         assert_eq!(json["supports_state_capture"], true);

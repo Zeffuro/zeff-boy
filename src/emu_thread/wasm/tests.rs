@@ -10,6 +10,9 @@ use crate::emu_thread::{
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[cfg(feature = "wasm-browser-tests")]
+mod md_persistence;
+
+#[cfg(feature = "wasm-browser-tests")]
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
 export function browser_test_delay(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -95,6 +98,8 @@ fn frame_input() -> FrameInput {
         },
         debug_actions: crate::debug::DebugUiActions::none(),
         snapshot: SnapshotRequest {
+            debug_target: crate::debug::DebugTarget::Primary,
+            debug_revision: 0,
             want_debug_info: true,
             want_perf_info: true,
             any_viewer_open: true,
@@ -107,7 +112,7 @@ fn frame_input() -> FrameInput {
             memory_view_start: 0,
             show_rom_viewer: true,
             show_instruction_trace: true,
-            trace_after_sequence: None,
+            trace_cursor: Default::default(),
             rom_view_start: 0,
             last_disasm_pc: None,
             last_disasm_mapping: None,

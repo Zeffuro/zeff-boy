@@ -51,6 +51,7 @@ mod debug_state;
 mod gb;
 mod gba;
 mod input;
+mod md;
 mod nes;
 mod pce;
 mod replay;
@@ -83,6 +84,10 @@ pub(crate) fn run_headless(
     audio_dump::validate_paths(path, opts)?;
     validate_audio_trace_options(opts)?;
     if opts.tas_project_path.is_some() {
+        anyhow::ensure!(
+            opts.md_timing.is_none(),
+            "--md-timing requires Mega Drive media"
+        );
         return tas_project::run_tas_project_headless(path, firmware_search_dirs, opts);
     }
     if crate::app::is_native_archive_path(path) {
@@ -99,6 +104,14 @@ pub(crate) fn run_headless(
     }
 
     let (rom_path, preloaded_data, system) = crate::app::detect_and_extract_rom(path)?;
+    anyhow::ensure!(
+        system == ActiveSystem::Md
+            || (opts.md_region.is_none()
+                && opts.md_timing.is_none()
+                && opts.md_controller.is_none()
+                && opts.md_save_state_path.is_none()),
+        "--md-region, --md-timing, --md-controller and --md-save-state-out require Mega Drive media"
+    );
     audio_trace::validate_system(system.code(), opts)?;
     validate_tas_system(opts, system.code())?;
     if system == ActiveSystem::Pce {
@@ -113,6 +126,9 @@ pub(crate) fn run_headless(
             firmware_search_dirs,
             opts,
         );
+    }
+    if system == ActiveSystem::Md {
+        return md::run_md_headless(path, &rom_path, preloaded_data, opts);
     }
     let rom_data = match preloaded_data {
         Some(data) => data,
@@ -143,6 +159,7 @@ pub(crate) fn run_headless(
             run_coleco_headless(&rom_path, &rom_data, &firmware_search_dirs, opts, capture)
         }
         ActiveSystem::Pce => unreachable!("PC Engine runs dispatch before raw ROM loading"),
+        ActiveSystem::Md => unreachable!("Mega Drive dispatches before raw ROM loading"),
         ActiveSystem::WonderSwan => run_ws_headless(&rom_path, &rom_data, opts, capture),
         ActiveSystem::MasterSystem | ActiveSystem::GameGear | ActiveSystem::Sg1000 => {
             run_sega8_headless(&rom_path, &rom_data, system, opts, capture)
